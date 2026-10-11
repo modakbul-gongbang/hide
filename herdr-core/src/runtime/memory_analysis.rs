@@ -26,8 +26,8 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
 use hide_memory::{
-    AnalysisBatch, ApplySummary, Candidate, CandidateRelation, CursorReader, HideNativeAnalyzer,
-    MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
+    AnalysisBatch, ApplySummary, Candidate, CursorReader, HideNativeAnalyzer, MemoryStore,
+    ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
@@ -1546,9 +1546,9 @@ fn comparison_text(group: &[Value]) -> String {
 }
 
 /// Checks the answer against what was sent: a candidate citing an event
-/// outside the group is left out, the operator's own words are the sources
-/// whose event is `human`, and a correction without them waits for review
-/// instead (D-14). Answers how many were left out.
+/// outside the group is left out, and the operator's own words are the
+/// sources whose event is `human`, which the store needs to let a correction
+/// replace a card (D-14). Answers how many were left out.
 pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Value]) -> usize {
     let offsets = events
         .iter()
@@ -1576,13 +1576,6 @@ pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Val
             .copied()
             .filter(|offset| human.contains(offset))
             .collect();
-        if !candidate.direct_human_source()
-            && let CandidateRelation::Supersedes { target_id } = &candidate.relation
-        {
-            candidate.relation = CandidateRelation::Conflicts {
-                target_id: target_id.clone(),
-            };
-        }
     }
     before - candidates.len()
 }
@@ -1744,7 +1737,7 @@ mod tests {
         AiBackend, AiRequest, AiResponse, Availability, ModelCatalog, NoopLogSink, ProviderId,
         RouterConfig,
     };
-    use hide_memory::{CandidateKind, MemoryLifecycle};
+    use hide_memory::{CandidateKind, CandidateRelation, MemoryLifecycle};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2254,8 +2247,8 @@ mod tests {
     }
 
     #[test]
-    fn a_correction_without_the_operators_words_waits_for_review() {
-        // D-14: only a `human` event can make a candidate replace a card.
+    fn the_operators_words_are_the_human_events_and_an_unsent_offset_is_left_out() {
+        // D-14: the store makes a correction without them wait for review.
         let candidate = |offset| Candidate {
             text: "Use yarn".to_owned(),
             title: String::new(),
@@ -2283,15 +2276,7 @@ mod tests {
         );
 
         assert_eq!(checked[0].human_offsets, [1]);
-        assert!(matches!(
-            checked[0].relation,
-            CandidateRelation::Supersedes { .. }
-        ));
         assert!(checked[1].human_offsets.is_empty());
-        assert!(matches!(
-            checked[1].relation,
-            CandidateRelation::Conflicts { .. }
-        ));
         assert_eq!(checked.len(), 2);
     }
 }

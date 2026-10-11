@@ -325,6 +325,7 @@ struct RetrievalCandidate {
     id: String,
     number: u64,
     revision: u64,
+    kind: String,
     title: String,
     aliases: Vec<String>,
     body: String,
@@ -864,10 +865,12 @@ impl MemoryStore {
         })
     }
 
+    /// Records a session; the same record again writes nothing, so a pass
+    /// over idle sessions appends nothing to the log.
     pub fn upsert_session_source(&self, source: &SessionSourceRecord) -> Result<(), MemoryError> {
         self.require_writer()?;
         self.connection.execute(
-            "INSERT INTO session_sources(id, project_id, provider, locator, checkout_path, started_at_ms, updated_at_ms, unavailable_reason) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(project_id,provider,id) DO UPDATE SET locator=excluded.locator, checkout_path=excluded.checkout_path, started_at_ms=excluded.started_at_ms, updated_at_ms=excluded.updated_at_ms, unavailable_reason=excluded.unavailable_reason",
+            "INSERT INTO session_sources(id, project_id, provider, locator, checkout_path, started_at_ms, updated_at_ms, unavailable_reason) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(project_id,provider,id) DO UPDATE SET locator=excluded.locator, checkout_path=excluded.checkout_path, started_at_ms=excluded.started_at_ms, updated_at_ms=excluded.updated_at_ms, unavailable_reason=excluded.unavailable_reason WHERE locator IS NOT excluded.locator OR checkout_path IS NOT excluded.checkout_path OR started_at_ms IS NOT excluded.started_at_ms OR updated_at_ms IS NOT excluded.updated_at_ms OR unavailable_reason IS NOT excluded.unavailable_reason",
             params![source.id, source.project_id, source.provider, source.locator, source.checkout_path, source.started_at_unix_ms, source.updated_at_unix_ms, source.unavailable_reason],
         )?;
         Ok(())
@@ -1247,16 +1250,11 @@ impl MemoryStore {
                 continue;
             }
             bytes += item_bytes;
-            let kind = self.connection.query_row(
-                "SELECT kind FROM memory_revisions WHERE item_id=?1 AND revision=?2",
-                params![candidate.id, candidate.revision],
-                |row| row.get::<_, String>(0),
-            )?;
             selected.push(ComparisonCard {
                 needs_aliases: candidate.aliases.is_empty(),
                 id: candidate.id,
                 number: candidate.number,
-                kind: CandidateKind::parse(&kind),
+                kind: CandidateKind::parse(&candidate.kind),
                 title: candidate.title,
                 body: candidate.body,
             });
@@ -1762,10 +1760,16 @@ impl MemoryStore {
         transaction.execute("DELETE FROM memory_fts WHERE project_id=?1", [project_id])?;
         transaction.execute("DELETE FROM projects WHERE id=?1", [project_id])?;
         transaction.commit()?;
+        let warnings = [
+            cleanup(&self.connection).err(),
+            scrub_backups(&self.path, project_id).err(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
         Ok(DeleteProjectOutcome {
-            cleanup_warning: cleanup(&self.connection)
-                .err()
-                .map(|error| error.to_string()),
+            cleanup_warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
         })
     }
 
@@ -1792,7 +1796,7 @@ impl MemoryStore {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
+        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
         let mut candidates = statement
             .query_map(
                 params![project_id, query.fts_expression(), limit as u64],
@@ -1801,6 +1805,7 @@ impl MemoryStore {
                         id: row.get(0)?,
                         number: row.get(1)?,
                         revision: row.get(2)?,
+                        kind: row.get(10)?,
                         title: row.get(3)?,
                         aliases: parse_aliases(&row.get::<_, String>(4)?),
                         body: row.get(5)?,
@@ -2106,6 +2111,11 @@ COMMIT;"#,
 fn migrate_version_seven(connection: &Connection) -> Result<(), MemoryError> {
     connection.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| -> Result<(), MemoryError> {
+        // Another opener may have migrated since the version was read.
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version != 7 {
+            return Ok(());
+        }
         connection.execute_batch(
             r#"ALTER TABLE projects ADD COLUMN next_number INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE memory_items ADD COLUMN number INTEGER NOT NULL DEFAULT 0;
@@ -2147,6 +2157,7 @@ CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);"#,
         connection.execute_batch(
             r#"UPDATE projects SET next_number=COALESCE((SELECT MAX(number) FROM memory_items WHERE project_id=projects.id),0)+1;
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
+UPDATE memory_revisions SET lifecycle='active' WHERE lifecycle='conflicting' AND EXISTS(SELECT 1 FROM memory_items i WHERE i.id=memory_revisions.item_id AND i.current_revision=memory_revisions.revision AND i.lifecycle='conflicting' AND i.conflict_with_id IS NULL);
 UPDATE memory_items SET lifecycle='active' WHERE lifecycle='conflicting' AND conflict_with_id IS NULL;"#,
         )?;
         let revisions = {
@@ -2178,26 +2189,62 @@ UPDATE memory_items SET lifecycle='active' WHERE lifecycle='conflicting' AND con
 /// A consistent copy of a store about to move to a newer schema, kept beside
 /// it as `<file>.v<version>-backup`, because a migration only goes forward
 /// (PRD project-memory-v2 Risks). One that exists already is kept as it is.
+/// The copy is written whole beside the backup and then renamed onto it, so
+/// a crash mid-copy leaves no partial file that a later open would keep.
 fn back_up(connection: &Connection, path: &Path, version: i64) -> Result<(), MemoryError> {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".v{version}-backup"));
-    let backup = path.with_file_name(name);
-    match hide_platform::fs::private::create_new_file(&backup) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
-        Err(error) => {
-            return Err(MemoryError::InvalidState(format!(
-                "database_backup:{}",
-                error.kind()
-            )));
-        }
+    let backup = backup_path(path, version);
+    if backup.exists() {
+        return Ok(());
     }
-    let destination = backup
+    let mut partial = backup.clone().into_os_string();
+    partial.push(".partial");
+    let partial = std::path::PathBuf::from(partial);
+    let backup_failure = |error: std::io::Error| {
+        MemoryError::InvalidState(format!("database_backup:{}", error.kind()))
+    };
+    match std::fs::remove_file(&partial) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(backup_failure(error)),
+    }
+    hide_platform::fs::private::create_new_file(&partial).map_err(backup_failure)?;
+    let destination = partial
         .to_str()
         .ok_or_else(|| MemoryError::InvalidState("backup_path_not_utf8".to_owned()))?;
     if let Err(error) = connection.execute("VACUUM INTO ?1", [destination]) {
-        let _ = std::fs::remove_file(&backup);
+        let _ = std::fs::remove_file(&partial);
         return Err(error.into());
+    }
+    std::fs::rename(&partial, &backup).map_err(|error| {
+        let _ = std::fs::remove_file(&partial);
+        backup_failure(error)
+    })
+}
+
+/// Where the copy of a store taken before it left schema `version` lives.
+fn backup_path(path: &Path, version: i64) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".v{version}-backup"));
+    path.with_file_name(name)
+}
+
+/// The schema versions a migration keeps a backup of.
+const BACKUP_VERSIONS: [i64; 1] = [7];
+
+/// Removes a deleted Project from every backup copy, so its cards do not
+/// outlive the delete there.
+fn scrub_backups(path: &Path, project_id: &str) -> Result<(), MemoryError> {
+    for version in BACKUP_VERSIONS {
+        let backup = backup_path(path, version);
+        if !backup.exists() {
+            continue;
+        }
+        let copy = Connection::open(&backup)?;
+        copy.busy_timeout(Duration::from_secs(2))?;
+        copy.execute_batch("PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;")?;
+        copy.execute("DELETE FROM memory_fts WHERE project_id=?1", [project_id])?;
+        copy.execute("DELETE FROM projects WHERE id=?1", [project_id])?;
+        copy.execute_batch("VACUUM")?;
     }
     Ok(())
 }
@@ -4043,7 +4090,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 INSERT INTO memory_items VALUES('pending','p','conflicting',1,0.9,0.8,'hidden',40,40);
                 INSERT INTO memory_revisions VALUES('r1','first',1,'{long}','rule','active',10,'b');
                 INSERT INTO memory_revisions VALUES('r2','second',1,'Run tests with nextest','fact','active',20,'b');
-                INSERT INTO memory_revisions VALUES('r3','hidden',1,'Use blue buttons','rule','active',30,'b');
+                INSERT INTO memory_revisions VALUES('r3','hidden',1,'Use blue buttons','rule','conflicting',30,'b');
                 INSERT INTO memory_revisions VALUES('r4','pending',1,'Use red buttons','rule','conflicting',40,'b');
                 INSERT INTO session_topics VALUES('p','codex','s',1,'topic',1);
                 INSERT INTO hook_projection_cursors VALUES('p','codex','s',9,x'',NULL,1);
@@ -4137,6 +4184,72 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .connection
                 .prepare("SELECT 1 FROM session_topics")
                 .is_err()
+        );
+        let revision_lifecycle = |id: &str| {
+            store
+                .connection
+                .query_row(
+                    "SELECT lifecycle FROM memory_revisions WHERE id=?1",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            revision_lifecycle("r3"),
+            "active",
+            "the un-hidden card's history agrees with it"
+        );
+        assert_eq!(revision_lifecycle("r4"), "conflicting");
+        drop(store);
+
+        // Deleting the Project takes it out of the backup too.
+        let mut store = MemoryStore::open(&path).unwrap();
+        assert_eq!(
+            store.delete_project_data("p").unwrap().cleanup_warning,
+            None
+        );
+        let copy = Connection::open(&backup).unwrap();
+        for table in ["projects", "memory_items", "memory_revisions", "memory_fts"] {
+            assert_eq!(
+                copy.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                0,
+                "{table}"
+            );
+        }
+        drop(copy);
+        assert!(
+            !fs::read(&backup)
+                .unwrap()
+                .windows(b"Use blue buttons".len())
+                .any(|window| window == b"Use blue buttons"),
+            "no page of the backup keeps the deleted text"
+        );
+    }
+
+    #[test]
+    fn a_crash_mid_backup_leaves_no_partial_copy_a_later_open_would_keep() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(&format!("{SCHEMA_V7} PRAGMA user_version=7;"))
+            .unwrap();
+        drop(connection);
+        let partial = temp.path().join("memory.sqlite3.v7-backup.partial");
+        fs::write(&partial, b"torn").unwrap();
+
+        MemoryStore::open(&path).unwrap();
+
+        assert!(!partial.exists());
+        let copy = Connection::open(temp.path().join("memory.sqlite3.v7-backup")).unwrap();
+        assert_eq!(
+            copy.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            7
         );
     }
 
