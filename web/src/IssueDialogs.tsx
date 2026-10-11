@@ -5,6 +5,7 @@
 // `task_operation`); a dialog never decides that its request succeeded.
 
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
@@ -20,7 +21,8 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { catalogWorkspaces, localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { catalogWorkspaces, localDeviceId, type Device, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { machineName } from "./screenMachine";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -80,6 +82,17 @@ export function sourcePlace(workspace: Workspace): string {
 }
 
 /**
+ * A row of New issue's project list: `sourcePlace`, and for a node's
+ * project the machine it is on, so the core's project and a node's at the
+ * same name read apart (PRD core-host-node-move D-29).
+ */
+export function issuePlace(workspace: Workspace, devices: readonly Device[] | undefined, t: TFunction<"translation">): string {
+  const place = sourcePlace(workspace);
+  const machine = workspace.remote_target_id ? workspace.device_id : null;
+  return machine ? `${place} · ${machineName(devices, machine, t)}` : place;
+}
+
+/**
  * New issue: in the named project's source, or another project picked from
  * the list; `Create and start immediately` goes on to the Start dialog with the new issue
  * once the source has it.
@@ -88,6 +101,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
   const { t } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const projects = useMemo(() => issueProjects(catalogWorkspaces(rest)), [rest]);
+  const devices = rest?.navigator?.devices;
   const [projectId, setProjectId] = useState(workspace.id);
   const project = projects.find((row) => row.id === projectId) ?? null;
   const [title, setTitle] = useState("");
@@ -131,7 +145,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
                 <SelectContent>
                   {projects.map((row) => (
                     <SelectItem key={row.id} value={row.id}>
-                      {sourcePlace(row)}
+                      {issuePlace(row, devices, t)}
                     </SelectItem>
                   ))}
                 </SelectContent>

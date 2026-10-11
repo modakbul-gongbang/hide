@@ -5,8 +5,9 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { StartIssueDialog } from "./IssueDialogs";
-import type { BackgroundAi, Task, Workspace } from "./snapshot";
+import { translate } from "./i18n/client";
+import { issuePlace, StartIssueDialog } from "./IssueDialogs";
+import type { BackgroundAi, Device, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -66,4 +67,16 @@ it.each([
   expect(kinds(events)).not.toContain("worktree_name_suggest");
   expect(q("[data-name-state]")).toBeNull();
   await unmount();
+});
+
+it("names the machine of a node's project in New issue's list, so two projects at the same name read apart (D-29)", () => {
+  const devices = [
+    { id: "mini-node", kind: "local", state: "local", label: "mini", machine_name: "Mac mini" },
+    { id: "macbook-node", kind: "remote", state: "ready", label: "MacBook", dials_in: true },
+  ] as unknown as Device[];
+  const source = { kind: "local", label: "Local", name: null } as never;
+  const own = { id: "ws-own", label: "herdr-ide", device_id: "mini-node", remote_target_id: null, tasks: { source } } as unknown as Workspace;
+  const node = { ...own, id: "ws-node", device_id: "macbook-node", remote_target_id: "macbook-node" } as Workspace;
+  expect(issuePlace(own, devices, translate)).toBe("herdr-ide · Local");
+  expect(issuePlace(node, devices, translate)).toBe("herdr-ide · Local · MacBook");
 });
