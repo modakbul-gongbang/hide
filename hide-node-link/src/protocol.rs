@@ -98,6 +98,10 @@ use crate::error::HostError;
 /// node that owns the Herdr server, and terminal lines name the screen a
 /// view or a key came from. A node on 27 would refuse the first as unknown,
 /// so it is refused at Hello and reinstalled.
+/// A wire enum may gain a variant within 28 (`crate::factory::VerifyOutcome::Lost`)
+/// only because no peer of another build reads it: a node that dials its
+/// core links only on the core's exact build (PRD core-host-node-move B10,
+/// option C), and Factory runs never go to a device the core dials.
 pub const PROTOCOL_VERSION: u32 = 28;
 
 /// What a link stream the core opens on a node that dialed it reaches on
