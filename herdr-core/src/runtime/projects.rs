@@ -3414,7 +3414,17 @@ impl Runtime {
             agent_kind: payload.agent_kind,
             focus: true,
             purpose: payload.purpose,
-            issue: if device.is_none() { issue } else { None },
+            // The link is kept where the core keeps a checkout's links: on
+            // this machine or a node that dials it (D-29), never a device it
+            // dials.
+            issue: if device.as_deref().is_none_or(|device| {
+                self.link_origin(device)
+                    .is_some_and(LinkOrigin::reports_own_facts)
+            }) {
+                issue
+            } else {
+                None
+            },
         };
         let context = match device.as_deref() {
             Some(device) => self.device_worktree_target(device),

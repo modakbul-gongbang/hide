@@ -948,3 +948,112 @@ fn a_factory_on_a_node_project_keeps_its_local_issues_under_the_node() {
         ["this machine's"]
     );
 }
+
+/// Starting an issue of a node's project makes its worktree on the node and
+/// links it there as Start links one of this machine's: the branch note in
+/// the node's repository and the Workspace token in the node's Herdr.
+#[test]
+fn starting_a_node_project_s_issue_links_the_new_worktree_on_the_node() {
+    let repo = repo(None, "feature");
+    let mut store = crate::local_issues::LocalIssueStore::default();
+    store
+        .devices
+        .entry(NODE.to_owned())
+        .or_default()
+        .insert(repo.root.clone(), local_project(&[(4, "moved")]));
+    let created = format!("{}-4-start", repo.root);
+    let root = repo.root.clone();
+    let path = created.clone();
+    let herdr = crate::fake_herdr::FakeHerdr::start_with_errors("node-start", move |method, _| {
+        match method {
+            "worktree.create" => {
+                git(&root, &["worktree", "add", "-q", "-b", "4-start", &path]);
+                Ok(serde_json::json!({
+                    "type": "worktree_created",
+                    "workspace": {"workspace_id": "w9", "label": "app", "number": 3, "focused": true,
+                        "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "unknown"},
+                    "tab": {"workspace_id": "w9", "tab_id": "w9:t1", "label": "app", "number": 1,
+                        "focused": true, "pane_count": 1, "agent_status": "unknown"},
+                    "root_pane": {"workspace_id": "w9", "tab_id": "w9:t1", "pane_id": "w9:p1",
+                        "terminal_id": "fixture-terminal", "cwd": path, "foreground_cwd": path,
+                        "focused": true, "agent_status": "unknown", "revision": 0,
+                        "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40}},
+                    "worktree": {"branch": "4-start", "is_bare": false, "is_detached": false,
+                        "is_linked_worktree": true, "is_prunable": false, "label": "app",
+                        "open_workspace_id": "w9", "path": path},
+                }))
+            }
+            "worktree.list" => Ok(serde_json::json!({
+                "type": "worktree_list",
+                "source": {"repo_key": format!("{root}/.git"), "repo_name": "app", "repo_root": root,
+                    "source_checkout_path": root, "source_workspace_id": "w1"},
+                "worktrees": [{"branch": "4-start", "is_bare": false, "is_detached": false,
+                    "is_linked_worktree": true, "is_prunable": false, "label": "app",
+                    "open_workspace_id": "w9", "path": path}],
+            })),
+            "workspace.report_metadata" => Ok(serde_json::json!({"type": "ok"})),
+            other => Err((
+                "unsupported".to_owned(),
+                format!("the fixture answers no {other}"),
+            )),
+        }
+    });
+    let own = Recording::of(None);
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        own.clone(),
+        store,
+        Arc::new(herdr.connector()),
+        vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[]),
+            herdr_workspace(NODE, "w2", &repo.linked, &[]),
+        ],
+    );
+    dispatch(
+        &shared,
+        "create_worktree",
+        serde_json::json!({
+            "device_id": NODE, "repository_root": repo.root, "branch": "4-start",
+            "base_branch": "main", "agent_kind": null, "purpose": null,
+            "task_key": crate::tasks::local_key(&repo.root, 4),
+        }),
+    );
+    wait(&shared, "the start to settle", |runtime| {
+        runtime
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase != "working")
+    });
+    let operation = shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .task_operation
+        .clone()
+        .unwrap();
+    assert_eq!(operation.phase, "ready", "{:?}", operation.message);
+    assert_eq!(
+        git(&repo.root, &["config", "branch.4-start.issue"]).trim(),
+        "L-4"
+    );
+    let tokens: Vec<serde_json::Value> = herdr
+        .calls()
+        .into_iter()
+        .filter(|(method, _)| method == "workspace.report_metadata")
+        .map(|(_, params)| params)
+        .collect();
+    assert!(
+        tokens
+            .iter()
+            .any(|params| params.to_string().contains("L-4")),
+        "{tokens:?}"
+    );
+    assert!(
+        own.calls.lock().unwrap().is_empty(),
+        "{:?}",
+        own.calls.lock().unwrap()
+    );
+    assert!(Path::new(&created).is_dir());
+}

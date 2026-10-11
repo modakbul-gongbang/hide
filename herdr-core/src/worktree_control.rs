@@ -356,8 +356,9 @@ pub struct WorktreeTaskRequest {
     pub focus: bool,
     pub purpose: Option<String>,
     /// The issue token to link the new worktree to (`owner/repo#N` or
-    /// `L-N`), written like `set_checkout_issue` writes one. This machine's
-    /// worktrees only.
+    /// `L-N`), written like `set_checkout_issue` writes one, on the
+    /// worktree's own machine: this one's or a node's that dials the core,
+    /// never a dialed device's, which the runtime leaves this empty for.
     pub issue: Option<String>,
 }
 
@@ -1570,7 +1571,7 @@ fn create_worktree_observing_purpose(
         });
         // The issue link is a convenience on top of a good worktree: a
         // failure to write it is reported, never a failed creation.
-        let issue_error = request.issue.as_ref().filter(|_| local).and_then(|issue| {
+        let issue_error = request.issue.as_ref().and_then(|issue| {
             let issue_request = PurposeTaskRequest {
                 id: request.id,
                 checkout_id: String::new(),
