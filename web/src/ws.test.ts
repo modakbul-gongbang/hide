@@ -157,12 +157,12 @@ it("a reconnect names the core its revision came from", async () => {
 // PRD core-host-node-move, Window handoff: a window goes through a move
 // without a reload. Once the move is under way the role the window draws
 // from stops and closes its socket, so the window is held as `moving` from
-// that frame, through the close and the reconnect, and sends nothing (W1);
-// the move's screen sends only the move; the screen closes when the role
-// after the move takes over, and the window reconnects to that role, which
-// draws it. The finished move names the node the window became, and the
-// page writes it into its own address.
-it("a move holds the window as moving, sends nothing, and the role after it draws the window at the node's address", async () => {
+// that frame, through the close and the reconnect, and sends nothing but the
+// move's own event (W1); the move's screen sends only the move; the screen
+// closes when the role after the move takes over, and the window reconnects
+// to that role, which draws it. The finished move names the node the window
+// became, and the page writes it into its own address.
+it("a move holds the window as moving, sends only the move, and the role after it draws the window at the node's address", async () => {
   const states: ConnectionState[] = [];
   const stop = useShellStore.subscribe((state) => states.push(state.connection));
   const shell = connectShell({ onChunks: () => {} });
@@ -184,6 +184,9 @@ it("a move holds the window as moving, sends nothing, and the role after it draw
   expect(useShellStore.getState().connection).toBe("moving");
   expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
   expect(moving.sent).toHaveLength(1);
+  // Giving up a wait is the one event the move's screen takes (amendment 4).
+  expect(shell.dispatch({ schema_version: 2, kind: "core_move", payload: { action: "abandon" } })).toBe(true);
+  expect(JSON.parse(moving.sent[1] ?? "{}")).toMatchObject({ kind: "core_move", payload: { action: "abandon" } });
   moving.frame({ type: "error", payload: { kind: "core_move", reason: "moving" }, message: "moving" });
   expect(useShellStore.getState().connection).toBe("moving");
   moving.frame({ type: "core_move", payload: { state: "done", direction: "forward", device: "mini", node: "mbp", sent: 2, total: 2, failed: [], step: "reattach", cause: null, intent: "i" } });

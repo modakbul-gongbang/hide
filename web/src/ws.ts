@@ -69,8 +69,9 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
 
   const dispatch: DispatchFn = (event) => {
     // A move holds the window until the machine that takes the core draws
-    // it; its screen refuses events, so none is sent (W1).
-    if (useShellStore.getState().connection === "moving") {
+    // it; its screen takes only the move's own event (giving up a wait) and
+    // refuses the rest, so nothing else is sent (W1).
+    if (useShellStore.getState().connection === "moving" && event.kind !== "core_move") {
       useShellStore.getState().noteDiagnostic(`dispatch dropped: ${event.kind} while the core moves`);
       return false;
     }
