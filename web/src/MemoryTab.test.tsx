@@ -150,6 +150,41 @@ describe("the Memory tab", () => {
     ]);
   });
 
+  it("sends one search for one edit while two windows show the Project's shared answer", async () => {
+    // Two windows on one Project share the core's search; the second follows it.
+    const other = document.createElement("div");
+    document.body.append(other);
+    const otherRoot = createRoot(other);
+    const dispatch: DispatchFn = (event) => {
+      events.push(event);
+      if (event.kind === "memory_search") {
+        const { query } = event.payload as { query: string };
+        const project = useShellStore.getState().memory?.project ?? null;
+        useShellStore.setState({ memory: { project: project && { ...project, search: { query, numbers: [7] } } } });
+      }
+      return true;
+    };
+    vi.useFakeTimers();
+    try {
+      useShellStore.setState({ connection: "live", rest, memory: { project: memory() } });
+      const tools = <TooltipProvider><Tools tool="memory" actions={createActions(dispatch)} /></TooltipProvider>;
+      await act(async () => root.render(tools));
+      await act(async () => otherRoot.render(tools));
+      const field = container.querySelector<HTMLInputElement>("[data-memory-search]")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "lint");
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => { vi.advanceTimersByTime(5_000); });
+      expect(sent("memory_search")).toEqual([{ workspace_id: "p", query: "lint" }]);
+      expect(other.querySelector<HTMLInputElement>("[data-memory-search]")!.value).toBe("lint");
+    } finally {
+      vi.useRealTimers();
+      await act(async () => otherRoot.unmount());
+      other.remove();
+    }
+  });
+
   it("says a device's Project keeps no Memory here", async () => {
     await render(memory({ unavailable: { reason: "remote_device", device_name: "mini" } }));
     expect(container.textContent).toContain("This pane runs on mini.");

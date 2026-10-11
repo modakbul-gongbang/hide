@@ -254,13 +254,24 @@ function Question({ question, project, actions, busy, last }: { question: Memory
 function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; actions: Actions; busy: boolean; onDelete: () => void }) {
   const { t } = useInterfaceTranslation();
   const id = project.workspace_id;
-  const [query, setQuery] = useState(project.search?.query ?? "");
+  // The search is the Project's, shared by every window: only a local edit is
+  // sent, and otherwise the field follows the accepted query, so two windows
+  // never send each other's answer back.
+  const shared = project.search?.query ?? "";
+  const [query, setQuery] = useState(shared);
+  const editing = useRef(false);
   const [all, setAll] = useState(false);
   useEffect(() => {
-    if (query === (project.search?.query ?? "")) return;
-    const timer = window.setTimeout(() => actions.memorySearch(id, query), 220);
+    if (!editing.current) setQuery(shared);
+  }, [shared]);
+  useEffect(() => {
+    if (!editing.current) return;
+    const timer = window.setTimeout(() => {
+      editing.current = false;
+      if (query !== shared) actions.memorySearch(id, query);
+    }, 220);
     return () => window.clearTimeout(timer);
-  }, [actions, id, query, project.search?.query]);
+  }, [actions, id, query, shared]);
   const cards = memoryCards(project);
   // Every card is already asked about above (a failed promotion of the
   // Project's one card): the list would be an empty search (design v7, 5).
@@ -295,7 +306,7 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
         </div>
       ) : (
         <>
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("memory.search")} aria-label={t("memory.search")} data-memory-search="true" />
+          <Input value={query} onChange={(event) => { editing.current = true; setQuery(event.target.value); }} placeholder={t("memory.search")} aria-label={t("memory.search")} data-memory-search="true" />
           {project.search && cards.length === 0 ? <p className="text-caption text-muted-foreground">{t("memory.noMatch")}</p> : null}
           <ol className="flex flex-col">
             {shown.map((row) => (
