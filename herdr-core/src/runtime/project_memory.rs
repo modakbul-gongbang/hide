@@ -606,9 +606,6 @@ impl Runtime {
             return;
         };
         let database = self.memory_database_path();
-        if !MemoryStore::exists(&database) && self.project_memory.received.is_empty() {
-            return;
-        }
         let Some(generation) = self.project_memory.received_reads.begin() else {
             return;
         };

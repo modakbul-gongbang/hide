@@ -425,7 +425,7 @@ pub fn next_action(code: &str) -> &'static str {
         "memory_device_unsupported" => {
             "Run hide memory on the machine that runs Hide; a connected device has no Project Memory"
         }
-        "memory_off" => "Turn Memory on for this Project in Hide's Project Sessions view",
+        "memory_off" => "Memory is off for this Project; only the operator can turn it on in Hide",
         "memory_ai_off" => "Turn Hide AI on and choose an agent in Hide's Settings",
         "memory_ai_sign_in" => "Sign in to the agent Hide AI uses, then retry",
         "memory_ai_usage_limited" => "Retry after the agent's usage limit resets",
