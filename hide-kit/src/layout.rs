@@ -279,7 +279,10 @@ mod tests {
                 .is_loaded("dev.withhide.core", marked.path(), &stop)
                 .unwrap()
         );
-        assert!(agents.session_present(marked.path(), &stop).is_err());
+        assert_eq!(
+            agents.login(marked.path(), &stop).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
         agents
             .unload("dev.withhide.core", marked.path(), &stop)
             .unwrap();

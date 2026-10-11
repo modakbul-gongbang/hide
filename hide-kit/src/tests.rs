@@ -280,10 +280,7 @@ impl Fixture {
             codex: None,
             login_shell: None,
             legacy_coordination_home: None,
-            user_agents: hide_platform::user_agents::UserAgents::fixture(
-                root.join("launchctl"),
-                "fixture".into(),
-            ),
+            user_agents: hide_platform::user_agents::UserAgents::fixture(&root),
             retirement_projects: Vec::new(),
             legacy: Vec::new(),
             stop: Arc::default(),
