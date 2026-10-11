@@ -160,6 +160,23 @@ fn hex_prefix(digest: &[u8]) -> String {
         .collect()
 }
 
+/// The records of daemons that run on a state folder other than the
+/// account's default, in that default folder (`hided::daemon_locator`).
+pub fn daemon_locators(home: &Path) -> PathBuf {
+    default_state_dir(home).join("daemons")
+}
+
+/// The record naming the state folder of the daemon whose panes are those
+/// of the Herdr at `herdr_socket`, filed under that socket's digest.
+pub fn daemon_locator(home: &Path, herdr_socket: &str) -> PathBuf {
+    use sha2::Digest;
+    let name: String = sha2::Sha256::digest(herdr_socket.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    daemon_locators(home).join(format!("{name}.json"))
+}
+
 /// Copies a move makes of this machine's brain state, one folder per move.
 pub fn move_staging(state_dir: &Path) -> PathBuf {
     state_dir.join("move-staging")

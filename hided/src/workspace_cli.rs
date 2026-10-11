@@ -144,7 +144,7 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
 }
 
 fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
-    let socket = crate::pane_auth::bootstrap_socket_path(&env.state_dir)?;
+    let socket = crate::pane_auth::bootstrap_socket_path(&daemon_state_dir(env))?;
     let mut stream = LocalStream::connect(&socket).map_err(|_| "hide_unavailable".to_owned())?;
     stream
         .set_read_timeout(Some(TIMEOUT))
@@ -157,6 +157,18 @@ fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
     }
     writeln!(stream, "{request}").map_err(|_| "hide_unavailable".to_owned())?;
     read_bootstrap_answer(&mut stream)
+}
+
+/// The state folder of the daemon that runs this pane: the one the daemon of
+/// the pane's Herdr recorded (`daemon_locator`), so a pane whose environment
+/// lacks the daemon's moved folder still reaches it; this command's own
+/// folder otherwise.
+fn daemon_state_dir(env: &Env) -> PathBuf {
+    env.herdr_socket_path
+        .as_deref()
+        .filter(|socket| !socket.is_empty())
+        .and_then(|socket| crate::daemon_locator::resolve(&env.home, socket))
+        .unwrap_or_else(|| env.state_dir.clone())
 }
 
 fn read_bootstrap_answer(stream: &mut impl Read) -> Result<PathBuf, String> {

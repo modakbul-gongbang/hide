@@ -16,6 +16,7 @@ pub mod cli_contract;
 pub mod core;
 pub mod core_move;
 pub mod core_update;
+pub mod daemon_locator;
 pub mod delivery_cli;
 pub mod demand;
 pub mod ending;
@@ -146,6 +147,8 @@ pub struct RunningDaemon {
 struct OwnSeat {
     _seat: seat::Seat,
     state_dir: std::path::PathBuf,
+    /// Its panes' way to it; gone before the lock.
+    _located: Option<daemon_locator::Registration>,
     _lock: std::fs::File,
 }
 
@@ -237,14 +240,17 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     )?;
     let state_dir = env.state_dir.clone();
     let herdr_socket = env.herdr_socket_path.clone();
+    let home = env.home.clone();
     let mut running = start_core_role(env, seat.parts()).await?;
     // Recorded once the daemon runs, so a start that failed leaves no record
     // naming a process that is gone.
+    let located = daemon_locator::announce(&home, herdr_socket.as_deref(), &state_dir);
     record_daemon(&state_dir, &seat.parts(), herdr_socket)?;
     seat.end_with(running.shutdown.clone(), state_dir.clone());
     running.own = Some(OwnSeat {
         _seat: seat,
         state_dir,
+        _located: located,
         _lock: lock,
     });
     Ok(running)
@@ -601,12 +607,15 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
     )?;
     let state_dir = env.state_dir.clone();
     let herdr_socket = env.herdr_socket_path.clone();
+    let home = env.home.clone();
     let mut running = start_node_role(env, seat.parts()).await?;
+    let located = daemon_locator::announce(&home, herdr_socket.as_deref(), &state_dir);
     record_daemon(&state_dir, &seat.parts(), herdr_socket)?;
     seat.end_with(running.shutdown.clone(), state_dir.clone());
     running.own = Some(OwnSeat {
         _seat: seat,
         state_dir,
+        _located: located,
         _lock: lock,
     });
     Ok(running)
