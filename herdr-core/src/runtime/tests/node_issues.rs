@@ -795,6 +795,11 @@ fn the_overview_in_front_of_a_node_checkout_reads_the_node_s_project() {
 /// machine's node, which has none of these folders, is asked nothing.
 #[test]
 fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused() {
+    // `lsof` answers nothing and exits 1 on a machine with no listener it
+    // can see, which the in-use check rightly reads as unverified; one held
+    // here, outside every worktree, gives it a listener to report.
+    let _listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port is bindable");
     let repo = repo(None, "feature");
     let changed = format!("{}-changed", repo.root);
     git(
