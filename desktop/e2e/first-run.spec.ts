@@ -10,7 +10,7 @@ import { expect, type ElectronApplication } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { hostLog, isolate, launch, screenshot, test, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, nodeOf, screenshot, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -88,4 +88,62 @@ test("the wizard walks agents, notifications and the first project, never return
   await expect(wizard).toHaveAttribute("data-first-run", "agents");
   await page.keyboard.press("Escape");
   await expect(wizard).toHaveCount(0);
+});
+
+/** Replaces the native folder picker with one answer per call. */
+async function stubPicker(app: ElectronApplication, folders: string[]): Promise<void> {
+  await app.evaluate(({ dialog }, queued) => {
+    const answers = [...queued];
+    dialog.showOpenDialog = (async () => {
+      const next = answers.shift();
+      if (!next) throw new Error("no queued pick");
+      return { canceled: false, filePaths: [next] };
+    }) as typeof dialog.showOpenDialog;
+  }, folders);
+}
+
+test("the first project closes the wizard into the start panel on it, Start runs there, and a later project opens no panel", async () => {
+  const home = run.env.HOME!;
+  for (const name of ["alpha", "beta"]) fs.mkdirSync(path.join(home, "projects", name), { recursive: true });
+  const [alpha, beta] = ["alpha", "beta"].map((name) => fs.realpathSync(path.join(home, "projects", name)));
+  let page;
+  ({ app, page } = await launch(run.env));
+  const wizard = page.locator("[data-first-run]");
+  await expect(wizard).toHaveAttribute("data-first-run", "agents", { timeout: 60_000 });
+  await page.locator("[data-onboarding-apply]").click();
+  await expect(wizard).toHaveAttribute("data-first-run", "notifications", { timeout: 60_000 });
+  await page.locator('[data-first-run-next="notifications"]').click();
+  await expect(wizard).toHaveAttribute("data-first-run", "project");
+  // The wizard keeps its own steps: its Host list has no Add device.
+  await page.locator("[data-add-project-host]").click();
+  await expect(page.locator("[data-host-option-add-device]")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(wizard).toHaveAttribute("data-first-run", "project");
+
+  // B23: the project added closes the wizard and opens the start panel on it, the keyboard in its text.
+  await stubPicker(app, [alpha!]);
+  await page.locator("[data-add-project-browse]").click();
+  await expect(wizard).toHaveCount(0, { timeout: 20_000 });
+  const panel = page.locator("[data-start-panel]");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", new RegExp(`^checkout:${nodeOf(run.env)}:.*/alpha$`));
+  await expect(page.locator("[data-start-text]")).toBeFocused();
+  await screenshot(page, "first-run-start-panel");
+
+  // B24: Start runs the agent in that project, in a new tab.
+  await page.locator("[data-start-text]").fill("first task");
+  await page.locator("[data-start-submit]").click();
+  const failure = panel.locator("[data-start-failure]");
+  await expect
+    .poll(async () => ((await failure.count()) > 0 ? `refused: ${await failure.innerText()}` : (await panel.count()) === 0 ? "closed" : "open"), { timeout: 90_000 })
+    .toBe("closed");
+  await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
+
+  // B24: a project added later opens no start panel.
+  await page.locator("[data-sidebar-new-workspace]").click();
+  await stubPicker(app, [beta!]);
+  await page.locator("[data-add-project-browse]").click();
+  await expect(page.locator("[data-add-project]")).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.locator("[data-project-list]")).toContainText("beta", { timeout: 20_000 });
+  await expect(panel).toHaveCount(0);
 });
