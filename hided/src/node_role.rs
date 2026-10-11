@@ -231,11 +231,65 @@ struct State {
     woken: bool,
     /// The live link's stream, ended to end the link.
     link: Option<ShutdownHandle>,
-    /// Why this connection's one update of the core failed, once it did
-    /// (B20).
-    update_failed: Option<String>,
+    /// This connection's one update of the core (B20).
+    update: Update,
     /// The operator ended the link (B16); the link thread parks.
     disconnected: bool,
+}
+
+/// Where a connection's one update of the core stands (B10, B20).
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Update {
+    /// The connection may update a core that runs an older build.
+    Untried,
+    /// The core reported this build running and no link has gone live
+    /// since: a core still older is this update not holding.
+    Unproven,
+    /// Spent, with its reason: the core is refused as older until the next
+    /// connection.
+    Failed(String),
+}
+
+/// Why a connection updates its core no more.
+#[derive(Debug, Eq, PartialEq)]
+struct Spent {
+    reason: String,
+    /// It was spent by this attempt, not before it.
+    now: bool,
+}
+
+/// The reason an update spends itself when it did not hold.
+const UPDATE_NOT_KEPT: &str = "not_kept: the core runs an older build again after its update";
+
+impl Update {
+    /// A core older than this build asks for an update: `Ok` when this
+    /// connection may run one. An update that did not hold until a live
+    /// link is spent here rather than run again, so a core that keeps going
+    /// back is updated once per connection, not once per dial.
+    fn attempt(&mut self) -> Result<(), Spent> {
+        match self {
+            Self::Untried => Ok(()),
+            Self::Unproven => {
+                *self = Self::Failed(UPDATE_NOT_KEPT.to_owned());
+                Err(Spent {
+                    reason: UPDATE_NOT_KEPT.to_owned(),
+                    now: true,
+                })
+            }
+            Self::Failed(reason) => Err(Spent {
+                reason: reason.clone(),
+                now: false,
+            }),
+        }
+    }
+
+    /// A link went live: an update before it held, and a core older again
+    /// later is a new reason to update.
+    fn held(&mut self) {
+        if *self == Self::Unproven {
+            *self = Self::Untried;
+        }
+    }
 }
 
 struct Shared {
@@ -318,7 +372,7 @@ impl NodeRole {
                 stopping: false,
                 woken: false,
                 link: None,
-                update_failed: None,
+                update: Update::Untried,
                 disconnected: placement.disconnected,
             }),
             changed: Condvar::new(),
@@ -394,7 +448,7 @@ impl NodeRole {
             return;
         }
         // A new connection: a core update that failed gets its attempt.
-        state.update_failed = None;
+        state.update = Update::Untried;
         state.woken = true;
         drop(state);
         self.shared.changed.notify_all();
@@ -432,9 +486,10 @@ impl NodeRole {
     pub fn connect_again(&self) {
         let mut state = lock(&self.shared.state);
         // The operator ended the link; only their reconnect dials again.
-        if state.disconnected || state.update_failed.take().is_none() {
+        if state.disconnected || !matches!(state.update, Update::Failed(_)) {
             return;
         }
+        state.update = Update::Untried;
         state.phase = Phase::Connecting;
         self.shared.phases.send_replace(Phase::Connecting);
         drop(state);
@@ -743,6 +798,9 @@ impl PortWatch {
 /// Sets the phase; `true` when the role is stopping.
 fn set_phase(shared: &Shared, phase: Phase) -> bool {
     let mut state = lock(&shared.state);
+    if let Phase::Live(_) = phase {
+        state.update.held();
+    }
     if state.phase != phase {
         state.phase = phase.clone();
         shared.phases.send_replace(phase);
@@ -859,7 +917,9 @@ fn try_link(
 /// the core's on its machine, and its own `hided core-update` replaces the
 /// core and goes back to the previous build when the new one does not take
 /// links. Once per connection (B20): a failed update is not tried again
-/// until the next one, and the core is then refused as older.
+/// until the next one, and the core is then refused as older; an update the
+/// core reported done is failed too when the core answers as older again
+/// before a link went live.
 fn update_core(
     shared: &Shared,
     upstream: &Upstream,
@@ -872,7 +932,16 @@ fn update_core(
         return LinkFailure::Refused("other_build".to_owned());
     };
     // Spent: refused as older until the next connection.
-    if let Some(reason) = lock(&shared.state).update_failed.clone() {
+    let spent = lock(&shared.state).update.attempt();
+    if let Err(Spent { reason, now }) = spent {
+        if now {
+            herdr_core::diagnostic!(json!({
+                "component": "node_role",
+                "kind": "update.failed",
+                "core": placement.node,
+                "reason": reason,
+            }));
+        }
         return LinkFailure::UpdateFailed {
             reason,
             machine,
@@ -901,7 +970,7 @@ fn update_core(
         herdr_core::diagnostic!(record);
     };
     let failed = |reason: String| {
-        lock(&shared.state).update_failed = Some(reason.clone());
+        lock(&shared.state).update = Update::Failed(reason.clone());
         log("update.failed", json!({"reason": reason}));
         LinkFailure::UpdateFailed {
             reason,
@@ -962,6 +1031,7 @@ fn update_core(
         log("update.record_failed", json!({"reason": reason}));
     }
     log("update.done", json!({"program": program}));
+    lock(&shared.state).update = Update::Unproven;
     LinkFailure::CoreUpdated { program }
 }
 
@@ -1199,6 +1269,38 @@ mod tests {
 
     fn addresses(last: u8) -> Option<BTreeSet<IpAddr>> {
         Some(BTreeSet::from([IpAddr::from([192, 168, 1, last])]))
+    }
+
+    /// A core that goes back to an older build after its update is updated
+    /// once per connection, not once per dial: the second ask before a live
+    /// link is the failed answer, and only a live link or a new connection
+    /// gives the next update its try.
+    #[test]
+    fn an_update_that_does_not_hold_until_a_live_link_is_spent() {
+        let mut update = Update::Untried;
+        assert_eq!(update.attempt(), Ok(()));
+        update = Update::Unproven;
+        assert_eq!(
+            update.attempt(),
+            Err(Spent {
+                reason: UPDATE_NOT_KEPT.to_owned(),
+                now: true,
+            })
+        );
+        assert_eq!(
+            update.attempt(),
+            Err(Spent {
+                reason: UPDATE_NOT_KEPT.to_owned(),
+                now: false,
+            })
+        );
+        // A failure stays spent across a live link; a new connection ends it.
+        update.held();
+        assert!(update.attempt().is_err());
+
+        let mut update = Update::Unproven;
+        update.held();
+        assert_eq!(update.attempt(), Ok(()));
     }
 
     #[test]
