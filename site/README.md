@@ -2,6 +2,7 @@
 
 This directory contains the static introduction-site source prepared for issue #338 and the intended `withhide.dev` domain.
 It has no build step, packages, framework, webfont service, analytics, cookies, or application environment variables.
+The Geist and Geist Mono variable fonts are served from `assets/fonts/` under the SIL Open Font License (`assets/fonts/OFL-Geist.txt`), copied unchanged from the `geist` 1.4.2 npm package.
 Serving this directory locally does not publish it or configure the domain.
 
 ## Preview and checks
@@ -51,6 +52,12 @@ Browser QA should simulate GitHub responses at that external boundary for ready,
 
 The brand line, approved owl mark, palette and voice come from [BRAND.md](../docs/BRAND.md).
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
+The page presents hide as an agent development environment in four pillars: multi-agent, multi-device, Hide AI and Software Factory, followed by the Herdr relationship.
+Each pillar's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md).
+The Factory is marked Coming soon until a public release carries it.
+The pillar panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title, the Factory board) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors.
+Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
+`site.js` runs the one-time scroll reveals and the sidebar panel's group changes, the page's only repeating animation; it pauses off screen and in a hidden tab, and both stop under `prefers-reduced-motion`.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
 Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md), with sample counts and boundaries beside the figures.
@@ -69,3 +76,4 @@ No video or placeholder demo link is included here.
 DNS ownership, hosting, HTTPS and live `withhide.dev` behavior have not been verified or changed by this source work.
 A complete public stable release must exist before real archive downloads can be verified end to end.
 Before publication, refresh feature and platform copy against current main, independently review the site and any media, test the live release links and checksums, and authorize deployment separately.
+The pillar copy describes current main, which is ahead of the latest public release (v0.3.0 names Claude Code and Codex only and carries no Factory); publish it with or after the release that ships those features.
