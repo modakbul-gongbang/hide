@@ -350,7 +350,9 @@ pub fn request_memory(
         herdr_core::memory_command::MemoryCommand::Add { .. } => {
             (true, herdr_core::memory_command::ADD_TIMEOUT)
         }
-        herdr_core::memory_command::MemoryCommand::Show { .. } => (true, TIMEOUT),
+        herdr_core::memory_command::MemoryCommand::Show { .. }
+        | herdr_core::memory_command::MemoryCommand::Forget { .. }
+        | herdr_core::memory_command::MemoryCommand::Undo { .. } => (true, TIMEOUT),
         herdr_core::memory_command::MemoryCommand::Search { .. } => (false, TIMEOUT),
     };
     credential.run(|path| {

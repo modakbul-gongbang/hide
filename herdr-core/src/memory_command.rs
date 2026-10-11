@@ -1,5 +1,5 @@
-//! `hide memory show|search|add` (PRD project-memory-v2 B7, B8, B14-B16,
-//! B27, D-03, D-11).
+//! `hide memory show|search|add|forget|undo` (PRD project-memory-v2 B7,
+//! B8, B14-B16, B27, D-03, D-11).
 //!
 //! hided names the caller from its pane capability; the core checks the
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
@@ -8,16 +8,20 @@
 //! A connected device's Memory is its own (D-22), so only a caller on this
 //! machine is answered.
 
+use crate::model::MemoryNoticeSnapshot;
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
-use crate::runtime::memory_analysis::{AnalysisFailure, BatchSource, admit_call, write_cards};
+use crate::runtime::RuntimeWorkerContext;
+use crate::runtime::memory_analysis::{
+    AnalysisFailure, BatchSource, admit_call, batch_identity, report_memory_change, write_cards,
+};
 use hide_ai::{AiError, AiRouter, AiSettings, CancelToken};
 use hide_memory::{CandidateOutcome, MemoryItem, MemoryLifecycle, MemoryStore, card_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The most characters `hide memory add` takes (B8).
 pub const ADD_LIMIT_CHARS: usize = hide_memory::MEMORY_BODY_LIMIT_CHARS;
@@ -30,25 +34,46 @@ pub const SEARCH_LIMIT_BYTES: usize = 1024;
 pub const ADD_PROVIDER_DEADLINE: Duration = Duration::from_secs(50);
 /// How long the caller waits for an `add` (B8).
 pub const ADD_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long before the caller stops waiting an `add` stops writing, for its
+/// answer to get back.
+const ADD_ANSWER_MARGIN: Duration = Duration::from_secs(5);
 
-/// The provider and session `add` writes its batch under: one per Project,
-/// so the same text added again is the same batch and never a second card.
+/// The provider and session `add` writes its batch under: one per Project
+/// and text, so the same text added again is the same batch and never a
+/// second card. Once every card of that batch is gone (forgotten, undone,
+/// or none was kept), the same text starts the next generation's batch.
 const ADD_PROVIDER: &str = "hide";
 const ADD_SESSION: &str = "memory-add";
+/// The most generations one text is looked up through.
+const ADD_GENERATIONS: u32 = 32;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum MemoryCommand {
-    Show { number: u64 },
-    Search { words: String },
-    Add { text: String },
+    Show {
+        number: u64,
+    },
+    Search {
+        words: String,
+    },
+    Add {
+        text: String,
+    },
+    /// The operator asked the agent to drop a card; Undo brings it back.
+    Forget {
+        number: u64,
+    },
+    /// Steps card `number` back one change.
+    Undo {
+        number: u64,
+    },
 }
 
 impl MemoryCommand {
     /// Whether the command's own values are ones a parser could have made.
     pub fn valid(&self) -> bool {
         match self {
-            Self::Show { number } => *number > 0,
+            Self::Show { number } | Self::Forget { number } | Self::Undo { number } => *number > 0,
             Self::Search { words } => !words.trim().is_empty() && words.len() <= SEARCH_LIMIT_BYTES,
             Self::Add { text } => {
                 !text.trim().is_empty() && text.chars().count() <= ADD_LIMIT_CHARS
@@ -74,6 +99,8 @@ pub struct PreparedMemory {
     pub(crate) reader: Option<(String, String)>,
     /// Hide AI's settings while it is on.
     pub(crate) settings: Option<AiSettings>,
+    /// Where a change is reported, so the screen reads Memory again.
+    pub(crate) context: Option<RuntimeWorkerContext>,
 }
 
 impl PreparedMemory {
@@ -85,6 +112,7 @@ impl PreparedMemory {
     }
 
     fn run_with(self, router: impl FnOnce(&AiSettings) -> AiRouter) -> Result<Value, String> {
+        let deadline = Instant::now() + ADD_TIMEOUT - ADD_ANSWER_MARGIN;
         if !MemoryStore::exists(&self.database) {
             return Err("memory_off".into());
         }
@@ -118,7 +146,7 @@ impl PreparedMemory {
             return Err("memory_off".into());
         }
         let now = crate::runtime::memory::now_ms();
-        match self.command {
+        match self.command.clone() {
             MemoryCommand::Show { number } => {
                 let reader = self
                     .reader
@@ -131,7 +159,43 @@ impl PreparedMemory {
                 if item.lifecycle == MemoryLifecycle::Tombstoned {
                     return Err("memory_card_forgotten".into());
                 }
+                self.report(&identity.id, None);
                 Ok(card(&item))
+            }
+            MemoryCommand::Forget { number } => {
+                let item = store
+                    .item_by_number(&identity.id, number)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .ok_or("memory_card_not_found")?;
+                if item.lifecycle == MemoryLifecycle::Tombstoned {
+                    return Err("memory_card_forgotten".into());
+                }
+                let batch_id = store
+                    .forget(&identity.id, &item.id)
+                    .map_err(|error| store_failure(&identity.id, &error))?;
+                self.report(
+                    &identity.id,
+                    Some(MemoryNoticeSnapshot {
+                        message: format!("Forgot {}", card_name(number)),
+                        undo_batch_id: Some(batch_id),
+                    }),
+                );
+                Ok(json!({"card": card_name(number), "outcome": "forgotten"}))
+            }
+            MemoryCommand::Undo { number } => {
+                let item = store
+                    .undo_card(&identity.id, number)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .ok_or("memory_nothing_to_undo")?;
+                self.report(&identity.id, None);
+                Ok(json!({
+                    "card": card_name(number),
+                    "outcome": if item.lifecycle == MemoryLifecycle::Tombstoned {
+                        "removed"
+                    } else {
+                        "restored"
+                    },
+                }))
             }
             MemoryCommand::Search { words } => {
                 let items = store
@@ -153,33 +217,73 @@ impl PreparedMemory {
                     "kind": "agent_note",
                     "text": text.trim(),
                 })];
+                let serialized = serde_json::to_string(&group).map_err(|error| {
+                    crate::diagnostic!(json!({
+                        "component": "memory", "kind": "command.add_unencodable",
+                        "message": error.to_string(),
+                    }));
+                    "memory_unavailable".to_owned()
+                })?;
+                let mut generation = 0;
+                let session_id = loop {
+                    if generation == ADD_GENERATIONS {
+                        crate::diagnostic!(json!({
+                            "component": "memory", "kind": "command.add_generations_spent",
+                            "project_id": identity.id,
+                        }));
+                        return Err("memory_unavailable".into());
+                    }
+                    let session_id = match generation {
+                        0 => ADD_SESSION.to_owned(),
+                        n => format!("{ADD_SESSION}-{n}"),
+                    };
+                    let source = self.add_source(&identity.id, &session_id, deadline);
+                    let (_, batch_id) = batch_identity(&source, &serialized);
+                    if !store
+                        .has_batch(&batch_id)
+                        .map_err(|error| store_failure(&identity.id, &error))?
+                    {
+                        break session_id;
+                    }
+                    let live = live_cards(&store, &identity.id, &batch_id)?;
+                    if !live.is_empty() {
+                        return Ok(json!({
+                            "outcomes": live.into_iter().map(|number| json!({
+                                "outcome": "already_added",
+                                "card": card_name(number),
+                            })).collect::<Vec<_>>(),
+                            "batch_id": batch_id,
+                        }));
+                    }
+                    generation += 1;
+                };
                 let written = write_cards(
                     &mut store,
                     self.sessions_node.as_ref(),
                     &router,
-                    &BatchSource {
-                        project_id: &identity.id,
-                        provider: ADD_PROVIDER,
-                        session_id: ADD_SESSION,
-                        checkout_path: &self.checkout_path,
-                    },
+                    &self.add_source(&identity.id, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
                     &mut |store| admit_call(store, None, false),
                 )
                 .map_err(|failure| add_failure(&identity.id, failure))?;
-                if written.summary.duplicate_batch {
-                    let numbers = store
-                        .batch_card_numbers(&written.batch_id)
-                        .map_err(|error| store_failure(&identity.id, &error))?;
-                    return Ok(json!({
-                        "outcomes": numbers.into_iter().map(|number| json!({
-                            "outcome": "already_added",
-                            "card": card_name(number),
-                        })).collect::<Vec<_>>(),
-                        "batch_id": written.batch_id,
-                    }));
-                }
+                let kept = written
+                    .summary
+                    .outcomes
+                    .iter()
+                    .filter_map(|outcome| match outcome {
+                        CandidateOutcome::Created { number }
+                        | CandidateOutcome::Conflict { number, .. } => Some(card_name(*number)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                self.report(
+                    &identity.id,
+                    (!kept.is_empty()).then(|| MemoryNoticeSnapshot {
+                        message: format!("Added {}", kept.join(" ")),
+                        undo_batch_id: Some(written.batch_id.clone()),
+                    }),
+                );
                 Ok(json!({
                     "outcomes": written.summary.outcomes.iter().map(outcome).collect::<Vec<_>>(),
                     "batch_id": written.batch_id,
@@ -187,6 +291,50 @@ impl PreparedMemory {
             }
         }
     }
+
+    fn add_source<'a>(
+        &'a self,
+        project_id: &'a str,
+        session_id: &'a str,
+        deadline: Instant,
+    ) -> BatchSource<'a> {
+        BatchSource {
+            project_id,
+            provider: ADD_PROVIDER,
+            session_id,
+            checkout_path: &self.checkout_path,
+            deadline: Some(deadline),
+        }
+    }
+
+    fn report(&self, project_id: &str, notice: Option<MemoryNoticeSnapshot>) {
+        if let Some(context) = &self.context {
+            report_memory_change(context, project_id, notice);
+        }
+    }
+}
+
+/// The cards of a written batch that are still in use, active or waiting for
+/// review.
+fn live_cards(store: &MemoryStore, project_id: &str, batch_id: &str) -> Result<Vec<u64>, String> {
+    let mut live = Vec::new();
+    for number in store
+        .batch_card_numbers(batch_id)
+        .map_err(|error| store_failure(project_id, &error))?
+    {
+        let item = store
+            .item_by_number(project_id, number)
+            .map_err(|error| store_failure(project_id, &error))?;
+        if item.is_some_and(|item| {
+            matches!(
+                item.lifecycle,
+                MemoryLifecycle::Active | MemoryLifecycle::Conflicting
+            )
+        }) {
+            live.push(number);
+        }
+    }
+    Ok(live)
 }
 
 fn card(item: &MemoryItem) -> Value {
@@ -409,6 +557,7 @@ mod tests {
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),
                 settings: ai.then(AiSettings::default),
+                context: None,
             }
             .run_with(|_| {
                 AiRouter::new(
@@ -546,6 +695,95 @@ mod tests {
     }
 
     #[test]
+    fn forget_drops_a_card_undo_brings_it_back_and_a_forgotten_text_can_be_added_again() {
+        // letter-4413: the operator tells the agent to forget a card.
+        let fixture = Fixture::new();
+        let run = |command| fixture.run(command, true);
+
+        assert_eq!(
+            run(MemoryCommand::Forget { number: 1 }).unwrap(),
+            json!({"card": "m1", "outcome": "forgotten"})
+        );
+        assert_eq!(
+            run(MemoryCommand::Forget { number: 1 }),
+            Err("memory_card_forgotten".to_owned())
+        );
+        assert_eq!(
+            run(MemoryCommand::Undo { number: 1 }).unwrap(),
+            json!({"card": "m1", "outcome": "restored"})
+        );
+        assert_eq!(
+            run(MemoryCommand::Show { number: 1 }).unwrap()["card"],
+            "m1"
+        );
+        assert_eq!(
+            run(MemoryCommand::Forget { number: 7 }),
+            Err("memory_card_not_found".to_owned())
+        );
+
+        let answer = |title: &str| {
+            json!({
+                "candidates": [{
+                    "text": "Lint runs before tests.",
+                    "title": title,
+                    "aliases": ["lint"],
+                    "kind": "rule",
+                    "confidence": 0.8,
+                    "salience": 0.7,
+                    "source_offsets": [0],
+                    "cited_paths": [],
+                    "relation": "new",
+                    "target_id": null,
+                }],
+                "alias_backfill": [],
+            })
+        };
+        let add = || {
+            run(MemoryCommand::Add {
+                text: "Lint runs before tests".to_owned(),
+            })
+        };
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(answer("Lint first"));
+        assert_eq!(
+            add().unwrap()["outcomes"],
+            json!([{"outcome": "added", "card": "m2"}])
+        );
+        run(MemoryCommand::Forget { number: 2 }).unwrap();
+
+        // Every card of the first add is gone, so the same text is a new add.
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(answer("Lint again"));
+        assert_eq!(
+            add().unwrap()["outcomes"],
+            json!([{"outcome": "added", "card": "m3"}])
+        );
+        assert_eq!(
+            add().unwrap()["outcomes"],
+            json!([{"outcome": "already_added", "card": "m3"}])
+        );
+        assert_eq!(fixture.calls(), 2);
+
+        // Undoing an add removes the card it made, and then there is nothing left.
+        assert_eq!(
+            run(MemoryCommand::Undo { number: 3 }).unwrap(),
+            json!({"card": "m3", "outcome": "removed"})
+        );
+        assert_eq!(
+            run(MemoryCommand::Undo { number: 3 }),
+            Err("memory_nothing_to_undo".to_owned())
+        );
+    }
+
+    #[test]
     fn a_failed_or_refused_add_writes_nothing() {
         // B8, B16.
         let fixture = Fixture::new();
@@ -602,6 +840,7 @@ mod tests {
             .valid()
         );
         assert!(!MemoryCommand::Show { number: 0 }.valid());
+        assert!(!MemoryCommand::Forget { number: 0 }.valid());
         assert_eq!(parse_card("m12"), Some(12));
         assert_eq!(parse_card("m0"), None);
     }

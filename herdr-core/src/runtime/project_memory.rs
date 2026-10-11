@@ -73,6 +73,7 @@ impl Runtime {
             checkout_path: context.checkout_path,
             reader,
             settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
+            context: self.worker_context.clone(),
         })
     }
 

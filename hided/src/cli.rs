@@ -66,13 +66,15 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory show|search|add` (PRD project-memory-v2 D-03, D-11).
+    /// `hide memory show|search|add|forget|undo` (PRD project-memory-v2 D-03,
+    /// D-11).
     Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
-const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text>";
+const MEMORY_USAGE: &str =
+    "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -198,6 +200,10 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
     let command = match (verb, words.as_slice()) {
         (Some("show"), [card]) => herdr_core::memory_command::parse_card(card)
             .map(|number| MemoryCommand::Show { number }),
+        (Some("forget"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Forget { number }),
+        (Some("undo"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Undo { number }),
         (Some("search"), [_, ..]) if !rest.trim().is_empty() => {
             Some(MemoryCommand::Search { words: rest })
         }
@@ -428,7 +434,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads and adds to the caller's Project Memory on the machine that runs Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory on the machine that runs Hide."
         );
         return Ok(());
     }
@@ -592,6 +598,17 @@ fn memory_text(
                 lines.push(format!("Files: {}", cited.join(", ")));
             }
             lines.join("\n") + "\n"
+        }
+        MemoryCommand::Forget { .. } => {
+            let card = text(&result["card"]);
+            format!("Forgot {card}. Undo: hide memory undo {card}\n")
+        }
+        MemoryCommand::Undo { .. } => {
+            let card = text(&result["card"]);
+            match result["outcome"].as_str() {
+                Some("removed") => format!("Removed {card}.\n"),
+                _ => format!("Restored {card}.\n"),
+            }
         }
         MemoryCommand::Search { .. } => {
             let cards = result["cards"].as_array().cloned().unwrap_or_default();
@@ -2161,8 +2178,18 @@ mod tests {
                 text: "Lint runs before tests".into()
             }))
         );
+        assert_eq!(
+            parse(&["hide", "memory", "forget", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Forget { number: 5 }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "undo", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Undo { number: 5 }))
+        );
         for bad in [
-            &["hide", "memory"][..],
+            &["hide", "memory", "forget"][..],
+            &["hide", "memory", "undo", "5x"],
+            &["hide", "memory"],
             &["hide", "memory", "show", "m0"],
             &["hide", "memory", "show", "m1", "m2"],
             &["hide", "memory", "search"],
@@ -2204,6 +2231,20 @@ mod tests {
                 ]})
             ),
             "Added m4, which conflicts with m1 and waits for review; m1 stays in use.\nAlready added as m2.\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Forget { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "forgotten"})
+            ),
+            "Forgot m5. Undo: hide memory undo m5\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Undo { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "removed"})
+            ),
+            "Removed m5.\n"
         );
     }
 

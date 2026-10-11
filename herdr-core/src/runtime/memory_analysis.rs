@@ -418,6 +418,24 @@ impl Runtime {
         }
     }
 
+    pub(super) fn note_memory_change(
+        &mut self,
+        project_id: &str,
+        notice: Option<MemoryNoticeSnapshot>,
+    ) {
+        if notice.is_some() {
+            self.memory_work
+                .projects
+                .entry(project_id.to_owned())
+                .or_default()
+                .notice = notice;
+        }
+        if self.named_memory_project() == Some(project_id) {
+            self.sync_project_memory();
+            self.refresh_project_memory();
+        }
+    }
+
     fn apply_memory_report(&mut self, report: PassReport) {
         let now = now_ms();
         match report {
@@ -520,6 +538,30 @@ fn apply_pass_report(context: &RuntimeWorkerContext, report: PassReport) {
     let applied = match runtime.lock() {
         Ok(mut guard) => {
             guard.apply_memory_report(report);
+            true
+        }
+        Err(_) => false,
+    };
+    drop(runtime);
+    if applied {
+        context.notifier.notify();
+    }
+}
+
+/// Tells the core a `hide memory` command changed a Project's Memory, so the
+/// screen reads it again and an added or forgotten card can be undone from
+/// it.
+pub(crate) fn report_memory_change(
+    context: &RuntimeWorkerContext,
+    project_id: &str,
+    notice: Option<MemoryNoticeSnapshot>,
+) {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return;
+    };
+    let applied = match runtime.lock() {
+        Ok(mut guard) => {
+            guard.note_memory_change(project_id, notice);
             true
         }
         Err(_) => false,
@@ -1145,6 +1187,7 @@ fn analyze_session(
                 provider,
                 session_id: &session.id,
                 checkout_path: &checkout,
+                deadline: None,
             },
             &group,
             cancel,
@@ -1184,12 +1227,33 @@ pub(crate) struct BatchSource<'a> {
     pub(crate) session_id: &'a str,
     /// The checkout cited paths are checked in.
     pub(crate) checkout_path: &'a str,
+    /// When the caller stops waiting: past it nothing is written (B8).
+    pub(crate) deadline: Option<std::time::Instant>,
 }
 
 pub(crate) struct WrittenCards {
     pub(crate) summary: ApplySummary,
     pub(crate) batch_id: String,
     content_hash: String,
+}
+
+/// The content hash and batch id one group from one source is written
+/// under, so the same text from the same source converges on one batch.
+pub(crate) fn batch_identity(source: &BatchSource<'_>, serialized_group: &str) -> (String, String) {
+    let content_hash = digest(&[
+        source.project_id,
+        source.provider,
+        source.session_id,
+        serialized_group,
+    ]);
+    let batch_id = digest(&[
+        "memory-batch",
+        source.project_id,
+        source.provider,
+        source.session_id,
+        &content_hash,
+    ]);
+    (content_hash, batch_id)
 }
 
 /// The one write path for new text, background analysis and `hide memory
@@ -1209,19 +1273,7 @@ pub(crate) fn write_cards(
 ) -> Result<WrittenCards, AnalysisFailure> {
     let local = |error: String| AnalysisFailure::Local(error);
     let serialized = serde_json::to_string(group).map_err(|error| local(error.to_string()))?;
-    let content_hash = digest(&[
-        source.project_id,
-        source.provider,
-        source.session_id,
-        &serialized,
-    ]);
-    let batch_id = digest(&[
-        "memory-batch",
-        source.project_id,
-        source.provider,
-        source.session_id,
-        &content_hash,
-    ]);
+    let (content_hash, batch_id) = batch_identity(source, &serialized);
     if store
         .has_batch(&batch_id)
         .map_err(|error| local(error.to_string()))?
@@ -1283,6 +1335,12 @@ pub(crate) fn write_cards(
         }));
     }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
+    if source
+        .deadline
+        .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    {
+        return Err(AnalysisFailure::Cancelled);
+    }
     let summary = store
         .apply_candidates(
             &AnalysisBatch {

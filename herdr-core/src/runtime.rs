@@ -1692,7 +1692,7 @@ pub struct Runtime {
 }
 
 #[derive(Clone)]
-struct RuntimeWorkerContext {
+pub(crate) struct RuntimeWorkerContext {
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }

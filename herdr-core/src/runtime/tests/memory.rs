@@ -268,6 +268,32 @@ fn a_memory_action_for_a_project_the_screen_no_longer_names_changes_nothing() {
 }
 
 #[test]
+fn a_cli_change_shows_its_notice_on_the_named_project_only() {
+    // `hide memory add|forget` writes off the lock; the screen reads again.
+    let (mut runtime, _) = named_project();
+    runtime.snapshot.project_sessions.as_mut().unwrap().memory =
+        Some(crate::model::ProjectMemorySnapshot::default());
+    let shown = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .project_sessions
+            .as_ref()
+            .and_then(|sessions| sessions.memory.as_ref())
+            .and_then(|memory| memory.notice.clone())
+    };
+    let notice = |message: &str| crate::model::MemoryNoticeSnapshot {
+        message: message.to_owned(),
+        undo_batch_id: Some("batch-1".to_owned()),
+    };
+
+    runtime.note_memory_change("another-project", Some(notice("Added m2")));
+    assert_eq!(shown(&runtime), None);
+
+    runtime.note_memory_change("project-1", Some(notice("Forgot m5")));
+    assert_eq!(shown(&runtime), Some(notice("Forgot m5")));
+}
+
+#[test]
 fn a_session_its_pane_let_go_is_analyzed_by_the_next_pass_at_once() {
     // B2: the label worker's live set is the pane-close signal.
     let mut runtime = runtime();

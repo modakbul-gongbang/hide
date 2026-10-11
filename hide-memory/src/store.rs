@@ -1438,52 +1438,66 @@ impl MemoryStore {
         };
         let mut restored = 0;
         for (item_id, previous_state, previous_revision) in changes {
-            let row: Option<u64> = transaction
-                .query_row(
-                    "SELECT current_revision FROM memory_items WHERE id=?1 AND project_id=?2",
-                    params![item_id, project_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let Some(current_revision) = row else {
-                continue;
-            };
-            // Only a revision this batch wrote is undone; a later change to
-            // the same card stands.
-            let created_by_batch: Option<String> = transaction
-                .query_row(
-                    "SELECT batch_id FROM memory_revisions WHERE item_id=?1 AND revision=?2",
-                    params![item_id, current_revision],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if created_by_batch.as_deref() != Some(batch_id) {
-                continue;
+            if undo_item(
+                &transaction,
+                project_id,
+                batch_id,
+                &item_id,
+                previous_state,
+                previous_revision,
+            )? {
+                restored += 1;
             }
-            match (previous_state, previous_revision) {
-                (Some(state), Some(revision)) => {
-                    transaction.execute("UPDATE memory_revisions SET lifecycle=CASE WHEN lifecycle='active' THEN 'superseded' ELSE lifecycle END WHERE item_id=?1 AND revision=?2", params![item_id,current_revision])?;
-                    transaction.execute("UPDATE memory_items SET lifecycle=?2,current_revision=?3,updated_at_ms=?4 WHERE id=?1", params![item_id,state,revision,now_ms()])?;
-                    transaction.execute(
-                        "UPDATE memory_revisions SET lifecycle=?3 WHERE item_id=?1 AND revision=?2",
-                        params![item_id, revision, state],
-                    )?;
-                    if state == "active" {
-                        let card = card_at(&transaction, &item_id, revision)?;
-                        reindex(&transaction, project_id, &item_id, &card)?;
-                    } else {
-                        remove_index(&transaction, &item_id)?;
-                    }
-                }
-                _ => {
-                    transaction.execute("UPDATE memory_items SET lifecycle='tombstoned',updated_at_ms=?2 WHERE id=?1", params![item_id,now_ms()])?;
-                    remove_index(&transaction, &item_id)?;
-                }
-            }
-            restored += 1;
         }
         transaction.commit()?;
         Ok(restored)
+    }
+
+    /// Undoes the latest change to card `number` alone: what the batch that
+    /// wrote its current revision did to it, whatever else that batch wrote.
+    /// Answers the card as it is after, or `None` when it has no change Hide
+    /// can undo.
+    pub fn undo_card(
+        &mut self,
+        project_id: &str,
+        number: u64,
+    ) -> Result<Option<MemoryItem>, MemoryError> {
+        self.require_writer()?;
+        let Some(item) = self.item_by_number(project_id, number)? else {
+            return Ok(None);
+        };
+        let transaction = self.connection.transaction()?;
+        let change: Option<(String, Option<String>, Option<u64>)> = transaction
+            .query_row(
+                "SELECT c.batch_id,c.previous_lifecycle,c.previous_revision FROM memory_items i \
+                 JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+                 JOIN batch_changes c ON c.batch_id=r.batch_id AND c.item_id=i.id \
+                 WHERE i.id=?1 AND i.project_id=?2",
+                params![item.id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((batch_id, previous_state, previous_revision)) = change else {
+            return Ok(None);
+        };
+        if !undo_item(
+            &transaction,
+            project_id,
+            &batch_id,
+            &item.id,
+            previous_state,
+            previous_revision,
+        )? {
+            return Ok(None);
+        }
+        // Undone once: the change no longer names this card, so a second
+        // undo finds nothing rather than repeating.
+        transaction.execute(
+            "DELETE FROM batch_changes WHERE batch_id=?1 AND item_id=?2",
+            params![batch_id, item.id],
+        )?;
+        transaction.commit()?;
+        self.item_by_number(project_id, number)
     }
 
     /// Settles a needs-review pair and returns the batch Undo reverses (B20).
@@ -2430,6 +2444,62 @@ impl CardText {
         matched.push(self.title.clone());
         CardTerms::index_text(&self.body, &matched)
     }
+}
+
+/// Reverts what `batch_id` did to one card, when the card's current revision
+/// is still the batch's own: a later change to the same card stands.
+fn undo_item(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &str,
+    batch_id: &str,
+    item_id: &str,
+    previous_state: Option<String>,
+    previous_revision: Option<u64>,
+) -> Result<bool, MemoryError> {
+    let row: Option<u64> = transaction
+        .query_row(
+            "SELECT current_revision FROM memory_items WHERE id=?1 AND project_id=?2",
+            params![item_id, project_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(current_revision) = row else {
+        return Ok(false);
+    };
+    let created_by_batch: Option<String> = transaction
+        .query_row(
+            "SELECT batch_id FROM memory_revisions WHERE item_id=?1 AND revision=?2",
+            params![item_id, current_revision],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if created_by_batch.as_deref() != Some(batch_id) {
+        return Ok(false);
+    }
+    match (previous_state, previous_revision) {
+        (Some(state), Some(revision)) => {
+            transaction.execute("UPDATE memory_revisions SET lifecycle=CASE WHEN lifecycle='active' THEN 'superseded' ELSE lifecycle END WHERE item_id=?1 AND revision=?2", params![item_id,current_revision])?;
+            transaction.execute("UPDATE memory_items SET lifecycle=?2,current_revision=?3,updated_at_ms=?4 WHERE id=?1", params![item_id,state,revision,now_ms()])?;
+            transaction.execute(
+                "UPDATE memory_revisions SET lifecycle=?3 WHERE item_id=?1 AND revision=?2",
+                params![item_id, revision, state],
+            )?;
+            if state == "active" {
+                let card = card_at(transaction, item_id, revision)?;
+                reindex(transaction, project_id, item_id, &card)?;
+            } else {
+                remove_index(transaction, item_id)?;
+            }
+        }
+        _ => {
+            transaction.execute(
+                "UPDATE memory_items SET lifecycle='tombstoned',updated_at_ms=?2 WHERE id=?1",
+                params![item_id, now_ms()],
+            )?;
+            remove_index(transaction, item_id)?;
+        }
+    }
+    Ok(true)
 }
 
 /// At the cap, deletes the receipts of sessions quiet for 30 days and
@@ -3771,6 +3841,47 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             store.session_given_ids(&project, "codex", "s").unwrap(),
             Some(vec![ids[&2].clone()])
         );
+    }
+
+    #[test]
+    fn undoing_a_card_steps_back_its_own_latest_change_and_leaves_its_batch_mates() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[
+                    candidate("Keep the parser pure", CandidateRelation::New),
+                    candidate("Run tests with nextest", CandidateRelation::New),
+                ],
+            )
+            .unwrap();
+        let first = store.item_by_number(&project, 1).unwrap().unwrap();
+        store.forget(&project, &first.id).unwrap();
+
+        let restored = store.undo_card(&project, 1).unwrap().unwrap();
+        assert_eq!(
+            restored.lifecycle,
+            MemoryLifecycle::Active,
+            "the forget is undone"
+        );
+        assert_eq!(restored.body, "Keep the parser pure");
+
+        let removed = store.undo_card(&project, 2).unwrap().unwrap();
+        assert_eq!(
+            removed.lifecycle,
+            MemoryLifecycle::Tombstoned,
+            "m2's creation is undone"
+        );
+        assert_eq!(
+            store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .lifecycle,
+            MemoryLifecycle::Active,
+            "m1, written by the same batch, stays"
+        );
+        assert!(store.undo_card(&project, 9).unwrap().is_none());
     }
 
     #[test]
