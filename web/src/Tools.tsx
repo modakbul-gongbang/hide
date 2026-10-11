@@ -3,7 +3,7 @@ import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
-import { MemoryTab } from "./MemoryTab";
+import { MemoryTab, useMemoryProject } from "./MemoryTab";
 import { frontCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -24,6 +24,7 @@ const TOOLS: readonly Tool[] = ["agent_sessions", "explorer", "changes", "memory
 export function Tools({ tool, actions }: { tool: Tool; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const id = useId();
+  useMemoryProject(actions);
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.tools.aria")} data-workspace-tools={tool}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center border-b border-border" data-column-row="tools">

@@ -29,30 +29,14 @@ const KIND: Record<MemoryCardKind, MessageKey> = { rule: "memory.kind.rule", dec
 
 /**
  * The Tools column's Memory tab (PRD project-memory-v2 D-17, B19-B32): the
- * front checkout's Project. The core keeps one opened Project per daemon, so
- * the tab names its Project when it shows, when the front Project changes,
- * and when its window comes forward after another window named another one;
- * until the core answers for this Project, the tab reads.
+ * front checkout's Project, which the Tools column opens (`useMemoryProject`);
+ * until the core answers for that Project, the tab reads.
  */
 export function MemoryTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const projectId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
-  const live = useShellStore((state) => state.connection === "live");
   const memory = useShellStore((state) => state.memory?.project ?? null);
   const opened = memory && memory.workspace_id === projectId ? memory : null;
-  const openedRef = useRef(opened !== null);
-  openedRef.current = opened !== null;
-
-  useEffect(() => {
-    if (!live || !projectId) return;
-    actions.memoryOpen(projectId);
-    const reclaim = () => {
-      if (!openedRef.current) actions.memoryOpen(projectId);
-    };
-    window.addEventListener("focus", reclaim);
-    return () => window.removeEventListener("focus", reclaim);
-  }, [actions, live, projectId]);
-
   if (!projectId) return <p className="p-lg text-caption text-muted-foreground">{t("history.openWorkspace")}</p>;
   if (!opened || (opened.loading && opened.rows.length === 0 && !opened.unavailable)) {
     return (
@@ -62,6 +46,31 @@ export function MemoryTab({ actions }: { actions: Actions }) {
     );
   }
   return <MemoryBody project={opened} actions={actions} />;
+}
+
+/**
+ * Opens the front checkout's Project's Memory while the Tools column shows,
+ * whatever its tool, so the Memory tab's dot says when the Project has
+ * something to ask (B28). The core keeps one opened Project per daemon: the
+ * column names its Project when it shows, when the front Project changes, and
+ * when its window comes forward after another window named another one, so
+ * two windows never take it from each other in a loop.
+ */
+export function useMemoryProject(actions: Actions) {
+  const projectId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
+  const live = useShellStore((state) => state.connection === "live");
+  const opened = useShellStore((state) => projectId !== null && state.memory?.project?.workspace_id === projectId);
+  const openedRef = useRef(opened);
+  openedRef.current = opened;
+  useEffect(() => {
+    if (!live || !projectId) return;
+    actions.memoryOpen(projectId);
+    const reclaim = () => {
+      if (!openedRef.current) actions.memoryOpen(projectId);
+    };
+    window.addEventListener("focus", reclaim);
+    return () => window.removeEventListener("focus", reclaim);
+  }, [actions, live, projectId]);
 }
 
 function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Actions }) {

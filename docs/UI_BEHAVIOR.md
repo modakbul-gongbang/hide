@@ -488,7 +488,7 @@ Under a request whose prompt a hook gave Memory cards there is one quiet line, `
 
 Web owner: `web/src/MemoryTab.tsx`, `web/src/memoryList.ts`; core owner: `herdr-core/src/runtime/project_memory.rs`, `herdr-core/src/runtime/memory_promotion.rs`.
 Memory is the Tools column's fourth tab, after Sessions, Explorer and History, and shows the Project of the checkout in front (PRD project-memory-v2 D-17, B19-B32).
-The core opens one Project's Memory per daemon; the tab names its Project when it shows, when the front Project changes and when its window comes forward after another window named another Project, and reads until the core answers for its own.
+The core opens one Project's Memory per daemon; the Tools column, whatever tool it holds, names its Project when it shows, when the front Project changes and when its window comes forward after another window named another Project, so the tab's dot is current, and the tab reads until the core answers for its own.
 Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI runs on with its logo; with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
 While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says existing cards are still used.

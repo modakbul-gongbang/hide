@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { MemoryTab } from "./MemoryTab";
+import { Tools } from "./Tools";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
@@ -58,10 +58,10 @@ describe("the Memory tab", () => {
     vi.unstubAllGlobals();
   });
 
-  async function render(project: ProjectMemory | null) {
+  async function render(project: ProjectMemory | null, tool: "memory" | "explorer" = "memory") {
     useShellStore.setState({ connection: "live", rest, memory: { project } });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><MemoryTab actions={actions} /></TooltipProvider>));
+    await act(async () => root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>));
   }
   const sent = (kind: string) => events.filter((event) => event.kind === kind).map((event) => event.payload);
   const click = async (selector: string) => {
@@ -81,6 +81,12 @@ describe("the Memory tab", () => {
     // when it comes forward.
     await act(async () => window.dispatchEvent(new Event("focus")));
     expect(sent("memory_open")).toHaveLength(2);
+  });
+
+  it("opens the Project and shows the tab's dot from any tool while its Project has a question", async () => {
+    await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7" }] }), "explorer");
+    expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
+    expect(container.querySelector('[data-tool-dot="memory"]')).not.toBeNull();
   });
 
   it("asks about a suggested card and a failed promotion, and sends the card's number", async () => {
