@@ -9,7 +9,7 @@ import type { TFunction } from "i18next";
 import { frontDeviceId, localDeviceId } from "./devices";
 import type { InterfaceLanguage } from "./i18n/locale";
 import { ageWords } from "./overviewLens";
-import type { Checkout, GithubSearch, SnapshotRest, Workspace } from "./snapshot";
+import { catalogWorkspaces, type Checkout, type GithubSearch, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The age words the detail and the failure tooltip use, from the shared elapsed-time words. */
 function readAge(at: number | null | undefined, now: number, t: TFunction<"translation">, language: InterfaceLanguage): string | null {
@@ -68,9 +68,9 @@ export function lastReadWords(workspace: Workspace, now: number, t: TFunction<"t
   return age ? t("search.lastRead", { age }) : null;
 }
 
-/** Whether this Mac has a project a GitHub search could look in (B16). */
+/** Whether the core has a project a GitHub search could look in (B16): its own or a node's, by the source it publishes. */
 export function hasGithubProject(rest: SnapshotRest | null): boolean {
-  return (rest?.navigator?.workspaces ?? []).some((workspace) => !workspace.is_home && !workspace.remote_target_id && workspace.is_git && workspace.tasks?.source?.kind === "github");
+  return catalogWorkspaces(rest).some((workspace) => !workspace.is_home && workspace.is_git && workspace.tasks?.source?.kind === "github");
 }
 
 /** The state of the `Search GitHub for "…"` row. */

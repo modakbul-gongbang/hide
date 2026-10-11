@@ -20,7 +20,7 @@ import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { screenDeviceId } from "./screenMachine";
+import { readsHere } from "./devices";
 import { ProjectSessions } from "./ProjectSessions";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
@@ -73,23 +73,17 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         : [],
     [tasks, workspace, found, lensAgents, sessions, pullRequests, t, i18n.language],
   );
-  // A local Git project's Git facts and pull requests are read whenever this
-  // screen opens. The previous answer stays visible during the worker reads.
-  const local = workspace !== null && workspace.is_git === true && !workspace.remote_target_id;
-  const localId = local ? workspace.id : null;
+  // The Git facts, pull requests and size of a Git project the core reads as
+  // its own (its machine's, or a node's that dials it, measured and read on
+  // that node) are read again whenever this screen opens. The previous answer
+  // stays visible during the worker reads.
+  const devices = useShellStore((state) => state.rest?.navigator?.devices);
+  const readId = workspace !== null && workspace.is_git === true && readsHere(workspace, devices) ? workspace.id : null;
   useEffect(() => {
-    if (!localId) return;
-    actions.measureProjectDisk(localId);
-    actions.refreshProjectOverview(localId);
-  }, [actions, localId]);
-  // A project of the machine this screen runs on, when the core runs on
-  // another, is measured there through the core (docs/ARCHITECTURE.md, A core
-  // on another machine).
-  const screen = useShellStore((state) => screenDeviceId(state.rest));
-  const screenProjectId = workspace !== null && workspace.is_git === true && workspace.remote_target_id && workspace.device_id === screen ? workspace.id : null;
-  useEffect(() => {
-    if (screenProjectId) actions.measureProjectDisk(screenProjectId);
-  }, [actions, screenProjectId]);
+    if (!readId) return;
+    actions.measureProjectDisk(readId);
+    actions.refreshProjectOverview(readId);
+  }, [actions, readId]);
   const sessionsId = workspace?.id ?? null;
   const sessionsDevice = workspace?.device_id ?? null;
   useEffect(() => {
@@ -100,7 +94,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     if (lens.tab !== "issues" || !lens.focusTask) return;
     document.querySelector(`[data-overview-screen] [data-task-key="${CSS.escape(lens.focusTask)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [lens.tab, lens.focusTask]);
-  const canIssue = workspace !== null && !workspace.remote_target_id && workspace.tasks?.source != null;
+  // The core publishes an issue source only for a project whose issues it keeps.
+  const canIssue = workspace !== null && workspace.tasks?.source != null;
   const newIssue = () => {
     if (canIssue && workspace) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: workspace.id });
   };

@@ -251,8 +251,10 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
   const more = tree?.more ?? 0;
   const branch = checkout?.branch ?? checkout?.label ?? null;
   const sourceLabel = workspace.tasks?.source?.label ?? task.source;
-  const local = !workspace.remote_target_id;
-  const canStart = task.open && checkout === null && local;
+  // The core publishes a source only for a project whose issues it keeps:
+  // its own, or a node's that dials it; a dialed device's has none.
+  const kept = workspace.tasks?.source != null;
+  const canStart = task.open && checkout === null && kept;
   const pr = checkout?.pull_request ? prChip(checkout.pull_request) : null;
   return {
     id,
@@ -273,7 +275,7 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
     turnKind: tree?.turn_kind ?? null,
     canStart,
     first: firstAction(stage, canStart, checkout, pr),
-    editable: task.source === "local" && local,
+    editable: task.source === "local" && kept,
     idHelp: [sourceLabel, scope === "all" ? workspace.label : null, branch].filter(Boolean).join(" · "),
     sourceFailure: sourceFailure(workspace, now),
     blockedBy: [],

@@ -91,8 +91,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // source; the dialog can move it to another.
   const issueProject = useMemo(() => {
     const front = frontCheckout(rest);
-    const local = projects.filter(({ workspace }) => !workspace.remote_target_id && workspace.tasks?.source);
-    return (front ? local.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? local[0]?.workspace.id ?? null;
+    const sourced = projects.filter(({ workspace }) => workspace.tasks?.source);
+    return (front ? sourced.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? sourced[0]?.workspace.id ?? null;
   }, [rest, projects]);
   const newIssue = () => {
     if (issueProject) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: issueProject });

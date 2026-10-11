@@ -206,7 +206,7 @@ describe("the Issues board", () => {
     expect(more).toBe(1);
   });
 
-  it("offers Start on an open backlog issue of a project on this Mac and editing on a Local one only (B6, D-41)", () => {
+  it("offers Start on an open backlog issue of a project whose issues the core keeps and editing on a Local one only (B6, D-41)", () => {
     const project = workspace([checkout("linked", { task: key(1), changed: 1 })], { tasks: [task(1), task(2)] });
     const board = buildTasks(one(project), "project", NOW);
     expect(board.cards.filter((card) => card.canStart).map((card) => card.id)).toEqual(["task:project:github:acme/project#2"]);
@@ -214,8 +214,16 @@ describe("the Issues board", () => {
     expect(board.cards.some((card) => card.editable)).toBe(false);
     const local: Task = { key: "local:/fixture#3", source: "local", id: "L-3", url: null, title: "Local 3", open: true };
     expect(buildTasks(one(workspace([], { tasks: [local] })), "project", NOW).cards[0]?.editable).toBe(true);
-    const remote = buildTasks(one(workspace([checkout("w")], { tasks: [task(3), local], remote: "mini" })), "project", NOW);
-    expect(remote.cards.some((card) => card.canStart || card.editable)).toBe(false);
+    // A node that dials the core carries the source its issues are kept by, so Start and editing work there as here (D-29).
+    const node = buildTasks(one(workspace([checkout("w")], { tasks: [task(3), local], remote: "macbook" })), "project", NOW);
+    expect(node.cards.map((card) => [card.canStart, card.editable])).toEqual([
+      [true, false],
+      [true, true],
+    ]);
+    // A project without a source, as a device the core dials has, offers neither.
+    const dialed = workspace([checkout("w")], { tasks: [task(3), local], remote: "mini" });
+    const unsourced = buildTasks(one({ ...dialed, tasks: { ...dialed.tasks!, source: null } }), "project", NOW);
+    expect(unsourced.cards.some((card) => card.canStart || card.editable)).toBe(false);
   });
 
   it("raises a card whose agent waits on the operator to the top of its own column and keeps the rest in order (B5)", () => {

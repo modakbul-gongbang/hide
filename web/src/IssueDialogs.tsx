@@ -20,7 +20,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { catalogWorkspaces, localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -63,9 +63,13 @@ export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>
   }
 }
 
-/** The projects on this Mac an issue can be made in: each with its source, never the Home, which is no project. */
-function issueProjects(workspaces: readonly Workspace[] | undefined): Workspace[] {
-  return (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source);
+/**
+ * The projects an issue can be made in: each one the core publishes a source
+ * for (its own, and a node's that dials it), never the Home, which is no
+ * project.
+ */
+function issueProjects(workspaces: readonly Workspace[]): Workspace[] {
+  return workspaces.filter((workspace) => !workspace.is_home && workspace.tasks?.source);
 }
 
 /** `herdr-ide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
@@ -82,8 +86,8 @@ export function sourcePlace(workspace: Workspace): string {
  */
 export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const projects = useMemo(() => issueProjects(workspaces), [workspaces]);
+  const rest = useShellStore((s) => s.rest);
+  const projects = useMemo(() => issueProjects(catalogWorkspaces(rest)), [rest]);
   const [projectId, setProjectId] = useState(workspace.id);
   const project = projects.find((row) => row.id === projectId) ?? null;
   const [title, setTitle] = useState("");

@@ -8,6 +8,8 @@ import { requireInterfaceLanguage } from "../i18n/locale";
 import { checkCommand } from "../coreMove";
 import { coreMachineAway } from "../screenMachine";
 import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdrLine, herdrProtocolText, shownIn } from "../settings";
+import { readsHere } from "../devices";
+import { catalogWorkspaces } from "../snapshot";
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
 import { FixCommand } from "./FixCommand";
@@ -23,14 +25,15 @@ export function GeneralTab({ actions }: { actions: Actions }) {
   );
 }
 
-/** GitHub through `gh`: the state the core resolved across this Mac's Git projects, and a way to read it again. */
+/** GitHub through `gh`: the state the core resolved across the Git projects it reads with its own login, and a way to read them again. */
 function ConnectionsGroup({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  // The projects whose issues and pull requests are read here: this Mac's Git projects, never a device's.
-  const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.is_git);
-  const access = githubAccess(projects);
+  const rest = useShellStore((s) => s.rest);
+  const devices = rest?.navigator?.devices;
+  // The projects whose issues and pull requests are read with the core's `gh`:
+  // its own Git projects and a node's that dials it, never a dialed device's.
+  const projects = catalogWorkspaces(rest).filter((workspace) => !workspace.is_home && workspace.is_git && readsHere(workspace, devices));
+  const access = githubAccess(projects, devices);
   const coreMachine = coreMachineAway(devices, t);
   const line = access ? githubAccessLine(access, t, coreMachine) : null;
   // Signed out on the core's machine, seen from another: where to sign in, and with what.

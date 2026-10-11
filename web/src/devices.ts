@@ -22,6 +22,16 @@ export function frontDeviceId(rest: SnapshotRest | null): string {
   return rest?.navigator?.focused_device_id ?? localDeviceId(rest);
 }
 
+/**
+ * Whether the core reads and changes this project's Git facts, issues and
+ * disk as its own: one of its own machine's, or one of a node that dials it
+ * (`Device.dials_in`, PRD core-host-node-move D-29); never a device it dials.
+ */
+export function readsHere(workspace: Workspace, devices: readonly Device[] | null | undefined): boolean {
+  if (!workspace.remote_target_id) return true;
+  return devices?.some((device) => device.id === workspace.device_id && device.dials_in === true) ?? false;
+}
+
 /** Whether the core reads the device now: this machine always, a remote while its connection row says connected. */
 export function deviceConnected(rest: SnapshotRest | null, deviceId: string): boolean {
   if (deviceId === localDeviceId(rest)) return true;

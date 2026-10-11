@@ -664,7 +664,7 @@ The Issues tab opens a board of issues, laid out by PRD overview-lenses-issues: 
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
 Every project on this Mac has one issue source, chosen in the project row's Issue source menu (Auto, GitHub or Local, the stored choice checked): GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
-A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project on a device has no source here.
+A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project of a device the core dials has no source here, while a project of a node that dials the core (the screen machine of a core that runs elsewhere) keeps its source, its issues and its Start as it had them before the core moved (PRD core-host-node-move D-29).
 The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, when it last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
 
 Every card is an issue; a worktree or a pull request is never a card of its own.
@@ -704,7 +704,7 @@ On the board a card takes focus, the arrows move between cards, Enter opens the 
 Hover, focus and a half-second rest publish no snapshot and start no Git or disk work; the preview's one read is the only event they send.
 
 The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
-New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project on this Mac; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
+New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project that has a source; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
 The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
 A name that is already a branch says so, and when a worktree has it the primary button opens that worktree instead.
@@ -792,10 +792,10 @@ The title row carries the path back (`Home / Project`, where Home is the project
 The project's name has the title row first: New agent and `새 이슈` carry their word (and `C` on `새 이슈`) only while the whole name fits beside them, and otherwise keep their icon alone, at any window, sidebar, device-badge and label width and in any language, with the name truncated to an ellipsis only after that (issue 618; `web/src/OverviewTitleRow.tsx`, `web/e2e/overview-header.spec.ts`).
 An icon-only action opens a hint with its name, and `새 이슈`'s hint carries the `C` keycap; the hint also opens over a disabled New agent, and no hint opens while the word shows.
 The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tabs, not here.
-The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet.
+The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet; a node's project is cleaned up on that node, and a dialed device's offers no sheet.
 `N merged → 정리` opens the same sheet filtered to finished checkouts; the `정리할 것` fold on Agents and the box's own `정리` (the Delete worktree dialog) are unchanged.
 The warning cell `여유 X GB · Y GB 비울 수 있음` stands only once the measurement is back and the volume has less than 10 GB free; Y is the build cache and dependencies of finished checkouts no agent is working in, and pressing the cell opens the sheet filtered to finished checkouts.
-Opening Overview's local Git project scope asks the core to measure its disk and re-read that project's worktree Git facts, pull requests and issues in the background.
+Opening Overview's Git project scope, for a project of the core's machine or of a node that dials it, asks the core to measure its disk and re-read that project's worktree Git facts, pull requests and issues in the background; a node's project is measured and read on that node.
 The previous Git facts and pull requests stay visible while the read runs, and a small icon beside the facts line spins until both reads finish without moving the line.
 The size reads `… GB` while measurement runs and is left out, with the reason only in the diagnostic log, when a part cannot be read.
 Local checkout commits, branch switches, pulls, merges, fetches, rebases and staging changes refresh that repository's worktree facts after the Git directory becomes quiet; Hide does not fetch automatically, so `behind origin` follows the local remote ref.
@@ -1475,7 +1475,7 @@ Under `관계` it draws the same groups the empty list draws for the row, when i
 
 Typing never calls GitHub.
 Opening ⌘K asks once per app run for the local project in front when nothing has read it, and a checkout row shows a spinner while that read has no answer and a warning mark with the last value's age when it failed; the reason is in the log.
-A query with a GitHub project on this Mac ends with `GitHub에서 "…" 검색`; choosing it sends one `github_search`, and the row shows a spinner, then the pull requests and issues GitHub holds under `GitHub` (an exact match to one already held is not listed twice), `GitHub에도 없음` (or `찾은 결과 없음 · 일부 저장소만 검색` when the core covered only some of the projects), or `GitHub 검색 실패 · 다시 시도`.
+A query with a GitHub project the core reads (its own or a node's that dials it) ends with `GitHub에서 "…" 검색`; choosing it sends one `github_search`, and the row shows a spinner, then the pull requests and issues GitHub holds under `GitHub` (an exact match to one already held is not listed twice), `GitHub에도 없음` (or `찾은 결과 없음 · 일부 저장소만 검색` when the core covered only some of the projects), or `GitHub 검색 실패 · 다시 시도`.
 A pull request's row, held or found on GitHub, leads with its PR mark without the number and says its state in the muted word; a found one's state is the core's (`pr_state`), as a held one's is.
 The query's words match like a search box, and a query is capped at 200 characters.
 The same query already searching is not started again, and an answer for an older query is dropped.
