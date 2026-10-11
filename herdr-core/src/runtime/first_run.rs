@@ -66,12 +66,14 @@ impl Runtime {
     /// project added). Only the step on screen moves, so a second press or a
     /// window still showing an earlier step changes nothing (engineering rule
     /// 11). The first step ends through its apply, never through this event.
-    /// Continue on the notification step of a Mac that already allows Hide
-    /// also turns the desktop switch on (B16).
+    /// Leaving the notification step may set the desktop switch with the same
+    /// press: Continue on a Mac that already allows Hide turns it on (B16),
+    /// Not now leaves it off even after Turn on was pressed while macOS asks
+    /// (B21); `None` leaves it as it is.
     pub(super) fn advance_first_run(
         &mut self,
         from: FirstRunStep,
-        turn_on_notifications: bool,
+        notifications: Option<bool>,
     ) -> bool {
         let to = match from {
             FirstRunStep::Notifications => FirstRunStep::Project,
@@ -88,8 +90,8 @@ impl Runtime {
         if self.first_run_step() != Some(from) {
             return false;
         }
-        if turn_on_notifications && from == FirstRunStep::Notifications {
-            self.set_desktop_notifications(true);
+        if let (Some(enabled), FirstRunStep::Notifications) = (notifications, from) {
+            self.set_desktop_notifications(enabled);
         }
         self.move_first_run(from, to)
     }

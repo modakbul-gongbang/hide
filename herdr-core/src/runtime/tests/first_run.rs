@@ -277,11 +277,13 @@ fn a_browser_tab_finishes_the_wizard_with_its_first_step() {
     assert_eq!(step(&runtime), Some(FirstRunStep::Done));
 }
 
-/// B16, B30: Continue on the notification step of a Mac that already allows
-/// Hide turns the switch on with the same press; Not now leaves it off, and a
-/// stale press neither moves the step nor turns the switch on.
+/// B16, B21, B30: Continue on the notification step of a Mac that already
+/// allows Hide turns the switch on with the same press; Not now leaves it off,
+/// even after Turn on was pressed while macOS asks; a press that names no
+/// switch leaves it as it is; and a stale press neither moves the step nor
+/// turns the switch on.
 #[test]
-fn continue_on_an_allowed_mac_turns_the_switch_on_with_the_step() {
+fn leaving_the_notification_step_sets_the_switch_its_press_names() {
     let at = |step| {
         let mut runtime = runtime();
         runtime.snapshot.ui_state.first_run = Some(FirstRun {
@@ -293,7 +295,7 @@ fn continue_on_an_allowed_mac_turns_the_switch_on_with_the_step() {
     let advance = |from: &str, on: bool| {
         event(
             "first_run_advance",
-            serde_json::json!({"from": from, "turn_on_notifications": on}),
+            serde_json::json!({"from": from, "notifications": on}),
         )
     };
     let mut allowed = at(FirstRunStep::Notifications);
@@ -302,8 +304,21 @@ fn continue_on_an_allowed_mac_turns_the_switch_on_with_the_step() {
     assert!(allowed.snapshot().ui_state.desktop_notifications);
 
     let mut not_now = at(FirstRunStep::Notifications);
+    assert!(not_now.dispatch_json(&event(
+        "desktop_notifications_set",
+        serde_json::json!({"enabled": true}),
+    )));
     assert!(not_now.dispatch_json(&advance("notifications", false)));
+    assert_eq!(step(&not_now), Some(FirstRunStep::Project));
     assert!(!not_now.snapshot().ui_state.desktop_notifications);
+
+    let mut kept = at(FirstRunStep::Notifications);
+    kept.snapshot.ui_state.desktop_notifications = true;
+    assert!(kept.dispatch_json(&event(
+        "first_run_advance",
+        serde_json::json!({"from": "notifications"}),
+    )));
+    assert!(kept.snapshot().ui_state.desktop_notifications);
 
     let mut stale = at(FirstRunStep::Project);
     assert!(!stale.dispatch_json(&advance("notifications", true)));

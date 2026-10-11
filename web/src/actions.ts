@@ -1062,10 +1062,11 @@ export function createActions(send: DispatchFn) {
 
     /**
      * The operator left the wizard's step `from` (Continue, Not now, Skip for now, a project added); the core moves only the step on screen.
-     * `turnOnNotifications` is Continue on a Mac that already allows Hide, which turns the switch on with the same press (B16).
+     * `notifications` is the desktop switch the notification step leaves with: on for Continue on a Mac that already allows Hide (B16),
+     * off for Not now (B21), absent to leave it as it is.
      */
-    advanceFirstRun(from: "notifications" | "project", turnOnNotifications = false) {
-      dispatch({ schema_version: 2, kind: "first_run_advance", payload: { from, turn_on_notifications: turnOnNotifications } });
+    advanceFirstRun(from: "notifications" | "project", notifications?: boolean) {
+      dispatch({ schema_version: 2, kind: "first_run_advance", payload: notifications === undefined ? { from } : { from, notifications } });
     },
 
     /** Notify me when an agent needs me (D-21). */

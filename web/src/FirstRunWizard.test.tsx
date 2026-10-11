@@ -193,8 +193,8 @@ it("asks for the sign-in probe while it is open and stops when it goes away", as
   expect(events.filter((event) => event.kind === "ai_settings").at(-1)).toEqual({ schema_version: 2, kind: "ai_settings", payload: { observing: false } });
 });
 
-it("says why when its pass could not run here, and holds Continue until the agents are read again", async () => {
-  const { unmount } = await mount(state(true, AGENTS));
+it("says why when its pass could not run here, and Try again sends the choice anew until the agents are read again", async () => {
+  const { events, unmount } = await mount(state(true, AGENTS));
   await act(async () => { continueButton().click(); });
   // The kit link failed: the core keeps the step, its row is unavailable and lists no agent.
   await act(async () => {
@@ -203,8 +203,23 @@ it("says why when its pass could not run here, and holds Continue until the agen
     useShellStore.setState({ ...next, revision: 2 } as never);
   });
   expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toContain("Hide could not set up agents on this Mac: timed out");
-  expect(continueButton().disabled).toBe(true);
-  await act(async () => { useShellStore.setState(state(true, AGENTS, [], {}, 3) as never); });
+  // An unread kit is not a Mac with no agent installed.
+  expect(document.querySelector("[data-first-run-no-agent]")).toBeNull();
+  expect(continueButton().textContent).toContain("Try again");
+  const before = choices(events).length;
+  await act(async () => { continueButton().click(); });
+  expect(choices(events).slice(before)).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: [], finish: true } }]);
+  await act(async () => { useShellStore.setState(state(true, AGENTS, [], {}, 4) as never); });
+  expect(continueButton().disabled).toBe(false);
+  await unmount();
+});
+
+it("says why the kit could not run here before anything is pressed, as after a relaunch", async () => {
+  const next = state(true, []);
+  (next.rest.navigator.devices[0]!.kit as { unavailable?: string }).unavailable = "timed out";
+  const { unmount } = await mount(next);
+  expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toContain("timed out");
+  expect(document.querySelector("[data-first-run-no-agent]")).toBeNull();
   expect(continueButton().disabled).toBe(false);
   await unmount();
 });
@@ -221,8 +236,24 @@ it("on a Mac that already allows Hide, opens the notification step on, and its C
   const button = document.querySelector('[data-first-run-next="notifications"]') as HTMLButtonElement;
   expect(button.textContent).toBe("Continue");
   await act(async () => { button.click(); });
-  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", turn_on_notifications: true } }]);
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", notifications: true } }]);
   expect(notify).not.toHaveBeenCalled();
+  await unmount();
+  vi.unstubAllGlobals();
+});
+
+it("Not now while macOS still asks after Turn on leaves the switch off with the step (B21)", async () => {
+  vi.stubGlobal("hideHost", { kind: "electron", platform: "darwin", notify: vi.fn(), notificationPermission: async () => "not_determined", onCommand: () => () => undefined, onNotificationOpen: () => () => undefined });
+  const next = state(true, AGENTS);
+  next.rest.ui_state.first_run.step = "notifications";
+  (next.rest.ui_state as { desktop_notifications?: boolean }).desktop_notifications = true;
+  const { events, unmount } = await mount(next);
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector("[data-notification-line]")?.getAttribute("data-notification-line")).toBe("asking");
+  const button = document.querySelector('[data-first-run-next="notifications"]') as HTMLButtonElement;
+  expect(button.textContent).toBe("Not now");
+  await act(async () => { button.click(); });
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", notifications: false } }]);
   await unmount();
   vi.unstubAllGlobals();
 });
@@ -239,7 +270,7 @@ it("on a desktop with no notification service, says so with Continue and no Turn
   const button = document.querySelector('[data-first-run-next="notifications"]') as HTMLButtonElement;
   expect(button.textContent).toBe("Continue");
   await act(async () => { button.click(); });
-  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", turn_on_notifications: false } }]);
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications" } }]);
   await unmount();
   vi.unstubAllGlobals();
 });

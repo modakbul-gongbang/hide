@@ -166,8 +166,9 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
   const changes = whatChanges(agents, on, kit, home);
   const applying = pressed || busy;
   const failures = sent && !applying ? failedAgents(agents, sent) : [];
-  // A Continue whose pass could not run here: the core keeps the step and reads the agents again.
-  const unavailable = sent && !applying ? (kit?.unavailable ?? null) : null;
+  // The kit could not run here, whether or not Continue was pressed: the step says why, and Try again
+  // sends the choice anew, which has the core read the agents again.
+  const unavailable = !applying ? (kit?.unavailable ?? null) : null;
   const toggle = (id: string) =>
     setFlipped((current) => {
       const next = new Set(current);
@@ -175,7 +176,7 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
       return next;
     });
   const proceed = () => {
-    if (applying || agents.length === 0) return;
+    if (applying || (agents.length === 0 && !unavailable)) return;
     const chosen = appliedAgents(agents, flipped, start);
     setSent(chosen);
     if (reopened) {
@@ -253,7 +254,7 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
           {hideAi ? <span data-onboarding-hide-ai={hideAi.id}>{t(hideAiFirstRunKey(hideAi.agent), { agent: hideAi.label })}</span> : null}
         </span>
         {/* With no agent read yet there is no choice to send; the next read brings the tiles back. */}
-        <MainButton onClick={proceed} disabled={applying || agents.length === 0} aria-busy={applying} data-onboarding-apply="true">
+        <MainButton onClick={proceed} disabled={applying || (agents.length === 0 && !unavailable)} aria-busy={applying} data-onboarding-apply="true">
           {label}
         </MainButton>
       </DialogFooter>
@@ -359,12 +360,15 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
   const allowedOff = !enabled && state === "on";
   // Where nothing can be shown the step only says so and goes on (B47); until the switch is on it offers Turn on and Not now.
   const goesOn = (enabled && state !== "asking") || allowedOff || state === "no_service";
-  const next = () => {
+  // Continue on a Mac that already allows Hide turns the switch on (B16); Not now leaves it off,
+  // even after Turn on was pressed while macOS still asks (B21).
+  const leave = (notifications: boolean | undefined) => {
     if (reopened) {
-      if (allowedOff) actions.setDesktopNotifications(true);
+      if (notifications !== undefined && notifications !== enabled) actions.setDesktopNotifications(notifications);
       useSetupWalk.getState().go("project");
-    } else actions.advanceFirstRun("notifications", allowedOff);
+    } else actions.advanceFirstRun("notifications", notifications);
   };
+  const next = () => leave(allowedOff ? true : undefined);
   primary.current = goesOn ? next : state === "off" && control ? control.turnOn : null;
   const system = machineSystem(null);
   return (
@@ -392,7 +396,7 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
         ) : (
           <>
             {/* Not now leaves the switch off (B21); Turn on waits while macOS asks (B14). */}
-            <Button variant="ghost" onClick={next} data-first-run-next="notifications">
+            <Button variant="ghost" onClick={() => leave(false)} data-first-run-next="notifications">
               {t("firstRun.notifications.notNow")}
             </Button>
             {control ? (

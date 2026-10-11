@@ -42,9 +42,9 @@ export function tileStatus(agent: KitAgent, providers: readonly AiProvider[] | u
   return "installed";
 }
 
-/** No agent is installed here: the step says so and links the two it names (B9). */
+/** The kit listed its agents and none is installed here: the step says so and links the two it names (B9). An empty list is a kit that has not listed them. */
 export function noAgentInstalled(agents: readonly KitAgent[]): boolean {
-  return agents.every((agent) => agent.availability !== "available");
+  return agents.length > 0 && agents.every((agent) => agent.availability !== "available");
 }
 
 export const SUGGESTED_INSTALLS = ["claude-code", "codex"] as const;
