@@ -3,7 +3,8 @@
 // pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
-// macOS builds hide.app, ad-hoc signed, as a zip. Windows x64 builds an
+// macOS builds hide.app, ad-hoc signed, as a zip, with the notification
+// permission helper compiled into Contents/MacOS. Windows x64 builds an
 // unsigned folder as a zip and Linux x64 an unsigned folder as a tar.gz
 // (operator decision 2026-10-03: no signing outside macOS for now). Each is
 // built on its own system, because the release binaries come from that
@@ -149,11 +150,46 @@ const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
 
+const APP_BUNDLE_ID = "me.grab.hide.desktop";
+
+/**
+ * macOS's notification permission helper (PRD first-run-onboarding D-12):
+ * one Swift file compiled for this machine's architecture, with the app's
+ * identifier embedded as its Info.plist, since macOS keys notification
+ * settings to it. A failed compile stops the package; nothing is shipped in
+ * its place.
+ */
+function buildNotificationHelper() {
+  const source = path.join(root, "native", "notification-status", "main.swift");
+  const work = path.join(out, "notification-status");
+  fs.rmSync(work, { recursive: true, force: true });
+  fs.mkdirSync(work, { recursive: true });
+  const plist = path.join(work, "Info.plist");
+  fs.writeFileSync(
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${APP_BUNDLE_ID}</string>
+  <key>CFBundleName</key>
+  <string>hide-notification-status</string>
+</dict>
+</plist>
+`,
+  );
+  const binary = path.join(work, "hide-notification-status");
+  run("/usr/bin/xcrun", ["swiftc", "-O", source, "-target", `${system.arch}-apple-macosx11.0`, "-o", binary, "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", plist], { stdio: "inherit" });
+  return binary;
+}
+const notificationHelper = platform === "darwin" ? buildNotificationHelper() : null;
+
 const [outputDir] = await packager({
   dir: root,
   out,
   name: "hide",
-  appBundleId: "me.grab.hide.desktop",
+  appBundleId: APP_BUNDLE_ID,
   appVersion: version,
   // macOS's CFBundleVersion and Windows' file version must be dotted
   // integers; the numeric prefix is that.
@@ -184,6 +220,14 @@ for (const [name] of shipped) {
 for (const companion of herdr.companions) {
   const name = path.basename(companion);
   if (!fs.existsSync(path.join(bundledResources, name))) throw new Error(`Herdr's ${name} did not land in ${bundledResources}`);
+}
+if (notificationHelper) {
+  // Beside the app's executable, where the host looks for it and where
+  // macOS resolves its bundle; signed under the app's identifier first.
+  const target = path.join(bundle, "Contents", "MacOS", path.basename(notificationHelper));
+  fs.copyFileSync(notificationHelper, target);
+  fs.chmodSync(target, 0o755);
+  run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", APP_BUNDLE_ID, "--timestamp=none", target], { stdio: "inherit" });
 }
 if (platform === "darwin") {
   run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });

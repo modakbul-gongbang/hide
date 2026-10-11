@@ -10,12 +10,16 @@ import { keySystemOf, systemRegistry, type Command } from "../../../web/src/shor
 import { menuBindings, menuTemplate } from "./menu";
 import { HostLanguage, languageFile } from "./language";
 import { recordUncaught } from "./uncaught";
+import { APP_ID } from "./notificationPermission";
 
 const env = loadEnv(process.env);
 // Pinned before anything reads it: the single-instance lock, web storage and
 // the log live here, apart from the folders the removed native app used.
 app.setPath("userData", env.userDataDir ?? path.join(app.getPath("appData"), "hide-desktop"));
 app.setAppLogsPath(path.join(app.getPath("userData"), "logs"));
+
+// Windows groups and attributes the app's notifications by this identifier (PRD first-run-onboarding D-13).
+if (process.platform === "win32") app.setAppUserModelId(APP_ID);
 
 if (!app.requestSingleInstanceLock()) {
   // B6: the running instance brings its window forward instead.

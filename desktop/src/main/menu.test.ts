@@ -126,6 +126,17 @@ describe("the app menu (B9)", () => {
     expect(plainCtrl.sort()).toEqual(["copy", "cut", "paste", "selectAll", "text_larger", "text_reset", "text_smaller", "undo"]);
   });
 
+  it("opens Help with Set up Hide on every system, which sends the host's own command", () => {
+    for (const system of ["mac", "pc"] as const) {
+      const sent: string[] = [];
+      const help = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false, system, t: english }).find((menu) => menu.role === "help");
+      const first = Array.isArray(help?.submenu) ? help.submenu[0] : undefined;
+      expect(first?.label).toBe("Set up Hide");
+      (first?.click as () => void)();
+      expect(sent).toEqual(["setup_hide"]);
+    }
+  });
+
   it("draws every label, the system's role items included, in the language it is given", () => {
     const labels = (menu: MenuItemConstructorOptions[]): string[] =>
       menu.flatMap((item) => [...(item.label ? [item.label] : []), ...(Array.isArray(item.submenu) ? labels(item.submenu) : [])]);

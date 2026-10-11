@@ -65,3 +65,20 @@ button {
 button:hover {
   background: var(--color-accent);
 }
+
+#actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--spacing-xs);
+}
+
+/* The diagnostics the clipboard refused, to select by hand (B2). */
+#diagnostics {
+  margin: var(--spacing-lg) 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
