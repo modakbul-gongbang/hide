@@ -115,9 +115,12 @@ describe("the Memory tab", () => {
         row(7, { promotion: { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p2" }, pr_number: null, target_path: null } }),
         row(9, { promotion: { state: "pr_open", agent: null, pr_number: 924, target_path: null } }),
         row(8, { promotion: { state: "merged", agent: null, pr_number: 924, target_path: "AGENTS.md" } }),
+        row(6, { promotion: { state: "running", agent: null, pr_number: null, target_path: null } }),
       ],
     }));
-    expect(container.querySelector("[data-memory-running='7']")?.textContent).toContain("memory-promote-m7");
+    expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
+    // An agent not seen yet: no name, and nothing it would follow.
+    expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
     expect(container.querySelector("[data-memory-card='9'] [data-pr-mark]")?.textContent).toContain("924");
     const merged = container.querySelector("[data-memory-card='8']");
     expect(merged?.className).toContain("opacity-");

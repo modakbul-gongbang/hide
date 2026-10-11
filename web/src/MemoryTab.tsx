@@ -380,6 +380,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
           <span className="flex min-w-0 items-center gap-xs text-caption text-subtle-foreground" data-memory-running={row.number}>
             <LoaderCircleIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 animate-spin" />
             <span className="shrink-0 whitespace-nowrap">{t("memory.running")}</span>
+            {row.promotion.agent ? <span aria-hidden="true">·</span> : null}
             {row.promotion.agent ? (
               row.promotion.agent.pane_id ? (
                 <button type="button" className="min-w-0 truncate font-mono underline underline-offset-4 hover:text-foreground" onClick={() => actions.openAgent(row.promotion!.agent!.pane_id!)}>
