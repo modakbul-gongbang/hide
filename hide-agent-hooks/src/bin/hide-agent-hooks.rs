@@ -261,9 +261,18 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
     report_count(&home, event, change, who);
 }
 
-fn print_line(text: &str) {
+/// Prints one JSON answer. On Windows every agent runs its hook under
+/// PowerShell, which re-encodes what a program prints in the console code
+/// page, so the answer goes out as ASCII with `\u` escapes, as the runtime
+/// hooks' does.
+fn print_line(json: &str) {
+    let json = if cfg!(windows) {
+        hide_agent_hooks::runtime::ascii_json(json)
+    } else {
+        json.to_owned()
+    };
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{text}").and_then(|_| stdout.flush());
+    let _ = writeln!(stdout, "{json}").and_then(|_| stdout.flush());
 }
 
 /// The spawn guard (`hide_agent_hooks::spawn_guard`) of Claude Code's and
