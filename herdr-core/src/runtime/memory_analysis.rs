@@ -157,6 +157,8 @@ pub(crate) enum AnalysisFailure {
     /// the conversation waits, unread past the cursor (B5).
     Deferred(&'static str),
     Cancelled,
+    /// The Project's Memory was turned off while the card was being made.
+    Disabled,
 }
 
 impl Runtime {
@@ -931,7 +933,7 @@ fn walk_project(
             // its receipts are still walked.
             Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
             Err(AnalysisFailure::Deferred(reason)) => *deferred = Some(reason),
-            Err(AnalysisFailure::Cancelled) => break,
+            Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => break,
             Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "analysis.session_failed",
@@ -1500,7 +1502,10 @@ pub(crate) fn write_cards(
             },
             &candidates,
         )
-        .map_err(|error| local(error.to_string()))?;
+        .map_err(|error| match error {
+            hide_memory::MemoryError::Disabled => AnalysisFailure::Disabled,
+            error => local(error.to_string()),
+        })?;
     for backfill in output.backfill {
         if let Err(error) = store.fill_aliases(
             source.project_id,

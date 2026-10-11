@@ -434,6 +434,12 @@ impl Runtime {
                 } else if action == "delete" {
                     self.close_memory_archive_tabs();
                 }
+                // A pass that started between the request and the store
+                // write still saw the Project on; the store refuses its
+                // cards, and this stops it asking the provider.
+                if action == "disable" || action == "delete" {
+                    self.cancel_memory_pass();
+                }
             }
             Err(message) => self.set_error("memory.action_failed", message, true),
         }

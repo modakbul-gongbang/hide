@@ -492,13 +492,18 @@ pub enum ReceiptRecord {
 #[derive(Debug)]
 pub enum MemoryError {
     Sql(rusqlite::Error),
-    WrongSchema { found: i64, expected: i64 },
+    WrongSchema {
+        found: i64,
+        expected: i64,
+    },
     ReadOnly,
     InvalidState(String),
     ProjectMissing,
     MemoryMissing,
     CrossProjectTarget,
     Integrity(String),
+    /// The Project's Memory was turned off before the write committed.
+    Disabled,
 }
 
 impl Display for MemoryError {
@@ -514,6 +519,7 @@ impl Display for MemoryError {
             Self::MemoryMissing => formatter.write_str("memory_item_missing"),
             Self::CrossProjectTarget => formatter.write_str("memory_cross_project_target"),
             Self::Integrity(value) => write!(formatter, "memory_integrity:{value}"),
+            Self::Disabled => formatter.write_str("memory_project_disabled"),
         }
     }
 }
@@ -1025,6 +1031,19 @@ impl MemoryStore {
     ) -> Result<ApplySummary, MemoryError> {
         self.require_writer()?;
         let transaction = self.connection.transaction()?;
+        // Checked in the write's own transaction: a card analyzed while the
+        // operator turned Memory off is not written after the switch.
+        let enabled = transaction
+            .query_row(
+                "SELECT enabled FROM projects WHERE id=?1",
+                [&batch.project_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .ok_or(MemoryError::ProjectMissing)?;
+        if !enabled {
+            return Err(MemoryError::Disabled);
+        }
         let inserted = transaction.execute(
             "INSERT OR IGNORE INTO analysis_batches(id,project_id,provider,analysis_provider,session_id,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",
             params![batch.id,batch.project_id,batch.provider,batch.analysis_provider,batch.session_id,batch.content_hash,batch.created_at_unix_ms],
@@ -4385,6 +4404,21 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let item = store.item_by_number(&project, 1).unwrap().unwrap();
         assert_eq!(item.title, "Spawn reviewers");
         assert_eq!(item.aliases, ["리뷰어"]);
+    }
+
+    #[test]
+    fn a_card_made_while_memory_was_turned_off_is_not_written() {
+        let (_temp, mut store, project) = store();
+        store.set_enabled(&project, false, true).unwrap();
+
+        let refused = store.apply_candidates(
+            &batch(&project, "late", "late"),
+            &[candidate("Use pnpm", CandidateRelation::New)],
+        );
+
+        assert!(matches!(refused, Err(MemoryError::Disabled)));
+        assert!(!store.has_batch("late").unwrap());
+        assert!(store.list_memories(&project).unwrap().is_empty());
     }
 
     #[test]

@@ -397,6 +397,7 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
         AnalysisFailure::Provider(_) => "memory_ai_failed",
         AnalysisFailure::Deferred(_) => "memory_daily_cap",
         AnalysisFailure::Cancelled => "memory_add_timeout",
+        AnalysisFailure::Disabled => "memory_off",
         AnalysisFailure::Local(_) => "memory_unavailable",
     };
     crate::diagnostic!(json!({
@@ -409,6 +410,7 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
             AnalysisFailure::Local(message) => message.clone(),
             AnalysisFailure::Deferred(reason) => (*reason).to_owned(),
             AnalysisFailure::Cancelled => "cancelled".to_owned(),
+            AnalysisFailure::Disabled => "disabled".to_owned(),
         },
     }));
     code.into()

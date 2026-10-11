@@ -405,6 +405,7 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
     store
         .ensure_project(project_id, &root, crate::node::TEST_NODE)
         .unwrap();
+    store.set_enabled(project_id, true, true).unwrap();
     store
         .apply_candidates(
             &hide_memory::AnalysisBatch {
