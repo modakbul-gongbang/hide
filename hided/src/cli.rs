@@ -587,9 +587,6 @@ fn memory_text(
                 String::new(),
                 text(&result["body"]),
             ];
-            if let Some(other) = result["conflicts_with"].as_str() {
-                lines.push(format!("Conflicts with {other}."));
-            }
             let cited = result["cited_paths"]
                 .as_array()
                 .map(|paths| paths.iter().map(text).collect::<Vec<_>>())
@@ -634,10 +631,8 @@ fn memory_text(
                         Some("already_added") => format!("Already added as {card}.\n"),
                         Some("same_as") => format!("{card} already says this; added it as a source.\n"),
                         Some("replaced") => format!("Replaced {card}.\n"),
-                        Some("needs_review") => format!(
-                            "Added {card}, which conflicts with {} and waits for review; {} stays in use.\n",
-                            text(&outcome["conflicts_with"]),
-                            text(&outcome["conflicts_with"]),
+                        Some("outranked") => format!(
+                            "Not given: {card} rests on the operator's own words and stays in use; this text is kept in its history.\n"
                         ),
                         Some("secret") => "Not kept: it looked like a secret.\n".to_owned(),
                         Some("full") => "Not kept: this Project's Memory is full.\n".to_owned(),
@@ -2207,14 +2202,14 @@ mod tests {
             &MemoryCommand::Show { number: 3 },
             &serde_json::json!({
                 "card": "m3", "title": "Tests run with nextest", "kind": "rule",
-                "state": "needs_review", "body": "Run tests with nextest.",
-                "sources": 2, "operator_sources": 1, "conflicts_with": "m1",
+                "state": "active", "body": "Run tests with nextest.",
+                "sources": 2, "operator_sources": 1,
                 "cited_paths": ["docs/TESTING.md"],
             }),
         );
         assert_eq!(
             shown,
-            "m3 · rule · needs review · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nConflicts with m1.\nFiles: docs/TESTING.md\n"
+            "m3 · rule · active · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nFiles: docs/TESTING.md\n"
         );
         let search = MemoryCommand::Search { words: "x".into() };
         assert_eq!(
@@ -2226,11 +2221,11 @@ mod tests {
             memory_text(
                 &add,
                 &serde_json::json!({"outcomes": [
-                    {"outcome": "needs_review", "card": "m4", "conflicts_with": "m1"},
+                    {"outcome": "outranked", "card": "m1"},
                     {"outcome": "already_added", "card": "m2"},
                 ]})
             ),
-            "Added m4, which conflicts with m1 and waits for review; m1 stays in use.\nAlready added as m2.\n"
+            "Not given: m1 rests on the operator's own words and stays in use; this text is kept in its history.\nAlready added as m2.\n"
         );
         assert_eq!(
             memory_text(

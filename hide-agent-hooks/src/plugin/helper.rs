@@ -452,6 +452,7 @@ mod tests {
                     salience: 0.9,
                     source_offsets: vec![1],
                     human_offsets: vec![1],
+                    source_times: Default::default(),
                     cited_paths: Vec::new(),
                     relation: hide_memory::CandidateRelation::New,
                 }],

@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{
-    ArchiveDetailSnapshot, MemoryAction, MemoryFix, ProjectMemorySnapshot, RightPanelSection,
-    SessionRowSnapshot, SessionsProviderFilter,
+    ArchiveDetailSnapshot, MemoryAction, MemoryUnavailableSnapshot, ProjectMemorySnapshot,
+    RightPanelSection, SessionRowSnapshot, SessionsProviderFilter,
 };
 
 fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> SessionRowSnapshot {
@@ -45,9 +45,6 @@ fn action(workspace: &str, action: MemoryAction) -> crate::runtime::events::Memo
         workspace_id: workspace.to_owned(),
         action,
         number: None,
-        other_number: None,
-        batch_id: None,
-        choice: None,
     }
 }
 
@@ -197,14 +194,14 @@ fn memory_opens_for_a_project_without_its_sessions_and_closes() {
     assert!(runtime.snapshot.project_sessions.is_none());
     let project = opened(&runtime).expect("Memory is open");
     assert_eq!(project.workspace_id, workspace);
-    assert_eq!(project.unavailable_reason, None);
+    assert_eq!(project.unavailable, None);
 
     assert!(runtime.open_project_memory(Some("gone-project".to_owned())));
     let project = opened(&runtime).unwrap();
     assert_eq!(project.workspace_id, "gone-project");
     assert_eq!(
-        project.unavailable_reason.as_deref(),
-        Some("This Project is no longer registered.")
+        project.unavailable,
+        Some(MemoryUnavailableSnapshot::Unregistered)
     );
     assert_eq!(runtime.named_memory_project(), None);
 
@@ -246,48 +243,21 @@ fn a_memory_action_for_a_project_no_longer_registered_says_so() {
 }
 
 #[test]
-fn a_cli_change_shows_its_notice_on_the_opened_project_only() {
-    // `hide memory add|forget` writes off the lock; the screen reads again.
+fn a_forgotten_card_offers_its_undo_on_its_project_until_undone() {
+    // B24: "mN 지움 · 되돌리기", from the tab or an agent's `hide memory forget`.
+    use crate::runtime::memory_analysis::MemoryChange;
     let (mut runtime, _) = opened_project();
-    let shown = |runtime: &Runtime| opened(runtime).and_then(|project| project.notice.clone());
-    let notice = |message: &str| crate::model::MemoryNoticeSnapshot {
-        message: message.to_owned(),
-        undo_batch_id: Some("batch-1".to_owned()),
-    };
+    let shown = |runtime: &Runtime| opened(runtime).and_then(|project| project.forgotten);
 
-    runtime.note_memory_change("another-project", Some(notice("Added m2")));
+    runtime.note_memory_change("another-project", MemoryChange::Forgot(2));
     assert_eq!(shown(&runtime), None);
 
-    runtime.note_memory_change("project-1", Some(notice("Forgot m5")));
-    assert_eq!(shown(&runtime), Some(notice("Forgot m5")));
-}
-
-#[test]
-fn a_panes_menu_lists_what_its_live_session_was_given() {
-    // P1-2: the received cards ride the pane that holds the session.
-    let mut runtime = runtime();
-    runtime.ingest_session(Ok(context_payload()));
-    let pane = runtime.snapshot.navigator.agents[0].pane_id.clone();
-    runtime.snapshot.navigator.agents[0].agent_kind = "codex".to_owned();
-    runtime.snapshot.navigator.agents[0].session_id = Some("s-1".to_owned());
-    let cards = vec![crate::model::MemoryReceivedCardSnapshot {
-        number: 5,
-        title: "Lint before tests".to_owned(),
-    }];
-    runtime
-        .project_memory
-        .received
-        .insert(("codex", "s-1".to_owned()), cards.clone());
-
-    assert!(runtime.publish_memory_received());
-    assert_eq!(
-        *runtime.snapshot.memory.as_ref().unwrap().received,
-        vec![crate::model::MemoryReceivedSnapshot {
-            pane_id: pane,
-            cards
-        }]
-    );
-    assert!(!runtime.publish_memory_received(), "nothing moved");
+    runtime.note_memory_change("project-1", MemoryChange::Forgot(5));
+    assert_eq!(shown(&runtime), Some(5));
+    runtime.note_memory_change("project-1", MemoryChange::Undid(4));
+    assert_eq!(shown(&runtime), Some(5), "another card's undo leaves it");
+    runtime.note_memory_change("project-1", MemoryChange::Undid(5));
+    assert_eq!(shown(&runtime), None);
 }
 
 #[test]
@@ -424,6 +394,7 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
                     salience: 1.0 - index as f64 / 100.0,
                     source_offsets: vec![index],
                     human_offsets: vec![index],
+                    source_times: Default::default(),
                     cited_paths: Vec::new(),
                     relation: hide_memory::CandidateRelation::New,
                 })
@@ -465,8 +436,12 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
 }
 
 #[test]
-fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
-    let (mut runtime, workspace) = opened_project();
+fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
+    // D-17, B4: the switch is the operator's word; no separate hook button.
+    let (runtime, workspace) = opened_project();
+    let runtime = Arc::new(Mutex::new(runtime));
+    let mut guard = runtime.lock().unwrap();
+    guard.install_worker_context(Arc::downgrade(&runtime), crate::handle::ChangeNotifier::noop());
     let diagnosis = |status| hide_agent_hooks::Diagnosis {
         runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
             runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -480,8 +455,8 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
         }],
         last_report_failure: None,
     };
-    runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
-    runtime.ingest_kit_report(
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
+    guard.ingest_kit_report(
         crate::node::TEST_NODE,
         &hide_kit::KitReport {
             components: vec![hide_kit::ComponentReport {
@@ -501,44 +476,32 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             codex_daemon_off: None,
         },
     );
+    let pending = |runtime: &Runtime| opened(runtime).and_then(|project| project.pending_action);
 
-    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    guard.apply_memory_action(action(&workspace, MemoryAction::Enable));
     assert_eq!(
-        opened(&runtime).and_then(|project| project.analysis.action),
-        Some(MemoryFix::UpdateHooks),
-        "Memory waits for the hook update the screen offers"
-    );
-    assert!(runtime.project_memory.enable_after_hook_update.is_none());
-    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
-
-    runtime.apply_memory_action(action(&workspace, MemoryAction::UpdateHooks));
-    assert_eq!(
-        runtime.project_memory.enable_after_hook_update,
-        Some(workspace.clone())
-    );
-    assert_eq!(
-        runtime.take_local_kit_job(std::time::Instant::now()),
+        guard.take_local_kit_job(std::time::Instant::now()),
         Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
             hide_kit::ComponentId::CodexHook
         ])))
     );
+    assert_eq!(pending(&guard), None, "Memory waits for the hooks");
 
-    runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
     }));
-    assert!(runtime.project_memory.enable_after_hook_update.is_none());
-    // Past the hook gate the enable goes to the store writer, which this
-    // fixture has none of: the refusal is the writer's, not the gate's.
     assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .expect("the approved enable intent resumed")
-            .kind,
-        "memory.worker_unavailable",
-        "the approved enable passed the hook gate once the hooks carry Memory"
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "the switch turns on once the hooks carry Memory"
+    );
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    assert_eq!(
+        guard.snapshot.status.last_error,
+        None,
+        "a second hook read starts no second enable"
     );
 }
 

@@ -100,7 +100,6 @@ Raw transcript bodies remain in the providers' files.
 
 `hide-memory` owns Hide's extraction prompt and output schema (`engine.rs`), one app SQLite store, its schema and migrations, Project hard filters, session cursors, card and revision lifecycle, provenance, receipts, usage counts, the matcher, and the FTS5 projection.
 No third-party memory engine, service, prompt asset or vector database is part of it.
-Schema 8 also reserves each card's promotion state toward repository files (`card_promotions`: state, the card revision a dismissal applies to, the agent, pull request and target path) and an archive reason for an expired needs-review card; nothing writes them yet, so that feature needs no second migration.
 The extraction prompt is Hide's own, held under 8 KiB by a test, and asks for each card's text, a one-line title, three to eight Korean and English aliases, its kind, the files it rests on (`cited_paths`) and its relation to a similar card (PRD project-memory-v2 D-09, D-26).
 Every analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority and transaction boundaries before any durable change, and keeps a cited path only when it names a file inside the checkout (`Call::RealPaths`, a repository-relative path with no `..`).
 Normalized session events and the comparison cards both pass through the current local redactor at the final provider egress boundary.
@@ -110,15 +109,16 @@ A card has a number inside its Project (`m1`, `m2`), never reused, which agents 
 `hide_memory::matcher` is the one model-free matcher: a card is indexed by its words, the words with a Korean particle or ending taken off, its aliases and every two-syllable piece of its Hangul words, FTS5 ranks the candidates by BM25, and a card is kept only above a minimum score, so a prompt that shares no word, stem, alias or piece with a card never receives it (B11, B12).
 The prompt hook, `hide memory search` and the comparison set a new card is checked against all use it, so a same-meaning card outside the most salient ones still reaches the provider (D-13, B17).
 The comparison set is bounded by cards and by bytes so it and one event group fit the 64 KiB request.
-On a conflict the old card stays active and keeps being injected and the new card waits for review; only the operator's own words supersede a card, and its old revision stays for Undo (D-14).
-Resolving a review pair writes a batch, so it is undone like any other.
+A conflict is settled by rule inside the write, never by asking the operator (D-14, B18): the side resting on the operator's own words wins and, between equals, the newer text wins.
+A winning new text becomes the card's current revision and the old one stays in its history, which the card's Undo restores (B19); a losing new text is kept in the history of the card it lost to and is never injected, and `add` answers that the card stays (B7).
 
 The app owns the only writer connection.
 The store is `project-memory.sqlite3` in the daemon's state folder, and `hide_memory::database_path` is the one function that names it: the core writes it from the state folder it was given, and every hook (Claude Code, Codex, OpenCode's, Pi's and omp's helper) reads it from `<home>/.hide/state`, the folder `hide_kit::layout::default_state_dir` names, which a herdr-core test holds equal.
 The hook does not follow a relocated state folder (`HIDE_STATE_DIR`, `XDG_STATE_HOME`), because a production hook takes no path from its environment; a daemon started with one gets no Memory context from its panes' hooks.
 The store `~/Library/Application Support/hide/project-memory.sqlite3` that the removed native shell wrote is never read, moved or deleted: its Project ids name this machine `local`, which the node-id conversion rewrites only inside the state folder, so a copy would key Projects wrongly, and Memory is opt-in per Project, so a fresh store starts with every Project off.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
-Schema 8 adds card numbers, titles, aliases, cited paths, usage counts and the human flag on sources, and the migration copies the store aside first and repairs any review pair whose older card had been hidden.
+Schema 8 adds card numbers, titles, aliases, cited paths, usage counts, and the human flag and time on sources, and the migration copies the store aside first and settles each pair the old conflict path left waiting for review by the rule: no version-7 source marks the operator's words, so the newer card stays and the older is forgotten (D-23, B25).
+A source's time is when its words were said, read from the conversation event; a version-7 source gets its batch's analysis time, the closest the old rows hold.
 
 A session start receives an index of at most 20 rule, decision and lesson cards, one line each, and no body; a prompt receives the bodies of the cards the matcher finds that the session was not already given in full (D-03, D-04, B10-B12).
 Each body injection carries a receipt authenticated over Project, runtime, session, event and the exact ordered card revisions, with one random key per Project kept in the store; an index carries none, because an index line is no delivery.
@@ -151,8 +151,8 @@ Disabling Memory stops new analysis and injection without deleting its data, whi
 `show` answers a card with its state, kind, source counts and cited paths and counts the read for the caller's session, `search` answers at most ten matching cards, and `add` writes through the same `write_cards` path background analysis uses, as an `agent_note` the provider sees, never as the operator's words (D-11, B7, B8, B14-B16, B27).
 An `add` is one batch per Project and text, so the same text added again answers the card it made and asks no provider; once every card of that batch is gone (forgotten, undone or never kept), the same text starts the next batch and is added again.
 Its provider tries end within 50 s and the cards are not written past 55 s, before the caller's minute runs out, so a refused or timed-out `add` has written nothing.
-`forget` tombstones a card the operator asked the agent to drop, and `undo` steps one card back one change: a forgotten card comes back, an added one goes.
-Every write reports to the core, which reads the opened Project's Memory again and shows the change's notice with its Undo.
+`forget` tombstones a card the operator asked the agent to drop, and `undo` steps one card back one change: a forgotten card comes back, a replaced text gives way to the one before it, an added card goes.
+Every write reports to the core, which reads the opened Project's Memory again; a forget names its card on the Memory tab with its Undo.
 A card write checks the Project's switch inside its own transaction, so a card analyzed or added while the operator turned Memory off is never written after the switch.
 
 The core owns the fourth right-panel section, the focused checkout's session list with its filters and editor preview identity; Memory is not shown there.
@@ -185,13 +185,15 @@ An unchanged completed stamp performs no transcript read, hash or SQLite write.
 The history read is the Sessions list's own `load_sessions` (`herdr-core/src/runtime/memory.rs`), which opens the Memory store read-only only for the sessions Memory recorded and no longer finds, lists no card, writes nothing, schedules no analysis, cancels none, and leaves the due-work poll alone.
 A session's conversation names, on each event, the cards a prompt hook gave it there (`memory_received`, from the event's verified receipt) and the cards Memory learned from it and still keeps (`memory_learned`), by number.
 
-Project Memory is its own snapshot section, `memory`, on its own delta revision (`herdr-core/src/runtime/project_memory.rs`), keyed by the Project a shell opens rather than by the Overview's Sessions or the focused checkout, and absent until a Project is opened or a pane's session was given a card.
-`memory_open` with a catalog `workspace_id` opens that Project's Memory for every window of the daemon (none closes it), and a read on a worker lays its switch, its cards with their usage counts (review pairs first, with both bodies) and the analysis state on `memory.project`; it waits for no Sessions history read.
-`memory_expand` shows one card in full on the same read (body, cited files, sources with the event and whether it was the operator's words), and `memory_search` runs the matcher over the Project and answers the card numbers, best first.
-`memory_action` with a `workspace_id` and card numbers turns Memory on or off, deletes its data, forgets a card, resolves a review pair or undoes a batch on a worker off the lock, one action at a time; it needs no open screen, so a pane's menu forgets from the pane's Project.
-`memory.received` lists, for each pane whose live agent session on this Mac was given cards in full, their numbers and titles, read again after a receipt, a pane change or a Memory change and joined with the panes that hold the sessions now.
-Card kinds and states, the analysis state, its fix and the actions are enums pinned in `contracts/snapshot-wire-enums.json`, and a card needing review is `needs_review` on the snapshot and in `hide memory show` alike.
-The web shell draws none of this yet: where Memory is shown waits for an approved design.
+Project Memory is its own snapshot section, `memory`, on its own delta revision (`herdr-core/src/runtime/project_memory.rs`), keyed by the Project a shell opens rather than by the Overview's Sessions or the focused checkout, and absent until a Project is opened.
+It is drawn by the Tools column's Memory tab (`Tool::Memory`, D-17), the fourth tool beside Sessions, Explorer and History.
+`memory_open` with a catalog `workspace_id` opens that Project's Memory for every window of the daemon (none closes it), and a read on a worker lays its switch, its cards with their usage counts and the analysis state on `memory.project`; it waits for no Sessions history read.
+A Project on a connected device answers `unavailable` with the device's name, because Memory is kept only for this Mac's sessions (B16).
+`memory_expand` shows one card in full on the same read (body, cited files, sources with their runtime's name, time and whether they were the operator's words, and the text the current one replaced), and `memory_search` runs the matcher over the Project and answers the card numbers, best first.
+`memory_action` with a `workspace_id` and a card number turns Memory on or off, deletes its data, forgets a card or undoes one card's latest change on a worker off the lock, one action at a time.
+Turning Memory on when this Mac's agent hooks do not carry it yet is the operator's word to update them: the kit's Reinstall runs first and Memory turns on once the hooks report the version that carries it, so the tab has no separate hook button (B4).
+The analysis state is `idle`, `analyzing` or `ai_not_ready`; the last shows at once while Memory is on and Hide AI is off, or after a pass the provider refused for sign-in or for having no agent, and the tab draws Hide AI's own provider and name from the Hide AI settings section (D-27).
+The analysis state and the actions are enums pinned in `contracts/snapshot-wire-enums.json`.
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.

@@ -16,9 +16,9 @@ pub use engine::{
 pub use redaction::{RedactedText, redact};
 pub use store::{
     AnalysisBatch, ApplySummary, Candidate, CandidateKind, CandidateOutcome, CandidateRelation,
-    ComparisonCard, ConflictChoice, CursorReader, DeleteProjectOutcome, InjectedItem, Injection,
+    ComparisonCard, CursorReader, DeleteProjectOutcome, InjectedItem, Injection,
     InjectionKind, InjectionOutcome, MemoryDetail, MemoryError, MemoryItem, MemoryLifecycle,
-    MemorySource, MemoryStore, ProjectMemoryState, ReceiptRecord, RetrievalQuery,
+    MemorySource, MemoryStore, PreviousRevision, ProjectMemoryState, ReceiptRecord, RetrievalQuery,
     SessionCursorRecord, SessionSourceRecord, StoreMode, card_name, parse_card_name,
 };
 

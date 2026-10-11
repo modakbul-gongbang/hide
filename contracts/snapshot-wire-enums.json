@@ -53,11 +53,9 @@
   "raise_verb": ["approval", "answer", "confirm", "draft"],
   "pr_state": ["failed", "pending", "mergeable", "draft", "merged", "closed"],
   "descendant_mark": ["raised", "working"],
-  "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
+  "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions", "memory"],
   "strip_tab_kind": ["herdr", "file", "diff", "session"],
   "memory_card_kind": ["rule", "decision", "lesson", "fact"],
-  "memory_card_state": ["active", "needs_review"],
-  "memory_analysis_state": ["idle", "analyzing", "needs_action"],
-  "memory_fix": ["sign_in", "open_settings", "update_hooks"],
-  "memory_action": ["enable", "disable", "delete", "forget", "undo", "resolve_conflict", "update_hooks", "retry"]
+  "memory_analysis_state": ["idle", "analyzing", "ai_not_ready"],
+  "memory_action": ["enable", "disable", "delete", "forget", "undo"]
 }

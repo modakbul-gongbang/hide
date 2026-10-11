@@ -8,12 +8,11 @@
 //! A connected device's Memory is its own (D-22), so only a caller on this
 //! machine is answered.
 
-use crate::model::MemoryNoticeSnapshot;
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use crate::runtime::RuntimeWorkerContext;
 use crate::runtime::memory_analysis::{
-    AnalysisFailure, BatchSource, WeeklyUsage, admit_call, batch_identity, report_memory_change,
+    AnalysisFailure, BatchSource, MemoryChange, WeeklyUsage, admit_call, batch_identity, report_memory_change,
     write_cards,
 };
 use hide_ai::{AiError, AiRouter, AiSettings, CancelToken};
@@ -160,7 +159,7 @@ impl PreparedMemory {
                 if item.lifecycle == MemoryLifecycle::Tombstoned {
                     return Err("memory_card_forgotten".into());
                 }
-                self.report(&identity.id, None);
+                self.report(&identity.id, MemoryChange::Other);
                 Ok(card(&item))
             }
             MemoryCommand::Forget { number } => {
@@ -171,16 +170,10 @@ impl PreparedMemory {
                 if item.lifecycle == MemoryLifecycle::Tombstoned {
                     return Err("memory_card_forgotten".into());
                 }
-                let batch_id = store
+                store
                     .forget(&identity.id, &item.id)
                     .map_err(|error| store_failure(&identity.id, &error))?;
-                self.report(
-                    &identity.id,
-                    Some(MemoryNoticeSnapshot {
-                        message: format!("Forgot {}", card_name(number)),
-                        undo_batch_id: Some(batch_id),
-                    }),
-                );
+                self.report(&identity.id, MemoryChange::Forgot(number));
                 Ok(json!({"card": card_name(number), "outcome": "forgotten"}))
             }
             MemoryCommand::Undo { number } => {
@@ -188,7 +181,7 @@ impl PreparedMemory {
                     .undo_card(&identity.id, number)
                     .map_err(|error| store_failure(&identity.id, &error))?
                     .ok_or("memory_nothing_to_undo")?;
-                self.report(&identity.id, None);
+                self.report(&identity.id, MemoryChange::Undid(number));
                 Ok(json!({
                     "card": card_name(number),
                     "outcome": if item.lifecycle == MemoryLifecycle::Tombstoned {
@@ -268,23 +261,7 @@ impl PreparedMemory {
                     &mut |store| admit_call(store, WeeklyUsage::Unknown, false),
                 )
                 .map_err(|failure| add_failure(&identity.id, failure))?;
-                let kept = written
-                    .summary
-                    .outcomes
-                    .iter()
-                    .filter_map(|outcome| match outcome {
-                        CandidateOutcome::Created { number }
-                        | CandidateOutcome::Conflict { number, .. } => Some(card_name(*number)),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                self.report(
-                    &identity.id,
-                    (!kept.is_empty()).then(|| MemoryNoticeSnapshot {
-                        message: format!("Added {}", kept.join(" ")),
-                        undo_batch_id: Some(written.batch_id.clone()),
-                    }),
-                );
+                self.report(&identity.id, MemoryChange::Other);
                 Ok(json!({
                     "outcomes": written.summary.outcomes.iter().map(outcome).collect::<Vec<_>>(),
                     "batch_id": written.batch_id,
@@ -308,15 +285,14 @@ impl PreparedMemory {
         }
     }
 
-    fn report(&self, project_id: &str, notice: Option<MemoryNoticeSnapshot>) {
+    fn report(&self, project_id: &str, change: MemoryChange) {
         if let Some(context) = &self.context {
-            report_memory_change(context, project_id, notice);
+            report_memory_change(context, project_id, change);
         }
     }
 }
 
-/// The cards of a written batch that are still in use, active or waiting for
-/// review.
+/// The cards of a written batch that are still in use.
 fn live_cards(store: &MemoryStore, project_id: &str, batch_id: &str) -> Result<Vec<u64>, String> {
     let mut live = Vec::new();
     for number in store
@@ -326,12 +302,7 @@ fn live_cards(store: &MemoryStore, project_id: &str, batch_id: &str) -> Result<V
         let item = store
             .item_by_number(project_id, number)
             .map_err(|error| store_failure(project_id, &error))?;
-        if item.is_some_and(|item| {
-            matches!(
-                item.lifecycle,
-                MemoryLifecycle::Active | MemoryLifecycle::Conflicting
-            )
-        }) {
+        if item.is_some_and(|item| item.lifecycle == MemoryLifecycle::Active) {
             live.push(number);
         }
     }
@@ -343,17 +314,10 @@ fn card(item: &MemoryItem) -> Value {
         "card": card_name(item.number),
         "title": item.title,
         "kind": item.kind.as_str(),
-        // A live card's state is spelled as the snapshot spells it.
-        "state": match item.lifecycle {
-            MemoryLifecycle::Active | MemoryLifecycle::Conflicting => {
-                crate::runtime::project_memory::card_state(item.lifecycle).as_str()
-            }
-            lifecycle => lifecycle.as_str(),
-        },
+        "state": item.lifecycle.as_str(),
         "body": item.body,
         "sources": item.source_count,
         "operator_sources": item.human_source_count,
-        "conflicts_with": item.conflict_number.map(card_name),
         "cited_paths": item.cited_paths,
     })
 }
@@ -369,11 +333,11 @@ fn outcome(outcome: &CandidateOutcome) -> Value {
         CandidateOutcome::Superseded { number } => {
             json!({"outcome": "replaced", "card": card_name(*number)})
         }
-        CandidateOutcome::Conflict { number, existing } => json!({
-            "outcome": "needs_review",
-            "card": card_name(*number),
-            "conflicts_with": card_name(*existing),
-        }),
+        // The card rests on the operator's own words; the added text is
+        // kept in its history and never given (D-14, B7).
+        CandidateOutcome::Kept { number } => {
+            json!({"outcome": "outranked", "card": card_name(*number)})
+        }
         CandidateOutcome::Discarded => json!({"outcome": "not_kept"}),
         CandidateOutcome::SecretRejected => json!({"outcome": "secret"}),
         CandidateOutcome::CapacityRejected => json!({"outcome": "full"}),
@@ -535,6 +499,7 @@ mod tests {
                         salience: 0.9,
                         source_offsets: vec![1],
                         human_offsets: vec![1],
+                        source_times: Default::default(),
                         cited_paths: vec!["src/lib.rs".to_owned()],
                         relation: CandidateRelation::New,
                     }],

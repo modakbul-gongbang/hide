@@ -252,6 +252,8 @@ impl HideNativeAnalyzer {
                     // Which offsets are the operator's words is the caller's
                     // to decide from the events it sent, never the model's.
                     human_offsets: Vec::new(),
+                    // So are the times they were said.
+                    source_times: Default::default(),
                     // Whether each exists in the checkout is the caller's check.
                     cited_paths: candidate.cited_paths,
                     relation,

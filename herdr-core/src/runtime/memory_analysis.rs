@@ -21,7 +21,7 @@ use super::memory::{
 };
 use super::*;
 use crate::labels::worker::{MemoryHandoff, MemorySession, SightedMemoryReceipt};
-use crate::model::{MemoryAnalysisSnapshot, MemoryAnalysisState, MemoryFix, MemoryNoticeSnapshot};
+use crate::model::MemoryAnalysisState;
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
@@ -102,8 +102,10 @@ pub(super) struct MemoryWork {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ProjectMemoryWork {
-    pub(super) analysis: MemoryAnalysisSnapshot,
-    pub(super) notice: Option<MemoryNoticeSnapshot>,
+    pub(super) analysis: MemoryAnalysisState,
+    /// The card the last forget took away, which the Memory tab offers to
+    /// bring back (B24).
+    pub(super) forgotten: Option<u64>,
     /// No analysis before this time (a failure's backoff or a usage limit).
     retry_at_unix_ms: u64,
     failures: u32,
@@ -114,12 +116,11 @@ enum PassReport {
     Analyzing {
         project_id: String,
     },
-    /// The Project's analysis in this pass ended: what it learned, and the
-    /// provider error that stopped it, if one did.
+    /// The Project's analysis in this pass ended: how many cards it wrote,
+    /// and the provider error that stopped it, if one did.
     Analyzed {
         project_id: String,
         learned: usize,
-        batch_ids: Vec<String>,
         error: Option<AiError>,
     },
 }
@@ -188,11 +189,7 @@ impl Runtime {
             if closed || opened {
                 work.next_pass_unix_ms = 0;
             }
-            let moved = live != work.live_sessions;
             work.live_sessions = live;
-            if moved {
-                self.refresh_memory_received();
-            }
         }
         if !handoff.receipts.is_empty() {
             self.record_memory_receipts(handoff.receipts);
@@ -236,10 +233,9 @@ impl Runtime {
                             let batch = std::mem::take(&mut work.receipts_pending);
                             if batch.is_empty() {
                                 work.receipts_in_flight = false;
-                                // What a pane's session was given is read
-                                // again for its menu.
+                                // The open Memory tab counts deliveries.
                                 if recorded_any {
-                                    guard.refresh_memory_received();
+                                    guard.refresh_project_memory();
                                 }
                             }
                             batch
@@ -376,8 +372,8 @@ impl Runtime {
         }
         let mut changed = false;
         for project in work.projects.values_mut() {
-            if project.analysis.state == MemoryAnalysisState::Analyzing {
-                project.analysis = MemoryAnalysisSnapshot::default();
+            if project.analysis == MemoryAnalysisState::Analyzing {
+                project.analysis = MemoryAnalysisState::Idle;
                 changed = true;
             }
         }
@@ -420,11 +416,6 @@ impl Runtime {
         };
         work.usage_unread_since_unix_ms = None;
         usage
-    }
-
-    /// The sessions this Mac's live panes hold now.
-    pub(super) fn live_memory_sessions(&self) -> &BTreeSet<MemorySession> {
-        &self.memory_work.live_sessions
     }
 
     /// Whether the usage reader reads with no window attached: a pass wants
@@ -477,12 +468,12 @@ impl Runtime {
         let mut changed = false;
         for project in self.memory_work.projects.values_mut() {
             if project.retry_at_unix_ms != 0
-                || project.analysis.state == MemoryAnalysisState::NeedsAction
+                || project.analysis == MemoryAnalysisState::AiNotReady
             {
                 project.retry_at_unix_ms = 0;
                 project.failures = 0;
-                if project.analysis.state == MemoryAnalysisState::NeedsAction {
-                    project.analysis = MemoryAnalysisSnapshot::default();
+                if project.analysis == MemoryAnalysisState::AiNotReady {
+                    project.analysis = MemoryAnalysisState::Idle;
                 }
                 changed = true;
             }
@@ -503,8 +494,8 @@ impl Runtime {
             .or_default();
         project.retry_at_unix_ms = 0;
         project.failures = 0;
-        if project.analysis.state == MemoryAnalysisState::NeedsAction {
-            project.analysis = MemoryAnalysisSnapshot::default();
+        if project.analysis == MemoryAnalysisState::AiNotReady {
+            project.analysis = MemoryAnalysisState::Idle;
         }
         self.memory_work.next_pass_unix_ms = 0;
     }
@@ -514,29 +505,29 @@ impl Runtime {
     pub(super) fn quiet_project_memory(&mut self, project_id: &str) {
         self.cancel_memory_pass();
         if let Some(project) = self.memory_work.projects.get_mut(project_id) {
-            project.analysis = MemoryAnalysisSnapshot::default();
+            project.analysis = MemoryAnalysisState::Idle;
             project.retry_at_unix_ms = 0;
             project.failures = 0;
         }
     }
 
-    pub(super) fn note_memory_change(
-        &mut self,
-        project_id: &str,
-        notice: Option<MemoryNoticeSnapshot>,
-    ) {
-        if notice.is_some() {
-            self.memory_work
-                .projects
-                .entry(project_id.to_owned())
-                .or_default()
-                .notice = notice;
+    pub(super) fn note_memory_change(&mut self, project_id: &str, change: MemoryChange) {
+        let project = self
+            .memory_work
+            .projects
+            .entry(project_id.to_owned())
+            .or_default();
+        match change {
+            MemoryChange::Forgot(number) => project.forgotten = Some(number),
+            MemoryChange::Undid(number) if project.forgotten == Some(number) => {
+                project.forgotten = None;
+            }
+            MemoryChange::Undid(_) | MemoryChange::Other => {}
         }
         if self.named_memory_project() == Some(project_id) {
             self.sync_project_memory();
             self.refresh_project_memory();
         }
-        self.refresh_memory_received();
     }
 
     /// Applies one report; answers whether the screen changed.
@@ -551,16 +542,11 @@ impl Runtime {
         match report {
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
-                project.analysis = MemoryAnalysisSnapshot {
-                    state: MemoryAnalysisState::Analyzing,
-                    message: None,
-                    action: None,
-                };
+                project.analysis = MemoryAnalysisState::Analyzing;
             }
             PassReport::Analyzed {
                 project_id,
                 learned,
-                batch_ids,
                 error,
             } => {
                 let named = self.named_memory_project() == Some(project_id.as_str());
@@ -582,21 +568,12 @@ impl Runtime {
                         project.retry_at_unix_ms = retry_at;
                     }
                     None => {
-                        project.analysis = MemoryAnalysisSnapshot::default();
+                        project.analysis = MemoryAnalysisState::Idle;
                         project.failures = 0;
                         project.retry_at_unix_ms = 0;
                     }
                 }
-                if !batch_ids.is_empty() {
-                    project.notice = Some(MemoryNoticeSnapshot {
-                        message: format!(
-                            "Learned {learned} {}",
-                            if learned == 1 { "memory" } else { "memories" }
-                        ),
-                        undo_batch_id: Some(batch_ids.join(",")),
-                    });
-                }
-                if named {
+                if named && learned > 0 {
                     self.refresh_project_memory();
                 }
             }
@@ -611,34 +588,23 @@ impl Runtime {
     }
 }
 
-/// What a failure shows and when the Project is tried again (B4, B23): only
-/// a sign-in or a provider choice reaches the screen, as an action; a usage
+/// What a failure shows and when the Project is tried again (B4, B23,
+/// D-27): only Hide AI that cannot answer (signed out, no agent chosen)
+/// reaches the screen, as "Hide AI not ready" with its settings; a usage
 /// limit waits for the time the provider named, and anything else backs off
 /// in the log alone.
 fn analysis_after_failure(
     error: &AiError,
     failures: u32,
     now_unix_ms: u64,
-) -> (MemoryAnalysisSnapshot, u64) {
+) -> (MemoryAnalysisState, u64) {
     match error {
-        AiError::NotAuthenticated => (
-            MemoryAnalysisSnapshot {
-                state: MemoryAnalysisState::NeedsAction,
-                message: Some("Sign in to the agent Hide AI runs on".to_owned()),
-                action: Some(MemoryFix::SignIn),
-            },
-            now_unix_ms.saturating_add(SIGN_IN_RETRY_MS),
-        ),
-        AiError::NoProvider(_) | AiError::Unsupported(_) => (
-            MemoryAnalysisSnapshot {
-                state: MemoryAnalysisState::NeedsAction,
-                message: Some("Choose an agent for Hide AI".to_owned()),
-                action: Some(MemoryFix::OpenSettings),
-            },
+        AiError::NotAuthenticated | AiError::NoProvider(_) | AiError::Unsupported(_) => (
+            MemoryAnalysisState::AiNotReady,
             now_unix_ms.saturating_add(SIGN_IN_RETRY_MS),
         ),
         AiError::UsageLimited { retry_after } => (
-            MemoryAnalysisSnapshot::default(),
+            MemoryAnalysisState::Idle,
             now_unix_ms
                 .saturating_add(retry_after.map_or(USAGE_RETRY_MS, |wait| wait.as_millis() as u64)),
         ),
@@ -647,7 +613,7 @@ fn analysis_after_failure(
                 .saturating_mul(1_u64 << failures.saturating_sub(1).min(16))
                 .min(RETRY_LAST_MS);
             (
-                MemoryAnalysisSnapshot::default(),
+                MemoryAnalysisState::Idle,
                 now_unix_ms.saturating_add(backoff),
             )
         }
@@ -668,20 +634,27 @@ fn apply_pass_report(context: &RuntimeWorkerContext, report: PassReport) {
     }
 }
 
+/// What a `hide memory` command did, for the card the Memory tab offers to
+/// bring back.
+pub(crate) enum MemoryChange {
+    Forgot(u64),
+    Undid(u64),
+    Other,
+}
+
 /// Tells the core a `hide memory` command changed a Project's Memory, so the
-/// screen reads it again and an added or forgotten card can be undone from
-/// it.
+/// screen reads it again and a forgotten card can be brought back from it.
 pub(crate) fn report_memory_change(
     context: &RuntimeWorkerContext,
     project_id: &str,
-    notice: Option<MemoryNoticeSnapshot>,
+    change: MemoryChange,
 ) {
     let Some(runtime) = context.runtime.upgrade() else {
         return;
     };
     let applied = match runtime.lock() {
         Ok(mut guard) => {
-            guard.note_memory_change(project_id, notice);
+            guard.note_memory_change(project_id, change);
             true
         }
         Err(_) => false,
@@ -774,7 +747,6 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
             report(PassReport::Analyzed {
                 project_id,
                 learned: tally.learned,
-                batch_ids: tally.batch_ids,
                 error: tally.error,
             });
         }
@@ -799,7 +771,6 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
 struct ProjectTally {
     analyzing: bool,
     learned: usize,
-    batch_ids: Vec<String>,
     error: Option<AiError>,
 }
 
@@ -943,10 +914,7 @@ fn walk_project(
             &input.cancel,
             &mut admit,
         ) {
-            Ok(result) => {
-                tally.learned += result.learned;
-                tally.batch_ids.extend(result.batch_ids);
-            }
+            Ok(learned) => tally.learned += learned,
             // One provider failure stops this Project's analysis for the pass;
             // its receipts are still walked.
             Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
@@ -1293,14 +1261,9 @@ fn record_sighted_receipts(
     }
 }
 
-pub(super) struct SessionAnalysis {
-    pub(super) learned: usize,
-    pub(super) batch_ids: Vec<String>,
-}
-
 /// Analyzes the session's conversation past the analysis cursor, one
 /// provider call per bounded group, and moves the cursor only when every
-/// group was written.
+/// group was written. Answers how many cards it created or replaced.
 fn analyze_session(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
@@ -1309,7 +1272,7 @@ fn analyze_session(
     session: &ProjectSession,
     cancel: &CancelToken,
     admit: &mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>,
-) -> Result<SessionAnalysis, AnalysisFailure> {
+) -> Result<usize, AnalysisFailure> {
     let local = |error: String| AnalysisFailure::Local(error);
     let provider = session.agent.as_str();
     let saved = store
@@ -1338,7 +1301,6 @@ fn analyze_session(
         .collect::<Vec<_>>();
     let checkout = session.checkout_path.to_string_lossy().into_owned();
     let mut learned = 0;
-    let mut batch_ids = Vec::new();
     let mut last_hash = saved.and_then(|record| record.last_content_hash);
     for group in event_groups(&events).map_err(local)? {
         if cancel.is_cancelled() {
@@ -1362,10 +1324,6 @@ fn analyze_session(
         last_hash = Some(written.content_hash);
         if !written.summary.duplicate_batch {
             learned += written.summary.created + written.summary.superseded;
-            if written.summary.created + written.summary.superseded + written.summary.conflicts > 0
-            {
-                batch_ids.push(written.batch_id);
-            }
         }
     }
     store
@@ -1382,7 +1340,7 @@ fn analyze_session(
             },
         )
         .map_err(|error| local(error.to_string()))?;
-    Ok(SessionAnalysis { learned, batch_ids })
+    Ok(learned)
 }
 
 /// Where a batch of new text came from.
@@ -1585,6 +1543,10 @@ pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Val
                 .flatten()
         })
         .collect::<HashSet<_>>();
+    let times = events
+        .iter()
+        .filter_map(|event| Some((event.get("offset")?.as_u64()?, event.get("at_unix_ms")?.as_u64()?)))
+        .collect::<HashMap<_, _>>();
     let before = candidates.len();
     candidates.retain(|candidate| {
         candidate
@@ -1598,6 +1560,11 @@ pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Val
             .iter()
             .copied()
             .filter(|offset| human.contains(offset))
+            .collect();
+        candidate.source_times = candidate
+            .source_offsets
+            .iter()
+            .filter_map(|offset| Some((*offset, *times.get(offset)?)))
             .collect();
     }
     before - candidates.len()
@@ -1848,6 +1815,7 @@ mod tests {
                         salience: 0.9,
                         source_offsets: vec![1],
                         human_offsets: vec![1],
+                        source_times: Default::default(),
                         cited_paths: Vec::new(),
                         relation: CandidateRelation::New,
                     }],
@@ -2278,15 +2246,17 @@ mod tests {
     }
 
     #[test]
-    fn only_a_sign_in_or_an_agent_choice_reaches_the_screen_and_the_rest_backs_off() {
-        // B4, B23.
+    fn only_hide_ai_that_cannot_answer_reaches_the_screen_and_the_rest_backs_off() {
+        // B4, B23, D-27.
         let now = 1_000_000;
-        let (shown, retry) = analysis_after_failure(&AiError::NotAuthenticated, 1, now);
-        assert_eq!(
-            (shown.state, shown.action),
-            (MemoryAnalysisState::NeedsAction, Some(MemoryFix::SignIn))
-        );
-        assert_eq!(retry, now + SIGN_IN_RETRY_MS);
+        for error in [
+            AiError::NotAuthenticated,
+            AiError::NoProvider(Vec::new()),
+        ] {
+            let (shown, retry) = analysis_after_failure(&error, 1, now);
+            assert_eq!(shown, MemoryAnalysisState::AiNotReady, "{error:?}");
+            assert_eq!(retry, now + SIGN_IN_RETRY_MS);
+        }
 
         let (shown, retry) = analysis_after_failure(
             &AiError::UsageLimited {
@@ -2295,7 +2265,7 @@ mod tests {
             1,
             now,
         );
-        assert_eq!(shown, MemoryAnalysisSnapshot::default());
+        assert_eq!(shown, MemoryAnalysisState::Idle);
         assert_eq!(retry, now + 90_000, "the provider's resume time is kept");
 
         let backoff = |failures| analysis_after_failure(&AiError::Timeout, failures, now).1 - now;
@@ -2304,13 +2274,15 @@ mod tests {
         assert_eq!(backoff(40), RETRY_LAST_MS);
         assert_eq!(
             analysis_after_failure(&AiError::Timeout, 3, now).0,
-            MemoryAnalysisSnapshot::default()
+            MemoryAnalysisState::Idle
         );
     }
 
     #[test]
-    fn the_operators_words_are_the_human_events_and_an_unsent_offset_is_left_out() {
-        // D-14: the store makes a correction without them wait for review.
+    fn the_operators_words_and_their_times_come_from_the_sent_events_and_an_unsent_offset_is_left_out()
+     {
+        // D-14: the conflict rule ranks the operator's words first; B21: a
+        // source shows when it was said.
         let candidate = |offset| Candidate {
             text: "Use yarn".to_owned(),
             title: String::new(),
@@ -2320,14 +2292,15 @@ mod tests {
             salience: 0.9,
             source_offsets: vec![offset],
             human_offsets: Vec::new(),
+            source_times: Default::default(),
             cited_paths: Vec::new(),
             relation: CandidateRelation::Supersedes {
                 target_id: "card".to_owned(),
             },
         };
         let events = [
-            json!({"offset": 1, "kind": "human", "text": "Use yarn now"}),
-            json!({"offset": 2, "kind": "assistant", "text": "Switching to yarn"}),
+            json!({"offset": 1, "kind": "human", "at_unix_ms": 10, "text": "Use yarn now"}),
+            json!({"offset": 2, "kind": "assistant", "at_unix_ms": 20, "text": "Switching to yarn"}),
         ];
 
         let mut checked = vec![candidate(1), candidate(2), candidate(9)];
@@ -2339,6 +2312,8 @@ mod tests {
 
         assert_eq!(checked[0].human_offsets, [1]);
         assert!(checked[1].human_offsets.is_empty());
+        assert_eq!(checked[0].source_times, [(1, 10)].into());
+        assert_eq!(checked[1].source_times, [(2, 20)].into());
         assert_eq!(checked.len(), 2);
     }
 }

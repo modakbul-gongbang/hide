@@ -415,7 +415,7 @@ impl Runtime {
                 None => {
                     self.set_error(
                         "workspace_view.unknown_tool",
-                        format!("{value} is not a Workspace tool; expected explorer or changes"),
+                        format!("{value} is not a Workspace tool; expected explorer, changes, agent_sessions or memory"),
                         false,
                     );
                     return true;
@@ -793,6 +793,7 @@ impl Runtime {
                 Tool::Explorer => RightPanelSection::Explorer,
                 Tool::Changes => RightPanelSection::Changes,
                 Tool::AgentSessions => RightPanelSection::AgentSessions,
+                Tool::Memory => RightPanelSection::Memory,
             };
         }
     }

@@ -683,22 +683,15 @@ fn default_true() -> bool {
 }
 
 /// One operator action on a catalog Project's Memory (PRD
-/// project-memory-v2 B20-B24), from the screen that opened it or a pane's
-/// menu. Cards are named by number, as agents name them.
+/// project-memory-v2 B19-B24), from its Memory tab. Cards are named by
+/// number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
     pub(super) workspace_id: String,
     pub(super) action: crate::model::MemoryAction,
-    /// The card a forget or a review names; for a review, the card in use.
+    /// The card a forget or an undo names.
     #[serde(default)]
     pub(super) number: Option<u64>,
-    /// For a review, the card that contradicts it.
-    #[serde(default)]
-    pub(super) other_number: Option<u64>,
-    #[serde(default)]
-    pub(super) batch_id: Option<String>,
-    #[serde(default)]
-    pub(super) choice: Option<crate::model::MemoryReviewChoice>,
 }
 
 /// Opens a catalog Project's Memory for a screen; none closes it.

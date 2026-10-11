@@ -2,7 +2,7 @@ use ring::hmac;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -34,7 +34,6 @@ pub enum StoreMode {
 pub enum MemoryLifecycle {
     Active,
     Superseded,
-    Conflicting,
     Tombstoned,
 }
 
@@ -43,7 +42,6 @@ impl MemoryLifecycle {
         match self {
             Self::Active => "active",
             Self::Superseded => "superseded",
-            Self::Conflicting => "conflicting",
             Self::Tombstoned => "tombstoned",
         }
     }
@@ -52,7 +50,6 @@ impl MemoryLifecycle {
         match value {
             "active" => Ok(Self::Active),
             "superseded" => Ok(Self::Superseded),
-            "conflicting" => Ok(Self::Conflicting),
             "tombstoned" => Ok(Self::Tombstoned),
             _ => Err(MemoryError::InvalidState(value.to_owned())),
         }
@@ -113,6 +110,8 @@ pub struct Candidate {
     /// The source offsets that are the operator's own words; a correction
     /// replaces a card only when one exists (D-14).
     pub human_offsets: Vec<u64>,
+    /// When each source offset was said, as the conversation recorded it.
+    pub source_times: BTreeMap<u64, u64>,
     /// Repository-relative files the card rests on, already checked by the
     /// caller to exist inside the checkout (D-26).
     pub cited_paths: Vec<String>,
@@ -161,15 +160,16 @@ pub enum CandidateOutcome {
     Merged {
         number: u64,
     },
-    /// The operator's own correction replaced the card's text.
+    /// The new text won the conflict and replaced the card's text; the old
+    /// text stays in the card's history (D-14).
     Superseded {
         number: u64,
     },
-    /// A new card that contradicts `existing` without the operator's word; it
-    /// waits for review and is not injected (D-14).
-    Conflict {
+    /// The new text lost the conflict to the operator's own words on card
+    /// `number`; it is kept in that card's history and never injected (D-14,
+    /// B7).
+    Kept {
         number: u64,
-        existing: u64,
     },
     Discarded,
     SecretRejected,
@@ -181,7 +181,7 @@ pub struct ApplySummary {
     pub created: usize,
     pub merged_sources: usize,
     pub superseded: usize,
-    pub conflicts: usize,
+    pub kept: usize,
     pub discarded: usize,
     pub secret_candidates: usize,
     pub capacity_rejections: usize,
@@ -204,7 +204,6 @@ pub struct ProjectMemoryState {
     pub enabled: bool,
     pub disclosure_accepted_at_unix_ms: Option<u64>,
     pub active_count: usize,
-    pub conflict_count: usize,
     pub capacity_reached: bool,
 }
 
@@ -229,8 +228,6 @@ pub struct MemoryItem {
     /// How many times an agent read it with `hide memory show` (B14).
     pub pull_count: u64,
     pub last_used_at_unix_ms: Option<u64>,
-    /// The other card of a needs-review pair, by number.
-    pub conflict_number: Option<u64>,
     /// Repository-relative files the card rests on (B27); empty for a card
     /// that cited none or predates them.
     pub cited_paths: Vec<String>,
@@ -248,6 +245,18 @@ pub struct MemorySource {
     pub content_hash: String,
     pub available: bool,
     pub human: bool,
+    /// When the cited words were said; `None` for a source written before
+    /// Hide kept the time.
+    pub at_unix_ms: Option<u64>,
+}
+
+/// The text a card had before its current revision replaced it, which the
+/// card's Undo restores (B19).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreviousRevision {
+    pub body: String,
+    /// When the current text replaced it.
+    pub changed_at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -255,7 +264,7 @@ pub struct MemoryDetail {
     pub item: MemoryItem,
     pub sources: Vec<MemorySource>,
     pub revisions: Vec<(u64, String, MemoryLifecycle, u64)>,
-    pub conflict_pair: Option<(String, String)>,
+    pub previous: Option<PreviousRevision>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -471,13 +480,6 @@ impl Injection {
             }
         })
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConflictChoice {
-    KeepExisting,
-    ReplaceWithNew,
-    ForgetBoth,
 }
 
 /// What recording one receipt did.
@@ -857,7 +859,6 @@ impl MemoryStore {
             .optional()?
             .ok_or(MemoryError::ProjectMissing)?;
         let active_count = count_state(&self.connection, project_id, "active")?;
-        let conflict_count = count_state(&self.connection, project_id, "conflicting")?;
         let live_count = count_live(&self.connection, project_id)?;
         Ok(ProjectMemoryState {
             project_id: project_id.to_owned(),
@@ -866,7 +867,6 @@ impl MemoryStore {
                 .then_some(disclosure)
                 .flatten(),
             active_count,
-            conflict_count,
             capacity_reached: live_count >= ACTIVE_MEMORY_LIMIT,
         })
     }
@@ -975,7 +975,7 @@ impl MemoryStore {
         session_id: &str,
     ) -> Result<Vec<(u64, String)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT DISTINCT i.number,r.title FROM injection_receipts ir JOIN injection_receipt_items rii ON rii.receipt_id=ir.id JOIN memory_items i ON i.id=rii.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE ir.runtime=?1 AND ir.session_id=?2 AND i.lifecycle IN('active','conflicting') ORDER BY i.number",
+            "SELECT DISTINCT i.number,r.title FROM injection_receipts ir JOIN injection_receipt_items rii ON rii.receipt_id=ir.id JOIN memory_items i ON i.id=rii.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE ir.runtime=?1 AND ir.session_id=?2 AND i.lifecycle='active' ORDER BY i.number",
         )?;
         Ok(statement
             .query_map(params![runtime, session_id], |row| {
@@ -993,7 +993,7 @@ impl MemoryStore {
         session_id: &str,
     ) -> Result<Vec<(u64, u64)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT DISTINCT s.event_offset,i.number FROM memory_sources s JOIN memory_items i ON i.id=s.item_id WHERE i.project_id=?1 AND s.provider=?2 AND s.session_id=?3 AND i.lifecycle IN('active','conflicting') ORDER BY s.event_offset,i.number",
+            "SELECT DISTINCT s.event_offset,i.number FROM memory_sources s JOIN memory_items i ON i.id=s.item_id WHERE i.project_id=?1 AND s.provider=?2 AND s.session_id=?3 AND i.lifecycle='active' ORDER BY s.event_offset,i.number",
         )?;
         Ok(statement
             .query_map(params![project_id, provider, session_id], |row| {
@@ -1115,15 +1115,7 @@ impl MemoryStore {
                     }
                     let item_id =
                         stable_id("memory", &[&batch.id, &index.to_string(), &redacted.text]);
-                    let number = create_item(
-                        &transaction,
-                        batch,
-                        candidate,
-                        &item_id,
-                        MemoryLifecycle::Active,
-                        &card,
-                        None,
-                    )?;
+                    let number = create_item(&transaction, batch, candidate, &item_id, &card)?;
                     live_count += 1;
                     summary.created += 1;
                     CandidateOutcome::Created { number }
@@ -1142,10 +1134,25 @@ impl MemoryStore {
                         number: item_number(&transaction, target_id)?,
                     }
                 }
-                CandidateRelation::Supersedes { target_id } if candidate.direct_human_source() => {
+                // A contradiction is settled by rule, never by asking: the
+                // side resting on the operator's own words wins, and between
+                // equals the newer text wins. The losing text stays in the
+                // card's history (D-14, B18).
+                CandidateRelation::Supersedes { target_id }
+                | CandidateRelation::Conflicts { target_id } => {
                     let previous =
                         require_active_target(&transaction, &batch.project_id, target_id)?;
                     let revision = next_revision(&transaction, target_id)?;
+                    if !candidate.direct_human_source()
+                        && revision_has_human_source(&transaction, target_id, previous.1)?
+                    {
+                        transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'superseded',?9,?10)", params![revision_id(target_id,revision),target_id,revision,card.body,card.title,card.aliases_json(),card.cited_json(),candidate.kind.as_str(),batch.created_at_unix_ms,batch.id])?;
+                        summary.kept += 1;
+                        summary.outcomes.push(CandidateOutcome::Kept {
+                            number: item_number(&transaction, target_id)?,
+                        });
+                        continue;
+                    }
                     record_batch_change(
                         &transaction,
                         &batch.id,
@@ -1161,36 +1168,6 @@ impl MemoryStore {
                     summary.superseded += 1;
                     CandidateOutcome::Superseded {
                         number: item_number(&transaction, target_id)?,
-                    }
-                }
-                // Without the operator's own words a contradiction never
-                // displaces the card agents already rely on: the old card
-                // stays active and injected, the new one waits for review
-                // (D-14, B18).
-                CandidateRelation::Supersedes { target_id }
-                | CandidateRelation::Conflicts { target_id } => {
-                    if live_count >= item_limit {
-                        summary.capacity_rejections += 1;
-                        summary.outcomes.push(CandidateOutcome::CapacityRejected);
-                        continue;
-                    }
-                    require_active_target(&transaction, &batch.project_id, target_id)?;
-                    let candidate_id =
-                        stable_id("memory", &[&batch.id, &index.to_string(), &redacted.text]);
-                    let number = create_item(
-                        &transaction,
-                        batch,
-                        candidate,
-                        &candidate_id,
-                        MemoryLifecycle::Conflicting,
-                        &card,
-                        Some(target_id),
-                    )?;
-                    live_count += 1;
-                    summary.conflicts += 1;
-                    CandidateOutcome::Conflict {
-                        number,
-                        existing: item_number(&transaction, target_id)?,
                     }
                 }
                 CandidateRelation::Discard => unreachable!(),
@@ -1276,7 +1253,7 @@ impl MemoryStore {
     /// most recently changed (B21).
     pub fn list_memories(&self, project_id: &str) -> Result<Vec<MemoryItem>, MemoryError> {
         let mut statement = self.connection.prepare(&format!(
-            "{ITEM_SELECT} WHERE i.project_id=?1 AND i.lifecycle IN ('active','conflicting') ORDER BY i.lifecycle='conflicting' DESC,i.updated_at_ms DESC,i.id"
+            "{ITEM_SELECT} WHERE i.project_id=?1 AND i.lifecycle='active' ORDER BY i.updated_at_ms DESC,i.id"
         ))?;
         let rows = statement.query_map([project_id], map_item)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1392,7 +1369,7 @@ impl MemoryStore {
         let item = self
             .item(project_id, item_id)?
             .ok_or(MemoryError::MemoryMissing)?;
-        let mut source_statement = self.connection.prepare("SELECT provider,session_id,event_offset,content_hash,available,human FROM memory_sources WHERE item_id=?1 ORDER BY provider,session_id,event_offset")?;
+        let mut source_statement = self.connection.prepare("SELECT provider,session_id,event_offset,content_hash,available,human,at_ms FROM memory_sources WHERE item_id=?1 ORDER BY COALESCE(at_ms,0) DESC,provider,session_id,event_offset")?;
         let sources = source_statement
             .query_map([item_id], |row| {
                 Ok(MemorySource {
@@ -1402,6 +1379,7 @@ impl MemoryStore {
                     content_hash: row.get(3)?,
                     available: row.get::<_, i64>(4)? != 0,
                     human: row.get::<_, i64>(5)? != 0,
+                    at_unix_ms: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1422,39 +1400,32 @@ impl MemoryStore {
                 Ok((revision, body, MemoryLifecycle::parse(&state)?, at))
             })
             .collect::<Result<Vec<_>, MemoryError>>()?;
-        let conflict_pair = self.conflict_pair(project_id, &item)?;
+        // The text the current revision replaced, exactly what the card's
+        // Undo restores: only a change that moved the card off an active
+        // revision of its own has one.
+        let previous = self
+            .connection
+            .query_row(
+                "SELECT p.body,r.created_at_ms FROM memory_items i \
+                 JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+                 JOIN batch_changes c ON c.batch_id=r.batch_id AND c.item_id=i.id \
+                 JOIN memory_revisions p ON p.item_id=i.id AND p.revision=c.previous_revision \
+                 WHERE i.id=?1 AND i.lifecycle='active' AND c.previous_lifecycle='active' AND p.body!=r.body",
+                [item_id],
+                |row| {
+                    Ok(PreviousRevision {
+                        body: row.get(0)?,
+                        changed_at_unix_ms: row.get(1)?,
+                    })
+                },
+            )
+            .optional()?;
         Ok(MemoryDetail {
             item,
             sources,
             revisions,
-            conflict_pair,
+            previous,
         })
-    }
-
-    /// `(existing, candidate)` ids while `item` is either side of a pair that
-    /// waits for review.
-    fn conflict_pair(
-        &self,
-        project_id: &str,
-        item: &MemoryItem,
-    ) -> Result<Option<(String, String)>, MemoryError> {
-        if item.lifecycle == MemoryLifecycle::Conflicting {
-            let existing: Option<String> = self.connection.query_row(
-                "SELECT conflict_with_id FROM memory_items WHERE id=?1 AND project_id=?2",
-                params![item.id, project_id],
-                |row| row.get(0),
-            )?;
-            return Ok(existing.map(|existing| (existing, item.id.clone())));
-        }
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT id FROM memory_items WHERE project_id=?1 AND conflict_with_id=?2 AND lifecycle='conflicting' ORDER BY created_at_ms DESC LIMIT 1",
-                params![project_id, item.id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .map(|candidate| (item.id.clone(), candidate)))
     }
 
     pub fn forget(&mut self, project_id: &str, item_id: &str) -> Result<String, MemoryError> {
@@ -1550,56 +1521,6 @@ impl MemoryStore {
         )?;
         transaction.commit()?;
         self.item_by_number(project_id, number)
-    }
-
-    /// Settles a needs-review pair and returns the batch Undo reverses (B20).
-    pub fn resolve_conflict(
-        &mut self,
-        project_id: &str,
-        existing_id: &str,
-        candidate_id: &str,
-        choice: ConflictChoice,
-    ) -> Result<String, MemoryError> {
-        self.require_writer()?;
-        let transaction = self.connection.transaction()?;
-        let (candidate_state, _) = require_target(&transaction, project_id, candidate_id)?;
-        let paired: Option<String> = transaction.query_row(
-            "SELECT conflict_with_id FROM memory_items WHERE id=?1",
-            [candidate_id],
-            |row| row.get(0),
-        )?;
-        if candidate_state != MemoryLifecycle::Conflicting || paired.as_deref() != Some(existing_id)
-        {
-            return Err(MemoryError::InvalidState(
-                "conflict_pair_not_pending".to_owned(),
-            ));
-        }
-        require_target(&transaction, project_id, existing_id)?;
-        let batch_id = stable_id(
-            "resolve",
-            &[
-                existing_id,
-                candidate_id,
-                &format!("{choice:?}"),
-                &now_ms().to_string(),
-            ],
-        );
-        let changes: &[(&str, MemoryLifecycle)] = match choice {
-            ConflictChoice::KeepExisting => &[(candidate_id, MemoryLifecycle::Tombstoned)],
-            ConflictChoice::ReplaceWithNew => &[
-                (existing_id, MemoryLifecycle::Superseded),
-                (candidate_id, MemoryLifecycle::Active),
-            ],
-            ConflictChoice::ForgetBoth => &[
-                (existing_id, MemoryLifecycle::Tombstoned),
-                (candidate_id, MemoryLifecycle::Tombstoned),
-            ],
-        };
-        for (item_id, state) in changes {
-            append_lifecycle(&transaction, project_id, item_id, *state, &batch_id)?;
-        }
-        transaction.commit()?;
-        Ok(batch_id)
     }
 
     pub fn retrieve(&self, query: &RetrievalQuery) -> Result<Injection, MemoryError> {
@@ -2156,10 +2077,12 @@ COMMIT;"#,
 }
 
 /// Version 8 (PRD project-memory-v2): card numbers, titles and aliases,
-/// use counts, human sources and the day's analysis calls. A card the old
-/// conflict path hid becomes active again, because an unconfirmed
-/// contradiction no longer takes a card away (D-14); its pending candidate
-/// stays for review. Prompt topics and the hook projection's cursors go:
+/// use counts, human sources and when they were said, and the day's
+/// analysis calls. A card the old conflict path hid becomes active again,
+/// and each pair that waited for review is settled by the conflict rule
+/// (D-14, D-23, B25): no version-7 source is marked as the operator's
+/// words, so the newer side wins and the older card is forgotten. A source's time is
+/// the analysis time of its batch, the closest the old rows hold. Prompt topics and the hook projection's cursors go:
 /// prompts are matched by their own words and receipts come from the
 /// session reads (D-05, D-16).
 fn migrate_version_seven(connection: &Connection) -> Result<(), MemoryError> {
@@ -2184,8 +2107,8 @@ ALTER TABLE hook_projection_cursors RENAME TO receipt_cursors;
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
 CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id,project_id);
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
-CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);
-ALTER TABLE memory_items ADD COLUMN archived_reason TEXT CHECK(archived_reason IS NULL OR archived_reason IN('review_expired'));
+ALTER TABLE memory_sources ADD COLUMN at_ms INTEGER;
+UPDATE memory_sources SET at_ms=(SELECT MIN(b.created_at_ms) FROM analysis_batches b WHERE b.provider=memory_sources.provider AND b.session_id=memory_sources.session_id AND b.content_hash=memory_sources.content_hash);
 CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('suggested','dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,agent_id TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);"#,
         )?;
         let items = {
@@ -2216,6 +2139,41 @@ CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
 UPDATE memory_revisions SET lifecycle='active' WHERE lifecycle='conflicting' AND EXISTS(SELECT 1 FROM memory_items i WHERE i.id=memory_revisions.item_id AND i.current_revision=memory_revisions.revision AND i.lifecycle='conflicting' AND i.conflict_with_id IS NULL);
 UPDATE memory_items SET lifecycle='active' WHERE lifecycle='conflicting' AND conflict_with_id IS NULL;"#,
+        )?;
+        let pairs = {
+            let mut statement = connection.prepare(
+                "SELECT p.id,p.current_revision,x.id FROM memory_items p \
+                 JOIN memory_items x ON x.id=p.conflict_with_id \
+                 WHERE p.lifecycle='conflicting' AND x.lifecycle='active'",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (pending, pending_revision, existing) in pairs {
+            connection.execute(
+                "UPDATE memory_items SET lifecycle='active' WHERE id=?1",
+                [&pending],
+            )?;
+            connection.execute(
+                "UPDATE memory_revisions SET lifecycle='active' WHERE item_id=?1 AND revision=?2",
+                params![pending, pending_revision],
+            )?;
+            connection.execute(
+                "UPDATE memory_items SET lifecycle='tombstoned' WHERE id=?1",
+                [&existing],
+            )?;
+        }
+        connection.execute_batch(
+            r#"UPDATE memory_items SET lifecycle='tombstoned' WHERE lifecycle='conflicting';
+UPDATE memory_revisions SET lifecycle='superseded' WHERE lifecycle='conflicting';
+ALTER TABLE memory_items DROP COLUMN conflict_with_id;"#,
         )?;
         let revisions = {
             let mut statement = connection.prepare("SELECT id,body FROM memory_revisions")?;
@@ -2448,12 +2406,11 @@ CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCE
 CREATE TABLE session_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE receipt_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE analysis_batches(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,analysis_provider TEXT NOT NULL,session_id TEXT NOT NULL,content_hash TEXT NOT NULL,created_at_ms INTEGER NOT NULL,UNIQUE(project_id,provider,session_id,content_hash));
-CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,conflict_with_id TEXT,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER,archived_reason TEXT CHECK(archived_reason IS NULL OR archived_reason IN('review_expired')));
+CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER);
 CREATE INDEX memory_items_project_state ON memory_items(project_id,lifecycle,updated_at_ms DESC);
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
-CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);
 CREATE TABLE memory_revisions(id TEXT PRIMARY KEY,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,lifecycle TEXT NOT NULL,created_at_ms INTEGER NOT NULL,batch_id TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',aliases TEXT NOT NULL DEFAULT '[]',cited_paths TEXT NOT NULL DEFAULT '[]',UNIQUE(item_id,revision));
-CREATE TABLE memory_sources(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,provider TEXT NOT NULL,session_id TEXT NOT NULL,event_offset INTEGER NOT NULL,content_hash TEXT NOT NULL,available INTEGER NOT NULL DEFAULT 1,human INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(item_id,provider,session_id,event_offset,content_hash));
+CREATE TABLE memory_sources(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,provider TEXT NOT NULL,session_id TEXT NOT NULL,event_offset INTEGER NOT NULL,content_hash TEXT NOT NULL,available INTEGER NOT NULL DEFAULT 1,human INTEGER NOT NULL DEFAULT 0,at_ms INTEGER,PRIMARY KEY(item_id,provider,session_id,event_offset,content_hash));
 CREATE TABLE batch_changes(batch_id TEXT NOT NULL,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,previous_lifecycle TEXT,previous_revision INTEGER,PRIMARY KEY(batch_id,item_id));
 CREATE TABLE injection_receipts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,runtime TEXT NOT NULL,session_id TEXT NOT NULL,turn_id TEXT,outcome TEXT NOT NULL,created_at_ms INTEGER NOT NULL);
 CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id,project_id);
@@ -2470,8 +2427,6 @@ const ITEM_SELECT: &str = "SELECT i.id,i.project_id,i.number,r.title,r.aliases,r
 (SELECT COUNT(*) FROM memory_sources s WHERE s.item_id=i.id AND s.human=1),\
 (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id WHERE rii.item_id=i.id),\
 i.pull_count,i.last_used_at_ms,\
-CASE WHEN i.lifecycle='conflicting' THEN (SELECT c.number FROM memory_items c WHERE c.id=i.conflict_with_id) \
-ELSE (SELECT c.number FROM memory_items c WHERE c.conflict_with_id=i.id AND c.lifecycle='conflicting' ORDER BY c.created_at_ms DESC LIMIT 1) END,\
 i.confidence,i.salience,i.created_at_ms,i.updated_at_ms,r.cited_paths \
 FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision";
 
@@ -2655,22 +2610,18 @@ fn create_item(
     batch: &AnalysisBatch,
     candidate: &Candidate,
     item_id: &str,
-    state: MemoryLifecycle,
     card: &CardText,
-    conflict_with: Option<&str>,
 ) -> Result<u64, MemoryError> {
     let number: u64 = transaction.query_row(
         "UPDATE projects SET next_number=next_number+1 WHERE id=?1 RETURNING next_number-1",
         [&batch.project_id],
         |row| row.get(0),
     )?;
-    transaction.execute("INSERT INTO memory_items(id,project_id,number,lifecycle,current_revision,confidence,salience,conflict_with_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,1,?5,?6,?7,?8,?8)",params![item_id,batch.project_id,number,state.as_str(),candidate.confidence,candidate.salience,conflict_with,batch.created_at_unix_ms])?;
-    transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,1,?3,?4,?5,?6,?7,?8,?9,?10)",params![revision_id(item_id,1),item_id,card.body,card.title,card.aliases_json(),card.cited_json(),candidate.kind.as_str(),state.as_str(),batch.created_at_unix_ms,batch.id])?;
+    transaction.execute("INSERT INTO memory_items(id,project_id,number,lifecycle,current_revision,confidence,salience,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'active',1,?4,?5,?6,?6)",params![item_id,batch.project_id,number,candidate.confidence,candidate.salience,batch.created_at_unix_ms])?;
+    transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,1,?3,?4,?5,?6,?7,'active',?8,?9)",params![revision_id(item_id,1),item_id,card.body,card.title,card.aliases_json(),card.cited_json(),candidate.kind.as_str(),batch.created_at_unix_ms,batch.id])?;
     record_batch_change(transaction, &batch.id, item_id, None, None)?;
     attach_sources(transaction, batch, candidate, item_id, 1)?;
-    if state == MemoryLifecycle::Active {
-        reindex(transaction, &batch.project_id, item_id, card)?;
-    }
+    reindex(transaction, &batch.project_id, item_id, card)?;
     Ok(number)
 }
 
@@ -2683,7 +2634,8 @@ fn attach_sources(
 ) -> Result<(), MemoryError> {
     for offset in &candidate.source_offsets {
         let human = candidate.human_offsets.contains(offset);
-        transaction.execute("INSERT OR IGNORE INTO memory_sources(item_id,revision,provider,session_id,event_offset,content_hash,available,human) VALUES(?1,?2,?3,?4,?5,?6,1,?7)",params![item_id,revision,batch.provider,batch.session_id,offset,batch.content_hash,human as i64])?;
+        let at = candidate.source_times.get(offset);
+        transaction.execute("INSERT OR IGNORE INTO memory_sources(item_id,revision,provider,session_id,event_offset,content_hash,available,human,at_ms) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8)",params![item_id,revision,batch.provider,batch.session_id,offset,batch.content_hash,human as i64,at])?;
     }
     Ok(())
 }
@@ -2786,6 +2738,19 @@ fn require_active_target(
     Ok(target)
 }
 
+/// Whether revision `revision` of the card rests on the operator's own words.
+fn revision_has_human_source(
+    transaction: &Transaction<'_>,
+    item_id: &str,
+    revision: u64,
+) -> Result<bool, MemoryError> {
+    Ok(transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_sources WHERE item_id=?1 AND revision=?2 AND human=1)",
+        params![item_id, revision],
+        |row| row.get(0),
+    )?)
+}
+
 fn current_revision(transaction: &Transaction<'_>, item_id: &str) -> Result<u64, MemoryError> {
     Ok(transaction.query_row(
         "SELECT current_revision FROM memory_items WHERE id=?1",
@@ -2886,12 +2851,11 @@ fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryItem> {
         provided_session_count: row.get::<_, u64>(11)? as usize,
         pull_count: row.get(12)?,
         last_used_at_unix_ms: row.get(13)?,
-        conflict_number: row.get(14)?,
-        confidence: row.get(15)?,
-        salience: row.get(16)?,
-        learned_at_unix_ms: row.get(17)?,
-        updated_at_unix_ms: row.get(18)?,
-        cited_paths: parse_aliases(&row.get::<_, String>(19)?),
+        confidence: row.get(14)?,
+        salience: row.get(15)?,
+        learned_at_unix_ms: row.get(16)?,
+        updated_at_unix_ms: row.get(17)?,
+        cited_paths: parse_aliases(&row.get::<_, String>(18)?),
     })
 }
 
@@ -3125,6 +3089,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             salience: 0.8,
             source_offsets: vec![7],
             human_offsets: vec![7],
+            source_times: BTreeMap::from([(7, 90)]),
             cited_paths: Vec::new(),
             relation,
         }
@@ -3268,9 +3233,74 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     }
 
     #[test]
-    fn an_unconfirmed_conflict_keeps_the_old_card_injected_and_holds_the_new_one_for_review() {
-        // D-14, B18: the old card stays active and is still given; only the
-        // new card waits for review and is not given.
+    fn a_conflict_is_settled_by_the_operators_words_then_by_age_without_asking() {
+        // D-14, B18, B7: the side resting on the operator's words wins,
+        // between equals the newer; the loser stays in the card's history.
+        for (old_human, new_human, given, outcome) in [
+            (true, false, "Use blue buttons", "kept"),
+            (false, false, "Use red buttons", "superseded"),
+            (true, true, "Use red buttons", "superseded"),
+            (false, true, "Use red buttons", "superseded"),
+        ] {
+            let (_temp, mut store, project) = store();
+            let words = |human: bool| if human { vec![7] } else { Vec::new() };
+            store
+                .apply_candidates(
+                    &batch(&project, "b1", "h1"),
+                    &[Candidate {
+                        human_offsets: words(old_human),
+                        ..candidate("Use blue buttons", CandidateRelation::New)
+                    }],
+                )
+                .unwrap();
+            let existing = store.list_memories(&project).unwrap()[0].clone();
+            let summary = store
+                .apply_candidates(
+                    &batch(&project, "b2", "h2"),
+                    &[Candidate {
+                        human_offsets: words(new_human),
+                        ..candidate(
+                            "Use red buttons",
+                            CandidateRelation::Conflicts {
+                                target_id: existing.id.clone(),
+                            },
+                        )
+                    }],
+                )
+                .unwrap();
+            let case = format!("old human {old_human}, new human {new_human}");
+            let number = existing.number;
+            let expected = if outcome == "kept" {
+                CandidateOutcome::Kept { number }
+            } else {
+                CandidateOutcome::Superseded { number }
+            };
+            assert_eq!(summary.outcomes, [expected], "{case}");
+            let given_now = store
+                .retrieve(&RetrievalQuery::prompt(&project, "buttons", vec![]))
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>();
+            assert_eq!(given_now, [given], "{case}");
+            let listed = store.list_memories(&project).unwrap();
+            assert_eq!(listed.len(), 1, "{case}: no second card");
+            let history = store
+                .detail(&project, &existing.id)
+                .unwrap()
+                .revisions
+                .into_iter()
+                .map(|(_, body, _, _)| body)
+                .collect::<Vec<_>>();
+            assert!(history.contains(&"Use blue buttons".to_owned()), "{case}");
+            assert!(history.contains(&"Use red buttons".to_owned()), "{case}");
+        }
+    }
+
+    #[test]
+    fn a_replaced_card_shows_its_previous_text_and_undo_brings_it_back() {
+        // B19: "N분 전에 바뀜 · 이전 내용", then Undo injects the old text again.
         let (_temp, mut store, project) = store();
         store
             .apply_candidates(
@@ -3278,123 +3308,43 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 &[candidate("Use blue buttons", CandidateRelation::New)],
             )
             .unwrap();
-        let existing = store.list_memories(&project).unwrap()[0].clone();
-        let summary = store
+        let card = store.list_memories(&project).unwrap()[0].clone();
+        assert_eq!(store.detail(&project, &card.id).unwrap().previous, None);
+        store
             .apply_candidates(
-                &batch(&project, "b2", "h2"),
-                &[Candidate {
-                    human_offsets: Vec::new(),
-                    ..candidate(
-                        "Use red buttons",
-                        CandidateRelation::Supersedes {
-                            target_id: existing.id.clone(),
-                        },
-                    )
-                }],
+                &AnalysisBatch {
+                    created_at_unix_ms: 500,
+                    ..batch(&project, "b2", "h2")
+                },
+                &[candidate(
+                    "Use red buttons",
+                    CandidateRelation::Supersedes {
+                        target_id: card.id.clone(),
+                    },
+                )],
             )
             .unwrap();
+        let detail = store.detail(&project, &card.id).unwrap();
         assert_eq!(
-            summary.outcomes,
-            [CandidateOutcome::Conflict {
-                number: 2,
-                existing: existing.number
-            }]
+            detail.previous,
+            Some(PreviousRevision {
+                body: "Use blue buttons".to_owned(),
+                changed_at_unix_ms: 500,
+            })
         );
-        assert_eq!(store.project_state(&project).unwrap().conflict_count, 1);
-        let prompt = |store: &MemoryStore, text: &str| {
-            store
-                .retrieve(&RetrievalQuery::prompt(&project, text, vec![]))
-                .unwrap()
-                .items
-                .into_iter()
-                .map(|item| item.text)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(prompt(&store, "buttons"), ["Use blue buttons"]);
-        assert!(prompt(&store, "red").is_empty());
-        let listed = store.list_memories(&project).unwrap();
-        assert_eq!(listed[0].lifecycle, MemoryLifecycle::Conflicting);
-        assert_eq!(listed[0].conflict_number, Some(existing.number));
-        assert_eq!(listed[1].conflict_number, Some(2));
-    }
+        assert_eq!(detail.sources[0].at_unix_ms, Some(90));
 
-    #[test]
-    fn each_review_choice_applies_at_once_and_undo_restores_the_pair() {
-        // B20
-        for (choice, given, existing_state, new_state) in [
-            (
-                ConflictChoice::KeepExisting,
-                vec!["Use blue buttons"],
-                MemoryLifecycle::Active,
-                MemoryLifecycle::Tombstoned,
-            ),
-            (
-                ConflictChoice::ReplaceWithNew,
-                vec!["Use red buttons"],
-                MemoryLifecycle::Superseded,
-                MemoryLifecycle::Active,
-            ),
-            (
-                ConflictChoice::ForgetBoth,
-                vec![],
-                MemoryLifecycle::Tombstoned,
-                MemoryLifecycle::Tombstoned,
-            ),
-        ] {
-            let (_temp, mut store, project) = store();
-            store
-                .apply_candidates(
-                    &batch(&project, "b1", "h1"),
-                    &[candidate("Use blue buttons", CandidateRelation::New)],
-                )
-                .unwrap();
-            let existing = store.list_memories(&project).unwrap()[0].id.clone();
-            store
-                .apply_candidates(
-                    &batch(&project, "b2", "h2"),
-                    &[candidate(
-                        "Use red buttons",
-                        CandidateRelation::Conflicts {
-                            target_id: existing.clone(),
-                        },
-                    )],
-                )
-                .unwrap();
-            let new = store.list_memories(&project).unwrap()[0].id.clone();
-            let given_now = |store: &MemoryStore| {
-                store
-                    .retrieve(&RetrievalQuery::prompt(&project, "buttons", vec![]))
-                    .unwrap()
-                    .items
-                    .into_iter()
-                    .map(|item| item.text)
-                    .collect::<Vec<_>>()
-            };
-            let undo = store
-                .resolve_conflict(&project, &existing, &new, choice)
-                .unwrap();
-            assert_eq!(given_now(&store), given, "{choice:?}");
-            assert_eq!(
-                store.detail(&project, &existing).unwrap().item.lifecycle,
-                existing_state
-            );
-            assert_eq!(
-                store.detail(&project, &new).unwrap().item.lifecycle,
-                new_state
-            );
-            assert!(
-                store
-                    .resolve_conflict(&project, &existing, &new, choice)
-                    .is_err()
-            );
-
-            store.undo_batch(&project, &undo).unwrap();
-            assert_eq!(given_now(&store), ["Use blue buttons"], "{choice:?} undone");
-            assert_eq!(
-                store.detail(&project, &new).unwrap().item.lifecycle,
-                MemoryLifecycle::Conflicting
-            );
-        }
+        let restored = store.undo_card(&project, card.number).unwrap().unwrap();
+        assert_eq!(restored.body, "Use blue buttons");
+        assert_eq!(store.detail(&project, &card.id).unwrap().previous, None);
+        let given = store
+            .retrieve(&RetrievalQuery::prompt(&project, "buttons", vec![]))
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.text)
+            .collect::<Vec<_>>();
+        assert_eq!(given, ["Use blue buttons"]);
     }
 
     #[test]
@@ -3423,7 +3373,6 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             )
             .unwrap();
         assert_eq!(store.undo_batch(&project, &conflict_batch.id).unwrap(), 2);
-        assert_eq!(store.project_state(&project).unwrap().conflict_count, 0);
         let restored = store.detail(&project, &existing).unwrap();
         assert_eq!(restored.item.lifecycle, MemoryLifecycle::Active);
         assert!(
@@ -4226,16 +4175,10 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 0o600
             );
         }
-        let numbers = store
-            .list_memories("p")
-            .unwrap()
-            .into_iter()
-            .map(|item| (item.id, item.number))
-            .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(numbers["first"], 1);
-        assert_eq!(numbers["second"], 2);
-        assert_eq!(numbers["hidden"], 3);
-        assert_eq!(numbers["pending"], 4);
+        let numbers = (1..=4)
+            .map(|number| store.item_by_number("p", number).unwrap().unwrap().id)
+            .collect::<Vec<_>>();
+        assert_eq!(numbers, ["first", "second", "hidden", "pending"]);
         let first = store.item_by_number("p", 1).unwrap().unwrap();
         assert_eq!(
             first.title,
@@ -4256,9 +4199,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             Some(9),
             "the receipt read resumes where the old one stopped",
         );
+        // The un-hidden card and the newer side of its pair: the newer wins.
         let hidden = store.item_by_number("p", 3).unwrap().unwrap();
-        assert_eq!(hidden.lifecycle, MemoryLifecycle::Active);
-        assert_eq!(hidden.conflict_number, Some(4));
+        assert_eq!(hidden.lifecycle, MemoryLifecycle::Tombstoned);
+        let pending = store.item_by_number("p", 4).unwrap().unwrap();
+        assert_eq!(pending.lifecycle, MemoryLifecycle::Active);
         assert_eq!(
             store
                 .retrieve(&RetrievalQuery::prompt("p", "buttons", vec![]))
@@ -4267,7 +4212,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .iter()
                 .map(|item| item.text.as_str())
                 .collect::<Vec<_>>(),
-            ["Use blue buttons"]
+            ["Use red buttons"]
         );
         assert_eq!(
             store
@@ -4288,7 +4233,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .into_iter()
             .map(|item| item.number)
             .collect::<Vec<_>>();
-        assert_eq!(index, [1, 3]);
+        assert_eq!(index, [1, 4]);
         assert!(
             store
                 .connection
@@ -4306,11 +4251,19 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .unwrap()
         };
         assert_eq!(
-            revision_lifecycle("r3"),
+            revision_lifecycle("r4"),
             "active",
-            "the un-hidden card's history agrees with it"
+            "the winner's history agrees with it"
         );
-        assert_eq!(revision_lifecycle("r4"), "conflicting");
+        let waiting: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM memory_revisions WHERE lifecycle='conflicting'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(waiting, 0, "nothing waits for review any more");
         // The migrated tables and columns are a new store's.
         let fresh_path = temp.path().join("fresh.sqlite3");
         let fresh = MemoryStore::open(&fresh_path).unwrap();

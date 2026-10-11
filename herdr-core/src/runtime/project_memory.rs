@@ -1,7 +1,7 @@
-//! Project Memory as a shell shows it (PRD project-memory-v2 B13,
-//! B20-B24): the Project a shell opened Memory for with `memory_open`, the
-//! operator's actions on a Project's Memory, one card in full, a search,
-//! and the cards each live agent session on this Mac was given.
+//! Project Memory as a shell shows it in its Tools column's Memory tab (PRD
+//! project-memory-v2 B16, B19-B24): the Project a shell opened Memory for
+//! with `memory_open`, the operator's actions on it, one card in full and a
+//! search.
 //!
 //! Memory is its own snapshot section, keyed by the Project a shell opens;
 //! nothing here follows the focused checkout or the Overview's Sessions.
@@ -9,18 +9,16 @@
 //! applies its answer.
 
 use super::memory::project_identity;
+use super::memory_analysis::MemoryChange;
 use super::*;
-use crate::labels::worker::MemorySession;
 use crate::model::{
-    MemoryAction, MemoryAnalysisSnapshot, MemoryAnalysisState, MemoryCardKind, MemoryCardSnapshot,
-    MemoryCardState, MemoryFix, MemoryNoticeSnapshot, MemoryReceivedCardSnapshot,
-    MemoryReceivedSnapshot, MemoryReviewChoice, MemoryRowSnapshot, MemorySearchSnapshot,
-    MemorySnapshot, MemorySourceSnapshot, ProjectMemorySnapshot,
+    MemoryAction, MemoryAnalysisState, MemoryCardKind, MemoryCardSnapshot, MemoryPreviousSnapshot,
+    MemoryRowSnapshot, MemorySearchSnapshot, MemorySnapshot, MemorySourceSnapshot,
+    MemoryUnavailableSnapshot, ProjectMemorySnapshot,
 };
 use hide_agent_hooks::HookStatus;
-use hide_memory::{ConflictChoice, MemoryLifecycle, MemoryStore};
+use hide_memory::{MemoryLifecycle, MemoryStore};
 use serde_json::json;
-use std::collections::HashSet;
 
 /// The most bytes of a screen search, as `hide memory search` takes.
 const SEARCH_LIMIT_BYTES: usize = crate::memory_command::SEARCH_LIMIT_BYTES;
@@ -38,12 +36,9 @@ pub(super) struct ProjectMemoryWork {
     reads: ReadFence,
     /// The catalog Project an action runs for, with the action.
     pub(super) action: Option<(String, MemoryAction)>,
-    /// The Project whose Memory turns on once the hook update the operator
-    /// asked for lands, by catalog Project.
-    pub(super) enable_after_hook_update: Option<String>,
-    received_reads: ReadFence,
-    /// The cards each live session was given in full, as the last read found.
-    pub(super) received: HashMap<MemorySession, Vec<MemoryReceivedCardSnapshot>>,
+    /// The Project whose Memory turns on once the hook update its switch
+    /// started lands, by catalog Project.
+    enable_after_hook_update: Option<String>,
 }
 
 /// One read in flight and at most one waiting; a read whose generation is
@@ -162,8 +157,6 @@ impl Runtime {
                 .is_some_and(|memory| memory.project.is_some());
             if open {
                 self.project_memory = ProjectMemoryWork {
-                    received_reads: std::mem::take(&mut self.project_memory.received_reads),
-                    received: std::mem::take(&mut self.project_memory.received),
                     action: self.project_memory.action.take(),
                     enable_after_hook_update: self.project_memory.enable_after_hook_update.take(),
                     ..ProjectMemoryWork::default()
@@ -190,13 +183,13 @@ impl Runtime {
             });
         }
         match self.memory_folder(&workspace_id) {
-            Err(reason) => {
+            Err(unavailable) => {
                 self.project_memory.path = None;
                 self.project_memory.reads.generation += 1;
                 if let Some(project) = self.memory_section().project.as_mut() {
                     *project = ProjectMemorySnapshot {
                         workspace_id,
-                        unavailable_reason: Some(reason),
+                        unavailable: Some(unavailable),
                         ..ProjectMemorySnapshot::default()
                     };
                 }
@@ -210,17 +203,24 @@ impl Runtime {
     }
 
     /// Where a catalog Project's Memory is read from, or why it is not kept
-    /// here: Memory is kept for the Projects on this machine.
-    fn memory_folder(&self, workspace_id: &str) -> Result<String, String> {
+    /// here: Memory is kept for the Projects on this machine (B16).
+    fn memory_folder(&self, workspace_id: &str) -> Result<String, MemoryUnavailableSnapshot> {
         let workspace = self
             .snapshot
             .navigator
             .workspaces
             .iter()
             .find(|workspace| workspace.id == workspace_id)
-            .ok_or_else(|| "This Project is no longer registered.".to_owned())?;
+            .ok_or(MemoryUnavailableSnapshot::Unregistered)?;
         if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str() {
-            return Err("Project Memory is kept only for Projects on this Mac.".to_owned());
+            let device_name = self
+                .snapshot
+                .navigator
+                .devices
+                .iter()
+                .find(|device| device.id == workspace.device_id)
+                .map_or_else(|| workspace.device_id.clone(), |device| device.label.clone());
+            return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
         }
         Ok(workspace.path.clone())
     }
@@ -342,8 +342,7 @@ impl Runtime {
                 }));
                 if let Some(project) = self.memory_section().project.as_mut() {
                     project.loading = false;
-                    project.unavailable_reason =
-                        Some("Project Memory could not be read.".to_owned());
+                    project.unavailable = Some(MemoryUnavailableSnapshot::Unreadable);
                 }
                 return true;
             }
@@ -353,7 +352,7 @@ impl Runtime {
             return false;
         };
         project.loading = false;
-        project.unavailable_reason = None;
+        project.unavailable = None;
         project.enabled = load.state.as_ref().is_some_and(|state| state.enabled);
         project.capacity_reached = load
             .state
@@ -368,8 +367,8 @@ impl Runtime {
         true
     }
 
-    /// Copies the opened Project's analysis state, notice and running action
-    /// onto its snapshot.
+    /// Copies the opened Project's analysis state, forgotten card and running
+    /// action onto its snapshot.
     pub(super) fn sync_project_memory(&mut self) {
         let work = self
             .project_memory
@@ -384,7 +383,7 @@ impl Runtime {
             .as_ref()
             .filter(|(workspace_id, _)| self.memory_opened(workspace_id))
             .map(|(_, action)| *action);
-        let hooks = self.memory_hooks_analysis();
+        let ai_ready = self.ai_active() && self.ai_settings.is_some();
         let Some(project) = self
             .snapshot
             .memory
@@ -393,31 +392,15 @@ impl Runtime {
         else {
             return;
         };
-        project.analysis = shown_analysis(hooks, project.enabled, work.analysis);
-        project.notice = work.notice;
+        // Hide AI that is off is "not ready" at once, not after a pass
+        // fails (D-27); while Memory is off nothing is analyzed.
+        project.analysis = match (project.enabled, ai_ready) {
+            (false, _) => MemoryAnalysisState::Idle,
+            (true, false) => MemoryAnalysisState::AiNotReady,
+            (true, true) => work.analysis,
+        };
+        project.forgotten = work.forgotten;
         project.pending_action = action;
-    }
-
-    /// What Memory needs before it can give anything to an agent: an agent
-    /// whose installed hooks carry Memory.
-    fn memory_hooks_analysis(&self) -> Option<MemoryAnalysisSnapshot> {
-        if self.hooks_support_memory() {
-            return None;
-        }
-        let diagnosis = self.hook_diagnosis.as_ref()?;
-        let compatible = diagnosis.runtimes.iter().any(|row| {
-            !matches!(row.status, HookStatus::RuntimeAbsent)
-                && row.memory_compatibility.supports_injection()
-        });
-        Some(MemoryAnalysisSnapshot {
-            state: MemoryAnalysisState::NeedsAction,
-            message: Some(if compatible {
-                "Agent hooks need an update before Memory can reach agents".to_owned()
-            } else {
-                "Install Claude Code or Codex for Memory to reach agents".to_owned()
-            }),
-            action: compatible.then_some(MemoryFix::UpdateHooks),
-        })
     }
 
     pub(super) fn hooks_support_memory(&self) -> bool {
@@ -429,62 +412,43 @@ impl Runtime {
         })
     }
 
-    /// One operator action on a catalog Project's Memory (B20, B22, B24),
-    /// from the screen that opened it or from a pane's menu. One action runs
-    /// at a time; another is refused with the reason.
+    /// One operator action on a catalog Project's Memory (B19, B22, B24),
+    /// from its Memory tab. One action runs at a time; another is refused
+    /// with the reason.
     pub(super) fn apply_memory_action(&mut self, payload: events::MemoryActionPayload) -> bool {
         let path = match self.memory_folder(&payload.workspace_id) {
             Ok(path) => path,
-            Err(reason) => {
-                self.set_error("memory.project_unavailable", reason, false);
+            Err(_) => {
+                self.set_error(
+                    "memory.project_unavailable",
+                    "Project Memory is kept only for registered Projects on this Mac",
+                    false,
+                );
                 return true;
             }
         };
-        match payload.action {
-            MemoryAction::UpdateHooks => {
-                // Memory's "update hooks" is the kit's Reinstall of this Mac's
-                // hook parts; the kit owns every hook write (PRD device-parity
-                // D-27).
-                let parts = self.local_hook_parts_to_repair();
-                if parts.is_empty() {
-                    self.set_error(
-                        "memory.hook_update_unavailable",
-                        "No supported local agent hook update is available",
-                        false,
-                    );
-                    return true;
-                }
+        if payload.action == MemoryAction::Enable && !self.hooks_support_memory() {
+            // Turning Memory on is the operator's word to bring the agent
+            // hooks that carry it up to date: the kit's Reinstall of this
+            // Mac's hook parts, which owns every hook write (PRD device-parity
+            // D-27). Memory turns on once they land.
+            if self.hook_diagnosis.is_none() {
+                self.set_error(
+                    "memory.hooks_unread",
+                    "Hide is still reading the agent hooks; try again in a moment",
+                    false,
+                );
+                return true;
+            }
+            let parts = self.local_hook_parts_to_repair();
+            if !parts.is_empty() {
                 let node = self.node.clone();
                 self.queue_kit_reinstall(node.as_str(), parts);
                 self.project_memory.enable_after_hook_update = Some(payload.workspace_id);
                 return true;
             }
-            MemoryAction::Enable if !self.hooks_support_memory() => {
-                // Memory on without hooks that carry it would analyze for
-                // agents that never receive a card; the screen shows the hook
-                // update.
-                if self.hook_diagnosis.is_none() {
-                    self.set_error(
-                        "memory.hooks_unread",
-                        "Hide is still reading the agent hooks; try again in a moment",
-                        false,
-                    );
-                }
-                self.sync_project_memory();
-                return true;
-            }
-            MemoryAction::Retry => {
-                if let Some(project_id) = self
-                    .memory_opened(&payload.workspace_id)
-                    .then(|| self.project_memory.project_id.clone())
-                    .flatten()
-                {
-                    self.wake_project_memory(&project_id);
-                    self.sync_project_memory();
-                }
-                return true;
-            }
-            _ => {}
+            // No agent here takes Memory's hooks; Memory is on for the ones
+            // installed later, which the kit sets up with Memory.
         }
         if let Some((_, running)) = &self.project_memory.action {
             self.set_error(
@@ -511,6 +475,7 @@ impl Runtime {
             self.cancel_memory_pass();
         }
         let action = payload.action;
+        let number = payload.number;
         self.project_memory.action = Some((payload.workspace_id.clone(), action));
         self.sync_project_memory();
         let database = self.memory_database_path();
@@ -525,7 +490,7 @@ impl Runtime {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.finish_memory_action(action, result),
+                    Ok(mut guard) => guard.finish_memory_action(action, number, result),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -547,6 +512,7 @@ impl Runtime {
     fn finish_memory_action(
         &mut self,
         action: MemoryAction,
+        number: Option<u64>,
         result: Result<MemoryActionOutcome, String>,
     ) -> bool {
         self.project_memory.action = None;
@@ -556,32 +522,32 @@ impl Runtime {
                     self.push_diagnostic(kind, message);
                 }
                 let project_id = outcome.project_id;
-                match action {
-                    MemoryAction::Enable => self.wake_project_memory(&project_id),
+                match (action, number) {
+                    (MemoryAction::Enable, _) => self.wake_project_memory(&project_id),
                     // A pass that started between the request and the store
                     // write still saw the Project on; the store refuses its
                     // cards, and this stops it asking the provider.
-                    MemoryAction::Disable | MemoryAction::Delete => {
+                    (MemoryAction::Disable | MemoryAction::Delete, _) => {
                         self.quiet_project_memory(&project_id)
+                    }
+                    (MemoryAction::Forget, Some(number)) => {
+                        self.note_memory_change(&project_id, MemoryChange::Forgot(number))
+                    }
+                    (MemoryAction::Undo, Some(number)) => {
+                        self.note_memory_change(&project_id, MemoryChange::Undid(number))
                     }
                     _ => {}
                 }
-                self.memory_work
-                    .projects
-                    .entry(project_id)
-                    .or_default()
-                    .notice = outcome.notice;
             }
             Err(message) => self.set_error("memory.action_failed", message, true),
         }
         self.sync_project_memory();
         self.refresh_project_memory();
-        self.refresh_memory_received();
         true
     }
 
-    /// Turns Memory on for the Project whose hook update the operator asked
-    /// for, once the hooks carry Memory.
+    /// Turns Memory on for the Project whose switch started a hook update,
+    /// once the hooks carry Memory.
     pub(super) fn enable_memory_after_hook_update(&mut self) {
         if !self.hooks_support_memory() {
             return;
@@ -593,127 +559,13 @@ impl Runtime {
             workspace_id,
             action: MemoryAction::Enable,
             number: None,
-            other_number: None,
-            batch_id: None,
-            choice: None,
         });
     }
 
-    /// Reads again what every live agent session on this Mac was given, for
-    /// its pane's menu: after a receipt, a pane change or a Memory change.
-    pub(super) fn refresh_memory_received(&mut self) {
-        let Some(context) = self.worker_context.clone() else {
-            return;
-        };
-        let database = self.memory_database_path();
-        let Some(generation) = self.project_memory.received_reads.begin() else {
-            return;
-        };
-        let sessions = self
-            .live_memory_sessions()
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let spawn = thread::Builder::new()
-            .name("hide-memory-received-read".to_owned())
-            .spawn(move || {
-                let result = load_received(&database, sessions);
-                let Some(runtime) = context.runtime.upgrade() else {
-                    return;
-                };
-                let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_memory_received(generation, result),
-                    Err(_) => return,
-                };
-                drop(runtime);
-                if changed {
-                    context.notifier.notify();
-                }
-            });
-        if let Err(error) = spawn {
-            self.project_memory.received_reads.in_flight = false;
-            self.push_diagnostic(
-                "memory.received_read_not_started",
-                format!("Project Memory reader could not start: {error}"),
-            );
-        }
-    }
-
-    fn ingest_memory_received(
-        &mut self,
-        generation: u64,
-        result: Result<HashMap<MemorySession, Vec<MemoryReceivedCardSnapshot>>, String>,
-    ) -> bool {
-        let (lands, waiting) = self.project_memory.received_reads.end(generation);
-        if waiting {
-            self.refresh_memory_received();
-        }
-        if !lands {
-            return false;
-        }
-        match result {
-            Ok(received) => self.project_memory.received = received,
-            Err(message) => {
-                crate::diagnostic!(json!({
-                    "component": "memory",
-                    "kind": "memory.received_read_failed",
-                    "message": message,
-                }));
-                return false;
-            }
-        }
-        self.publish_memory_received()
-    }
-
-    /// Joins the received cards with the panes that hold each session now.
-    pub(super) fn publish_memory_received(&mut self) -> bool {
-        let received = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .filter_map(|agent| {
-                let runtime = hide_session::Agent::from_kind(&agent.agent_kind)?.as_str();
-                let cards = self
-                    .project_memory
-                    .received
-                    .get(&(runtime, agent.session_id.clone()?))?;
-                Some(MemoryReceivedSnapshot {
-                    pane_id: agent.pane_id.clone(),
-                    cards: cards.clone(),
-                })
-            })
-            .collect::<Vec<_>>();
-        if self
-            .snapshot
-            .memory
-            .as_ref()
-            .map_or(received.is_empty(), |memory| *memory.received == received)
-        {
-            return false;
-        }
-        self.memory_section().received = Arc::new(received);
-        true
-    }
-}
-
-/// Which of the hooks' need and analysis's own state the operator acts on
-/// (B23): missing hooks block everything while Memory is on; while it is
-/// off they show only when analysis has nothing of its own to say.
-fn shown_analysis(
-    hooks: Option<MemoryAnalysisSnapshot>,
-    enabled: bool,
-    analysis: MemoryAnalysisSnapshot,
-) -> MemoryAnalysisSnapshot {
-    match hooks {
-        Some(hooks) if enabled || analysis.state == MemoryAnalysisState::Idle => hooks,
-        _ => analysis,
-    }
 }
 
 struct MemoryActionOutcome {
     project_id: String,
-    notice: Option<MemoryNoticeSnapshot>,
     diagnostic: Option<(String, String)>,
 }
 
@@ -726,22 +578,12 @@ fn mutate_memory(
 ) -> Result<MemoryActionOutcome, String> {
     let identity = project_identity(sessions_node, node, checkout_path)?;
     let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
-    let outcome = |notice: Option<(String, Option<String>)>| MemoryActionOutcome {
+    let outcome = || MemoryActionOutcome {
         project_id: identity.id.clone(),
-        notice: notice.map(|(message, undo_batch_id)| MemoryNoticeSnapshot {
-            message,
-            undo_batch_id,
-        }),
         diagnostic: None,
     };
-    let card = |store: &MemoryStore, number: Option<u64>| {
-        let number = number.ok_or("The Memory action names no card")?;
-        store
-            .item_by_number(&identity.id, number)
-            .map_err(|error| error.to_string())?
-            .filter(|item| item.lifecycle != MemoryLifecycle::Tombstoned)
-            .ok_or_else(|| format!("m{number} is no longer in this Project's Memory"))
-    };
+    let number = payload.number;
+    let named = || number.ok_or("The Memory action names no card");
     match payload.action {
         MemoryAction::Enable => {
             // Turning Memory on is accepting the disclosure the switch shows.
@@ -751,13 +593,13 @@ fn mutate_memory(
             store
                 .set_enabled(&identity.id, true, true)
                 .map_err(|error| error.to_string())?;
-            Ok(outcome(None))
+            Ok(outcome())
         }
         MemoryAction::Disable => {
             store
                 .set_enabled(&identity.id, false, false)
                 .map_err(|error| error.to_string())?;
-            Ok(outcome(None))
+            Ok(outcome())
         }
         MemoryAction::Delete => {
             let deletion = store
@@ -772,53 +614,30 @@ fn mutate_memory(
                         ),
                     )
                 }),
-                ..outcome(None)
+                ..outcome()
             })
         }
         MemoryAction::Forget => {
-            let item = card(&store, payload.number)?;
-            let batch = store
+            let number = named()?;
+            let item = store
+                .item_by_number(&identity.id, number)
+                .map_err(|error| error.to_string())?
+                .filter(|item| item.lifecycle != MemoryLifecycle::Tombstoned)
+                .ok_or_else(|| format!("m{number} is no longer in this Project's Memory"))?;
+            store
                 .forget(&identity.id, &item.id)
                 .map_err(|error| error.to_string())?;
-            Ok(outcome(Some((
-                format!("Forgot m{}", item.number),
-                Some(batch),
-            ))))
+            Ok(outcome())
         }
+        // Steps the card back one change: a forgotten card returns, a
+        // replaced text gives way to the one before it (B19, B24).
         MemoryAction::Undo => {
-            let batch = payload
-                .batch_id
-                .as_deref()
-                .ok_or("The Memory action names no change")?;
-            let mut count = 0;
-            for batch_id in batch.split(',').rev().filter(|value| !value.is_empty()) {
-                count += store
-                    .undo_batch(&identity.id, batch_id)
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(outcome(Some((
-                format!(
-                    "Restored {count} {}",
-                    if count == 1 { "card" } else { "cards" }
-                ),
-                None,
-            ))))
-        }
-        MemoryAction::ResolveConflict => {
-            let existing = card(&store, payload.number)?;
-            let candidate = card(&store, payload.other_number)?;
-            let choice = match payload.choice.ok_or("The review names no choice")? {
-                MemoryReviewChoice::KeepExisting => ConflictChoice::KeepExisting,
-                MemoryReviewChoice::ReplaceWithNew => ConflictChoice::ReplaceWithNew,
-                MemoryReviewChoice::ForgetBoth => ConflictChoice::ForgetBoth,
-            };
-            let batch = store
-                .resolve_conflict(&identity.id, &existing.id, &candidate.id, choice)
-                .map_err(|error| error.to_string())?;
-            Ok(outcome(Some(("Reviewed".to_owned(), Some(batch)))))
-        }
-        MemoryAction::UpdateHooks | MemoryAction::Retry => {
-            Err(format!("{} is not a store write", payload.action.as_str()))
+            let number = named()?;
+            store
+                .undo_card(&identity.id, number)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("m{number} has no change to undo"))?;
+            Ok(outcome())
         }
     }
 }
@@ -850,22 +669,11 @@ fn load_opened_memory(
         Err(hide_memory::MemoryError::ProjectMissing) => return Ok(empty(identity.id)),
         Err(error) => return Err(error.to_string()),
     };
-    let items = store
+    let rows = store
         .list_memories(&identity.id)
-        .map_err(|error| error.to_string())?;
-    // A card in a needs-review pair carries its text, and so does the card
-    // it contradicts, so the two read side by side (B20).
-    let paired = items
-        .iter()
-        .filter_map(|item| item.conflict_number)
-        .collect::<HashSet<_>>();
-    let rows = items
+        .map_err(|error| error.to_string())?
         .into_iter()
-        .map(|item| {
-            let compared =
-                paired.contains(&item.number) || item.lifecycle == MemoryLifecycle::Conflicting;
-            memory_row(item, compared)
-        })
+        .map(memory_row)
         .collect();
     let expanded = match expanded {
         Some(number) => match store
@@ -885,12 +693,15 @@ fn load_opened_memory(
                         .sources
                         .into_iter()
                         .map(|source| MemorySourceSnapshot {
-                            provider: source.provider,
-                            session_id: source.session_id,
-                            event_offset: source.event_offset,
+                            provider_label: provider_label(&source.provider),
+                            at_unix_ms: source.at_unix_ms,
                             human: source.human,
                         })
                         .collect(),
+                    previous: detail.previous.map(|previous| MemoryPreviousSnapshot {
+                        body: previous.body,
+                        changed_at_unix_ms: previous.changed_at_unix_ms,
+                    }),
                 })
             }
             None => None,
@@ -918,20 +729,15 @@ fn load_opened_memory(
     })
 }
 
-fn memory_row(item: hide_memory::MemoryItem, with_body: bool) -> MemoryRowSnapshot {
+fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
     MemoryRowSnapshot {
         number: item.number,
         title: item.title,
         kind: card_kind(item.kind),
-        state: card_state(item.lifecycle),
-        source_count: item.source_count,
         human_source_count: item.human_source_count,
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
-        last_used_at_unix_ms: item.last_used_at_unix_ms,
         updated_at_unix_ms: item.updated_at_unix_ms,
-        conflict_number: item.conflict_number,
-        body: with_body.then_some(item.body),
     }
 }
 
@@ -944,36 +750,13 @@ pub(crate) fn card_kind(kind: hide_memory::CandidateKind) -> MemoryCardKind {
     }
 }
 
-/// A live card's state; only active and needs-review cards are listed.
-pub(crate) fn card_state(lifecycle: MemoryLifecycle) -> MemoryCardState {
-    match lifecycle {
-        MemoryLifecycle::Conflicting => MemoryCardState::NeedsReview,
-        _ => MemoryCardState::Active,
+/// A source's runtime as the screens name it; a card `hide memory add`
+/// wrote names the agent that added it only by Hide.
+fn provider_label(provider: &str) -> String {
+    match hide_agent_adapter::adapter(provider) {
+        Some(_) => crate::sidebar::provider_name(Some(provider)),
+        None => "Hide".to_owned(),
     }
-}
-
-/// The live cards each session was given in full.
-fn load_received(
-    database: &Path,
-    sessions: Vec<MemorySession>,
-) -> Result<HashMap<MemorySession, Vec<MemoryReceivedCardSnapshot>>, String> {
-    let mut received = HashMap::new();
-    if sessions.is_empty() || !MemoryStore::exists(database) {
-        return Ok(received);
-    }
-    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
-    for session in sessions {
-        let cards = store
-            .received_cards(session.0, &session.1)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|(number, title)| MemoryReceivedCardSnapshot { number, title })
-            .collect::<Vec<_>>();
-        if !cards.is_empty() {
-            received.insert(session, cards);
-        }
-    }
-    Ok(received)
 }
 
 #[cfg(test)]
@@ -1020,6 +803,7 @@ mod tests {
                     salience: 0.9,
                     source_offsets: vec![4],
                     human_offsets: vec![4],
+                    source_times: [(4, 77)].into(),
                     cited_paths: vec!["docs/TESTING.md".to_owned()],
                     relation: CandidateRelation::New,
                 }],
@@ -1043,21 +827,17 @@ mod tests {
         assert_eq!(load.rows.len(), 1);
         assert_eq!(load.rows[0].kind, MemoryCardKind::Rule);
         assert_eq!(
-            load.rows[0].body, None,
-            "a row carries no text until expanded"
-        );
-        assert_eq!(
             load.expanded,
             Some(MemoryCardSnapshot {
                 number: 1,
                 body: "Run tests with nextest before a merge".to_owned(),
                 cited_paths: vec!["docs/TESTING.md".to_owned()],
                 sources: vec![MemorySourceSnapshot {
-                    provider: "codex".to_owned(),
-                    session_id: "s-1".to_owned(),
-                    event_offset: 4,
+                    provider_label: "Codex".to_owned(),
+                    at_unix_ms: Some(77),
                     human: true,
                 }],
+                previous: None,
             })
         );
         assert_eq!(

@@ -2443,37 +2443,33 @@ pub struct ProjectSessionsSnapshot {
     pub detail: Option<ProjectSessionDetailSnapshot>,
 }
 
-/// Project Memory on the wire: the Project a shell opened Memory for, and
-/// what each live agent session on this Mac was given.
+/// Project Memory on the wire: the Project a shell opened Memory for in its
+/// Tools column's Memory tab.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemorySnapshot {
     pub project: Option<ProjectMemorySnapshot>,
-    /// One entry per live agent session given at least one card in full, so a
-    /// pane's menu can name them without opening its Project.
-    #[serde(serialize_with = "serialize_memory_received")]
-    pub received: Arc<Vec<MemoryReceivedSnapshot>>,
 }
 
 /// One Project's Memory as a shell opened it with `memory_open` (PRD
 /// project-memory-v2 B20-B24): the switch, the cards, what analysis needs
-/// from the operator, and the last change with its Undo.
+/// from the operator, and the card just forgotten with its Undo.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectMemorySnapshot {
     /// The catalog Project the shell named.
     pub workspace_id: String,
-    /// Why this Project has no Memory here: it is on another device, or it
-    /// left the catalog.
-    pub unavailable_reason: Option<String>,
+    /// Why this Project has no Memory here.
+    pub unavailable: Option<MemoryUnavailableSnapshot>,
     /// The first read of the Project's Memory has not answered yet.
     pub loading: bool,
     pub enabled: bool,
-    /// Live cards, needing-review ones included, against the store's cap.
+    /// Live cards against the store's cap.
     pub capacity_reached: bool,
-    /// Cards needing review first, then the most recently changed.
+    /// Live cards, the most recently changed first.
     #[serde(serialize_with = "serialize_memory_rows")]
     pub rows: Arc<Vec<MemoryRowSnapshot>>,
-    pub analysis: MemoryAnalysisSnapshot,
-    pub notice: Option<MemoryNoticeSnapshot>,
+    pub analysis: MemoryAnalysisState,
+    /// The card the last forget took away, which Undo brings back (B24).
+    pub forgotten: Option<u64>,
     /// The operator's Memory action still running for this Project; another
     /// waits for it.
     pub pending_action: Option<MemoryAction>,
@@ -2481,6 +2477,19 @@ pub struct ProjectMemorySnapshot {
     pub expanded: Option<MemoryCardSnapshot>,
     /// The matcher's answer to the shell's `memory_search`.
     pub search: Option<MemorySearchSnapshot>,
+}
+
+/// Why a Project's Memory is not kept here.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum MemoryUnavailableSnapshot {
+    /// The Project's sessions run on a connected device; Memory is kept
+    /// only for this Mac's (B16).
+    RemoteDevice { device_name: String },
+    /// The Project left the catalog.
+    Unregistered,
+    /// The store could not be read; the reason is in the diagnostic log.
+    Unreadable,
 }
 
 /// One card of a Project's Memory list (B21).
@@ -2491,21 +2500,13 @@ pub struct MemoryRowSnapshot {
     pub number: u64,
     pub title: String,
     pub kind: MemoryCardKind,
-    pub state: MemoryCardState,
-    pub source_count: usize,
     /// Sources that are the operator's own words.
     pub human_source_count: usize,
     /// Distinct sessions given the card in full (D-18).
     pub provided_session_count: usize,
     /// Reads with `hide memory show`.
     pub pull_count: u64,
-    pub last_used_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: u64,
-    /// The other card of a needs-review pair, by number.
-    pub conflict_number: Option<u64>,
-    /// The card's text, carried only for a card in a needs-review pair, so
-    /// the two can be compared before one is chosen (B20).
-    pub body: Option<String>,
 }
 
 /// What a card is; the same words the extraction and `hide memory show`
@@ -2519,42 +2520,35 @@ pub enum MemoryCardKind {
     Fact,
 }
 
-/// A live card is in use, or waits for the operator's review of the card it
-/// contradicts; `hide memory show` names the states the same way.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryCardState {
-    Active,
-    NeedsReview,
-}
-
-impl MemoryCardState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::NeedsReview => "needs_review",
-        }
-    }
-}
-
-/// One card in full, as a row expanded in place shows it.
+/// One card in full, as a row expanded in place shows it (B19, B21).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryCardSnapshot {
     pub number: u64,
     pub body: String,
     /// Repository-relative files the card rests on (B27).
     pub cited_paths: Vec<String>,
+    /// The most recent first.
     pub sources: Vec<MemorySourceSnapshot>,
+    /// The text the current one replaced, which the card's Undo restores.
+    pub previous: Option<MemoryPreviousSnapshot>,
 }
 
 /// Where a card came from: one event of one session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemorySourceSnapshot {
-    pub provider: String,
-    pub session_id: String,
-    pub event_offset: u64,
+    /// The runtime's name as the screens write it (`Claude Code`).
+    pub provider_label: String,
+    /// When the words were said; absent for a source older than the time.
+    pub at_unix_ms: Option<u64>,
     /// The operator's own words.
     pub human: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryPreviousSnapshot {
+    pub body: String,
+    /// When the current text replaced it.
+    pub changed_at_unix_ms: u64,
 }
 
 /// The cards a `memory_search` matched, best first.
@@ -2564,46 +2558,17 @@ pub struct MemorySearchSnapshot {
     pub numbers: Vec<u64>,
 }
 
-/// The cards the agent session in one pane was given in full, for the
-/// pane's menu; a forget from it names the pane's Project.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryReceivedSnapshot {
-    pub pane_id: String,
-    pub cards: Vec<MemoryReceivedCardSnapshot>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryReceivedCardSnapshot {
-    pub number: u64,
-    pub title: String,
-}
-
-/// What a Project's Memory analysis needs the operator to see (B23). A
+/// What a Project's Memory analysis shows the operator (B23, D-27). A
 /// failure the operator cannot act on is logged and never shown.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct MemoryAnalysisSnapshot {
-    pub state: MemoryAnalysisState,
-    pub message: Option<String>,
-    /// The one action that unblocks `needs_action`.
-    pub action: Option<MemoryFix>,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryAnalysisState {
     #[default]
     Idle,
     Analyzing,
-    NeedsAction,
-}
-
-/// What the operator does to unblock analysis.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryFix {
-    SignIn,
-    OpenSettings,
-    UpdateHooks,
+    /// Memory is on but Hide AI is off or cannot answer, so no new card is
+    /// made; existing cards are still given.
+    AiNotReady,
 }
 
 /// One operator action on a Project's Memory (`memory_action`).
@@ -2615,9 +2580,6 @@ pub enum MemoryAction {
     Delete,
     Forget,
     Undo,
-    ResolveConflict,
-    UpdateHooks,
-    Retry,
 }
 
 impl MemoryAction {
@@ -2628,20 +2590,8 @@ impl MemoryAction {
             Self::Delete => "delete",
             Self::Forget => "forget",
             Self::Undo => "undo",
-            Self::ResolveConflict => "resolve_conflict",
-            Self::UpdateHooks => "update_hooks",
-            Self::Retry => "retry",
         }
     }
-}
-
-/// The operator's answer to a needs-review pair; no answer is the default.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryReviewChoice {
-    KeepExisting,
-    ReplaceWithNew,
-    ForgetBoth,
 }
 
 fn serialize_memory_rows<S: serde::Serializer>(
@@ -2649,13 +2599,6 @@ fn serialize_memory_rows<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     rows.as_ref().serialize(serializer)
-}
-
-fn serialize_memory_received<S: serde::Serializer>(
-    received: &Arc<Vec<MemoryReceivedSnapshot>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    received.as_ref().serialize(serializer)
 }
 
 fn serialize_session_rows<S: serde::Serializer>(
@@ -2708,12 +2651,6 @@ fn serialize_shared_archive<S: serde::Serializer>(
     archive.as_deref().serialize(serializer)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryNoticeSnapshot {
-    pub message: String,
-    pub undo_batch_id: Option<String>,
-}
-
 /// What kind of document an open file is, decided once by the host that
 /// read it (`hide_node_link::document`) and drawn by the shell as one view per
 /// kind. Adding a kind is one variant there and one case in the shell's
@@ -2764,6 +2701,7 @@ pub enum RightPanelSection {
     Changes,
     AgentSessions,
     Sessions,
+    Memory,
 }
 
 impl RightPanelSection {
@@ -2774,6 +2712,7 @@ impl RightPanelSection {
             "changes" => Some(Self::Changes),
             "agent_sessions" => Some(Self::AgentSessions),
             "sessions" => Some(Self::Sessions),
+            "memory" => Some(Self::Memory),
             _ => None,
         }
     }
@@ -5543,6 +5482,7 @@ mod wire_enum_tests {
             RightPanelSection::Changes,
             RightPanelSection::AgentSessions,
             RightPanelSection::Sessions,
+            RightPanelSection::Memory,
         ];
         for variant in sections {
             match variant {
@@ -5550,7 +5490,8 @@ mod wire_enum_tests {
                 | RightPanelSection::Explorer
                 | RightPanelSection::Changes
                 | RightPanelSection::AgentSessions
-                | RightPanelSection::Sessions => {}
+                | RightPanelSection::Sessions
+                | RightPanelSection::Memory => {}
             }
         }
         assert_wire(&contract, "right_panel_section", &sections);
@@ -5637,44 +5578,20 @@ mod wire_enum_tests {
         assert_wire(&contract, "memory_card_kind", &card_kinds);
         checked.insert("memory_card_kind");
 
-        let card_states = [MemoryCardState::Active, MemoryCardState::NeedsReview];
-        for variant in card_states {
-            match variant {
-                MemoryCardState::Active | MemoryCardState::NeedsReview => {}
-            }
-            // `hide memory show` names a state the way the snapshot does.
-            assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
-        }
-        assert_wire(&contract, "memory_card_state", &card_states);
-        checked.insert("memory_card_state");
-
         let analysis_states = [
             MemoryAnalysisState::Idle,
             MemoryAnalysisState::Analyzing,
-            MemoryAnalysisState::NeedsAction,
+            MemoryAnalysisState::AiNotReady,
         ];
         for variant in analysis_states {
             match variant {
                 MemoryAnalysisState::Idle
                 | MemoryAnalysisState::Analyzing
-                | MemoryAnalysisState::NeedsAction => {}
+                | MemoryAnalysisState::AiNotReady => {}
             }
         }
         assert_wire(&contract, "memory_analysis_state", &analysis_states);
         checked.insert("memory_analysis_state");
-
-        let fixes = [
-            MemoryFix::SignIn,
-            MemoryFix::OpenSettings,
-            MemoryFix::UpdateHooks,
-        ];
-        for variant in fixes {
-            match variant {
-                MemoryFix::SignIn | MemoryFix::OpenSettings | MemoryFix::UpdateHooks => {}
-            }
-        }
-        assert_wire(&contract, "memory_fix", &fixes);
-        checked.insert("memory_fix");
 
         let actions = [
             MemoryAction::Enable,
@@ -5682,9 +5599,6 @@ mod wire_enum_tests {
             MemoryAction::Delete,
             MemoryAction::Forget,
             MemoryAction::Undo,
-            MemoryAction::ResolveConflict,
-            MemoryAction::UpdateHooks,
-            MemoryAction::Retry,
         ];
         for variant in actions {
             match variant {
@@ -5692,10 +5606,7 @@ mod wire_enum_tests {
                 | MemoryAction::Disable
                 | MemoryAction::Delete
                 | MemoryAction::Forget
-                | MemoryAction::Undo
-                | MemoryAction::ResolveConflict
-                | MemoryAction::UpdateHooks
-                | MemoryAction::Retry => {}
+                | MemoryAction::Undo => {}
             }
             assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
         }
