@@ -647,6 +647,51 @@ fn a_linked_node_s_sessions_are_read_through_its_link() {
 /// its node, a caller on the node is admitted as on that machine and its
 /// hint is a pane there, and a worker start holds on to the node's Herdr
 /// and link, which stop being current once the link ends.
+/// After a move every checkout of the machine the core left is a node's
+/// (PRD core-host-node-move D-29, arch review open question): one in front
+/// carries its node as its target, so the readers of this machine's own
+/// checkout in front (the card, the Overview's re-read, the cleanup's
+/// current checkout, the GitHub order) do not take it for this machine's.
+#[test]
+fn a_node_s_checkout_in_front_is_the_node_s_not_this_machine_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = fs::canonicalize(dir.path())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let shared = shared_runtime();
+    let (link, _release) = held_link();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link is taken");
+    wait(&shared, "the link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
+    });
+    let mut runtime = shared.lock().unwrap();
+    let workspace_id = format!("remote:{NODE}:workspace:w1");
+    let mut reported = session(vec![herdr_workspace(NODE, "w1", &path, &[("t1", &path)])]);
+    reported.focused_workspace_id = Some(workspace_id.clone());
+    runtime.ingest_remote_session(NODE, Ok(reported));
+    // The node's projects are its session's rows, never this machine's.
+    assert!(runtime.snapshot.navigator.workspaces.is_empty());
+    let workspace = runtime
+        .snapshot
+        .status
+        .remote
+        .iter()
+        .filter_map(|status| status.session.as_ref())
+        .flat_map(|session| session.workspaces.iter())
+        .find(|workspace| workspace.id == workspace_id)
+        .expect("the node's project is listed");
+    assert_eq!(workspace.remote_target_id.as_deref(), Some(NODE));
+    let checkout = workspace.checkouts[0].id.clone();
+    runtime.snapshot.navigator.focused_device_id = Some(NODE.to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout);
+    assert!(runtime.focused_local_checkout().is_none());
+}
+
 #[test]
 fn a_factory_runs_on_this_machine_or_a_node_that_dials_in_never_a_dialed_device() {
     let shared = shared_runtime();
