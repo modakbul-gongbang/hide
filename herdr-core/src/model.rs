@@ -4589,6 +4589,12 @@ pub struct RemoteSessionSnapshot {
     /// (`Runtime::derive_device_session`), so they are not sent to the shell.
     #[serde(skip)]
     pub pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
+    /// The issue tokens of the device's Herdr: a workspace's by its Herdr
+    /// id, a pane's by its remote pane id. The core reads a node checkout's
+    /// issue link from them (`Runtime::project_node_issues`), so they are not
+    /// sent to the shell either.
+    #[serde(skip)]
+    pub issue_tokens: crate::wire::IssueTokens,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

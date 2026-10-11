@@ -356,6 +356,7 @@ impl SessionReplica {
         payload: SessionSnapshotPayload,
     ) -> Result<(RemoteSessionSnapshot, Vec<crate::sidebar::AgentExclusion>), SessionFetchError>
     {
+        let issue_tokens = crate::wire::issue_tokens(&payload);
         let agent_projection = crate::sidebar::project_agents(payload);
         let mut agents = agent_projection.agents;
 
@@ -692,6 +693,14 @@ impl SessionReplica {
                     })
                     .filter(|(_, tokens)| !tokens.is_empty())
                     .collect(),
+                issue_tokens: crate::wire::IssueTokens {
+                    panes: issue_tokens
+                        .panes
+                        .into_iter()
+                        .map(|(pane, token)| (remote_pane_id(target_id, &pane), token))
+                        .collect(),
+                    workspaces: issue_tokens.workspaces,
+                },
             },
             agent_projection.excluded,
         ))

@@ -884,6 +884,9 @@ pub(super) struct GithubSearchPayload {
 #[serde(deny_unknown_fields)]
 pub(super) struct LocalIssueUpdatePayload {
     pub(super) request_id: String,
+    /// The project the issue is in: a node's project and this machine's may
+    /// share a path, and the key names only the path.
+    pub(super) workspace_id: String,
     pub(super) task_key: String,
     pub(super) title: String,
     #[serde(default)]
@@ -945,6 +948,8 @@ pub(super) struct PrDelegatePayload {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct IssueSetOpenPayload {
+    /// The project the issue is in, as in `LocalIssueUpdatePayload`.
+    pub(super) workspace_id: String,
     pub(super) task_key: String,
     pub(super) open: bool,
 }

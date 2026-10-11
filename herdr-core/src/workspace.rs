@@ -384,6 +384,12 @@ impl PathIndex {
         self.notes.get(main_root)?.as_ref().ok()?.get(branch)
     }
 
+    /// Every branch note of the repository holding `path`; none when the
+    /// node did not place it or could not read its config.
+    pub(crate) fn branch_notes(&self, path: &str) -> Option<&BTreeMap<String, BranchNote>> {
+        self.notes.get(&self.place(path)?.main_root)?.as_ref().ok()
+    }
+
     /// Every path a catalog of `registrations`, `spaces` and `worktrees`
     /// reads, for one `PathIndex::ask`.
     pub fn wanted(

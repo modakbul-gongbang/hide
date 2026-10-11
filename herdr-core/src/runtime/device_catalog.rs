@@ -62,6 +62,12 @@ impl Runtime {
                 }
             }
         }
+        if self
+            .link_origin(target)
+            .is_some_and(LinkOrigin::reports_own_facts)
+        {
+            self.project_node_issues(target, &mut session);
+        }
         if let Some(listeners) = self.device_ports.get(target) {
             device_catalog::apply_ports(&mut session, listeners);
         }
@@ -525,21 +531,19 @@ impl Runtime {
         entry.again = false;
         entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
-            let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
-            return self.ingest_device_worktrees(target, generation, answers, failure);
+            let answer = ask_worktrees(channel.as_ref(), &wanted);
+            return self.ingest_device_worktrees(target, generation, answer);
         };
         let device = target.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-worktrees".to_owned())
             .spawn(move || {
-                let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
+                let answer = ask_worktrees(channel.as_ref(), &wanted);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => {
-                        guard.ingest_device_worktrees(&device, generation, answers, failure)
-                    }
+                    Ok(mut guard) => guard.ingest_device_worktrees(&device, generation, answer),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -562,9 +566,13 @@ impl Runtime {
         &mut self,
         target: &str,
         generation: u64,
-        answers: Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
-        failure: Option<String>,
+        answer: WorktreesAnswer,
     ) -> bool {
+        let WorktreesAnswer {
+            answers,
+            notes,
+            failure,
+        } = answer;
         let Some(entry) = self.device_worktrees.get_mut(target) else {
             return false;
         };
@@ -578,10 +586,24 @@ impl Runtime {
                     entry.projects.insert(root, project);
                 }
                 None => {
+                    entry.notes.remove(&root);
                     entry.projects.remove(&root);
                 }
             }
         }
+        for (root, read) in notes {
+            match read {
+                Some(read) => {
+                    entry.notes.insert(root, read);
+                }
+                None => {
+                    entry.notes.remove(&root);
+                }
+            }
+        }
+        entry
+            .notes
+            .retain(|root, _| entry.projects.contains_key(root));
         if let Some(reason) = failure.as_deref() {
             crate::diagnostic!(serde_json::json!({
                 "component": "device_worktrees",
@@ -648,9 +670,48 @@ impl Runtime {
 
 const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Reads each repository in turn; a refusal is that repository's answer (no
-/// rows), a connection failure stops the batch with the reason.
-fn ask_worktrees(
+/// What one read of a device's repositories answered.
+pub(super) struct WorktreesAnswer {
+    pub answers: Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
+    /// Each repository's branch notes, `None` where its config could not be
+    /// read; empty when the node could not be asked.
+    pub notes: Vec<(String, Option<BranchNotes>)>,
+    pub failure: Option<String>,
+}
+
+type BranchNotes = std::collections::BTreeMap<String, hide_node_link::catalog::BranchNote>;
+
+/// Reads each repository in turn, then every one's branch notes in one
+/// `Call::PathFacts`; a refusal is that repository's answer (no rows), a
+/// connection failure stops the batch with the reason. Notes that cannot be
+/// read leave the issue a branch names unread, which is logged, not failed.
+fn ask_worktrees(channel: &dyn crate::node_access::NodeLink, roots: &[String]) -> WorktreesAnswer {
+    let (answers, failure) = ask_repositories(channel, roots);
+    let notes = match crate::workspace::PathIndex::ask(
+        channel,
+        answers.iter().map(|(root, _)| root.clone()).collect(),
+    ) {
+        Ok(index) => answers
+            .iter()
+            .map(|(root, _)| (root.clone(), index.branch_notes(root).cloned()))
+            .collect(),
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "device_worktrees",
+                "kind": "branch_notes.read_failed",
+                "message": error,
+            }));
+            Vec::new()
+        }
+    };
+    WorktreesAnswer {
+        answers,
+        notes,
+        failure,
+    }
+}
+
+fn ask_repositories(
     channel: &dyn crate::node_access::NodeLink,
     roots: &[String],
 ) -> (

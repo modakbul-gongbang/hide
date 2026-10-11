@@ -1039,6 +1039,16 @@ pub(crate) struct TaskAgentLaunch {
     pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
 }
 
+/// One repository of a node's GitHub read: the generation it was last asked
+/// with, when, and the linked issues that ask named, so a new link asks again
+/// at once rather than at the next re-read.
+#[derive(Clone, Debug)]
+pub(crate) struct DeviceGithubRead {
+    generation: u64,
+    asked_at: std::time::Instant,
+    links: Vec<crate::issues::IssueReference>,
+}
+
 pub struct Runtime {
     snapshot: Snapshot,
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
@@ -1135,7 +1145,7 @@ pub struct Runtime {
     /// The pull requests of each node that dials this core, read here by
     /// repository name, and when each of its repositories was last asked.
     device_github: HashMap<String, crate::model::GithubSnapshot>,
-    device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
+    device_github_reads: HashMap<(String, String), DeviceGithubRead>,
     /// How many of each device's projects the pull-request read left out at
     /// its cap, last logged.
     device_github_over_limit: HashMap<String, usize>,
@@ -1504,7 +1514,7 @@ pub struct Runtime {
     pending_checks_read_at: Option<std::time::Instant>,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
-    issue_write_pending: Option<(u64, String, String)>,
+    issue_write_pending: Option<issues::IssueWritePending>,
     unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
     /// Every project's Local issues, read when the runtime is created; `Err`
     /// holds why the file could not be read, and then no change is accepted,

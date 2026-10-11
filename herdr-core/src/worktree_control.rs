@@ -818,8 +818,22 @@ fn write_issue_metadata(
     Err(IssueWriteFailure::unchanged(detail))
 }
 
-pub fn spawn_issue_write(
-    context: LiveContext,
+/// How a GitHub link's issue is read before the link is written: with this
+/// machine's login, in the checkout here or by the repository's name for a
+/// checkout on a node (D-16).
+pub(crate) struct LinkedIssueRead {
+    pub node: Arc<dyn crate::node_access::NodeLink>,
+    pub place: crate::github::Where,
+}
+
+/// A checkout's issue link: the branch's `issue` note and its Workspace
+/// token, written on the checkout's own machine (`target`: this machine's
+/// Herdr and node, or a node's), never another's git. A GitHub link reads
+/// its issue first (`read`); a Local one names an issue already in the
+/// core's store, so nothing is read.
+pub(crate) fn spawn_issue_write(
+    target: WorktreeTarget,
+    read: Option<LinkedIssueRead>,
     request: PurposeTaskRequest,
     previous: Option<String>,
 ) -> Result<(), String> {
@@ -827,61 +841,35 @@ pub fn spawn_issue_write(
         .name("herdr-core-issue-write".into())
         .spawn(move || {
             let result = (|| {
-                let issue = if request.purpose.is_empty() {
-                    None
-                } else {
-                    let reference = crate::issues::IssueReference::parse(&request.purpose, None)
-                        .map_err(IssueWriteFailure::unchanged)?;
-                    Some(
-                        crate::github::read_linked_issue(
-                            context.node.as_ref(),
-                            Path::new(&request.repository_root),
-                            &reference,
+                let issue = match read {
+                    Some(read) if !request.purpose.is_empty() => {
+                        let reference =
+                            crate::issues::IssueReference::parse(&request.purpose, None)
+                                .map_err(IssueWriteFailure::unchanged)?;
+                        Some(
+                            crate::github::read_linked_issue(
+                                read.node.as_ref(),
+                                &read.place,
+                                &reference,
+                            )
+                            .map_err(IssueWriteFailure::unchanged)?,
                         )
-                        .map_err(IssueWriteFailure::unchanged)?,
-                    )
+                    }
+                    _ => None,
                 };
                 write_issue_metadata(
-                    context.api_connector.as_ref(),
-                    &NodeGit(context.node.as_ref()),
+                    target.connector.as_ref(),
+                    &NodeGit(target.host.as_ref()),
                     &request,
                     previous.as_deref(),
                 )?;
                 Ok(issue)
             })();
-            if let Some(runtime) = context.runtime.upgrade() {
+            if let Some(runtime) = target.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_issue_operation_result(&request, result);
                 }
-                context.notifier.notify();
-            }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("issue worker could not be started: {error}"))
-}
-
-/// A Local issue link: the same metadata write as a GitHub one, with no
-/// GitHub read, since the issue is in this Mac's store.
-pub fn spawn_local_issue_write(
-    context: LiveContext,
-    request: PurposeTaskRequest,
-    previous: Option<String>,
-) -> Result<(), String> {
-    thread::Builder::new()
-        .name("herdr-core-local-issue-write".into())
-        .spawn(move || {
-            let result = write_issue_metadata(
-                context.api_connector.as_ref(),
-                &NodeGit(context.node.as_ref()),
-                &request,
-                previous.as_deref(),
-            )
-            .map(|()| None);
-            if let Some(runtime) = context.runtime.upgrade() {
-                if let Ok(mut guard) = runtime.lock() {
-                    guard.ingest_issue_operation_result(&request, result);
-                }
-                context.notifier.notify();
+                target.notifier.notify();
             }
         })
         .map(|_| ())

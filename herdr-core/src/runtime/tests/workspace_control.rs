@@ -206,6 +206,7 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
             focused_pane_id: None,
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

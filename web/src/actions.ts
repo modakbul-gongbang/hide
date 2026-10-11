@@ -1313,9 +1313,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "issue_settings_set", payload: patch });
     },
 
-    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. */
-    updateLocalIssue(requestId: string, taskKey: string, title: string, body: string) {
-      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, task_key: taskKey, title, body } });
+    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. The project is named since a key names only a path. */
+    updateLocalIssue(requestId: string, workspaceId: string, taskKey: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, workspace_id: workspaceId, task_key: taskKey, title, body } });
     },
 
     /**
@@ -1398,9 +1398,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_search", payload: { request_id: requestId, query } });
     },
 
-    /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
-    setIssueOpen(taskKey: string, open: boolean) {
-      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
+    /** Closes or reopens a Local issue of a project; a GitHub one closes on GitHub. */
+    setIssueOpen(workspaceId: string, taskKey: string, open: boolean) {
+      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { workspace_id: workspaceId, task_key: taskKey, open } });
     },
 
 

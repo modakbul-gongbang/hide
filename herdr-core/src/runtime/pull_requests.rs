@@ -147,7 +147,7 @@ impl Runtime {
                     Err(message) => return self.fail_pr_link(link, "create", message),
                 };
                 if local {
-                    return match self.create_local_issue(&workspace.path, &title, &body) {
+                    return match self.create_local_issue(None, &workspace.path, &title, &body) {
                         Err(message) => self.fail_pr_link(link, "create", message),
                         Ok(number) => {
                             let link = PrLinkSnapshot {
@@ -170,8 +170,12 @@ impl Runtime {
                 let spawned = self.spawn_issue_worker(
                     "pr-issue-create",
                     move || {
-                        let created =
-                            crate::github::create_issue(node.as_ref(), &root, &title, &body);
+                        let created = crate::github::create_issue(
+                            node.as_ref(),
+                            &crate::github::Where::Checkout(root.clone()),
+                            &title,
+                            &body,
+                        );
                         let written = created.as_ref().ok().map(|issue| {
                             crate::github::write_closing_line(
                                 node.as_ref(),
@@ -347,7 +351,7 @@ impl Runtime {
         let reference = issue.reference.clone();
         let target = self.open_pull_request(&link.workspace_id, link.pr_number);
         if let Some(workspace) = self.local_project_by_id(&link.workspace_id) {
-            self.remember_created_issue(&workspace.path, issue);
+            self.remember_created_issue(None, &workspace.path, issue);
         }
         self.snapshot.pr_work.link = Some(PrLinkSnapshot {
             step: "body".into(),

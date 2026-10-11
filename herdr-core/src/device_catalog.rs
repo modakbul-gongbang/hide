@@ -467,6 +467,7 @@ pub(crate) fn group(
         focused_pane_id: raw.focused_pane_id.clone(),
         pane_layouts: raw.pane_layouts.clone(),
         pane_hook_tokens: raw.pane_hook_tokens.clone(),
+        issue_tokens: raw.issue_tokens.clone(),
     }
 }
 
@@ -620,6 +621,9 @@ pub(crate) fn apply_registrations(
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeviceWorktrees {
     pub projects: BTreeMap<String, crate::model::ProjectWorktreesSnapshot>,
+    /// Each repository's branch notes (`branch.<b>.issue`), by the root the
+    /// session names it by, read with its worktrees.
+    pub notes: BTreeMap<String, BTreeMap<String, hide_node_link::catalog::BranchNote>>,
     /// The helper connection the running read belongs to.
     pub in_flight: Option<u64>,
     /// Asked again while a read ran; one more read follows it.

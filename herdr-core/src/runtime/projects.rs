@@ -2808,6 +2808,7 @@ impl Runtime {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
         });
         let answered = self.device_github.get(device_id);
+        let mut links = self.node_issue_links(device_id);
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {
@@ -2821,18 +2822,25 @@ impl Runtime {
                 } else {
                     GITHUB_REREAD
                 };
+                let links = links.remove(&root).unwrap_or_default();
                 let read = self
                     .device_github_reads
                     .entry((device_id.to_owned(), root.clone()))
-                    .or_insert((0, now));
-                if now.duration_since(read.1) >= wait {
-                    *read = (read.0.wrapping_add(1), now);
+                    .or_insert_with(|| DeviceGithubRead {
+                        generation: 0,
+                        asked_at: now,
+                        links: links.clone(),
+                    });
+                if now.duration_since(read.asked_at) >= wait || read.links != links {
+                    read.generation = read.generation.wrapping_add(1);
+                    read.asked_at = now;
+                    read.links = links.clone();
                 }
                 crate::github::GithubProjectRequest {
-                    links: Vec::new(),
+                    links,
                     root: PathBuf::from(&root),
                     repository: Some(repository),
-                    generation: read.0,
+                    generation: read.generation,
                 }
             })
             .collect();

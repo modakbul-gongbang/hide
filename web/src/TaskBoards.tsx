@@ -979,7 +979,7 @@ export function IssueMenu({ card, actions, handlers, trigger }: { card: TaskCard
         {card.editable ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => actions.setIssueOpen(task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
+            <DropdownMenuItem onSelect={() => actions.setIssueOpen(owner.id, task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
               {t(task.open ? "board.closeIssue" : "board.reopenIssue")}
             </DropdownMenuItem>
           </>

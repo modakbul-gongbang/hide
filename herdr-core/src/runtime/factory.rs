@@ -789,7 +789,7 @@ impl Runtime {
         {
             return Ok(existing.number);
         }
-        self.create_local_issue(project, title, body)
+        self.create_local_issue(None, project, title, body)
     }
 
     pub(crate) fn factory_local_issue_read(
