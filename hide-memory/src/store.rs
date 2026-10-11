@@ -1368,7 +1368,7 @@ impl MemoryStore {
         maximum_bytes: usize,
     ) -> Result<Vec<ComparisonCard>, MemoryError> {
         let query = Query::salient(text, crate::matcher::COMPARISON_TERM_LIMIT);
-        let candidates = self.matching_active(project_id, &query, HOOK_CANDIDATE_LIMIT)?;
+        let candidates = self.matching_active(project_id, &query, HOOK_CANDIDATE_LIMIT, false)?;
         let mut selected = Vec::new();
         let mut bytes = 0;
         for candidate in candidates {
@@ -1403,7 +1403,7 @@ impl MemoryStore {
     ) -> Result<Vec<MemoryItem>, MemoryError> {
         let query = Query::new(text);
         let mut items = Vec::new();
-        for candidate in self.matching_active(project_id, &query, HOOK_CANDIDATE_LIMIT)? {
+        for candidate in self.matching_active(project_id, &query, HOOK_CANDIDATE_LIMIT, false)? {
             if let Some(item) = self.item(project_id, &candidate.id)? {
                 items.push(item);
             }
@@ -1721,6 +1721,59 @@ impl MemoryStore {
         Ok(moved == 1)
     }
 
+    /// Records the agent of card `number`'s attempt `from` once its spawn
+    /// answers, if that attempt is still running with no agent; answers
+    /// whether it did.
+    pub fn set_promotion_agent(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        agent_id: &str,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let moved = self.connection.execute(
+            "UPDATE card_promotions SET agent_id=?1 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?2 AND number=?3) \
+             AND state='running' AND attempt=?4 AND agent_id IS NULL",
+            params![agent_id, project_id, number, from.attempt],
+        )?;
+        Ok(moved == 1)
+    }
+
+    /// Names the file card `number`'s attempt `from` put it in, if that
+    /// attempt is still running or its pull request open with the same agent;
+    /// answers whether it did. Nothing else on the row moves.
+    pub fn place_promotion(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        path: &str,
+        now_unix_ms: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        if !repository_path(path) {
+            return Err(MemoryError::InvalidState(format!(
+                "promotion_target:{path}"
+            )));
+        }
+        let moved = self.connection.execute(
+            "UPDATE card_promotions SET target_path=?1,updated_at_ms=?2 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?3 AND number=?4) \
+             AND state IN ('running','pr_open') AND attempt=?5 AND agent_id IS ?6",
+            params![
+                path,
+                now_unix_ms,
+                project_id,
+                number,
+                from.attempt,
+                from.agent_id
+            ],
+        )?;
+        Ok(moved == 1)
+    }
+
     /// Writes card `number`'s promotion as the core decided it.
     pub fn set_promotion(
         &mut self,
@@ -1832,14 +1885,15 @@ impl MemoryStore {
         let selected = match query.kind {
             InjectionKind::Index => self.index(&query.project_id, query.maximum_items)?,
             InjectionKind::Bodies => {
-                let mut candidates = self.matching_active(
+                // A card in the repository's own files is read there (B12),
+                // and is left out before the candidate limit, so it takes no
+                // live card's place.
+                let candidates = self.matching_active(
                     &query.project_id,
                     &Query::new(&query.text),
                     HOOK_CANDIDATE_LIMIT,
+                    true,
                 )?;
-                // A card in the repository's own files is read there (B12).
-                let merged = self.merged_items(&query.project_id)?;
-                candidates.retain(|candidate| !merged.contains(&candidate.id));
                 if expired() {
                     return Ok(empty(InjectionOutcome::Deadline));
                 }
@@ -1890,16 +1944,6 @@ impl MemoryStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
-    /// The cards of a Project whose promotion merged.
-    fn merged_items(&self, project_id: &str) -> Result<HashSet<String>, MemoryError> {
-        let mut statement = self.connection.prepare(
-            "SELECT p.item_id FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 AND p.state='merged'",
-        )?;
-        Ok(statement
-            .query_map([project_id], |row| row.get(0))?
-            .collect::<rusqlite::Result<HashSet<String>>>()?)
     }
 
     /// Records a receipt a session carried for the cards it was given in
@@ -2077,14 +2121,20 @@ impl MemoryStore {
         project_id: &str,
         query: &Query,
         limit: usize,
+        without_merged: bool,
     ) -> Result<Vec<RetrievalCandidate>, MemoryError> {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
+        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 AND (?4=0 OR NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged')) ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
         let mut candidates = statement
             .query_map(
-                params![project_id, query.fts_expression(), limit as u64],
+                params![
+                    project_id,
+                    query.fts_expression(),
+                    limit as u64,
+                    without_merged
+                ],
                 |row| {
                     Ok(RetrievalCandidate {
                         id: row.get(0)?,
@@ -2913,10 +2963,20 @@ pub fn repository_path(path: &str) -> bool {
         && path.len() <= CITED_PATH_LIMIT_BYTES
         && !path.starts_with('/')
         && !path.contains('\\')
-        && !path.chars().any(char::is_control)
+        && !path.chars().any(|c| c.is_control() || invisible(c))
         && path
             .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
+            .all(|part| !part.is_empty() && part != "." && part != ".." && part != ".git")
+}
+
+/// A character that changes how a path reads without showing itself: the
+/// bidirectional controls and zero-width marks a path in an agent's prompt
+/// could hide behind.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+    )
 }
 
 fn parse_aliases(value: &str) -> Vec<String> {
@@ -3921,6 +3981,64 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         assert_eq!(
             (now.state, now.pr_number, now.target_path.as_deref()),
             (PromotionState::PrOpen, Some(925), Some("AGENTS.md"))
+        );
+
+        // `placed` names the file only for the attempt and agent it read.
+        assert!(
+            store
+                .place_promotion(&project, 1, &now, "docs/README.md", 4)
+                .unwrap()
+        );
+        let retried = Promotion {
+            attempt: 2,
+            ..now.clone()
+        };
+        assert!(
+            !store
+                .place_promotion(&project, 1, &retried, "CLAUDE.md", 5)
+                .unwrap(),
+            "another attempt's agent"
+        );
+        let (_, placed) = store.promotions(&project).unwrap().remove(0);
+        assert_eq!(
+            (
+                placed.state,
+                placed.pr_number,
+                placed.target_path.as_deref()
+            ),
+            (PromotionState::PrOpen, Some(925), Some("docs/README.md")),
+            "only the path moved"
+        );
+        assert!(
+            store
+                .place_promotion(&project, 1, &now, ".git/config", 6)
+                .is_err()
+        );
+
+        // An unseen agent is recorded only on its own running attempt.
+        let unseen = Promotion {
+            state: PromotionState::Running,
+            agent_id: None,
+            pr_number: None,
+            target_path: None,
+            ..merged(None)
+        };
+        store.set_promotion(&project, 1, &unseen).unwrap();
+        assert!(
+            !store
+                .set_promotion_agent(&project, 1, &retried, "agent-9")
+                .unwrap()
+        );
+        assert!(
+            store
+                .set_promotion_agent(&project, 1, &unseen, "agent-8")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .set_promotion_agent(&project, 1, &unseen, "agent-9")
+                .unwrap(),
+            "an agent already recorded stays"
         );
     }
 
@@ -5626,5 +5744,32 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         assert_eq!(fts_rows(&project), 0);
         assert_eq!(fts_rows(&new), 1);
         assert_eq!(store.search(&new, "retry budget", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_repository_path_stays_inside_the_working_tree_and_reads_as_written() {
+        for path in [
+            "AGENTS.md",
+            "docs/README.md",
+            "docs/한국어.md",
+            ".github/CODEOWNERS",
+        ] {
+            assert!(repository_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "/etc/passwd",
+            "../outside.md",
+            "docs/../AGENTS.md",
+            "docs//README.md",
+            "a\\b",
+            ".git/config",
+            "vendor/.git/HEAD",
+            "docs/\u{202E}dm.SDRAWKCAB",
+            "AGENTS\u{200B}.md",
+            "line\nbreak",
+        ] {
+            assert!(!repository_path(path), "{path:?}");
+        }
     }
 }

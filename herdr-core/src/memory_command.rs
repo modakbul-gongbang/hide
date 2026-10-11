@@ -210,7 +210,7 @@ impl PreparedMemory {
                 }))
             }
             MemoryCommand::Placed { number, path } => {
-                let (_, mut promotion) = store
+                let (_, promotion) = store
                     .promotions(&identity.id)
                     .map_err(|error| store_failure(&identity.id, &error))?
                     .into_iter()
@@ -236,11 +236,15 @@ impl PreparedMemory {
                 if !inside.contains(&path) {
                     return Err("memory_path_not_found".into());
                 }
-                promotion.target_path = Some(path.clone());
-                promotion.updated_at_unix_ms = now;
-                store
-                    .set_promotion(&identity.id, number, &promotion)
-                    .map_err(|error| store_failure(&identity.id, &error))?;
+                // Only the path is written, and only while this attempt and
+                // agent still hold the card, so a tracker move or a retry in
+                // between stands.
+                if !store
+                    .place_promotion(&identity.id, number, &promotion, &path, now)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                {
+                    return Err("memory_card_not_promoting".into());
+                }
                 self.report(&identity.id, MemoryChange::Other);
                 Ok(json!({"card": card_name(number), "path": path}))
             }

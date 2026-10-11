@@ -264,6 +264,18 @@ impl Runtime {
         {
             project.expanded = None;
         }
+        // A card opened from elsewhere (a conversation's card line, B33) that
+        // the standing search leaves out clears the search, so it is shown.
+        if let Some(number) = number
+            && let Some(project) = self.memory_section().project.as_mut()
+            && project
+                .search
+                .as_ref()
+                .is_some_and(|search| !search.numbers.contains(&number))
+        {
+            project.search = None;
+            self.project_memory.search = None;
+        }
         self.refresh_project_memory();
         true
     }
@@ -386,6 +398,7 @@ impl Runtime {
             .state
             .as_ref()
             .is_some_and(|state| state.capacity_reached);
+        let project_id = self.project_memory.project_id.clone().unwrap_or_default();
         let mut rows = load.rows;
         let mut questions = Vec::new();
         let mut open = false;
@@ -394,7 +407,7 @@ impl Runtime {
                 promotion.state,
                 hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
             );
-            let snapshot = self.promotion_snapshot(promotion);
+            let snapshot = self.promotion_snapshot(&project_id, *number, promotion);
             let Some(row) = rows.iter_mut().find(|row| row.number == *number) else {
                 continue;
             };
@@ -626,7 +639,14 @@ impl Runtime {
                     (MemoryAction::Undo, Some(number)) => {
                         self.note_memory_change(&project_id, MemoryChange::Undid(number))
                     }
-                    (MemoryAction::Promote, _) => self.promotions_moved(),
+                    (MemoryAction::Promote, _) => {
+                        if let Some((number, attempt, start)) = outcome.unseen {
+                            self.project_memory
+                                .promotions
+                                .add_unseen((project_id.clone(), number, attempt), start);
+                        }
+                        self.promotions_moved()
+                    }
                     _ => {}
                 }
             }
@@ -657,6 +677,9 @@ impl Runtime {
 struct MemoryActionOutcome {
     project_id: String,
     diagnostic: Option<(String, String)>,
+    /// A promotion whose agent was started but not seen yet: the card, the
+    /// attempt and its start, for the tracker to ask again.
+    unseen: Option<(u64, u32, super::memory_promotion::PromotionStart)>,
 }
 
 fn mutate_memory(
@@ -672,6 +695,7 @@ fn mutate_memory(
     let outcome = || MemoryActionOutcome {
         project_id: identity.id.clone(),
         diagnostic: None,
+        unseen: None,
     };
     let number = payload.number;
     let named = || number.ok_or("The Memory action names no card");
@@ -697,6 +721,7 @@ fn mutate_memory(
                 .delete_project_data(&identity.id)
                 .map_err(|error| error.to_string())?;
             Ok(MemoryActionOutcome {
+                unseen: None,
                 diagnostic: deletion.cleanup_warning.map(|warning| {
                     (
                         "memory.delete_cleanup_deferred".to_owned(),
@@ -732,8 +757,13 @@ fn mutate_memory(
         }
         MemoryAction::Promote => {
             let start = start.ok_or("The promotion has no agent to start")?;
-            super::memory_promotion::start_promotion(&mut store, &identity.id, named()?, start)?;
-            Ok(outcome())
+            let number = named()?;
+            let unseen =
+                super::memory_promotion::start_promotion(&mut store, &identity.id, number, start)?;
+            Ok(MemoryActionOutcome {
+                unseen: unseen.map(|(attempt, start)| (number, attempt, start)),
+                ..outcome()
+            })
         }
         MemoryAction::Dismiss => {
             super::memory_promotion::dismiss_promotion(&mut store, &identity.id, named()?)?;
@@ -1116,6 +1146,7 @@ mod tests {
                 agent: None,
                 pr_number: Some(924),
                 target_path: None,
+                github_failure: None,
             })
         );
         assert_eq!(

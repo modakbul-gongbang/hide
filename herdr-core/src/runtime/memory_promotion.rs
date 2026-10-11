@@ -45,9 +45,11 @@ fn base36(mut value: u64) -> String {
     digits.iter().rev().collect()
 }
 
-/// The name the agent is listed under (`memory-promote-m7`).
-fn agent_name(number: u64) -> String {
-    format!("memory-promote-m{number}")
+/// The name the agent is listed under (`memory-promote-m7-mv43hxze`): its
+/// own per attempt, like its branch, since card numbers repeat across
+/// Projects and an earlier attempt's agent may still hold its name.
+fn agent_name(number: u64, started_at_unix_ms: u64) -> String {
+    format!("memory-promote-m{number}-{}", base36(started_at_unix_ms))
 }
 
 /// The agent's fixed first prompt. The card is read with `hide memory
@@ -60,7 +62,7 @@ fn prompt(number: u64) -> String {
          2. Read the repository's routing documents (AGENTS.md, CLAUDE.md, docs/README.md and what they point to) and find where a rule like this belongs.\n\
          3. Put the card's content there in that document's own style, changing existing text rather than adding a duplicate.\n\
          4. Tell Hide which file you changed: `hide memory placed {card} <repository-relative path>`.\n\
-         5. Commit on this branch, push it, and open a pull request. Do not merge it; the operator reviews it."
+         5. Commit on this branch, push it, and open a pull request whose description quotes the card's text as `hide memory show {card}` printed it, so the reviewer sees exactly what is being placed. Do not merge it; the operator reviews it."
     )
 }
 
@@ -89,22 +91,41 @@ pub(super) struct PromotionTracking {
     /// Whether one is running: only then does the minute tick check agents.
     running: bool,
     next_unix_ms: u64,
-    /// Each running attempt seen gone with no pull request, and the PR
-    /// catalog generation asked for when it was: the attempt fails only on
-    /// an answer to that ask or a later one, so a pull request opened just
-    /// before the agent ended is not missed by an older read. Kept in memory:
-    /// after a restart the ask is made again.
-    gone: HashMap<AttemptKey, u64>,
+    /// Each running attempt seen gone with no pull request: the attempt
+    /// fails only on an answer to the PR catalog read asked for then (or a
+    /// later one), so a pull request opened just before the agent ended is
+    /// not missed by an older read. Kept in memory: after a restart the ask
+    /// is made again.
+    gone: HashMap<AttemptKey, GoneAttempt>,
+    /// Each attempt whose agent was started but had not shown its session
+    /// when its start returned, with what started it: the tracker asks the
+    /// same spawn again until the agent shows or the grace ends.
+    unseen: HashMap<AttemptKey, PromotionStart>,
+}
+
+struct GoneAttempt {
+    /// The PR catalog generation asked for when the attempt was seen gone.
+    asked: u64,
+    /// The catalog answered that ask but could not say whether a pull request
+    /// came (gh missing or logged out, or a failed read): the attempt stays
+    /// running and the tab says so, with GitHub's reason when it has one.
+    unconfirmed: Option<Option<GithubFailureCategory>>,
 }
 
 /// One attempt: the Project, the card number and the attempt.
-type AttemptKey = (String, u64, u32);
+pub(super) type AttemptKey = (String, u64, u32);
 
 impl PromotionTracking {
     /// A promotion started or a read found one followed: check it.
     pub(super) fn mark_open(&mut self) {
         self.followed = Some(true);
         self.running = true;
+    }
+
+    /// An attempt whose start returned before its agent showed its session.
+    pub(super) fn add_unseen(&mut self, key: AttemptKey, start: PromotionStart) {
+        self.unseen.insert(key, start);
+        self.mark_open();
     }
 }
 
@@ -146,16 +167,25 @@ impl Runtime {
     /// whose pull request closed unmerged is drawn as an ordinary card.
     pub(super) fn promotion_snapshot(
         &self,
+        project_id: &str,
+        number: u64,
         promotion: &Promotion,
     ) -> Option<MemoryPromotionSnapshot> {
+        let unconfirmed = self
+            .project_memory
+            .promotions
+            .gone
+            .get(&(project_id.to_owned(), number, promotion.attempt))
+            .and_then(|gone| gone.unconfirmed);
         let state = match promotion.state {
             PromotionState::Dismissed | PromotionState::ClosedUnmerged => return None,
+            PromotionState::Running if unconfirmed.is_some() => MemoryPromotionState::Unconfirmed,
             PromotionState::Running => MemoryPromotionState::Running,
             PromotionState::PrOpen => MemoryPromotionState::PrOpen,
             PromotionState::Merged => MemoryPromotionState::Merged,
             PromotionState::Failed => MemoryPromotionState::Failed,
         };
-        let agent = (promotion.state == PromotionState::Running)
+        let agent = (state == MemoryPromotionState::Running)
             .then_some(promotion.agent_id.as_deref())
             .flatten()
             .and_then(|id| {
@@ -171,6 +201,7 @@ impl Runtime {
             agent,
             pr_number: promotion.pr_number,
             target_path: promotion.target_path.clone(),
+            github_failure: unconfirmed.flatten(),
         })
     }
 
@@ -238,10 +269,13 @@ impl Runtime {
         }
     }
 
-    fn finish_promotion_tracking(&mut self, moved: Result<TrackOutcome, String>) {
+    fn finish_promotion_tracking(&mut self, mut moved: Result<TrackOutcome, String>) {
         let tracking = &mut self.project_memory.promotions;
         tracking.in_flight = false;
         let again = std::mem::take(&mut tracking.again);
+        if let Ok(outcome) = &mut moved {
+            tracking.unseen.extend(outcome.unseen.drain(..));
+        }
         let moved_projects = match moved {
             // A check asked for during this one may see rows this one did not.
             Ok(outcome) if again => {
@@ -274,26 +308,40 @@ impl Runtime {
         attempt_pull_request(self.github.project(root)?, promotion)
     }
 
-    /// Whether the PR catalog has answered for `root` since the attempt
-    /// `key` was seen gone; the first time it is seen, asks for that answer.
-    fn promotion_catalog_answered(&mut self, key: &AttemptKey, root: &str) -> bool {
-        let asked = match self.project_memory.promotions.gone.get(key) {
-            Some(asked) => *asked,
-            None => {
-                self.refresh_pull_requests(root);
-                let asked = self.github_generations.get(root).copied().unwrap_or(0);
-                self.project_memory
-                    .promotions
-                    .gone
-                    .insert(key.clone(), asked);
-                return false;
-            }
+    /// What the PR catalog has answered for `root` since the attempt `key`
+    /// was seen gone; the first time it is seen, asks for that answer.
+    /// Answers whether the tab's drawing of the attempt changed.
+    fn promotion_catalog_verdict(
+        &mut self,
+        key: &AttemptKey,
+        root: &str,
+    ) -> (CatalogVerdict, bool) {
+        let Some(gone) = self.project_memory.promotions.gone.get(key) else {
+            self.refresh_pull_requests(root);
+            let asked = self.github_generations.get(root).copied().unwrap_or(0);
+            self.project_memory.promotions.gone.insert(
+                key.clone(),
+                GoneAttempt {
+                    asked,
+                    unconfirmed: None,
+                },
+            );
+            return (CatalogVerdict::Waiting, false);
         };
-        catalog_answered(
+        let verdict = catalog_verdict(
             self.github.project(root),
             self.github_read_generation.get(root).copied(),
-            asked,
-        )
+            gone.asked,
+        );
+        let unconfirmed = match verdict {
+            CatalogVerdict::Unconfirmed(failure) => Some(failure),
+            _ => None,
+        };
+        let changed = gone.unconfirmed != unconfirmed;
+        if let Some(gone) = self.project_memory.promotions.gone.get_mut(key) {
+            gone.unconfirmed = unconfirmed;
+        }
+        (verdict, changed)
     }
 
     /// Whether the agent with coordination id `id` has ended: `None` while
@@ -345,35 +393,46 @@ fn attempt_pull_request(
     })
 }
 
-/// Whether the PR catalog has answered generation `asked` or later for a
-/// repository: with a current read, a pull request missing from it is missing
-/// on GitHub too; with gh missing or logged out, or no GitHub remote, Hide
-/// cannot see one there at all, and the attempt is not left running forever
-/// on an agent that is gone. A failed read (network, rate limit) is waited
-/// out.
-fn catalog_answered(
+/// What the PR catalog's answer for a repository says of a missing pull
+/// request, once it answers generation `asked` or later.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CatalogVerdict {
+    /// No answer to the ask yet.
+    Waiting,
+    /// A current read without it, or no GitHub remote: none came.
+    NoPullRequest,
+    /// The answer could not say (gh missing or logged out, or a failed read
+    /// such as a network or rate-limit failure), with GitHub's reason.
+    Unconfirmed(Option<GithubFailureCategory>),
+}
+
+fn catalog_verdict(
     project: Option<&GithubProjectSnapshot>,
     read: Option<u64>,
     asked: u64,
-) -> bool {
-    project.is_some_and(|project| {
-        read.is_some_and(|read| read >= asked)
-            && ((project.pull_requests_read && !project.status.stale)
-                || matches!(
-                    project.status.failure_category,
-                    Some(
-                        GithubFailureCategory::NotInstalled
-                            | GithubFailureCategory::NotLoggedIn
-                            | GithubFailureCategory::NoGithubRemote
-                    )
-                ))
-    })
+) -> CatalogVerdict {
+    if !read.is_some_and(|read| read >= asked) {
+        return CatalogVerdict::Waiting;
+    }
+    let Some(project) = project else {
+        return CatalogVerdict::Unconfirmed(None);
+    };
+    if project.status.failure_category == Some(GithubFailureCategory::NoGithubRemote)
+        || (project.pull_requests_read && !project.status.stale)
+    {
+        CatalogVerdict::NoPullRequest
+    } else {
+        CatalogVerdict::Unconfirmed(project.status.failure_category)
+    }
 }
 
 struct TrackOutcome {
     followed: bool,
     running: bool,
     moved_projects: BTreeSet<String>,
+    /// Starts the check took to ask again and hands back, the agent still
+    /// unseen.
+    unseen: Vec<(AttemptKey, PromotionStart)>,
 }
 
 /// One check of every followed promotion (see `track_memory_promotions`).
@@ -386,6 +445,7 @@ fn track_promotions(
         followed: false,
         running: false,
         moved_projects: BTreeSet::new(),
+        unseen: Vec::new(),
     };
     if !MemoryStore::exists(database) {
         return Ok(outcome);
@@ -394,71 +454,152 @@ fn track_promotions(
     let followed = MemoryStore::open_read_only(database)
         .and_then(|store| store.open_promotions(node.as_str()))
         .map_err(|error| error.to_string())?;
-    let moves = {
+    let (moves, mut asks) = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
         let mut gone_now = HashSet::new();
+        let mut asks = Vec::new();
         let moves = followed
             .iter()
             .map(|(project_id, root, number, promotion)| {
+                let key = (project_id.clone(), *number, promotion.attempt);
+                let within_grace =
+                    now.saturating_sub(promotion.started_at_unix_ms) < START_GRACE_MS;
+                // An agent started but not seen yet is asked for again, off
+                // the lock, until the grace ends.
+                if let Some(start) = guard.project_memory.promotions.unseen.remove(&key)
+                    && promotion.state == PromotionState::Running
+                    && promotion.agent_id.is_none()
+                    && within_grace
+                {
+                    asks.push((key.clone(), promotion.clone(), start));
+                }
                 let pull = guard.promotion_pull_request(root, promotion);
                 let ended = promotion
                     .agent_id
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
-                let answered = pull.is_none() && attempt_gone(promotion, ended, now) && {
-                    let key = (project_id.clone(), *number, promotion.attempt);
-                    let answered = guard.promotion_catalog_answered(&key, root);
+                let no_pull_request = pull.is_none() && attempt_gone(promotion, ended, now) && {
+                    let (verdict, changed) = guard.promotion_catalog_verdict(&key, root);
                     gone_now.insert(key);
-                    answered
+                    if changed {
+                        outcome.moved_projects.insert(project_id.clone());
+                    }
+                    verdict == CatalogVerdict::NoPullRequest
                 };
-                next_promotion(promotion, pull, answered)
+                next_promotion(promotion, pull, no_pull_request)
             })
             .collect::<Vec<_>>();
-        guard
-            .project_memory
-            .promotions
+        let tracking = &mut guard.project_memory.promotions;
+        let dropped = tracking
             .gone
-            .retain(|key, _| gone_now.contains(key));
-        moves
+            .keys()
+            .filter(|key| !gone_now.contains(*key))
+            .map(|(project_id, _, _)| project_id.clone())
+            .collect::<Vec<_>>();
+        outcome.moved_projects.extend(dropped);
+        tracking.gone.retain(|key, _| gone_now.contains(key));
+        // An attempt no longer running takes its start with it.
+        tracking.unseen.retain(|key, _| {
+            followed.iter().any(|(project_id, _, number, promotion)| {
+                (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
+            })
+        });
+        (moves, asks)
     };
-    let mut store = moves
-        .iter()
-        .any(Option::is_some)
+    let mut store = (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| MemoryStore::open(database))
         .transpose()
         .map_err(|error| error.to_string())?;
     for ((project_id, _, number, promotion), next) in followed.iter().zip(moves) {
         let state = match (next, store.as_mut()) {
+            // Only the state and the pull request move: a file `placed`
+            // named meanwhile stays, and a row that moved on is left.
             (Some((state, pr_number)), Some(store)) => {
-                // Only the state and the pull request move: a file `placed`
-                // named meanwhile stays, and a row that moved on is left.
-                if store
-                    .move_promotion(project_id, *number, promotion, state, pr_number, now)
-                    .map_err(|error| error.to_string())?
-                {
-                    crate::diagnostic!(json!({
-                        "component": "memory",
-                        "kind": "promotion.moved",
-                        "project_id": project_id,
-                        "card": hide_memory::card_name(*number),
-                        "state": state.as_str(),
-                        "pr_number": pr_number,
-                    }));
-                    outcome.moved_projects.insert(project_id.clone());
+                match store.move_promotion(project_id, *number, promotion, state, pr_number, now) {
+                    Ok(true) => {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "promotion.moved",
+                            "project_id": project_id,
+                            "card": hide_memory::card_name(*number),
+                            "state": state.as_str(),
+                            "pr_number": pr_number,
+                        }));
+                        outcome.moved_projects.insert(project_id.clone());
+                        state
+                    }
+                    Ok(false) => promotion.state,
+                    // One row's failure leaves the others' moves standing.
+                    Err(error) => {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "promotion.move_failed",
+                            "project_id": project_id,
+                            "card": hide_memory::card_name(*number),
+                            "message": error.to_string(),
+                        }));
+                        promotion.state
+                    }
                 }
-                state
             }
             _ => promotion.state,
         };
         outcome.followed |= matches!(state, PromotionState::Running | PromotionState::PrOpen);
         outcome.running |= state == PromotionState::Running;
     }
+    if let Some(store) = store.as_mut() {
+        for (key, promotion, start) in asks.drain(..) {
+            if let Some(start) = adopt_agent(store, &key, &promotion, start) {
+                outcome.unseen.push((key, start));
+            } else {
+                outcome.moved_projects.insert(key.0.clone());
+            }
+        }
+    }
     Ok(outcome)
 }
 
-/// Whether a running attempt's agent is gone: it ended, or none was written
-/// within the grace (Hide quit between writing the state and the spawn).
+/// Asks an unseen agent's spawn again; records the agent when it shows, and
+/// hands the start back while it still has not.
+fn adopt_agent(
+    store: &mut MemoryStore,
+    key: &AttemptKey,
+    promotion: &Promotion,
+    start: PromotionStart,
+) -> Option<PromotionStart> {
+    let (project_id, number, _) = key;
+    match spawn_agent(project_id, *number, promotion, &start) {
+        Ok(agent_id) => {
+            if let Err(error) = store.set_promotion_agent(project_id, *number, promotion, &agent_id)
+            {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "promotion.agent_not_recorded",
+                    "project_id": project_id,
+                    "card": hide_memory::card_name(*number),
+                    "message": error.to_string(),
+                }));
+            }
+            None
+        }
+        Err(reason) if reason == UNSEEN => Some(start),
+        Err(reason) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotion.agent_not_adopted",
+                "project_id": project_id,
+                "card": hide_memory::card_name(*number),
+                "reason": reason,
+            }));
+            None
+        }
+    }
+}
+
+/// Whether a running attempt's agent is gone: it ended, or none was seen
+/// within the grace (Hide quit between writing the state and the spawn, or
+/// the agent never showed its session).
 /// `agent_ended` is `None` while the ledger cannot be read.
 fn attempt_gone(promotion: &Promotion, agent_ended: Option<bool>, now_unix_ms: u64) -> bool {
     promotion.state == PromotionState::Running
@@ -470,12 +611,12 @@ fn attempt_gone(promotion: &Promotion, agent_ended: Option<bool>, now_unix_ms: u
 
 /// Where a followed promotion goes next, or `None` when it stays (B31, B32):
 /// the attempt's pull request decides; with none, a running attempt whose
-/// agent is gone fails once the PR catalog has answered since
-/// (`catalog_answered`).
+/// agent is gone fails once the PR catalog has said none came
+/// (`CatalogVerdict::NoPullRequest`).
 fn next_promotion(
     promotion: &Promotion,
     pull: Option<PullRequestFact>,
-    catalog_answered: bool,
+    no_pull_request: bool,
 ) -> Option<(PromotionState, Option<u64>)> {
     let next = match pull {
         Some(PullRequestFact {
@@ -487,7 +628,7 @@ fn next_promotion(
             badge: PullRequestBadge::Closed,
         }) => (PromotionState::ClosedUnmerged, Some(number)),
         Some(PullRequestFact { number, .. }) => (PromotionState::PrOpen, Some(number)),
-        None if promotion.state == PromotionState::Running && catalog_answered => {
+        None if promotion.state == PromotionState::Running && no_pull_request => {
             (PromotionState::Failed, None)
         }
         None => return None,
@@ -498,13 +639,15 @@ fn next_promotion(
 /// Starts card `number`'s promotion on the action worker (B30): the card must
 /// be a live rule, decision or lesson that no promotion holds; the attempt is
 /// written as running before the spawn, so a start Hide never finished fails
-/// by the tracker's grace rather than holding the card forever.
+/// by the tracker's grace rather than holding the card forever. Answers the
+/// attempt and its start when the agent was started but has not shown its
+/// session yet, for the tracker to ask again.
 pub(super) fn start_promotion(
     store: &mut MemoryStore,
     project_id: &str,
     number: u64,
     start: PromotionStart,
-) -> Result<(), String> {
+) -> Result<Option<(u32, PromotionStart)>, String> {
     let item = store
         .item_by_number(project_id, number)
         .map_err(|error| error.to_string())?
@@ -534,12 +677,12 @@ pub(super) fn start_promotion(
     let attempt = previous.map_or(0, |promotion| promotion.attempt) + 1;
     let started = super::memory::now_ms();
     let branch = branch(number, started);
-    let mut promotion = Promotion {
+    let promotion = Promotion {
         state: PromotionState::Running,
         revision: item.revision,
         attempt,
         agent_id: None,
-        branch: Some(branch.clone()),
+        branch: Some(branch),
         pr_number: None,
         target_path: None,
         started_at_unix_ms: started,
@@ -548,35 +691,46 @@ pub(super) fn start_promotion(
     store
         .set_promotion(project_id, number, &promotion)
         .map_err(|error| error.to_string())?;
-    match spawn_until_seen(project_id, number, attempt, &branch, &start) {
-        Ok(agent_id) => promotion.agent_id = Some(agent_id),
+    // Each write after the spawn is conditional on the attempt still running
+    // as written, so a tracker move in between stands.
+    let failed = |store: &mut MemoryStore, reason: &str| {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "promotion.start_failed",
+            "project_id": project_id,
+            "card": hide_memory::card_name(number),
+            "reason": reason,
+        }));
+        store
+            .move_promotion(
+                project_id,
+                number,
+                &promotion,
+                PromotionState::Failed,
+                None,
+                super::memory::now_ms(),
+            )
+            .map(|_| None)
+            .map_err(|error| error.to_string())
+    };
+    match spawn_when_free(project_id, number, &promotion, &start) {
+        Ok(agent_id) => store
+            .set_promotion_agent(project_id, number, &promotion, &agent_id)
+            .map(|_| None)
+            .map_err(|error| error.to_string()),
         // The agent was started and has not shown its session yet: the
-        // attempt stays running with no agent, and the tracker's grace and
-        // catalog rules end it if no agent or pull request comes.
-        Err(reason) if STARTED_UNSEEN.contains(&reason.as_str()) => {
+        // tracker asks the same spawn again until it shows or the grace ends.
+        Err(reason) if reason == UNSEEN => {
             crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "promotion.agent_unseen",
                 "project_id": project_id,
                 "card": hide_memory::card_name(number),
-                "reason": reason,
             }));
+            Ok(Some((attempt, start)))
         }
-        Err(reason) => {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "promotion.start_failed",
-                "project_id": project_id,
-                "card": hide_memory::card_name(number),
-                "reason": reason,
-            }));
-            promotion.state = PromotionState::Failed;
-        }
+        Err(reason) => failed(store, &reason),
     }
-    promotion.updated_at_unix_ms = super::memory::now_ms();
-    store
-        .set_promotion(project_id, number, &promotion)
-        .map_err(|error| error.to_string())
 }
 
 /// The operator's 안 올림 on a suggestion or a failed attempt: the card is
@@ -623,31 +777,30 @@ pub(super) fn dismiss_promotion(
         .map_err(|error| error.to_string())
 }
 
-/// The spawn's answers that mean the agent's pane was made and its start
-/// typed, or another spawn held the machine's spawn lock: asking the same
-/// intent again continues it (the Factory reads them the same way).
-const STARTED_UNSEEN: [&str; 2] = ["native_identity_unavailable", "spawn_busy"];
-/// How long a promotion's start keeps asking for an agent that has not shown
-/// its session yet; each ask waits up to the spawn's own five seconds.
-const START_SEEN_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+/// The spawn's answer when the agent's pane was made and its start typed but
+/// its session was not seen within the spawn's own wait: asking the same
+/// intent again continues it (the Factory reads it the same way).
+const UNSEEN: &str = "native_identity_unavailable";
+/// The spawn's answer when another spawn holds this machine's spawn lock:
+/// nothing was started, and asking again soon may get the lock.
+const BUSY: &str = "spawn_busy";
+/// How long a promotion's start waits for the machine's spawn lock.
+const SPAWN_LOCK_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// `spawn_agent`, asked again with the same intent while the agent has not
-/// shown its session, until [`START_SEEN_WITHIN`].
+/// `spawn_agent`, asked again while another spawn holds the lock, until
+/// [`SPAWN_LOCK_WITHIN`]; a lock still held then fails the start, since
+/// nothing was started.
 #[allow(clippy::disallowed_methods)] // a production wait on the action worker
-fn spawn_until_seen(
+fn spawn_when_free(
     project_id: &str,
     number: u64,
-    attempt: u32,
-    branch: &str,
+    promotion: &Promotion,
     start: &PromotionStart,
 ) -> Result<String, String> {
-    let deadline = std::time::Instant::now() + START_SEEN_WITHIN;
+    let deadline = std::time::Instant::now() + SPAWN_LOCK_WITHIN;
     loop {
-        match spawn_agent(project_id, number, attempt, branch, start) {
-            Err(reason)
-                if STARTED_UNSEEN.contains(&reason.as_str())
-                    && std::time::Instant::now() < deadline =>
-            {
+        match spawn_agent(project_id, number, promotion, start) {
+            Err(reason) if reason == BUSY && std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
             answer => return answer,
@@ -660,19 +813,21 @@ fn spawn_until_seen(
 fn spawn_agent(
     project_id: &str,
     number: u64,
-    attempt: u32,
-    branch: &str,
+    promotion: &Promotion,
     start: &PromotionStart,
 ) -> Result<String, String> {
     let dialect = hide_agent_adapter::adapter(&start.kind)
         .and_then(|row| row.start)
         .ok_or("agent_not_startable")?;
+    let branch = promotion.branch.clone().ok_or("promotion_without_branch")?;
+    let started = promotion.started_at_unix_ms;
     let mut args = start.args.clone();
     args.push(dialect.prompt_flag().to_owned());
     args.push(crate::live::prompt_argument(&prompt(number))?);
     crate::coordination::register_code_owned(&start.client, &start.authority, &start.actor)?;
-    // Stable per Project, card and attempt, so a start asked again
-    // continues the same spawn (rule 11).
+    // Stable per Project, card and attempt start, so a start asked again
+    // continues the same spawn (rule 11), and an attempt after the
+    // Project's data was deleted and its numbers began again is a new one.
     let digest = &stable_digest(project_id)[..12];
     let view = crate::coordination::run(
         start.client.clone(),
@@ -684,11 +839,15 @@ fn spawn_agent(
         crate::coordination::Command::Spawn {
             parent: None,
             machine: None,
-            name: agent_name(number),
-            intent: format!("memory-promote-{digest}-m{number}-a{attempt}"),
+            name: agent_name(number, started),
+            intent: format!(
+                "memory-promote-{digest}-m{number}-a{}-{}",
+                promotion.attempt,
+                base36(started)
+            ),
             kind: start.kind.clone(),
             repo: start.repo.clone(),
-            branch: branch.to_owned(),
+            branch,
             path: None,
             args,
         },
@@ -832,7 +991,8 @@ mod tests {
     }
 
     #[test]
-    fn only_an_answer_asked_for_after_the_agent_went_says_no_pull_request_came() {
+    fn only_an_answer_asked_for_after_the_agent_went_says_whether_a_pull_request_came() {
+        use CatalogVerdict::{NoPullRequest, Unconfirmed, Waiting};
         let project = |read: bool, stale: bool, category| GithubProjectSnapshot {
             pull_requests_read: read,
             status: crate::model::GithubStatusSnapshot {
@@ -843,39 +1003,34 @@ mod tests {
             ..Default::default()
         };
         let current = project(true, false, None);
-        assert!(
-            !catalog_answered(None, Some(3), 3),
-            "GitHub has not answered"
-        );
-        assert!(catalog_answered(Some(&current), Some(3), 3));
-        assert!(catalog_answered(Some(&current), Some(4), 3));
-        assert!(
-            !catalog_answered(Some(&current), Some(2), 3),
+        assert_eq!(catalog_verdict(Some(&current), Some(3), 3), NoPullRequest);
+        assert_eq!(catalog_verdict(Some(&current), Some(4), 3), NoPullRequest);
+        assert_eq!(
+            catalog_verdict(Some(&current), Some(2), 3),
+            Waiting,
             "a read from before the ask, such as one restored at launch"
         );
-        assert!(!catalog_answered(Some(&current), None, 0));
-        assert!(!catalog_answered(
-            Some(&project(true, true, None)),
-            Some(3),
-            3
-        ));
-        assert!(!catalog_answered(
-            Some(&project(
-                true,
-                true,
-                Some(GithubFailureCategory::NetworkOrRateLimit)
-            )),
-            Some(3),
-            3
-        ));
-        for unseen in [
-            GithubFailureCategory::NotInstalled,
-            GithubFailureCategory::NotLoggedIn,
-            GithubFailureCategory::NoGithubRemote,
+        assert_eq!(catalog_verdict(Some(&current), None, 0), Waiting);
+        let no_remote = project(false, false, Some(GithubFailureCategory::NoGithubRemote));
+        assert_eq!(catalog_verdict(Some(&no_remote), Some(3), 3), NoPullRequest);
+        assert_eq!(
+            catalog_verdict(Some(&no_remote), Some(2), 3),
+            Waiting,
+            "a remote may have been added since that answer"
+        );
+        // GitHub answered and could not say: the attempt is unconfirmed, never
+        // failed, until GitHub can be read again.
+        for (failure, read, stale) in [
+            (Some(GithubFailureCategory::NotInstalled), false, false),
+            (Some(GithubFailureCategory::NotLoggedIn), false, false),
+            (Some(GithubFailureCategory::NetworkOrRateLimit), true, true),
+            (None, true, true),
         ] {
-            let project = project(false, false, Some(unseen));
-            assert!(catalog_answered(Some(&project), Some(3), 3), "{unseen:?}");
-            assert!(!catalog_answered(Some(&project), Some(2), 3), "{unseen:?}");
+            assert_eq!(
+                catalog_verdict(Some(&project(read, stale, failure)), Some(3), 3),
+                Unconfirmed(failure),
+                "{failure:?}"
+            );
         }
     }
 
@@ -977,11 +1132,40 @@ mod tests {
             "no answer to the ask yet"
         );
 
+        // GitHub answers the ask but cannot say (logged out): the attempt is
+        // still followed and drawn unconfirmed, never failed.
         {
             let mut runtime = runtime.lock().unwrap();
             runtime.github_read_generation.insert(repo.into(), asked);
-            runtime.github.projects[0].pull_requests =
-                vec![pull_request(924, &branch(1, started), started + 1)];
+            let project = &mut runtime.github.projects[0];
+            project.pull_requests_read = false;
+            project.status.failure_category = Some(GithubFailureCategory::NotLoggedIn);
+        }
+        let outcome = track_promotions(&context, &node, &database).unwrap();
+        assert_eq!(state(&store, "p"), PromotionState::Running);
+        assert!(outcome.followed && outcome.running);
+        assert!(outcome.moved_projects.contains("p"), "the tab redraws it");
+        let drawn = |runtime: &Runtime| {
+            let (number, promotion) = store.promotions("p").unwrap().remove(0);
+            runtime
+                .promotion_snapshot("p", number, &promotion)
+                .map(|snapshot| (snapshot.state, snapshot.github_failure))
+        };
+        assert_eq!(
+            drawn(&runtime.lock().unwrap()),
+            Some((
+                MemoryPromotionState::Unconfirmed,
+                Some(GithubFailureCategory::NotLoggedIn)
+            ))
+        );
+
+        // GitHub can be read again and shows the pull request.
+        {
+            let mut runtime = runtime.lock().unwrap();
+            let project = &mut runtime.github.projects[0];
+            project.pull_requests_read = true;
+            project.status.failure_category = None;
+            project.pull_requests = vec![pull_request(924, &branch(1, started), started + 1)];
         }
         let outcome = track_promotions(&context, &node, &database).unwrap();
         let (_, open) = store.promotions("p").unwrap().remove(0);

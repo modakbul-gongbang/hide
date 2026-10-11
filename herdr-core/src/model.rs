@@ -2524,6 +2524,9 @@ pub struct MemoryPromotionSnapshot {
     pub pr_number: Option<u64>,
     /// The repository-relative file the card went into, once the agent said.
     pub target_path: Option<String>,
+    /// Why GitHub could not say whether an `unconfirmed` attempt's pull
+    /// request came, when it gave a reason.
+    pub github_failure: Option<GithubFailureCategory>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -2535,6 +2538,10 @@ pub enum MemoryPromotionState {
     Merged,
     /// The agent ended without a pull request; the card is asked about again.
     Failed,
+    /// The agent is gone and GitHub could not say whether its pull request
+    /// came (gh missing or logged out, or failing reads): the attempt is
+    /// still followed, and restoring GitHub settles it.
+    Unconfirmed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -5656,13 +5663,15 @@ mod wire_enum_tests {
             MemoryPromotionState::PrOpen,
             MemoryPromotionState::Merged,
             MemoryPromotionState::Failed,
+            MemoryPromotionState::Unconfirmed,
         ];
         for variant in promotion_states {
             match variant {
                 MemoryPromotionState::Running
                 | MemoryPromotionState::PrOpen
                 | MemoryPromotionState::Merged
-                | MemoryPromotionState::Failed => {}
+                | MemoryPromotionState::Failed
+                | MemoryPromotionState::Unconfirmed => {}
             }
         }
         assert_wire(&contract, "memory_promotion_state", &promotion_states);

@@ -57,6 +57,6 @@
   "strip_tab_kind": ["herdr", "file", "diff", "session"],
   "memory_card_kind": ["rule", "decision", "lesson", "fact"],
   "memory_analysis_state": ["idle", "analyzing", "ai_not_ready"],
-  "memory_promotion_state": ["running", "pr_open", "merged", "failed"],
+  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed"],
   "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss"]
 }
