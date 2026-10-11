@@ -8,7 +8,6 @@ mod connect_build;
 mod connect_stop;
 mod handshake;
 mod held_letter_notice;
-mod memory_locator;
 mod mobile;
 mod node_contract;
 mod node_home;
