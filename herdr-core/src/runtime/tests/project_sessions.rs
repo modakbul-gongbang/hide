@@ -302,7 +302,11 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
     assert_eq!(
         sessions.unavailable_reason.as_deref(),
         Some(
-            "Sessions on build-box are not available here. Hide reads Codex and Claude Code sessions only on This Mac."
+            format!(
+                "Sessions on build-box are not available here. Hide reads Codex and Claude Code sessions only on {}.",
+                crate::workspace::LOCAL_DEVICE_LABEL
+            )
+            .as_str()
         )
     );
     assert!(sessions.rows.is_empty());

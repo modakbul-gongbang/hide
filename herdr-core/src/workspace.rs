@@ -26,7 +26,7 @@ use crate::node_access::{NodeLink, call_as};
 /// The name the core's own machine goes by on screen: what its system calls
 /// it, as macOS ("This Mac") and Windows ("This PC") do, and a plain "This
 /// computer" on Linux, which has no one name for it.
-const LOCAL_DEVICE_LABEL: &str = if cfg!(target_os = "macos") {
+pub(crate) const LOCAL_DEVICE_LABEL: &str = if cfg!(target_os = "macos") {
     "This Mac"
 } else if cfg!(windows) {
     "This PC"
