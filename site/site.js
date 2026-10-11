@@ -90,7 +90,7 @@ function mountLiveSidebar() {
     if (!run && timer) { window.clearInterval(timer); timer = null; }
   };
   if ("IntersectionObserver" in window) {
-    new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }, { threshold: 0.3 }).observe(root);
+    new IntersectionObserver(entries => { inView = entries[entries.length - 1].isIntersecting; sync(); }, { threshold: 0.3 }).observe(root);
   }
   document.addEventListener("visibilitychange", sync);
   sync();

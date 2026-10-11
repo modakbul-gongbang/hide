@@ -280,6 +280,8 @@ function mountFactory(root) {
     return;
   }
 
+  // Draw the opening board at once, so the line is never empty before the loop reaches the screen.
+  reset();
   let started = false;
   let inView = false;
   const sync = () => {
@@ -289,7 +291,8 @@ function mountFactory(root) {
       cycle();
     }
   };
-  new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }, { threshold: 0.2 }).observe(root);
+  // One callback can carry several entries for the demo; the last one is its current state.
+  new IntersectionObserver(entries => { inView = entries[entries.length - 1].isIntersecting; sync(); }, { threshold: 0.2 }).observe(root);
   document.addEventListener("visibilitychange", sync);
 }
 
