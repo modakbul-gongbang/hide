@@ -145,7 +145,7 @@ pub fn before_core_at_login() {
     let Some(bin) = std::env::var_os(crate::env::HERDR_BIN_PATH) else {
         return;
     };
-    let outcome = ensure_herdr(Path::new(&bin));
+    let outcome = ensure_herdr(Path::new(&bin), HERDR_STARTED_WITHIN);
     herdr_core::diagnostic!(json!({
         "component": "login_item",
         "kind": "herdr.checked",
@@ -153,10 +153,12 @@ pub fn before_core_at_login() {
     }));
 }
 
-/// Starts the Herdr server at `bin` when it says none runs, and waits for
-/// it; answers what happened, for the log.
+/// Starts the Herdr server at `bin` when it says none runs, and waits up to
+/// `started_within` for it; answers what happened, for the log. The server
+/// is the machine's, as one the operator starts is: it is left running when
+/// this process ends, so a core that restarts finds it.
 #[allow(clippy::disallowed_methods)] // a production wait for another process
-fn ensure_herdr(bin: &Path) -> String {
+fn ensure_herdr(bin: &Path, started_within: Duration) -> String {
     let status = || -> Result<bool, String> {
         let mut command = std::process::Command::new(bin);
         command.args(["status", "server", "--json"]);
@@ -197,7 +199,7 @@ fn ensure_herdr(bin: &Path) -> String {
     if let Err(error) = command.spawn() {
         return format!("start_failed: {error}");
     }
-    let deadline = Instant::now() + HERDR_STARTED_WITHIN;
+    let deadline = Instant::now() + started_within;
     while Instant::now() < deadline {
         if status() == Ok(true) {
             return "started".to_owned();
@@ -205,4 +207,70 @@ fn ensure_herdr(bin: &Path) -> String {
         std::thread::sleep(Duration::from_millis(200));
     }
     "start_failed: the server did not answer in time".to_owned()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A stand-in Herdr whose status answers from files beside it: none
+    /// runs until its server is started, `.stuck` keeps a started server
+    /// silent, and `.broken` makes the status fail. Each start is a line in
+    /// `.starts`.
+    const HERDR: &str = r#"#!/bin/sh
+case "$1" in
+status)
+  [ -e "$0.broken" ] && exit 3
+  if [ -e "$0.running" ]; then echo '{"running":true}'; else echo '{"running":false}'; fi ;;
+server)
+  echo started >> "$0.starts"
+  [ -e "$0.stuck" ] || : > "$0.running" ;;
+esac
+"#;
+
+    fn herdr(with: &[&str]) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("herdr");
+        std::fs::write(&bin, HERDR).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for name in with {
+            std::fs::write(dir.path().join(format!("herdr.{name}")), "").unwrap();
+        }
+        (dir, bin)
+    }
+
+    fn starts(bin: &Path) -> usize {
+        std::fs::read_to_string(format!("{}.starts", bin.display()))
+            .map(|starts| starts.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// A login starts the machine's Herdr server only when Herdr says none
+    /// runs (B9), and a status Herdr cannot give starts nothing, so a server
+    /// that may be running is never doubled.
+    #[test]
+    fn herdr_is_started_only_when_its_status_says_none_runs() {
+        let within = Duration::from_secs(5);
+
+        let (_dir, bin) = herdr(&[]);
+        assert_eq!(ensure_herdr(&bin, within), "started");
+        assert_eq!(starts(&bin), 1);
+
+        let (_dir, bin) = herdr(&["running"]);
+        assert_eq!(ensure_herdr(&bin, within), "running");
+        assert_eq!(starts(&bin), 0);
+
+        let (_dir, bin) = herdr(&["stuck"]);
+        assert_eq!(
+            ensure_herdr(&bin, Duration::from_millis(500)),
+            "start_failed: the server did not answer in time"
+        );
+        assert_eq!(starts(&bin), 1);
+
+        let (_dir, bin) = herdr(&["broken"]);
+        let outcome = ensure_herdr(&bin, within);
+        assert!(outcome.starts_with("status_failed: "), "{outcome}");
+        assert_eq!(starts(&bin), 0);
+    }
 }
