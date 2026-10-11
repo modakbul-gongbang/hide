@@ -2551,6 +2551,13 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
             "create_workspace",
             json!({"path": app, "label": "App", "initialize_git": false}),
         )?;
+        // A project's source is GitHub until a GitHub read says the
+        // repository has no GitHub remote; the operator's Issue source menu
+        // picks Local without waiting for one.
+        fixture.event(
+            "issue_source_set",
+            json!({"project_path": app, "source": "local"}),
+        )?;
         let app_id = wait_for("the app project with a Local source", || {
             let snapshot = fixture.snapshot()?;
             Ok(app_project(&snapshot, None, &app)
