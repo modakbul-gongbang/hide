@@ -200,6 +200,14 @@ struct Harness {
 }
 
 fn harness(policy: RetryPolicy) -> Harness {
+    harness_with(policy, || Cleanup::None)
+}
+
+/// A harness whose sessions each end with what `cleanup` makes.
+fn harness_with(
+    policy: RetryPolicy,
+    cleanup: impl Fn() -> Cleanup + Send + Sync + 'static,
+) -> Harness {
     let (opened_tx, opened) = channel();
     let (reports_tx, reports) = channel();
     let attacher = Arc::new(FakeAttacher {
@@ -207,8 +215,8 @@ fn harness(policy: RetryPolicy) -> Harness {
         refuse: Mutex::new(None),
     });
     let outputs = Arc::new(Outputs::default());
-    struct Shared(Arc<FakeAttacher>);
-    impl Attacher for Shared {
+    struct Shared<C>(Arc<FakeAttacher>, C);
+    impl<C: Fn() -> Cleanup + Send + Sync> Attacher for Shared<C> {
         fn open(
             &self,
             pane: &str,
@@ -216,11 +224,13 @@ fn harness(policy: RetryPolicy) -> Harness {
             rows: u16,
             cols: u16,
         ) -> Result<SessionParts, String> {
-            self.0.open(pane, mode, rows, cols)
+            let mut parts = self.0.open(pane, mode, rows, cols)?;
+            parts.cleanup = (self.1)();
+            Ok(parts)
         }
     }
     let service = Service::start(
-        Box::new(Shared(Arc::clone(&attacher))),
+        Box::new(Shared(Arc::clone(&attacher), cleanup)),
         Arc::clone(&outputs) as Arc<dyn OutputSink>,
         Arc::new(Reports(Mutex::new(reports_tx))),
         policy,
@@ -1362,4 +1372,43 @@ fn a_closed_service_lets_its_panes_go_and_attaches_none_again() {
     while opened.next_line()["type"] != "terminal.release" {}
     harness.attach("w1:p2", Some(SIZE));
     assert_eq!(harness.service.attached(), 0);
+}
+
+/// A close returns only once each attach child it ended has exited: the
+/// role that follows in the same process attaches only after it, and a
+/// child still on its way out would meet that attach as another client
+/// holding the pane.
+#[test]
+fn a_close_returns_only_once_its_children_have_exited() {
+    let (exiting_tx, exiting) = channel();
+    let (exit_tx, exit) = channel::<()>();
+    let exiting_tx = Mutex::new(exiting_tx);
+    let exit = Arc::new(Mutex::new(exit));
+    let harness = harness_with(RetryPolicy::Automatic, move || {
+        let exiting = exiting_tx.lock().unwrap().clone();
+        let exit = Arc::clone(&exit);
+        Cleanup::Other(Box::new(move || {
+            exiting.send(()).unwrap();
+            let _ = exit.lock().unwrap().recv();
+        }))
+    });
+    harness.controlling("w1:p1");
+    let (closed_tx, closed) = channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            harness.service.close();
+            closed_tx.send(()).unwrap();
+        });
+        exiting.recv_timeout(WAIT).expect("the child began to exit");
+        // A close that does not wait returns within microseconds of letting
+        // the pane go; this one waits for the child as long as it takes.
+        assert!(
+            closed.recv_timeout(WAIT / 10).is_err(),
+            "the close returned while its child was still exiting"
+        );
+        exit_tx.send(()).unwrap();
+        closed
+            .recv_timeout(WAIT)
+            .expect("the close returned once its child exited");
+    });
 }

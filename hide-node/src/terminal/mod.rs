@@ -45,8 +45,8 @@ use self::input::{
 };
 pub use self::protocol::Mode;
 use self::protocol::SessionEvent;
-use self::session::Session;
 pub use self::session::{Attacher, Cleanup, LocalAttacher, SessionParts};
+use self::session::{ChildHold, Children, Session};
 
 /// Where a node's frames go: the screen-side hub on this machine, or the
 /// link up from a device.
@@ -74,6 +74,11 @@ const MAX_UNATTACHED_PANES: usize = 2 * MAX_ATTACHED_PANES;
 
 /// Seconds between a failed control attach and its next attempt.
 const RETRY_SECONDS: [u64; 4] = [5, 10, 20, 30];
+/// How long a close waits for the attach children it ended to exit. Each
+/// one's reaper ends its child within about a second and a quarter (the
+/// release's answer, then a short wait before it kills), so this is a
+/// hang guard rather than a pace.
+const CLOSE_WITHIN: Duration = Duration::from_secs(5);
 
 /// What a node does on its own about a failed attach.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,6 +291,7 @@ struct Shared {
     outputs: Arc<dyn OutputSink>,
     reports: Arc<dyn ReportSink>,
     policy: RetryPolicy,
+    children: Arc<Children>,
 }
 
 /// A node's terminals. Dropping it ends every session it holds and joins
@@ -320,6 +326,7 @@ impl Service {
             outputs,
             reports,
             policy,
+            children: Arc::default(),
         });
         let clock_shared = Arc::downgrade(&shared);
         let clock = thread::Builder::new()
@@ -336,16 +343,28 @@ impl Service {
         self.shared.lock().attached()
     }
 
-    /// Ends every session it holds, whose attach children end with them,
-    /// and starts none after: its owner ended (the core whose role stopped
-    /// for a move, in a process that goes on as a node), whoever still holds
-    /// the service. A session still holding a pane would leave the next
-    /// client of this machine's Herdr only a read-only view of it.
+    /// Ends every session it holds and starts none after, and returns once
+    /// each attach child it started has exited: its owner ended (the core
+    /// whose role stopped for a move, in a process that goes on as a node;
+    /// a node whose link ended), whoever still holds the service. A child
+    /// still holding a pane would make the next client of this machine's
+    /// Herdr meet it (`owner_conflict`) and view the pane read-only, so the
+    /// role that follows starts only after this returns. A child still
+    /// live after [`CLOSE_WITHIN`] is left to its reaper and logged.
     pub fn close(&self) {
         self.shared.run(|inner, _| {
             inner.closed = true;
             inner.panes.clear();
         });
+        let live = self.shared.children.wait_gone(CLOSE_WITHIN);
+        if live > 0 {
+            crate::diagnostic!(json!({
+                "component": "terminal_session",
+                "kind": "terminal.close_unfinished",
+                "live": live,
+                "within_ms": CLOSE_WITHIN.as_millis() as u64,
+            }));
+        }
     }
 }
 
@@ -586,6 +605,9 @@ impl Shared {
             let Some(shared) = shared.upgrade() else {
                 return;
             };
+            // Counted before it starts, so a close that runs while it starts
+            // waits for it too.
+            let child = shared.children.hold();
             let began = Instant::now();
             let result = shared.attacher.open(
                 &request.pane,
@@ -601,14 +623,16 @@ impl Shared {
                     request.generation,
                     request.mode,
                     result,
+                    child,
                     elapsed_ms,
                 )
             });
         });
         if let Err(error) = started {
             let message = format!("terminal session worker could not be started: {error}");
+            let child = self.children.hold();
             self.run(|inner, shared| {
-                inner.ingest_spawn(shared, &pane, generation, mode, Err(message), 0)
+                inner.ingest_spawn(shared, &pane, generation, mode, Err(message), child, 0)
             });
         }
     }
@@ -1471,6 +1495,7 @@ impl Inner {
         }));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ingest_spawn(
         &mut self,
         shared: &Arc<Shared>,
@@ -1478,6 +1503,7 @@ impl Inner {
         generation: u64,
         mode: Mode,
         result: Result<SessionParts, String>,
+        child: ChildHold,
         elapsed_ms: u128,
     ) {
         let now = Instant::now();
@@ -1485,8 +1511,10 @@ impl Inner {
             entry.current_generation == Some(generation) && entry.lifecycle.mode == Some(mode)
         });
         if !current {
-            // A late session for a pane that moved on ends with its parts.
+            // A late session for a pane that moved on ends with its parts,
+            // which kill and reap its child, and only then is it gone.
             drop(result);
+            drop(child);
             return;
         }
         let attempt = self.panes[pane].lifecycle.attempt;
@@ -1518,7 +1546,7 @@ impl Inner {
         });
         let (session, reader) =
             match Session::start(pane, generation, mode, parts, on_write_failure) {
-                Ok(started) => started,
+                Ok((session, reader)) => (session.counted(child), reader),
                 Err(message) => {
                     self.spawn_failed(
                         shared,
