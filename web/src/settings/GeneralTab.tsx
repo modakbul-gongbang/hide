@@ -9,25 +9,31 @@ import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdr
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
 import { hostBridge } from "../host";
-import { NotificationControls } from "../NotificationControls";
+import { NotificationControls, usePermission } from "../NotificationControls";
 
 /** Language and look, the desktop app's notifications, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
 export function GeneralTab({ actions }: { actions: Actions }) {
-  const { t } = useInterfaceTranslation();
   return (
     <>
       <AppearanceGroup actions={actions} />
       {/* Desktop notifications are the desktop app's (PRD first-run-onboarding D-14, D-21). */}
-      {hostBridge() ? (
-        <Group title={t("firstRun.settings.group")} data-settings-group="notifications">
-          <div className="px-md py-sm">
-            <NotificationControls actions={actions} place="settings" />
-          </div>
-        </Group>
-      ) : null}
+      {hostBridge() ? <NotificationsGroup actions={actions} /> : null}
       <ConnectionsGroup actions={actions} />
       <AboutGroup />
     </>
+  );
+}
+
+/** Notify me when an agent needs me, and what macOS allows, read while this tab is open (B18, B30). */
+function NotificationsGroup({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const permission = usePermission();
+  return (
+    <Group title={t("firstRun.settings.group")} data-settings-group="notifications">
+      <div className="px-md py-sm">
+        <NotificationControls actions={actions} place="settings" permission={permission} />
+      </div>
+    </Group>
   );
 }
 

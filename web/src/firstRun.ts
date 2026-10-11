@@ -100,22 +100,36 @@ export function firstStartAgent(agents: readonly KitAgent[], providers: readonly
 }
 
 /**
- * What the notification step and Settings > General show (B14-B19, B30):
- * `off` before the operator turned it on, `asking` while macOS's dialog waits
- * for an answer, `on`, `blocked` when macOS refuses, `unreadable` when Hide
- * could not read macOS's setting, and `on_unchecked` where the system has no
- * permission to read (Windows, Linux).
+ * Whether the agent `kind` the start panel would run is one whose sign-in
+ * Hide checks and that last read as signed out (B23); an agent Hide cannot
+ * check, Terminal, or a sign-in not read yet says nothing (D-06).
  */
-export type NotificationState = "off" | "asking" | "on" | "blocked" | "unreadable" | "on_unchecked";
+export function notSignedIn(kind: ProviderKind | "terminal", providers: readonly AiProvider[] | undefined): boolean {
+  const id = AGENT_ADAPTERS.find((adapter) => adapter.can_start && adapter.herdr_kind === kind)?.id;
+  if (!id || !SIGN_IN_CHECKED.has(id)) return false;
+  return providers?.find((row) => row.agent === id)?.state === "needs_login";
+}
 
-export function notificationState(enabled: boolean, permission: NotificationPermission | null): NotificationState {
+/**
+ * What the notification step and Settings > General show (B14-B19, B30):
+ * `off` before the operator turned it on, `reading` until the first answer
+ * about the permission, `asking` while macOS's dialog waits for an answer,
+ * `on`, `blocked` when macOS refuses, `unreadable` when Hide could not read
+ * macOS's setting, and `on_unchecked` where the system has no permission to
+ * read (Windows, Linux). On a Mac that already allows Hide the wizard's step
+ * opens on `on` with the switch still off, and its Continue turns the switch
+ * on (B16).
+ */
+export type NotificationState = "off" | "reading" | "asking" | "on" | "blocked" | "unreadable" | "on_unchecked";
+
+export function notificationState(enabled: boolean, permission: NotificationPermission | null, place: "wizard" | "settings"): NotificationState {
   if (permission === "unsupported") return enabled ? "on_unchecked" : "off";
   // macOS's refusal shows even with the switch off: turning it on would do nothing.
   if (permission === "denied") return "blocked";
+  if (permission === "granted" && (enabled || place === "wizard")) return "on";
   if (!enabled) return "off";
-  if (permission === "granted") return "on";
-  if (permission === "not_determined") return "asking";
-  return permission === "unknown" ? "unreadable" : "asking";
+  if (permission === null) return "reading";
+  return permission === "not_determined" ? "asking" : "unreadable";
 }
 
 /** How often a screen showing the permission reads it again, so a change in System Settings shows within seconds (B16). */

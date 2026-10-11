@@ -206,6 +206,61 @@ fn an_unsaved_answer_keeps_the_first_step() {
     assert_eq!(step(&runtime), Some(FirstRunStep::Agents));
 }
 
+/// A Continue whose pass could not run (the kit link failed, or the pass
+/// listed no agent) keeps the first step, leaves the question unanswered,
+/// asks for the agents again, and a second Continue queues the install anew.
+#[test]
+fn a_pass_that_did_not_run_keeps_the_first_step_and_continue_again_sends_it() {
+    for not_run in ["link failed", "no agents"] {
+        let mut runtime = runtime();
+        report_here(&mut runtime, &first_run_pass());
+        runtime.dispatch_json(&event(
+            "agent_onboarding_apply",
+            serde_json::json!({"agents": ["claude-code"]}),
+        ));
+        let Some(KitJob::Apply(_)) = runtime.take_local_kit_job(Instant::now()) else {
+            panic!("Continue queues an install on this Mac");
+        };
+        if not_run == "link failed" {
+            runtime.set_local_kit_unavailable("timed out");
+        } else {
+            report_here(&mut runtime, &pass(true, Vec::new()));
+        }
+        assert_eq!(step(&runtime), Some(FirstRunStep::Agents), "{not_run}");
+        assert_eq!(
+            runtime.snapshot().ui_state.agent_onboarding,
+            Some(crate::model::AgentOnboarding::Pending),
+            "{not_run}: nothing was written, so the question is open again"
+        );
+        assert!(
+            matches!(
+                runtime.take_local_kit_job(Instant::now()),
+                Some(KitJob::Status)
+            ),
+            "{not_run}: the agents are read again"
+        );
+
+        report_here(&mut runtime, &first_run_pass());
+        assert!(runtime.dispatch_json(&event(
+            "agent_onboarding_apply",
+            serde_json::json!({"agents": ["claude-code"]}),
+        )));
+        let scope = run_queued_pass(
+            &mut runtime,
+            &pass(
+                false,
+                vec![agent("claude-code", true, ComponentState::Installed)],
+            ),
+        );
+        assert_eq!(agent_ids(&scope.agent_on), ["claude-code"], "{not_run}");
+        assert_eq!(
+            step(&runtime),
+            Some(FirstRunStep::Notifications),
+            "{not_run}"
+        );
+    }
+}
+
 /// B26: a browser tab's wizard is its first step alone, so applying it ends it.
 #[test]
 fn a_browser_tab_finishes_the_wizard_with_its_first_step() {
@@ -220,6 +275,39 @@ fn a_browser_tab_finishes_the_wizard_with_its_first_step() {
         &pass(false, vec![agent("codex", true, ComponentState::Installed)]),
     );
     assert_eq!(step(&runtime), Some(FirstRunStep::Done));
+}
+
+/// B16, B30: Continue on the notification step of a Mac that already allows
+/// Hide turns the switch on with the same press; Not now leaves it off, and a
+/// stale press neither moves the step nor turns the switch on.
+#[test]
+fn continue_on_an_allowed_mac_turns_the_switch_on_with_the_step() {
+    let at = |step| {
+        let mut runtime = runtime();
+        runtime.snapshot.ui_state.first_run = Some(FirstRun {
+            version: crate::model::FIRST_RUN_VERSION,
+            step,
+        });
+        runtime
+    };
+    let advance = |from: &str, on: bool| {
+        event(
+            "first_run_advance",
+            serde_json::json!({"from": from, "turn_on_notifications": on}),
+        )
+    };
+    let mut allowed = at(FirstRunStep::Notifications);
+    assert!(allowed.dispatch_json(&advance("notifications", true)));
+    assert_eq!(step(&allowed), Some(FirstRunStep::Project));
+    assert!(allowed.snapshot().ui_state.desktop_notifications);
+
+    let mut not_now = at(FirstRunStep::Notifications);
+    assert!(not_now.dispatch_json(&advance("notifications", false)));
+    assert!(!not_now.snapshot().ui_state.desktop_notifications);
+
+    let mut stale = at(FirstRunStep::Project);
+    assert!(!stale.dispatch_json(&advance("notifications", true)));
+    assert!(!stale.snapshot().ui_state.desktop_notifications);
 }
 
 /// B21, B25, B6: the later steps move one at a time from the step on screen;

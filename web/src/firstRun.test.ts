@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyHome, failedAgents, firstRunStep, firstStartAgent, notificationState, tileStatus, whatChanges } from "./firstRun";
+import { emptyHome, failedAgents, firstRunStep, firstStartAgent, notificationState, notSignedIn, tileStatus, whatChanges } from "./firstRun";
 import type { AiProvider, Kit, KitAgent, SnapshotRest } from "./snapshot";
 
 const agent = (id: string, overrides: Partial<KitAgent> = {}): KitAgent => ({
@@ -71,16 +71,34 @@ describe("the start panel's first agent (D-15)", () => {
   });
 });
 
+describe("the start panel's sign-in mark (B23, D-06)", () => {
+  it("marks only an agent whose sign-in Hide checks and read as signed out", () => {
+    expect(notSignedIn("claude", [provider("claude-code", "needs_login")])).toBe(true);
+    expect(notSignedIn("claude", [provider("claude-code", "ready")])).toBe(false);
+    expect(notSignedIn("claude", [provider("claude-code", "unread")])).toBe(false);
+    expect(notSignedIn("opencode", [provider("opencode", "needs_login")])).toBe(false);
+    expect(notSignedIn("terminal", [provider("claude-code", "needs_login")])).toBe(false);
+    expect(notSignedIn("codex", undefined)).toBe(false);
+  });
+});
+
 describe("the notification line (B14-B19, B30)", () => {
   it("follows the switch and what the system says", () => {
-    expect(notificationState(false, "granted")).toBe("off");
-    expect(notificationState(true, "not_determined")).toBe("asking");
-    expect(notificationState(true, "granted")).toBe("on");
-    expect(notificationState(true, "denied")).toBe("blocked");
-    expect(notificationState(false, "denied")).toBe("blocked");
-    expect(notificationState(true, "unknown")).toBe("unreadable");
-    expect(notificationState(true, "unsupported")).toBe("on_unchecked");
-    expect(notificationState(false, "unsupported")).toBe("off");
+    expect(notificationState(false, "granted", "settings")).toBe("off");
+    expect(notificationState(true, "not_determined", "settings")).toBe("asking");
+    expect(notificationState(true, "granted", "settings")).toBe("on");
+    expect(notificationState(true, "denied", "settings")).toBe("blocked");
+    expect(notificationState(false, "denied", "wizard")).toBe("blocked");
+    expect(notificationState(true, "unknown", "settings")).toBe("unreadable");
+    expect(notificationState(true, "unsupported", "wizard")).toBe("on_unchecked");
+    expect(notificationState(false, "unsupported", "wizard")).toBe("off");
+  });
+
+  it("opens the wizard's step on where macOS already allows Hide, and says nothing until the first read (B16)", () => {
+    expect(notificationState(false, "granted", "wizard")).toBe("on");
+    expect(notificationState(false, "not_determined", "wizard")).toBe("off");
+    expect(notificationState(true, null, "settings")).toBe("reading");
+    expect(notificationState(false, null, "wizard")).toBe("off");
   });
 });
 

@@ -15,6 +15,7 @@ import { useShellStore } from "./store";
 import { restoreFocus } from "./terminals";
 import { useUiStore } from "./ui";
 import { useInterfaceTranslation } from "./i18n/client";
+import { notSignedIn } from "./firstRun";
 
 // The start panel (PRD home-device-rail D-17..D-21, B23-B31): ⌘K's position
 // and width, no backdrop, the keyboard in the text box. What is written is the
@@ -215,6 +216,12 @@ function StartPanel({ actions }: { actions: Actions }) {
           </SelectContent>
         </Select>
         <AgentPicker actions={actions} value={selection} onChange={setSelection} disabled={working} />
+        {/* The chosen agent would start signed out (B23). */}
+        {notSignedIn(selection.kind, rest?.status?.background_ai?.providers) ? (
+          <span className="shrink-0 text-caption text-muted-foreground" data-start-not-signed-in={selection.kind}>
+            {t("firstRun.tile.notSignedIn")}
+          </span>
+        ) : null}
         <Kbd aria-hidden="true">⏎</Kbd>
         <Button size="default" disabled={!canStart} onClick={start} data-start-submit="true">
           {working ? t("shell.starting") : t("common.start")}

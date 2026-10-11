@@ -173,10 +173,12 @@ impl Runtime {
         paths
     }
 
-    /// This Mac cannot run the kit at all, and its row says why (B11).
+    /// This Mac cannot run the kit at all, and its row says why (B11); a
+    /// first-run Continue waiting for that pass learns it did not run.
     pub(crate) fn set_local_kit_unavailable(&mut self, reason: &str) {
         let node = self.node.clone();
         self.set_kit_state(node.as_str(), KitSnapshot::unavailable(reason));
+        self.settle_first_run_apply();
     }
 
     /// The worker exists: the launch pass is its first job (B1, B10).
@@ -493,25 +495,28 @@ impl Runtime {
         let mut agents = agents;
         agents.sort();
         agents.dedup();
-        let changed = if self.snapshot.ui_state.agent_onboarding
-            == Some(crate::model::AgentOnboarding::Pending)
-        {
+        let answer =
+            self.snapshot.ui_state.agent_onboarding == Some(crate::model::AgentOnboarding::Pending);
+        let changed = if answer {
             self.finish_agent_onboarding(agents.clone())
         } else {
+            let node = self.node.clone();
+            if let Some(reason) = self.kit_view(node.as_str()).unavailable {
+                // Nothing can be switched, so nothing is waited for.
+                self.set_error("kit.unavailable", reason, false);
+                return true;
+            }
             self.switch_agents_here(&agents)
         };
-        changed | self.wait_for_first_run_apply(agents, finish)
+        changed | self.wait_for_first_run_apply(agents, finish, answer)
     }
 
     /// Switches every agent installed on this Mac to what `on` says, through
-    /// the per-agent path Settings > Agents uses.
+    /// the per-agent path Settings > Agents uses; the caller has checked that
+    /// the kit can run here.
     fn switch_agents_here(&mut self, on: &[String]) -> bool {
         let node = self.node.clone();
         let view = self.kit_view(node.as_str());
-        if let Some(reason) = view.unavailable {
-            self.set_error("kit.unavailable", reason, false);
-            return true;
-        }
         // Decided before anything is queued: a queued switch marks the row
         // busy, which would make every later agent of the same press read as
         // undecided and be sent again.

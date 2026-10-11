@@ -192,3 +192,37 @@ it("asks for the sign-in probe while it is open and stops when it goes away", as
   await unmount();
   expect(events.filter((event) => event.kind === "ai_settings").at(-1)).toEqual({ schema_version: 2, kind: "ai_settings", payload: { observing: false } });
 });
+
+it("says why when its pass could not run here, and holds Continue until the agents are read again", async () => {
+  const { unmount } = await mount(state(true, AGENTS));
+  await act(async () => { continueButton().click(); });
+  // The kit link failed: the core keeps the step, its row is unavailable and lists no agent.
+  await act(async () => {
+    const next = state(true, []);
+    (next.rest.navigator.devices[0]!.kit as { unavailable?: string }).unavailable = "timed out";
+    useShellStore.setState({ ...next, revision: 2 } as never);
+  });
+  expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toBe("Hide could not set up agents on this Mac: timed out");
+  expect(continueButton().disabled).toBe(true);
+  await act(async () => { useShellStore.setState(state(true, AGENTS, [], {}, 3) as never); });
+  expect(continueButton().disabled).toBe(false);
+  await unmount();
+});
+
+it("on a Mac that already allows Hide, opens the notification step on, and its Continue turns the switch on with the step (B16)", async () => {
+  const notify = vi.fn();
+  vi.stubGlobal("hideHost", { kind: "electron", platform: "darwin", notify, notificationPermission: async () => "granted", onCommand: () => () => undefined, onNotificationOpen: () => () => undefined });
+  const next = state(true, AGENTS);
+  next.rest.ui_state.first_run.step = "notifications";
+  const { events, unmount } = await mount(next);
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector("[data-notification-line]")?.getAttribute("data-notification-line")).toBe("on");
+  expect(document.querySelector("[data-notification-turn-on]")).toBeNull();
+  const button = document.querySelector('[data-first-run-next="notifications"]') as HTMLButtonElement;
+  expect(button.textContent).toBe("Continue");
+  await act(async () => { button.click(); });
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", turn_on_notifications: true } }]);
+  expect(notify).not.toHaveBeenCalled();
+  await unmount();
+  vi.unstubAllGlobals();
+});

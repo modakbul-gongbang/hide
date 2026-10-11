@@ -13,6 +13,9 @@ pub(super) struct FirstRunApply {
     agents: Vec<String>,
     /// A browser tab's wizard ends with this step (B26).
     finish: bool,
+    /// This Continue answered the first-run question (the record waited);
+    /// a pass that did not run leaves that question unanswered again.
+    answer: bool,
 }
 
 impl Runtime {
@@ -63,7 +66,13 @@ impl Runtime {
     /// project added). Only the step on screen moves, so a second press or a
     /// window still showing an earlier step changes nothing (engineering rule
     /// 11). The first step ends through its apply, never through this event.
-    pub(super) fn advance_first_run(&mut self, from: FirstRunStep) -> bool {
+    /// Continue on the notification step of a Mac that already allows Hide
+    /// also turns the desktop switch on (B16).
+    pub(super) fn advance_first_run(
+        &mut self,
+        from: FirstRunStep,
+        turn_on_notifications: bool,
+    ) -> bool {
         let to = match from {
             FirstRunStep::Notifications => FirstRunStep::Project,
             FirstRunStep::Project => FirstRunStep::Done,
@@ -79,6 +88,9 @@ impl Runtime {
         if self.first_run_step() != Some(from) {
             return false;
         }
+        if turn_on_notifications && from == FirstRunStep::Notifications {
+            self.set_desktop_notifications(true);
+        }
         self.move_first_run(from, to)
     }
 
@@ -91,19 +103,29 @@ impl Runtime {
     /// The first step's Continue queued its choice: the step ends once this
     /// Mac's kit pass says every chosen agent is in place (B12). With nothing
     /// queued, what the kit last said decides now.
-    pub(super) fn wait_for_first_run_apply(&mut self, agents: Vec<String>, finish: bool) -> bool {
+    pub(super) fn wait_for_first_run_apply(
+        &mut self,
+        agents: Vec<String>,
+        finish: bool,
+        answer: bool,
+    ) -> bool {
         if self.first_run_step() != Some(FirstRunStep::Agents) {
             return false;
         }
-        self.first_run_apply = Some(FirstRunApply { agents, finish });
+        self.first_run_apply = Some(FirstRunApply {
+            agents,
+            finish,
+            answer,
+        });
         self.settle_first_run_apply()
     }
 
-    /// Decides the first step after this Mac's kit report was stored. A
-    /// report while work is still queued predates the pass Continue asked for
-    /// and decides nothing. A record that did not save asks again (B6), and a
-    /// chosen agent whose piece failed keeps the step on screen with its
-    /// reason (B12); otherwise the wizard moves on.
+    /// Decides the first step after this Mac's kit report was stored, or
+    /// after its kit could not run. A report while work is still queued
+    /// predates the pass Continue asked for and decides nothing. A pass that
+    /// did not run, a record that did not save (B6) and a chosen agent whose
+    /// piece failed (B12) keep the step on screen; otherwise the wizard moves
+    /// on.
     pub(super) fn settle_first_run_apply(&mut self) -> bool {
         if self.local_kit_pending.is_some() || self.first_run_apply.is_none() {
             return false;
@@ -122,8 +144,25 @@ impl Runtime {
             return false;
         }
         let node = self.node.clone();
-        let failed: Vec<String> = self
-            .kit_view(node.as_str())
+        let view = self.kit_view(node.as_str());
+        // The kit could not run here, or ran without listing an agent
+        // (retirement refused, account lock): nothing was written, so a
+        // first-run answer is unanswered again and Continue sends it anew,
+        // and the agents are read again for the step to show.
+        if view.unavailable.is_some() || view.agents.is_empty() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "first_run",
+                "kind": "first_run.apply_not_run",
+                "unavailable": view.unavailable,
+            }));
+            if apply.answer {
+                self.snapshot.ui_state.agent_onboarding = Some(AgentOnboarding::Pending);
+                self.persist_ui_state();
+            }
+            self.local_kit_check_requested = true;
+            return true;
+        }
+        let failed: Vec<String> = view
             .agents
             .iter()
             .filter(|row| apply.agents.contains(&row.id) && row.enabled)

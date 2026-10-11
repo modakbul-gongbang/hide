@@ -19,12 +19,12 @@ import { agentLogo, monogram } from "./agentLogos";
 import { appliedAgents, hideAiFirstRunKey, selection, tileSwitchable, type TileStart } from "./agentOnboardingRules";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
-import { failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
+import { failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, notificationState, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
 import { firstRunAgent } from "./hideAi";
 import { hostBridge } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import { NotificationControls } from "./NotificationControls";
+import { NotificationControls, usePermission } from "./NotificationControls";
 import { installDocUrl, supportedAgents } from "./settings/agentRows";
 import { useAgentsDemand } from "./settings/useAgentsDemand";
 import type { KitAgent, WorkspaceRegistration } from "./snapshot";
@@ -49,12 +49,13 @@ export function FirstRunWizard({ actions }: { actions: Actions }) {
   const desktop = hostBridge() !== null;
   const firstRun = useShellStore((s) => firstRunStep(s.rest, desktop));
   const setup = useSetupWalk((s) => s.step);
-  const kitAgents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents);
+  const kit = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit);
   // The first run owns the screen; Help's walk waits behind it.
   const step = firstRun ?? setup;
   if (step === null) return null;
-  // The agent step draws this Mac's kit, which lists every supported agent once it has been read.
-  if (step === "agents" && !kitAgents?.length) return null;
+  // The agent step draws this Mac's kit, which lists every supported agent once it has been read;
+  // a kit that could not run stays on screen to say why.
+  if (step === "agents" && !kit?.agents?.length && !kit?.unavailable) return null;
   return <Wizard actions={actions} step={step} reopened={firstRun === null} desktop={desktop} />;
 }
 
@@ -135,6 +136,8 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
   const changes = whatChanges(agents, on, kit);
   const applying = pressed || busy;
   const failures = sent && !applying ? failedAgents(agents, sent) : [];
+  // A Continue whose pass could not run here: the core keeps the step and reads the agents again.
+  const unavailable = sent && !applying ? (kit?.unavailable ?? null) : null;
   const toggle = (id: string) =>
     setFlipped((current) => {
       const next = new Set(current);
@@ -142,7 +145,7 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
       return next;
     });
   const proceed = () => {
-    if (applying) return;
+    if (applying || agents.length === 0) return;
     const chosen = appliedAgents(agents, flipped, start);
     setSent(chosen);
     if (reopened) {
@@ -197,6 +200,11 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
             </ul>
           ) : null}
         </div>
+        {unavailable ? (
+          <p role="alert" className="mt-sm text-body text-destructive" data-first-run-unavailable="true">
+            {t("firstRun.agents.unavailable", { reason: unavailable })}
+          </p>
+        ) : null}
         {failures.map((failure) => (
           <p key={failure.id} role="alert" className="mt-sm text-body text-destructive" data-first-run-failed={failure.id}>
             {failure.reason ? t("firstRun.agents.failed", { agent: failure.label, reason: failure.reason }) : t("firstRun.agents.failedNoReason", { agent: failure.label })}
@@ -205,8 +213,9 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
         <p className="mt-md text-caption text-muted-foreground">{t("onboarding.devices")}</p>
       </DialogBody>
       <DialogFooter className="flex-col items-end">
-        <Button onClick={proceed} disabled={applying} aria-busy={applying} data-onboarding-apply="true">
-          {applying ? t("firstRun.agents.applying") : failures.length > 0 ? t("firstRun.agents.retry") : t("firstRun.agents.continue")}
+        {/* With no agent read yet there is no choice to send; the next read brings the tiles back. */}
+        <Button onClick={proceed} disabled={applying || agents.length === 0} aria-busy={applying} data-onboarding-apply="true">
+          {applying ? t("firstRun.agents.applying") : failures.length > 0 || unavailable ? t("firstRun.agents.retry") : t("firstRun.agents.continue")}
         </Button>
         {/* The agent Hide AI will run on under its first-run rule; no line when none of the chosen agents is signed in (B13). */}
         {hideAi ? (
@@ -291,9 +300,14 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
 function NotificationsStep({ actions, reopened, primary }: StepProps) {
   const { t } = useInterfaceTranslation();
   const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
+  const permission = usePermission();
+  // On a Mac that already allows Hide the step opens on, and Continue is what turns the switch on (B16).
+  const allowedOff = !enabled && notificationState(enabled, permission, "wizard") === "on";
   const next = () => {
-    if (reopened) useSetupWalk.getState().go("project");
-    else actions.advanceFirstRun("notifications");
+    if (reopened) {
+      if (allowedOff) actions.setDesktopNotifications(true);
+      useSetupWalk.getState().go("project");
+    } else actions.advanceFirstRun("notifications", allowedOff);
   };
   primary.current = next;
   return (
@@ -303,15 +317,15 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
         <DialogDescription>{t("firstRun.notifications.description")}</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-sm">
-        <NotificationControls actions={actions} place="wizard" />
+        <NotificationControls actions={actions} place="wizard" permission={permission} />
         <button type="button" onClick={() => useUiStore.getState().openSettings("mobile")} className="self-start text-body text-muted-foreground underline" data-first-run-phone="true">
           {t("firstRun.notifications.phone")}
         </button>
       </DialogBody>
       <DialogFooter>
         {/* Not now leaves the switch off; once it is on, the step goes on with Continue (B21). */}
-        <Button variant={enabled ? "default" : "secondary"} onClick={next} data-first-run-next="notifications">
-          {enabled ? t("firstRun.agents.continue") : t("firstRun.notifications.notNow")}
+        <Button variant={enabled || allowedOff ? "default" : "secondary"} onClick={next} data-first-run-next="notifications">
+          {enabled || allowedOff ? t("firstRun.agents.continue") : t("firstRun.notifications.notNow")}
         </Button>
       </DialogFooter>
     </>

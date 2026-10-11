@@ -23,7 +23,7 @@ const TEST_ID = "test";
  * Settings shows within seconds (B16) and nothing is read once the screen
  * closes (B18). Null until the first answer, and in a browser tab.
  */
-function usePermission(): NotificationPermission | null {
+export function usePermission(): NotificationPermission | null {
   const bridge = hostBridge();
   const [permission, setPermission] = useState<NotificationPermission | null>(null);
   useEffect(() => {
@@ -47,12 +47,12 @@ function usePermission(): NotificationPermission | null {
   return permission;
 }
 
-export function NotificationControls({ actions, place }: { actions: Actions; place: "wizard" | "settings" }) {
+/** The desktop notification controls over `permission`, which the screen showing them reads with `usePermission`. */
+export function NotificationControls({ actions, place, permission }: { actions: Actions; place: "wizard" | "settings"; permission: NotificationPermission | null }) {
   const { t } = useInterfaceTranslation();
   const bridge = hostBridge();
   const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
-  const permission = usePermission();
-  const state = notificationState(enabled, permission);
+  const state = notificationState(enabled, permission, place);
   const sendTest = () => bridge?.notify(TEST_ID, t("firstRun.notifications.testTitle"), t("firstRun.notifications.testBody"));
   // Allowing in macOS's dialog shows the test the press asked for (B15); it replaces the one the dialog held.
   const before = useRef<NotificationState>(state);

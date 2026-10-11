@@ -1151,6 +1151,10 @@ pub(super) struct AgentOnboardingApplyPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct FirstRunAdvancePayload {
     pub(super) from: crate::model::FirstRunStep,
+    /// Continue on the notification step of a Mac that already allows Hide
+    /// turns the desktop switch on with the same press (B16).
+    #[serde(default)]
+    pub(super) turn_on_notifications: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3416,7 +3420,9 @@ impl Runtime {
             Event::AgentOnboardingApply(payload) => {
                 self.apply_agent_onboarding(payload.agents, payload.finish)
             }
-            Event::FirstRunAdvance(payload) => self.advance_first_run(payload.from),
+            Event::FirstRunAdvance(payload) => {
+                self.advance_first_run(payload.from, payload.turn_on_notifications)
+            }
             Event::DesktopNotificationsSet(payload) => {
                 self.set_desktop_notifications(payload.enabled)
             }
