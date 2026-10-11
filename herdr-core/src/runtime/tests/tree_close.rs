@@ -484,6 +484,7 @@ fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects()
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

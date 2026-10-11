@@ -1932,3 +1932,58 @@ fn a_node_checkout_s_malformed_link_is_logged_once_per_value() {
     });
     assert_eq!(invalid(&records), 1, "{records:?}");
 }
+
+/// A node's GitHub read asks for the issues its rows were derived with: a
+/// coordinator wake reads that list and derives nothing, and the node's next
+/// answer moves the rows and the list together.
+#[test]
+fn a_node_github_read_asks_the_links_its_rows_were_derived_with() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    ingest_node_issues(&mut runtime, &repo, &[9]);
+    let child = format!("remote:{NODE}:pane:t2");
+    let mut raw = session(vec![
+        herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+        herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
+    ]);
+    raw.issue_tokens
+        .panes
+        .insert(child.clone(), "acme/app#9".to_owned());
+    runtime.ingest_remote_session(NODE, Ok(raw.clone()));
+    let root = std::path::PathBuf::from(&repo.root);
+    let asked = |runtime: &mut Runtime| -> Vec<u32> {
+        runtime
+            .device_github_request(NODE, std::time::Instant::now())
+            .projects
+            .iter()
+            .find(|project| project.root == root)
+            .map(|project| project.links.iter().map(|link| link.number).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(asked(&mut runtime), [9]);
+    // A wake does not read the tokens again: one only the published session
+    // carries changes nothing it asks.
+    runtime
+        .snapshot
+        .status
+        .remote
+        .iter_mut()
+        .find(|status| status.target_id == NODE)
+        .and_then(|status| status.session.as_mut())
+        .unwrap()
+        .issue_tokens
+        .panes
+        .insert(child.clone(), "acme/app#10".to_owned());
+    assert_eq!(asked(&mut runtime), [9]);
+    raw.issue_tokens
+        .panes
+        .insert(child, "acme/app#10".to_owned());
+    runtime.ingest_remote_session(NODE, Ok(raw));
+    assert_eq!(asked(&mut runtime), [10]);
+}

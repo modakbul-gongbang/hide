@@ -596,6 +596,7 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

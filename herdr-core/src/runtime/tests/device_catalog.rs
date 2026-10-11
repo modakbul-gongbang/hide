@@ -106,6 +106,7 @@ pub(super) fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapsh
         pane_layouts: Vec::new(),
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
+        issue_links: Default::default(),
     }
 }
 

@@ -2899,7 +2899,17 @@ impl Runtime {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
         });
         let answered = self.device_github.get(device_id);
-        let mut links = self.node_issue_links(device_id);
+        // The links the node's rows were derived with; a wake reads them and
+        // derives nothing.
+        let mut links = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device_id)
+            .and_then(|status| status.session.as_ref())
+            .map(|session| session.issue_links.clone())
+            .unwrap_or_default();
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {

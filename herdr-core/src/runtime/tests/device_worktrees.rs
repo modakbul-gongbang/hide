@@ -110,6 +110,7 @@ fn device_runtime_with_host(
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

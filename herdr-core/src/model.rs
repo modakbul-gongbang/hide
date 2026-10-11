@@ -4595,6 +4595,12 @@ pub struct RemoteSessionSnapshot {
     /// sent to the shell either.
     #[serde(skip)]
     pub issue_tokens: crate::wire::IssueTokens,
+    /// The GitHub issues a node project's checkouts link to, by project
+    /// root, made with its rows (`Runtime::project_node_issues`) for the
+    /// node's GitHub read to bring the ones its open list leaves out; empty
+    /// in a raw session. Not sent to the shell.
+    #[serde(skip)]
+    pub issue_links: BTreeMap<String, Vec<crate::issues::IssueReference>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

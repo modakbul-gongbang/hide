@@ -1596,6 +1596,7 @@ impl Runtime {
             });
             let repository = repository.as_deref();
             let mut local_links = BTreeMap::new();
+            let mut linked = BTreeSet::new();
             for checkout in &mut workspace.checkouts {
                 checkout.github = status.clone();
                 checkout.branch_issue = checkout
@@ -1608,17 +1609,28 @@ impl Runtime {
                         local_links.insert(checkout.id.clone(), number);
                         None
                     }
-                    Some(ChainLink::Github(candidate)) => workspace
-                        .home_issues
-                        .issues
-                        .iter()
-                        .find(|issue| issue.reference == candidate.reference)
-                        .map(|issue| IssueLinkSnapshot {
-                            issue: issue.clone(),
-                            source: candidate.source,
-                        }),
+                    Some(ChainLink::Github(candidate)) => {
+                        linked.insert(candidate.reference.clone());
+                        workspace
+                            .home_issues
+                            .issues
+                            .iter()
+                            .find(|issue| issue.reference == candidate.reference)
+                            .map(|issue| IssueLinkSnapshot {
+                                issue: issue.clone(),
+                                source: candidate.source,
+                            })
+                    }
                     None => None,
                 };
+            }
+            // What the node's GitHub read brings beside the open list: the
+            // linked issues it leaves out, closed or in another repository.
+            if !linked.is_empty() {
+                session.issue_links.insert(
+                    workspace.path.clone(),
+                    linked.into_iter().take(ISSUE_LIMIT).collect(),
+                );
             }
             project_tasks(
                 workspace,
@@ -1628,67 +1640,6 @@ impl Runtime {
                 &local_links,
             );
         }
-    }
-
-    /// The issues a node's checkouts link to, by project root, for the
-    /// node's GitHub read to bring the closed and cross-repository ones a
-    /// project's open list leaves out, as this machine's read does.
-    pub(super) fn node_issue_links(&self, target: &str) -> BTreeMap<String, Vec<IssueReference>> {
-        let Some(session) = self
-            .snapshot
-            .status
-            .remote
-            .iter()
-            .find(|status| status.target_id == target)
-            .and_then(|status| status.session.as_ref())
-        else {
-            return BTreeMap::new();
-        };
-        let tokens = LinkTokens::new(
-            &session.issue_tokens,
-            self.unconfirmed_node_issue_tokens.get(target),
-            &session.agents,
-            &self.invalid_links,
-        );
-        let sources = &self.snapshot.ui_state.project_issue_sources;
-        let listed = self.device_worktrees.get(target);
-        let mut links = BTreeMap::new();
-        for workspace in &session.workspaces {
-            let choice = sources.get(&workspace.path).map(String::as_str);
-            let status = workspace
-                .checkouts
-                .first()
-                .map(|checkout| checkout.github.clone())
-                .unwrap_or_default();
-            if crate::tasks::source_kind(choice, workspace.is_git, &workspace.home_issues, &status)
-                == crate::tasks::SourceKind::Local
-            {
-                continue;
-            }
-            let references: BTreeSet<IssueReference> = workspace
-                .checkouts
-                .iter()
-                .filter_map(|checkout| {
-                    let repository = workspace.home_issues.repository.clone().or_else(|| {
-                        listed
-                            .and_then(|listed| listed.projects.get(&workspace.path))
-                            .and_then(|project| project.repository.clone())
-                    });
-                    let owner = checkout.owner_workspace_id.as_deref();
-                    match tokens.checkout_link(owner, checkout, false, repository.as_deref())? {
-                        ChainLink::Github(candidate) => Some(candidate.reference),
-                        ChainLink::Local(_) => None,
-                    }
-                })
-                .collect();
-            if !references.is_empty() {
-                links.insert(
-                    workspace.path.clone(),
-                    references.into_iter().take(ISSUE_LIMIT).collect(),
-                );
-            }
-        }
-        links
     }
 }
 

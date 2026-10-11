@@ -2006,6 +2006,7 @@ fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
         pane_layouts: Vec::new(),
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
+        issue_links: Default::default(),
     };
     runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
     let attaches = |terminals: &RecordedTerminals| {

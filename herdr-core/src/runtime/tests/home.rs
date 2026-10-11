@@ -642,6 +642,7 @@ fn a_device_checkout_start_opens_its_tab_on_that_device() {
                 pane_layouts: Vec::new(),
                 pane_hook_tokens: Default::default(),
                 issue_tokens: Default::default(),
+                issue_links: Default::default(),
             }),
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),

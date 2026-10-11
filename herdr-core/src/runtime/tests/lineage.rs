@@ -48,6 +48,7 @@ fn remote_lineage_session(agents: Vec<SidebarAgentSnapshot>) -> RemoteSessionSna
         pane_layouts: Vec::new(),
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
+        issue_links: Default::default(),
     }
 }
 

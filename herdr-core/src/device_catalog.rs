@@ -468,6 +468,7 @@ pub(crate) fn group(
         pane_layouts: raw.pane_layouts.clone(),
         pane_hook_tokens: raw.pane_hook_tokens.clone(),
         issue_tokens: raw.issue_tokens.clone(),
+        issue_links: BTreeMap::new(),
     }
 }
 

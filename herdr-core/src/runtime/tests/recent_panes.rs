@@ -171,6 +171,7 @@ fn only_a_listed_pane_is_recorded_on_this_machine_or_a_device() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

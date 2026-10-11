@@ -904,6 +904,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         };
         runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
             target_id: DEVICE.to_owned(),

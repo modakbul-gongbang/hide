@@ -833,6 +833,7 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
             pane_layouts: vec![],
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         };
             runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
                 target_id: "mini".into(),

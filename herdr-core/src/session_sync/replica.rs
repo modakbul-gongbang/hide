@@ -701,6 +701,7 @@ impl SessionReplica {
                         .collect(),
                     workspaces: issue_tokens.workspaces,
                 },
+                issue_links: BTreeMap::new(),
             },
             agent_projection.excluded,
         ))

@@ -36,6 +36,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -161,6 +162,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         pane_layouts: Vec::new(),
         pane_hook_tokens: Default::default(),
         issue_tokens: Default::default(),
+        issue_links: Default::default(),
     };
 
     assert!(runtime.ingest_remote_session("mini", Ok(session.clone())));
@@ -264,6 +266,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         })
     ));
     assert!(terminals.take().contains(&TerminalControl::Forget {
@@ -333,6 +336,7 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1092,6 +1096,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1844,6 +1849,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }
     };
     let stored_agents = |runtime: &Runtime, target_id: &str| {
@@ -2130,6 +2136,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
             issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
