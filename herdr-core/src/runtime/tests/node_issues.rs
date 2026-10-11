@@ -411,7 +411,7 @@ fn github_issue(repository: &str, number: u32, title: &str) -> crate::issues::Is
 /// A GitHub project of a node lists the issues this machine's read of the
 /// repository the node named brought, and a checkout whose branch starts
 /// with a number links that issue; the node's next read asks for the linked
-/// issues by name.
+/// issues by name, and a read that fails keeps both, as this machine's do.
 #[test]
 fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts() {
     let repo = repo(Some("https://github.com/acme/app.git"), "12-fix-login");
@@ -492,6 +492,45 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
     // The same links ask nothing again before the next re-read.
     let again = runtime.device_github_request(NODE, std::time::Instant::now());
     assert_eq!(again.projects[0].generation, first);
+
+    // A read that fails keeps the issues and links read before it, and the
+    // source says the read failed and when the last one answered.
+    runtime.ingest_device_github(
+        NODE,
+        crate::model::GithubSnapshot {
+            projects: vec![crate::model::GithubProjectSnapshot {
+                root_path: repo.root.clone(),
+                status: crate::model::GithubStatusSnapshot {
+                    available: true,
+                    stale: true,
+                    unavailable_reason: Some("gh timed out".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+        },
+    );
+    let project = node_project(&runtime).unwrap();
+    let source = project.tasks.source.clone().unwrap();
+    assert_eq!(
+        (source.failure.as_deref(), source.last_read_at_unix_ms),
+        (Some("gh timed out"), Some(5))
+    );
+    assert_eq!(
+        project
+            .tasks
+            .tasks
+            .iter()
+            .map(|task| task.key.as_str())
+            .collect::<Vec<_>>(),
+        ["github:acme/app#14", "github:acme/app#12"]
+    );
+    let linked = project
+        .checkouts
+        .iter()
+        .find(|checkout| checkout.path == repo.linked)
+        .unwrap();
+    assert_eq!(linked.task_key.as_deref(), Some("github:acme/app#12"));
 }
 
 /// When this machine's `gh` is signed out, a node's GitHub project says so

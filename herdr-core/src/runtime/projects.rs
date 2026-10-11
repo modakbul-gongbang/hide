@@ -1384,52 +1384,8 @@ impl Runtime {
             }
             newly_settled |= self.github_settled.insert(path);
         }
-        // A failed lookup must not erase the answer it failed to replace: the
-        // card shows the previous pull requests with `as of` beside them, so a
-        // stale project keeps its results and only its status changes.
         let mut merged = github;
-        for project in &mut merged.projects {
-            if (project.status.stale || project.status.unavailable_reason.is_some())
-                && let Some(previous) = self.github.project(&project.root_path)
-            {
-                let incomplete = !project.pull_requests_read || !project.issues_read;
-                if !project.pull_requests_read
-                    && (previous.pull_requests_read
-                        || previous.status.last_success_at_unix_ms.is_some())
-                {
-                    project.pull_requests = previous.pull_requests.clone();
-                    project.pull_requests_read = true;
-                }
-                if !project.issues_read
-                    && (previous.issues_read || previous.status.last_success_at_unix_ms.is_some())
-                {
-                    project.issues = previous.issues.clone();
-                    project.issues_read = true;
-                }
-                if incomplete {
-                    project.status.stale = true;
-                    project.status.last_success_at_unix_ms =
-                        previous.status.last_success_at_unix_ms;
-                }
-            }
-            // Dependencies and sub-issues that could not be read this pass keep the ones
-            // read before, the same way a failed lookup keeps its answer.
-            if project.issues.dependencies_failure.is_some()
-                && let Some(previous) = self.github.project(&project.root_path)
-            {
-                for issue in &mut project.issues.issues {
-                    if let Some(known) = previous
-                        .issues
-                        .issues
-                        .iter()
-                        .find(|known| known.reference == issue.reference)
-                    {
-                        issue.blocked_by = known.blocked_by.clone();
-                        issue.sub_issues = known.sub_issues.clone();
-                    }
-                }
-            }
-        }
+        keep_previous_reads(&mut merged, &self.github);
         if self.github == merged {
             // Nothing to show changed, but a project that returned nothing
             // stops loading.
@@ -2982,8 +2938,8 @@ impl Runtime {
         crate::github::GithubRequest { projects }
     }
 
-    /// The pull requests of a node's repositories: its rows carry them, as
-    /// this machine's do.
+    /// The pull requests and issues of a node's repositories: its rows carry
+    /// them, as this machine's do, and a failed read keeps the previous ones.
     pub(crate) fn ingest_device_github(
         &mut self,
         device_id: &str,
@@ -2992,11 +2948,17 @@ impl Runtime {
         if !self
             .link_origin(device_id)
             .is_some_and(LinkOrigin::reports_own_facts)
-            || self.device_github.get(device_id) == Some(&github)
         {
             return false;
         }
-        self.device_github.insert(device_id.to_owned(), github);
+        let mut merged = github;
+        if let Some(previous) = self.device_github.get(device_id) {
+            keep_previous_reads(&mut merged, previous);
+        }
+        if self.device_github.get(device_id) == Some(&merged) {
+            return false;
+        }
+        self.device_github.insert(device_id.to_owned(), merged);
         self.refresh_device_catalog(device_id)
     }
 
@@ -4260,6 +4222,59 @@ fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>>
         kind: kind.to_owned(),
         session_id: Some(session_id.to_owned()),
     })
+}
+
+/// `answer` with what `previous` read kept wherever a project's read failed:
+/// a failed lookup must not erase the answer it failed to replace, so the
+/// card and the board show the previous pull requests and issues with `as of`
+/// beside them and only the status changes; dependencies and sub-issues that
+/// could not be read keep the ones read before. This machine's answers and a
+/// node's go through it alike.
+fn keep_previous_reads(
+    answer: &mut crate::model::GithubSnapshot,
+    previous: &crate::model::GithubSnapshot,
+) {
+    for project in &mut answer.projects {
+        if (project.status.stale || project.status.unavailable_reason.is_some())
+            && let Some(previous) = previous.project(&project.root_path)
+        {
+            let incomplete = !project.pull_requests_read || !project.issues_read;
+            if !project.pull_requests_read
+                && (previous.pull_requests_read
+                    || previous.status.last_success_at_unix_ms.is_some())
+            {
+                project.pull_requests = previous.pull_requests.clone();
+                project.pull_requests_read = true;
+            }
+            if !project.issues_read
+                && (previous.issues_read || previous.status.last_success_at_unix_ms.is_some())
+            {
+                project.issues = previous.issues.clone();
+                project.issues_read = true;
+            }
+            if incomplete {
+                project.status.stale = true;
+                project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
+            }
+        }
+        // Dependencies and sub-issues that could not be read this pass keep the ones
+        // read before, the same way a failed lookup keeps its answer.
+        if project.issues.dependencies_failure.is_some()
+            && let Some(previous) = previous.project(&project.root_path)
+        {
+            for issue in &mut project.issues.issues {
+                if let Some(known) = previous
+                    .issues
+                    .issues
+                    .iter()
+                    .find(|known| known.reference == issue.reference)
+                {
+                    issue.blocked_by = known.blocked_by.clone();
+                    issue.sub_issues = known.sub_issues.clone();
+                }
+            }
+        }
+    }
 }
 
 /// The Overview card of `checkout`, whichever machine it is on.
