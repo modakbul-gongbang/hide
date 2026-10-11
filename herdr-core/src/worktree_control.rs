@@ -818,10 +818,11 @@ fn write_issue_metadata(
     Err(IssueWriteFailure::unchanged(detail))
 }
 
-/// How a GitHub link's issue is read before the link is written: with this
-/// machine's login, in the checkout here or by the repository's name for a
-/// checkout on a node (D-16).
-pub(crate) struct LinkedIssueRead {
+/// Where `gh` reads a project's repository: with this machine's login
+/// (`node`, the core's own), in the checkout here or by the repository's
+/// name for a project on a node (D-16).
+#[derive(Clone)]
+pub(crate) struct GhPlace {
     pub node: Arc<dyn crate::node_access::NodeLink>,
     pub place: crate::github::Where,
 }
@@ -833,7 +834,7 @@ pub(crate) struct LinkedIssueRead {
 /// core's store, so nothing is read.
 pub(crate) fn spawn_issue_write(
     target: WorktreeTarget,
-    read: Option<LinkedIssueRead>,
+    read: Option<GhPlace>,
     request: PurposeTaskRequest,
     previous: Option<String>,
 ) -> Result<(), String> {

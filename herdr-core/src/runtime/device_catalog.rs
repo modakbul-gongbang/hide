@@ -67,6 +67,13 @@ impl Runtime {
             .is_some_and(LinkOrigin::reports_own_facts)
         {
             self.project_node_issues(target, &mut session);
+            for project in &mut session.workspaces {
+                project.cleanup = self
+                    .cleanup
+                    .as_ref()
+                    .filter(|review| review.workspace_id == project.id)
+                    .cloned();
+            }
         }
         if let Some(listeners) = self.device_ports.get(target) {
             device_catalog::apply_ports(&mut session, listeners);

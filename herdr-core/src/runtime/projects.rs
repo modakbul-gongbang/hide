@@ -466,48 +466,108 @@ impl Runtime {
         changed
     }
 
-    /// The local Git project a cleanup names, or `None` for anything else.
-    fn cleanup_workspace(&self, workspace_id: &str) -> Option<&crate::model::WorkspaceSnapshot> {
-        self.snapshot.navigator.workspaces.iter().find(|workspace| {
+    /// The Git project a cleanup names: one of this machine's, or one of a
+    /// node that dials this core with that node's id; `None` for anything
+    /// else, a device this core dials among them.
+    fn cleanup_workspace(&self, workspace_id: &str) -> Option<(Option<&str>, &WorkspaceSnapshot)> {
+        let own = self.snapshot.navigator.workspaces.iter().find(|workspace| {
             workspace.id == workspace_id && workspace.remote_target_id.is_none() && workspace.is_git
+        });
+        if let Some(workspace) = own {
+            return Some((None, workspace));
+        }
+        self.node_sessions().find_map(|(node, session)| {
+            session
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id && workspace.is_git)
+                .map(|workspace| (Some(node), workspace))
         })
     }
 
+    /// The in-use facts of a project's checkouts. A node's panes are named
+    /// as its own Herdr names them, which the worker asks; a pane this core
+    /// cannot name there leaves its checkout unverified, never idle.
     fn checkout_facts(
         &self,
-        workspace: &crate::model::WorkspaceSnapshot,
+        node: Option<&str>,
+        workspace: &WorkspaceSnapshot,
     ) -> Vec<live::cleanup::CheckoutFacts> {
-        crate::agent_state::cleanup_facts(&self.snapshot, workspace)
+        let mut facts = crate::agent_state::cleanup_facts(&self.snapshot, workspace);
+        let Some(node) = node else {
+            return facts;
+        };
+        for checkout in &mut facts {
+            let mut unnamed = 0;
+            let mut on_node = |panes: &mut Vec<String>| {
+                *panes = panes
+                    .iter()
+                    .filter_map(|pane| {
+                        let named = super::remote_pane_source_id(node, pane).map(str::to_owned);
+                        unnamed += usize::from(named.is_none());
+                        named
+                    })
+                    .collect();
+            };
+            on_node(&mut checkout.terminal_panes);
+            on_node(&mut checkout.panes);
+            checkout.agent_unknown += unnamed;
+        }
+        facts
     }
 
-    /// Only the in-use facts of a local Git project's checkouts, for a read
-    /// that happens once per move: none of the folder or size maps
+    /// Only the in-use facts of a Git project's checkouts, for a read that
+    /// happens once per move: none of the folder or size maps
     /// [`Self::cleanup_input`] copies.
     pub(crate) fn cleanup_facts(
         &self,
         workspace_id: &str,
     ) -> Option<Vec<live::cleanup::CheckoutFacts>> {
-        Some(self.checkout_facts(self.cleanup_workspace(workspace_id)?))
+        let (node, workspace) = self.cleanup_workspace(workspace_id)?;
+        Some(self.checkout_facts(node, workspace))
     }
 
-    /// What the cleanup worker needs to know about a local Git project's
+    /// What the cleanup worker needs to know about a Git project's
     /// checkouts, copied under the lock so the worker reads nothing of the
-    /// runtime while it inspects the disk and Herdr.
-    pub(crate) fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
-        let workspace = self.cleanup_workspace(workspace_id)?;
-        let worktrees = self
-            .worktree_catalog
-            .project(&workspace.path)
-            .into_iter()
-            .flat_map(|project| &project.worktrees);
-        Some(live::cleanup::ReviewInput {
-            workspace_id: workspace.id.clone(),
-            root: PathBuf::from(&workspace.path),
-            current: self
+    /// runtime while it inspects the disk and Herdr, with the node the
+    /// project is on (`None` for this machine).
+    pub(crate) fn cleanup_input(
+        &self,
+        workspace_id: &str,
+    ) -> Option<(Option<String>, live::cleanup::ReviewInput)> {
+        let (node, workspace) = self.cleanup_workspace(workspace_id)?;
+        let listed = match node {
+            None => self.worktree_catalog.project(&workspace.path).cloned(),
+            // A node's worktrees as its read listed them, with the sizes it
+            // measured, as its rows show them.
+            Some(node) => self
+                .device_worktrees
+                .get(node)
+                .and_then(|listed| listed.projects.get(&workspace.path))
+                .map(|project| {
+                    let mut project = project.clone();
+                    if let Some(disk) = self.device_disk.get(node) {
+                        measure_worktrees(&mut project, disk);
+                    }
+                    project
+                }),
+        };
+        let worktrees = listed.iter().flat_map(|project| &project.worktrees);
+        let current = match node {
+            None => self
                 .focused_local_checkout()
                 .filter(|(focused, _)| focused.id == workspace.id)
                 .map(|(_, checkout)| PathBuf::from(&checkout.path)),
-            checkouts: self.checkout_facts(workspace),
+            Some(_) => self
+                .focused_node_checkout()
+                .filter(|(_, focused, _)| focused.id == workspace.id)
+                .map(|(_, _, checkout)| PathBuf::from(&checkout.path)),
+        };
+        let input = live::cleanup::ReviewInput {
+            workspace_id: workspace.id.clone(),
+            root: PathBuf::from(&workspace.path),
+            current,
+            checkouts: self.checkout_facts(node, workspace),
             folders: worktrees
                 .clone()
                 .filter(|worktree| !worktree.disk.folders.is_empty())
@@ -518,7 +578,55 @@ impl Runtime {
                     Some((PathBuf::from(&worktree.path), worktree.disk.total_bytes?))
                 })
                 .collect(),
-        })
+        };
+        Some((node.map(str::to_owned), input))
+    }
+
+    /// Where a cleanup of `root` runs: this machine's Herdr and node, or
+    /// node `node`'s Herdr and link, with its merge proofs read by the
+    /// repository's name here (D-16).
+    fn cleanup_place(
+        &mut self,
+        node: Option<&str>,
+        root: &str,
+    ) -> Result<live::cleanup::CleanupPlace, String> {
+        // A node's project whose `origin` names no GitHub repository has no
+        // squash-merge proof to read; its worktrees merged by Git still go.
+        let github = self
+            .github_place(node, root)
+            .ok()
+            .map(|place| crate::live::GhPlace {
+                node: self.own_node(),
+                place,
+            });
+        let Some(node) = node else {
+            let context = self.live.clone().ok_or_else(|| {
+                "A live Herdr connection is required to verify what is in use. Connect and review again.".to_owned()
+            })?;
+            return Ok(live::cleanup::CleanupPlace::local(context, github));
+        };
+        let control = self.remote_controls.get(node).cloned().ok_or_else(|| {
+            "The node's Herdr connection is unavailable. Reconnect and review again.".to_owned()
+        })?;
+        Ok(live::cleanup::CleanupPlace::node(
+            &control,
+            self.node_link(node)?,
+            github,
+        ))
+    }
+
+    /// The node the project `workspace_id` is on, when it is a node's.
+    pub(super) fn cleanup_node(&self, workspace_id: &str) -> Option<String> {
+        self.cleanup_workspace(workspace_id)?.0.map(str::to_owned)
+    }
+
+    /// Publishes the cleanup on the project it names: this machine's rows,
+    /// and the session of the node the project is on.
+    pub(super) fn publish_cleanup(&mut self, node: Option<&str>) {
+        self.refresh_worktree_projection();
+        if let Some(node) = node {
+            self.refresh_device_catalog(node);
+        }
     }
 
     /// The worker of cleanup `id` has ended, however it ended.
@@ -547,12 +655,18 @@ impl Runtime {
                     .cell_results
                     .iter()
                     .any(|cell| cell.outcome == "removed"));
+        let node = self.cleanup_node(&answer.workspace_id);
         self.cleanup = Some(answer);
         if removed {
-            self.refresh_worktrees();
+            match node.as_deref() {
+                None => self.refresh_worktrees(),
+                Some(node) => {
+                    self.request_device_worktrees(node, true);
+                }
+            }
             self.remeasure_disk();
         }
-        self.refresh_worktree_projection();
+        self.publish_cleanup(node.as_deref());
         true
     }
 
@@ -565,7 +679,7 @@ impl Runtime {
         {
             return false;
         }
-        let Some(input) = self.cleanup_input(workspace_id) else {
+        let Some((node, input)) = self.cleanup_input(workspace_id) else {
             crate::diagnostic!(serde_json::json!({
                 "component": "cleanup",
                 "kind": "review.not_local_git",
@@ -585,8 +699,10 @@ impl Runtime {
         // The sizes the sheet shows come from the reader the facts line uses;
         // reviewing again measures again.
         self.measure_project_disk(workspace_id);
-        let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify what is in use. Connect and review again.".into())
-            .and_then(|context| live::cleanup::spawn_review(context, review.id, input));
+        let root = hide_platform::path::to_wire_lossy(&input.root);
+        let started = self
+            .cleanup_place(node.as_deref(), &root)
+            .and_then(|place| live::cleanup::spawn_review(place, review.id, input));
         if started.is_ok() {
             self.cleanup_worker = Some(review.id);
         }
@@ -596,7 +712,7 @@ impl Runtime {
             review.message = Some(message);
             self.cleanup = Some(review);
         }
-        self.refresh_worktree_projection();
+        self.publish_cleanup(node.as_deref());
         true
     }
 
@@ -653,18 +769,14 @@ impl Runtime {
         if paths.is_empty() && cells.is_empty() {
             return false;
         }
-        let Some(input) = self.cleanup_input(&review.workspace_id) else {
+        let Some((node, input)) = self.cleanup_input(&review.workspace_id) else {
             return false;
         };
         self.cleanup.as_mut().unwrap().phase = "removing".into();
         let started = self
-            .live
-            .clone()
-            .ok_or_else(|| {
-                "The Herdr connection is unavailable. Reconnect and review again.".into()
-            })
-            .and_then(|context| {
-                live::cleanup::spawn_confirm(context, review.clone(), input, paths, cells)
+            .cleanup_place(node.as_deref(), &review.repository_root)
+            .and_then(|place| {
+                live::cleanup::spawn_confirm(place, review.clone(), input, paths, cells)
             });
         if started.is_ok() {
             self.cleanup_worker = Some(review.id);
@@ -674,7 +786,7 @@ impl Runtime {
             active.phase = "failed".into();
             active.message = Some(message);
         }
-        self.refresh_worktree_projection();
+        self.publish_cleanup(node.as_deref());
         true
     }
 

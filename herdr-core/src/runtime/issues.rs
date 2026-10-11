@@ -292,7 +292,7 @@ impl Runtime {
             let place = self
                 .github_place(node.as_deref(), &workspace.path)
                 .map_err(|error| ("checkout_issue.unavailable", error))?;
-            Some(crate::live::LinkedIssueRead {
+            Some(crate::live::GhPlace {
                 node: self.own_node(),
                 place,
             })

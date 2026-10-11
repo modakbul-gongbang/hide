@@ -138,6 +138,26 @@ fn node_runtime(
     own: Arc<dyn NodeLink>,
     store: crate::local_issues::LocalIssueStore,
 ) -> SharedRuntime {
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    let workspaces = vec![
+        herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+        herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
+    ];
+    node_runtime_with(repo, node, own, store, connector, workspaces)
+}
+
+/// `node_runtime` with the node's Herdr (`connector`) and the workspaces its
+/// session holds given.
+fn node_runtime_with(
+    repo: &Repo,
+    node: Arc<dyn NodeLink>,
+    own: Arc<dyn NodeLink>,
+    store: crate::local_issues::LocalIssueStore,
+    connector: Arc<dyn hide_herdr_client::ApiConnector>,
+    workspaces: Vec<WorkspaceSnapshot>,
+) -> SharedRuntime {
     let mut runtime = runtime();
     runtime.own_node = own;
     runtime.local_issues = Ok(store);
@@ -175,9 +195,6 @@ fn node_runtime(
     let shared = SharedRuntime::new(runtime);
     {
         let mut runtime = shared.lock().unwrap();
-        let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-            hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
-        );
         runtime.install_remote_control(RemoteControlContext::new(
             NODE,
             connector,
@@ -185,11 +202,7 @@ fn node_runtime(
             ChangeNotifier::noop(),
         ));
         runtime.install_worker_context(shared.weak(), ChangeNotifier::noop());
-        let raw = session(vec![
-            herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
-            herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
-        ]);
-        runtime.ingest_remote_session(NODE, Ok(raw));
+        runtime.ingest_remote_session(NODE, Ok(session(workspaces)));
     }
     let (root, linked) = (repo.root.clone(), repo.linked.clone());
     wait(
@@ -772,5 +785,101 @@ fn the_overview_in_front_of_a_node_checkout_reads_the_node_s_project() {
     assert!(
         generation(&mut runtime).is_none(),
         "past the limit in path order"
+    );
+}
+
+/// A node's project is cleaned up on the node, as one of this machine's is
+/// here: the review lists its worktrees through the node's link and its
+/// Herdr, a worktree merged into main is removed there, and one that picked
+/// up a change after the review is refused by the node's recheck. This
+/// machine's node, which has none of these folders, is asked nothing.
+#[test]
+fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused() {
+    let repo = repo(None, "feature");
+    let changed = format!("{}-changed", repo.root);
+    git(
+        &repo.root,
+        &["worktree", "add", "-q", "-b", "changed", &changed],
+    );
+    let herdr = crate::fake_herdr::FakeHerdr::start("node-cleanup", |method, _| match method {
+        "session.snapshot" => serde_json::json!({"type": "session_snapshot", "snapshot": {
+            "version": "fixture", "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+            "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": []
+        }}),
+        other => panic!("the node's Herdr is asked {other}"),
+    });
+    let own = Recording::of(None);
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        own.clone(),
+        Default::default(),
+        Arc::new(herdr.connector()),
+        vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[]),
+            herdr_workspace(NODE, "w2", &repo.linked, &[]),
+            herdr_workspace(NODE, "w3", &changed, &[]),
+        ],
+    );
+    let workspace_id = node_project(&shared.lock().unwrap()).unwrap().id.clone();
+    dispatch(
+        &shared,
+        "cleanup_review",
+        serde_json::json!({"workspace_id": workspace_id}),
+    );
+    wait(&shared, "the review", |runtime| {
+        runtime
+            .cleanup
+            .as_ref()
+            .is_some_and(|review| review.phase != "loading")
+    });
+    let review = shared.lock().unwrap().cleanup.clone().unwrap();
+    assert_eq!(review.phase, "review", "{review:?}");
+    let eligible = |path: &str| {
+        review
+            .rows
+            .iter()
+            .any(|row| row.path == path && row.exclusion.is_none() && row.in_use.is_none())
+    };
+    assert!(
+        eligible(&repo.linked) && eligible(&changed),
+        "{:?}",
+        review.rows
+    );
+    assert_eq!(
+        node_project(&shared.lock().unwrap())
+            .unwrap()
+            .cleanup
+            .as_ref()
+            .map(|shown| shown.id),
+        Some(review.id),
+        "the node project's row shows the review"
+    );
+
+    std::fs::write(Path::new(&changed).join("notes.txt"), "kept").unwrap();
+    dispatch(
+        &shared,
+        "cleanup_confirm",
+        serde_json::json!({"id": review.id, "paths": [repo.linked, changed]}),
+    );
+    wait(&shared, "the removal", |runtime| {
+        runtime
+            .cleanup
+            .as_ref()
+            .is_some_and(|run| run.phase == "complete")
+    });
+    let run = shared.lock().unwrap().cleanup.clone().unwrap();
+    let result = |path: &str| {
+        let row = run.rows.iter().find(|row| row.path == path).unwrap();
+        (row.result.as_deref(), row.result_code)
+    };
+    assert_eq!(result(&repo.linked), (Some("removed"), None));
+    assert!(!Path::new(&repo.linked).exists());
+    assert_eq!(result(&changed), (Some("skipped"), Some("dirty")));
+    assert!(Path::new(&changed).join("notes.txt").exists());
+    assert!(
+        own.calls.lock().unwrap().is_empty(),
+        "{:?}",
+        own.calls.lock().unwrap()
     );
 }

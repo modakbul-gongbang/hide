@@ -55,7 +55,7 @@ pub use worktree_control::{
     spawn_remote_purpose_write, spawn_task_agent_start, spawn_workspace_close,
     spawn_worktree_close, spawn_worktree_create, spawn_worktree_open, spawn_worktree_preflight,
 };
-pub(crate) use worktree_control::{LinkedIssueRead, spawn_issue_write};
+pub(crate) use worktree_control::{GhPlace, spawn_issue_write};
 
 /// What live commands and session sync need from the live configuration.
 #[derive(Clone)]

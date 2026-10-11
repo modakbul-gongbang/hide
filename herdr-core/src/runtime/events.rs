@@ -3342,11 +3342,15 @@ impl Runtime {
             Event::CleanupDismiss => {
                 // A worker still running owns the snapshot; it cannot be
                 // dismissed until the worker has ended.
-                if self.cleanup.is_none() || self.cleanup_worker.is_some() {
+                let Some(cleanup) = self.cleanup.as_ref() else {
+                    return false;
+                };
+                if self.cleanup_worker.is_some() {
                     return false;
                 }
+                let node = self.cleanup_node(&cleanup.workspace_id);
                 self.cleanup = None;
-                self.refresh_worktree_projection();
+                self.publish_cleanup(node.as_deref());
                 true
             }
             Event::OverviewOpenSection(payload) => self.overview_open_section(payload),

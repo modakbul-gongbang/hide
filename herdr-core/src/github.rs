@@ -1385,12 +1385,12 @@ struct GhMergedPullRequestProof {
 /// caller matches the head commit and the base.
 pub(crate) fn merged_pull_request_proofs(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     branch: &str,
 ) -> Result<Vec<MergedPullRequestProof>, String> {
-    let listed = gh(
+    let listed = gh_at(
         node,
-        Some(root),
+        place,
         &[
             "pr",
             "list",
