@@ -2573,7 +2573,7 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
         ensure!(before["tasks"][0][1] == "L-1", "{before}");
         ensure!(before["linked"] == before["tasks"][0][0], "{before}");
 
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let node_app_id = wait_for("the same issues and link through the new core", || {
             let snapshot = fixture.snapshot()?;
