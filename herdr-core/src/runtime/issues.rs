@@ -75,6 +75,7 @@ impl Runtime {
             &self.issue_tokens,
             Some(&self.unconfirmed_issue_tokens),
             &self.snapshot.navigator.agents,
+            &self.invalid_links,
         );
         let sources = self.snapshot.ui_state.project_issue_sources.clone();
         let mut local_links = BTreeMap::new();
@@ -1547,6 +1548,7 @@ impl Runtime {
             &session.issue_tokens,
             self.unconfirmed_node_issue_tokens.get(target),
             lineage,
+            &self.invalid_links,
         );
         let (read, _) = self.node_github_repositories(target);
         for workspace in &mut session.workspaces {
@@ -1628,6 +1630,7 @@ impl Runtime {
             &session.issue_tokens,
             self.unconfirmed_node_issue_tokens.get(target),
             &session.agents,
+            &self.invalid_links,
         );
         let sources = &self.snapshot.ui_state.project_issue_sources;
         let listed = self.device_worktrees.get(target);
@@ -1686,6 +1689,7 @@ struct LinkTokens<'a> {
     workspaces: &'a BTreeMap<String, String>,
     unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
     family: BTreeMap<String, BTreeMap<String, String>>,
+    invalid: &'a InvalidLinks,
 }
 
 impl<'a> LinkTokens<'a> {
@@ -1694,11 +1698,13 @@ impl<'a> LinkTokens<'a> {
         tokens: &'a crate::wire::IssueTokens,
         unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
         agents: &[crate::model::SidebarAgentSnapshot],
+        invalid: &'a InvalidLinks,
     ) -> Self {
         Self {
             workspaces: &tokens.workspaces,
             unconfirmed,
             family: family_tokens(&tokens.panes, agents),
+            invalid,
         }
     }
 
@@ -1727,7 +1733,33 @@ impl<'a> LinkTokens<'a> {
             .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
             .collect();
         let pane = pane_token(&self.family, &physical);
-        chain_link(local, manual, pane, checkout, repository)
+        chain_link(local, manual, pane, checkout, repository, self.invalid)
+    }
+}
+
+/// Most checkouts whose malformed link is remembered; past it the record
+/// starts over, so a value already logged is at worst logged once more.
+const INVALID_LINKS_LIMIT: usize = 1024;
+
+/// The malformed link value each checkout's chain last logged. The chain
+/// runs on every pass over a project, a node's included, so a value that
+/// stays malformed is logged once for its checkout, not on each pass.
+#[derive(Default)]
+pub(super) struct InvalidLinks(std::cell::RefCell<BTreeMap<String, String>>);
+
+impl InvalidLinks {
+    fn log(&self, checkout_id: &str, value: &str) {
+        let mut logged = self.0.borrow_mut();
+        if logged.get(checkout_id).is_some_and(|last| last == value) {
+            return;
+        }
+        if logged.len() >= INVALID_LINKS_LIMIT && !logged.contains_key(checkout_id) {
+            logged.clear();
+        }
+        logged.insert(checkout_id.to_owned(), value.to_owned());
+        crate::diagnostic!(
+            serde_json::json!({"component":"checkout_issue","kind":"reference.invalid","checkout_id":checkout_id})
+        );
     }
 }
 
@@ -1804,6 +1836,7 @@ fn chain_link(
     pane: Option<&String>,
     checkout: &crate::model::CheckoutSnapshot,
     repository: Option<&str>,
+    invalid: &InvalidLinks,
 ) -> Option<ChainLink> {
     if local {
         return manual
@@ -1847,9 +1880,7 @@ fn chain_link(
             // A missing repository will resolve after the first lookup;
             // malformed external metadata is diagnostic.
             if repository.is_some() || !value.starts_with('#') {
-                crate::diagnostic!(
-                    serde_json::json!({"component":"checkout_issue","kind":"reference.invalid","checkout_id":checkout.id})
-                );
+                invalid.log(&checkout.id, &value);
             }
             None
         }

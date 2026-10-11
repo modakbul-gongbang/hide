@@ -1773,3 +1773,49 @@ fn a_failed_node_write_s_token_is_not_drawn_as_a_direct_link() {
         Some((6, "직접 연결".to_owned()))
     );
 }
+
+/// A malformed link a node's checkout carries is logged once for its value,
+/// though every pass over the node's project reads the chain again; a
+/// different malformed value is logged again.
+#[test]
+fn a_node_checkout_s_malformed_link_is_logged_once_per_value() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let workspaces = |token: &str| {
+        let mut linked = herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]);
+        linked.checkouts[0].owner_workspace_id = Some("w2".to_owned());
+        let mut raw = session(vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+            linked,
+        ]);
+        raw.issue_tokens
+            .workspaces
+            .insert("w2".to_owned(), token.to_owned());
+        raw
+    };
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    ingest_node_issues(&mut runtime, &repo, &[5]);
+    let invalid = |records: &[serde_json::Value]| {
+        records
+            .iter()
+            .filter(|record| record["kind"] == "reference.invalid")
+            .count()
+    };
+    let ((), records) = crate::diagnostics::capture(|| {
+        for _ in 0..3 {
+            runtime.ingest_remote_session(NODE, Ok(workspaces("not an issue")));
+            runtime.refresh_device_catalog(NODE);
+        }
+    });
+    assert_eq!(invalid(&records), 1, "{records:?}");
+    assert_eq!(node_checkout_issue(&runtime, &repo.linked), None);
+    let ((), records) = crate::diagnostics::capture(|| {
+        runtime.ingest_remote_session(NODE, Ok(workspaces("still not one")));
+    });
+    assert_eq!(invalid(&records), 1, "{records:?}");
+}

@@ -1520,6 +1520,9 @@ pub struct Runtime {
     /// workspace ids; kept while the node's session is.
     unconfirmed_node_issue_tokens:
         BTreeMap<String, BTreeMap<String, issues::UnconfirmedIssueToken>>,
+    /// The malformed link value each checkout's chain last logged, so one
+    /// that stays malformed is logged once rather than on every pass.
+    invalid_links: issues::InvalidLinks,
     /// Every project's Local issues, read when the runtime is created; `Err`
     /// holds why the file could not be read, and then no change is accepted,
     /// so a damaged file is never replaced by a partial one.
@@ -2096,6 +2099,7 @@ impl Runtime {
             issue_write_pending: None,
             unconfirmed_issue_tokens: BTreeMap::new(),
             unconfirmed_node_issue_tokens: BTreeMap::new(),
+            invalid_links: Default::default(),
             local_issues: match &local_issues_path {
                 Some(path) => crate::local_issues::load(path),
                 None => Ok(crate::local_issues::LocalIssueStore::default()),
