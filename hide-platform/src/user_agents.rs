@@ -12,6 +12,14 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+/// How long one `launchctl` command may take that waits on nothing but
+/// launchd: `print`, `bootstrap`, `kickstart`.
+const COMMAND_WITHIN: Duration = Duration::from_secs(5);
+/// How long a `bootout` may take: it returns once the job has ended, which
+/// launchd allows its default `ExitTimeOut` (20 s) before it kills the job,
+/// so a job that takes its time to stop is not reported as still loaded.
+const STOPPED_WITHIN: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Debug)]
 pub struct UserAgents {
     command: Option<PathBuf>,
@@ -189,7 +197,7 @@ impl UserAgents {
         if !self.loaded(&name, home, stop)? {
             return Ok(());
         }
-        let result = self.run(&["bootout", &name], home, stop)?;
+        let result = self.run_within(&["bootout", &name], home, stop, STOPPED_WITHIN)?;
         if result.code != Some(0) && self.loaded(&name, home, stop)? {
             return Err(io::Error::other(format!(
                 "bootout failed (exit {:?})",
@@ -221,6 +229,16 @@ impl UserAgents {
         home: &Path,
         stop: &AtomicBool,
     ) -> io::Result<crate::process::Finished> {
+        self.run_within(args, home, stop, COMMAND_WITHIN)
+    }
+
+    fn run_within(
+        &self,
+        args: &[&str],
+        home: &Path,
+        stop: &AtomicBool,
+        within: Duration,
+    ) -> io::Result<crate::process::Finished> {
         let mut command = Command::new(
             self.command
                 .as_ref()
@@ -230,7 +248,7 @@ impl UserAgents {
             .args(args)
             .env_clear()
             .env(crate::host::HOME_VARIABLE, home);
-        crate::process::run_to_end(&mut command, Duration::from_secs(5), stop)
+        crate::process::run_to_end(&mut command, within, stop)
             .map_err(|error| io::Error::other(format!("login agent command failed: {error:?}")))
     }
 }

@@ -40,7 +40,9 @@ const LEASE_MARGIN: Duration = Duration::from_secs(30);
 const LINK_WITHIN: Duration = Duration::from_secs(30);
 /// How often a driver that cannot reach the other machine tries again.
 const RETRY_EVERY: Duration = Duration::from_secs(2);
-/// How long the core role has to stop before its process ends instead.
+/// How long the core role has to stop before its process ends instead:
+/// launchd's own allowance (`ExitTimeOut`, 20 s) for a login item's core it
+/// boots out, so the bootout's wait (`UserAgents::unload`) covers it.
 const CORE_STOP_WITHIN: Duration = Duration::from_secs(20);
 /// The exit of a process whose core did not stop in time.
 const STOP_UNCONFIRMED_EXIT: i32 = 3;

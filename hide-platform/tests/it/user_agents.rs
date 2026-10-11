@@ -44,6 +44,27 @@ fn systems_without_login_agents_need_no_command() {
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
+/// A bootout returns once its job has ended, which a job may take launchd's
+/// whole exit allowance for: one past the bound of every other command
+/// still unloads it.
+#[cfg(unix)]
+#[test]
+fn a_job_that_takes_its_time_to_stop_is_still_unloaded() {
+    use std::sync::atomic::AtomicBool;
+    let directory = tempfile::tempdir().unwrap();
+    let command = directory.path().join("launchctl-fixture");
+    crate::stand_ins::program(
+        &command,
+        "#!/bin/sh\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootout) sleep 6; rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
+    );
+    std::fs::write(directory.path().join("loaded"), "").unwrap();
+    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    boundary
+        .unload("example.agent", directory.path(), &AtomicBool::new(false))
+        .unwrap();
+    assert!(!directory.path().join("loaded").exists());
+}
+
 /// An install replaces what is loaded, then loads the written list; a
 /// removal unloads before it deletes the list.
 #[cfg(unix)]
