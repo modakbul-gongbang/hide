@@ -771,7 +771,7 @@ function buildAgentGraphBox(tokens) {
       // a change request keeps its word, red as failed checks are.
       frame('agb-pr', 'PR mark', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xxs'], height: LINE, cornerRadius: '$--radius-xs'}, [
         frame('agb-pr-mark', 'Mark', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-          icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-mergeable'}), caption('agb-pr-n', '#221', '$--subtle-foreground', true),
+          icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-mergeable'}), caption('agb-pr-n', '221', '$--subtle-foreground', true),
         ]),
         disabled(caption('agb-pr-rv', '변경 요청', '$--pr-failed')),
       ]),
@@ -876,7 +876,7 @@ function buildAgentGraphBox(tokens) {
     'agb-pr': {enabled: Boolean(pr)},
     ...(pr ? {
       'agb-pr-g': prGlyph(pr.state),
-      'agb-pr-n': {content: `#${pr.number}`},
+      'agb-pr-n': {content: `${pr.number}`},
       'agb-pr-rv': {enabled: Boolean(pr.changes)},
     } : {}),
     'agb-dist': {enabled: Boolean(distance), content: distance ?? ''},

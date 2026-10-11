@@ -280,7 +280,7 @@ fn a_pr_reads_draft_then_failed_or_changes_requested_then_mergeable_then_pending
 }
 
 #[test]
-fn sessions_keep_delegated_children_out_order_each_group_and_fold_quiet_idle_rows() {
+fn sessions_keep_delegated_children_out_and_order_each_group_with_quiet_idle_rows_last() {
     use crate::agent_state::sessions::{Group, scope};
     let mut rows = rows(&[
         ("approval", "blocked"),
@@ -316,16 +316,16 @@ fn sessions_keep_delegated_children_out_order_each_group_and_fold_quiet_idle_row
     let groups: Vec<_> = scope
         .groups
         .iter()
-        .map(|section| (section.group, section.members.clone(), section.more.clone()))
+        .map(|section| (section.group, section.members.clone()))
         .collect();
     assert_eq!(
         groups,
         [
-            (Group::NeedsYou, vec![0], vec![]),
-            (Group::Working, vec![1], vec![]),
+            (Group::NeedsYou, vec![0]),
+            (Group::Working, vec![1]),
             // Unfinished first, then a failed check, then mergeable; a row
-            // with neither a PR nor unfinished work folds into "N more".
-            (Group::Idle, vec![4, 5, 6], vec![2]),
+            // with neither a PR nor unfinished work comes last, not folded.
+            (Group::Idle, vec![4, 5, 6, 2]),
         ]
     );
     assert_eq!(

@@ -34,7 +34,7 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
   // A checkout's pull request as the one PR mark (web/src/components/pr-mark.tsx).
   const prMark = (id, [number, state]) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `${number}`}});
   };
   const HAIR = num(tokens, '--size-hairline');
   const DIM = num(tokens, '--opacity-dimmed');
