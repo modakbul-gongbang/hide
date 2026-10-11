@@ -13,6 +13,7 @@ pub mod answer;
 pub mod back;
 pub mod control;
 pub mod driver;
+pub mod flags;
 pub mod gate;
 pub mod handover;
 pub mod journal;

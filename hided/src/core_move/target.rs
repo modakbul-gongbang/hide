@@ -40,56 +40,28 @@ const USAGE: &str = "usage: hided core-move <inspect|check|verify|place|start|st
 const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn parse(args: &[OsString]) -> Result<Args, String> {
-    let mut args = args.iter();
-    let step = args
-        .next()
-        .and_then(|step| step.to_str())
-        .ok_or(USAGE)?
-        .to_owned();
-    let (mut state_dir, mut intent, mut source, mut target, mut ai, mut answer) =
-        (None, None, None, None, None, None);
-    while let Some(flag) = args.next() {
-        let value = args
-            .next()
-            .and_then(|value| value.to_str())
-            .ok_or(USAGE)?
-            .to_owned();
-        match flag.to_str() {
-            Some("--state-dir") => {
-                if !Path::new(&value).is_absolute() {
-                    return Err("--state-dir must be an absolute path".to_owned());
-                }
-                state_dir = Some(PathBuf::from(value));
-            }
-            Some("--intent") => intent = Some(super::checked_intent(&value)?.to_owned()),
-            Some("--source") => source = Some(value),
-            Some("--target") => target = Some(value),
-            Some("--ai") => ai = Some(value),
-            Some("--answer") => {
-                if !Path::new(&value).is_absolute() {
-                    return Err("--answer must be an absolute path".to_owned());
-                }
-                answer = Some(PathBuf::from(value));
-            }
-            _ => return Err(USAGE.to_owned()),
-        }
-    }
-    let state_dir = match state_dir {
-        Some(dir) => dir,
-        None => {
-            let home = hide_platform::host::home_dir()
-                .map_err(|error| format!("core-move has no home folder: {error}"))?;
-            hide_kit::layout::state_dir_from_process(&home)
-        }
-    };
+    let (step, rest) = args.split_first().ok_or(USAGE)?;
+    let step = step.to_str().ok_or(USAGE)?.to_owned();
+    let flags = super::flags::parse(
+        rest,
+        &[
+            "--state-dir",
+            "--intent",
+            "--source",
+            "--target",
+            "--ai",
+            "--answer",
+        ],
+        USAGE,
+    )?;
     Ok(Args {
         step,
-        state_dir,
-        intent,
-        source,
-        target,
-        ai,
-        answer,
+        state_dir: flags.state_dir,
+        intent: flags.intent,
+        source: flags.source,
+        target: flags.target,
+        ai: flags.ai,
+        answer: flags.answer,
     })
 }
 

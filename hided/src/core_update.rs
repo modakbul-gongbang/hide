@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use crate::core_move::handover;
 use crate::core_move::starter::CoreStarter;
 
-const USAGE: &str = "usage: hided core-update --state-dir <dir> --previous <hided> --intent <id>";
+const USAGE: &str = "usage: hided core-update [--state-dir <dir>] --previous <hided> --intent <id>";
 
 /// How long an update may take where it runs: the old core's stop, the new
 /// one's 30 s to take links, and the same again for a way back.
@@ -86,31 +86,12 @@ struct Args {
 }
 
 fn parse(args: &[OsString]) -> Result<Args, String> {
-    let (mut state_dir, mut previous, mut intent) = (None, None, None);
-    let mut args = args.iter();
-    while let Some(flag) = args.next() {
-        let value = args
-            .next()
-            .and_then(|value| value.to_str())
-            .ok_or(USAGE)?
-            .to_owned();
-        match flag.to_str() {
-            Some("--state-dir") if Path::new(&value).is_absolute() => {
-                state_dir = Some(PathBuf::from(value));
-            }
-            Some("--previous") if Path::new(&value).is_absolute() => {
-                previous = Some(PathBuf::from(value));
-            }
-            Some("--intent") => {
-                intent = Some(crate::core_move::checked_intent(&value)?.to_owned());
-            }
-            _ => return Err(USAGE.to_owned()),
-        }
-    }
+    let flags =
+        crate::core_move::flags::parse(args, &["--state-dir", "--previous", "--intent"], USAGE)?;
     Ok(Args {
-        state_dir: state_dir.ok_or(USAGE)?,
-        previous: previous.ok_or(USAGE)?,
-        intent: intent.ok_or(USAGE)?,
+        state_dir: flags.state_dir,
+        previous: flags.previous.ok_or(USAGE)?,
+        intent: flags.intent.ok_or(USAGE)?,
     })
 }
 
@@ -232,6 +213,23 @@ fn log(intent: &str, kind: &str, fields: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An update run with no state folder works on the process's default
+    /// one, as a node whose placement names none runs it (B10).
+    #[test]
+    fn an_update_with_no_state_folder_runs_on_the_default_one() {
+        let args: Vec<OsString> = ["--previous", "/x/hided", "--intent", "update-1"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        let args = parse(&args).unwrap();
+        let home = hide_platform::host::home_dir().unwrap();
+        assert_eq!(
+            args.state_dir,
+            hide_kit::layout::state_dir_from_process(&home)
+        );
+        assert_eq!(args.previous, PathBuf::from("/x/hided"));
+    }
 
     /// The node reads only an outcome: a line of any other shape is named
     /// by the run's exit, not read as an update.
