@@ -1623,10 +1623,10 @@ fn stop(state_dir: &Path) -> Result<(), String> {
 /// ended but that its starter has not reaped yet is gone too, although Linux
 /// still lists its start time.
 fn still_the_daemon(state: &DaemonState) -> bool {
-    process::is_alive(state.pid)
-        && state
-            .pid_started
-            .is_none_or(|recorded| process::start_time(state.pid).is_ok_and(|now| now == recorded))
+    match state.pid_started {
+        Some(_) => state.is_proven_running(),
+        None => process::is_alive(state.pid),
+    }
 }
 
 /// Ends the daemon `state` names: SIGTERM and five seconds for its graceful

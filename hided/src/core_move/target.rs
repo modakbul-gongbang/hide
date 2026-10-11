@@ -114,7 +114,7 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
                 ),
                 "start" => start(&args.state_dir, intent),
                 "status" => status(&args.state_dir, intent),
-                "abort" => abort(&args.state_dir, intent),
+                "abort" => abort(&args.state_dir, intent, account_starter),
                 "finish" => finish(&args.state_dir, intent),
                 "release" => release(
                     &args.state_dir,
@@ -376,13 +376,32 @@ fn status(state_dir: &Path, intent: &str) -> Answered {
     })
 }
 
+/// This account's starter of a core (`CoreStarter::for_account`).
+fn account_starter() -> Result<CoreStarter, String> {
+    let home = hide_platform::host::home_dir().map_err(|error| error.to_string())?;
+    CoreStarter::for_account(&home)
+}
+
 /// Stops a pending core and returns its copy to `move-incoming`; an active
 /// core is the move committed and is left running. A core that cannot be
 /// confirmed stopped is busy: nothing of it is taken back while it may run.
-fn abort(state_dir: &Path, intent: &str) -> Answered {
+/// With no record left (the pending core gave its copy back at its lease's
+/// end) the starter is removed all the same, so no login starts a core on
+/// the folder the move left; a core running there is no core of the move
+/// and is left alone.
+fn abort(
+    state_dir: &Path,
+    intent: &str,
+    starter: impl FnOnce() -> Result<CoreStarter, String>,
+) -> Answered {
     let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
-        None => return Ok(StepAnswer::Aborted),
+        None => {
+            starter()
+                .and_then(|starter| starter.remove(state_dir))
+                .map_err(busy)?;
+            return Ok(StepAnswer::Aborted);
+        }
         Some(record) if record.intent != intent => {
             return Ok(StepAnswer::OtherMove {
                 intent: record.intent,
@@ -393,8 +412,7 @@ fn abort(state_dir: &Path, intent: &str) -> Answered {
         }
         Some(_) => {}
     }
-    let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
-    CoreStarter::for_account(&home)
+    starter()
         .and_then(|starter| starter.stop(state_dir))
         .map_err(busy)?;
     // A core still starting holds no record yet, but it holds the instance
@@ -475,7 +493,7 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
                     return Err(plain(reason));
                 }
             }
-            wait_until_gone(running.pid)?;
+            wait_until_gone(&running)?;
         }
     }
     let _instance = acquire_instance(state_dir)?;
@@ -520,7 +538,7 @@ fn resume(state_dir: &Path, intent: &str) -> Answered {
     }
     drop(held);
     if let Ok(Some(running)) = crate::state_file::read_state(state_dir)
-        && hide_platform::process::is_alive(running.pid)
+        && running.is_proven_running()
     {
         return Ok(StepAnswer::Running { pid: running.pid });
     }
@@ -555,15 +573,16 @@ fn retire(state_dir: &Path, intent: &str) -> Answered {
     Ok(StepAnswer::Retired)
 }
 
-/// Waits until `pid` has ended; one that has not is busy, since it may
-/// still end.
+/// Waits until the core `running` names has ended; one that has not is
+/// busy, since it may still end. A pid another process reused is gone.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_until_gone(pid: u32) -> Result<(), StepAnswer> {
+fn wait_until_gone(running: &crate::state_file::DaemonState) -> Result<(), StepAnswer> {
     let deadline = std::time::Instant::now() + RELEASED_WITHIN;
-    while hide_platform::process::is_alive(pid) {
+    while running.is_proven_running() {
         if std::time::Instant::now() >= deadline {
             return Err(busy(format!(
-                "the core {pid} did not end after its release"
+                "the core {} did not end after its release",
+                running.pid
             )));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -584,6 +603,44 @@ fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, StepAnswer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A move whose pending core already gave its copy back leaves no
+    /// starter: the abort that finds no record removes the folder's login
+    /// item all the same.
+    #[cfg(unix)]
+    #[test]
+    fn an_abort_with_no_record_left_removes_the_login_item() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        // `print` answers loaded until a bootout.
+        let launchctl = home.path().join("launchctl");
+        std::fs::write(
+            &launchctl,
+            "#!/bin/sh\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&launchctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let label = hide_kit::layout::core_login_item(home.path(), &state);
+        let list = hide_platform::user_agents::UserAgents::plist(home.path(), &label);
+        std::fs::create_dir_all(list.parent().unwrap()).unwrap();
+        std::fs::write(&list, "").unwrap();
+        std::fs::write(home.path().join("loaded"), "").unwrap();
+        let starter = CoreStarter::LoginItem {
+            home: home.path().to_path_buf(),
+            agents: hide_platform::user_agents::UserAgents::fixture(
+                launchctl,
+                "gui/fixture".to_owned(),
+            ),
+        };
+        assert_eq!(abort(&state, "i1", || Ok(starter)), Ok(StepAnswer::Aborted));
+        assert!(!list.exists(), "the login item's list is left");
+        assert!(
+            !home.path().join("loaded").exists(),
+            "the login item is still loaded"
+        );
+    }
 
     /// A start is given only what the lease leaves beyond a full pending
     /// lease, so a core that started always has that lease for its link.

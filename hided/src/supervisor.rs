@@ -304,7 +304,11 @@ fn give_back_pending(state_dir: &Path, home: &Path, intent: &str) {
             &herdr_core::hide_ai_settings_path(home),
         )
         .map_err(|refusal| refusal.to_string())?;
-        held.remove()
+        held.remove()?;
+        // Last, once nothing of the move is left: a login would otherwise
+        // start an empty core on the folder. A copy not given back keeps it,
+        // so the next login's pending core gives it back again.
+        crate::login_item::forget(home, state_dir)
     })();
     log(
         "pending.lease_ended",
@@ -351,6 +355,11 @@ async fn stop_core(state_dir: &Path, running: RunningDaemon) {
     ) {
         eprintln!("the unconfirmed stop could not be logged: {error}");
     }
+    // `hided.json` is left naming this process, which a crash leaves too:
+    // the next start of the folder writes its own once it holds the
+    // instance lock, and every reader before that proves the pid by its
+    // recorded start (`DaemonState::is_proven_running`), so the pid is
+    // never signalled once another process has it.
     std::process::exit(STOP_UNCONFIRMED_EXIT);
 }
 
@@ -417,6 +426,38 @@ async fn wait_on_peer<T: Send + 'static>(
             view.cause = Some(failure.clone());
         });
         unless_stopped(stop, tokio::time::sleep(wait))
+            .await
+            .ok_or(Halt::Stopped)?;
+    }
+}
+
+/// Asks `remove` again, ever more slowly, until it removes what it names:
+/// the move has decided where the core runs, and this machine starts its
+/// role only once nothing of the move says otherwise. Until then the window
+/// shows Waiting with the failure, which is logged as `kind` when it
+/// changes.
+async fn until_removed(
+    seat: &seat::Seat,
+    intent: &str,
+    kind: &str,
+    remove: impl Fn() -> Result<(), String>,
+) -> Result<(), Halt> {
+    let mut slower = crate::backoff::Backoff::default();
+    let mut last = None;
+    loop {
+        let reason = match remove() {
+            Ok(()) => return Ok(()),
+            Err(reason) => reason,
+        };
+        if last.as_ref() != Some(&reason) {
+            log(kind, json!({"intent": intent, "reason": reason}));
+            last = Some(reason.clone());
+        }
+        seat.moves.update(|view| {
+            view.state = MoveState::Waiting;
+            view.cause = Some(MoveFailure::Local { reason });
+        });
+        unless_stopped(&seat.stop, tokio::time::sleep(slower.failed()))
             .await
             .ok_or(Halt::Stopped)?;
     }
@@ -1261,17 +1302,21 @@ async fn rollback(
             ),
         }
     }
-    let mut undone = placement::remove(&env.state_dir);
+    // The core starts here only once no placement says it runs there; the
+    // journal keeps its phase until then, so a start meanwhile rolls back
+    // again.
+    until_removed(seat, &journal.intent, "rollback.unfinished", || {
+        placement::remove(&env.state_dir)
+    })
+    .await?;
     let staging = node_migration::staging_dir(&env.state_dir, &journal.intent);
     if staging.exists()
         && let Err(error) = std::fs::remove_dir_all(&staging)
     {
-        undone = Err(error.to_string());
-    }
-    if let Err(reason) = undone {
+        // What is left is named by the next move's check.
         log(
             "rollback.unclean",
-            json!({"intent": journal.intent, "reason": reason}),
+            json!({"intent": journal.intent, "reason": error.to_string()}),
         );
     }
     journal.phase = Phase::Forward(ForwardPhase::RolledBack {
@@ -1325,6 +1370,37 @@ mod tests {
             .await
             .expect("the lease did not end at its deadline");
         assert_eq!(gate.expire(now_unix_ms()), Some("i1".to_owned()));
+    }
+
+    /// A pending core whose lease ended gives its copy back and then
+    /// forgets its login item, so no login starts an empty core on the
+    /// folder; a record of another move is left with its item.
+    #[test]
+    fn a_core_that_gives_its_copy_back_forgets_its_login_item() {
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        handover::hold(&state)
+            .unwrap()
+            .write(&Handover::new(
+                "i1",
+                "m",
+                "c",
+                HandoverState::Pending {
+                    lease_until_unix_ms: now_unix_ms(),
+                },
+            ))
+            .unwrap();
+        let label = hide_kit::layout::core_login_item(home.path(), &state);
+        let list = hide_platform::user_agents::UserAgents::plist(home.path(), &label);
+        std::fs::create_dir_all(list.parent().unwrap()).unwrap();
+        std::fs::write(&list, "").unwrap();
+
+        give_back_pending(&state, home.path(), "i2");
+        assert!(list.exists(), "another move's item was forgotten");
+        give_back_pending(&state, home.path(), "i1");
+        assert!(handover::read(&state).unwrap().is_none());
+        assert!(!list.exists(), "the login item's list is left");
     }
 
     /// A stop ends a wait on the peer that would ask forever, both between

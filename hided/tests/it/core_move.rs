@@ -1499,6 +1499,55 @@ fn back_journal_until(fixture: &Fixture, phase: &str) -> Result<Value> {
     })
 }
 
+/// A move back whose commit cannot remove this machine's placement (a
+/// folder is in its way) stays at Retiring and shows the failure, rather
+/// than recording a move it cannot finish; once the way is clear the move
+/// ends and this machine runs the core.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_back_whose_placement_cannot_be_removed_waits_at_retiring() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let program = std::path::PathBuf::from(placed_program(&fixture)?);
+        let placement = fixture.source.state.join("core-placement.json");
+        let blocked = fixture.root.join("placement-blocked");
+        // The retirement runs, and then the placement cannot be removed.
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"if [ "$1 $2" = "core-move retire" ] && [ ! -e '{blocked}' ]; then
+  "$0.real" "$@" || exit
+  : > '{blocked}'; rm -f '{placement}'; mkdir -p '{placement}/in-the-way'
+  exit 0
+fi"#,
+                blocked = blocked.display(),
+                placement = placement.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let unfinished = fixture.logged(&fixture.source, "commit.unfinished")?;
+        ensure!(
+            unfinished["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("core-placement.json")),
+            "{unfinished}"
+        );
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["phase"]["phase"] == "retiring", "{journal}");
+        std::fs::remove_dir_all(&placement)?;
+        back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// A move back whose check fails changes nothing: the window stays a node
 /// of the core, which keeps running.
 #[test]

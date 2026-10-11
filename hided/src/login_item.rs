@@ -122,6 +122,21 @@ pub fn remove(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), 
         .map_err(|error| format!("the login item {label}: {error}"))
 }
 
+/// Removes the property list of the login item the core on `state_dir`
+/// runs under, leaving the item loaded: that core is the process asking,
+/// which its own `bootout` would stop midway. It exits successfully next,
+/// which the item never restarts, so nothing of it starts again, and the
+/// next login loads nothing; the next install or removal unloads what is
+/// left loaded.
+pub fn forget(home: &Path, state_dir: &Path) -> Result<(), String> {
+    let label = hide_kit::layout::core_login_item(home, state_dir);
+    match std::fs::remove_file(UserAgents::plist(home, &label)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("the login item {label}: {error}")),
+    }
+}
+
 /// `hided core-login`, before the daemon runs as any start of it does:
 /// the machine's Herdr server is started when Herdr says none runs; a
 /// status Herdr cannot give starts nothing, so a server that may be running

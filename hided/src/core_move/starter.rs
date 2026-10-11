@@ -17,8 +17,11 @@ const STOPPED_WITHIN: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub enum CoreStarter {
-    /// The account's login item (`login_item`).
-    LoginItem { home: PathBuf },
+    /// The account's login item (`login_item`), loaded through `agents`.
+    LoginItem {
+        home: PathBuf,
+        agents: hide_platform::user_agents::UserAgents,
+    },
     /// A detached `hided`, only in a fixture HOME.
     Fixture,
 }
@@ -57,6 +60,7 @@ impl CoreStarter {
         }
         Ok(Self::LoginItem {
             home: home.to_path_buf(),
+            agents: hide_platform::user_agents::UserAgents::current(),
         })
     }
 
@@ -99,11 +103,10 @@ impl CoreStarter {
                         .map(|status| format!("the core exited at its start: {status}"))
                 })
             }
-            Self::LoginItem { home } => {
-                let agents = hide_platform::user_agents::UserAgents::current();
-                crate::login_item::start(&agents, home, state_dir, program)?;
+            Self::LoginItem { home, agents } => {
+                crate::login_item::start(agents, home, state_dir, program)?;
                 Box::new(crate::login_item::exited_at_start(
-                    agents,
+                    agents.clone(),
                     home.clone(),
                     state_dir.to_path_buf(),
                 ))
@@ -117,31 +120,37 @@ impl CoreStarter {
     /// replaced in place, so a machine that restarts midway starts one of
     /// the two builds at login; the fixture's process is stopped first.
     pub fn replace(&self, state_dir: &Path, program: &Path) -> Result<u32, String> {
-        if let Self::Fixture = self
-            && let Some(running) = crate::state_file::read_state(state_dir)
-                .map_err(|error| format!("the core's state could not be read: {error}"))?
-        {
-            stop_pid(running.pid)?;
+        if let Self::Fixture = self {
+            stop_running(state_dir)?;
         }
         self.start(state_dir, program)
+    }
+
+    /// Removes this folder's starter, so no core of it starts again; a core
+    /// running on the folder is left as it is.
+    pub fn remove(&self, state_dir: &Path) -> Result<(), String> {
+        match self {
+            Self::LoginItem { home, agents } => crate::login_item::remove(agents, home, state_dir),
+            Self::Fixture => Ok(()),
+        }
     }
 
     /// Stops the core on `state_dir` and removes its starter, and answers
     /// only once no core of that folder runs.
     pub fn stop(&self, state_dir: &Path) -> Result<(), String> {
-        if let Self::LoginItem { home } = self {
-            crate::login_item::remove(
-                &hide_platform::user_agents::UserAgents::current(),
-                home,
-                state_dir,
-            )?;
-        }
-        let Some(running) = crate::state_file::read_state(state_dir)
-            .map_err(|error| format!("the core's state could not be read: {error}"))?
-        else {
-            return Ok(());
-        };
-        stop_pid(running.pid)
+        self.remove(state_dir)?;
+        stop_running(state_dir)
+    }
+}
+
+/// Stops the core `state_dir`'s state names, when its pid is proven still
+/// that core: a pid another process reused since is never signalled.
+fn stop_running(state_dir: &Path) -> Result<(), String> {
+    match crate::state_file::read_state(state_dir)
+        .map_err(|error| format!("the core's state could not be read: {error}"))?
+    {
+        Some(running) if running.is_proven_running() => stop_pid(running.pid),
+        _ => Ok(()),
     }
 }
 
@@ -175,7 +184,7 @@ fn wait_for_core(
         if record.is_some()
             && record.as_deref() != stale
             && let Ok(Some(running)) = crate::state_file::read_state(state_dir)
-            && hide_platform::process::is_alive(running.pid)
+            && running.is_proven_running()
         {
             return Ok(running.pid);
         }
@@ -217,6 +226,39 @@ fn stop_pid(pid: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A state whose pid another process has since is no core: stopping the
+    /// folder's core signals nothing, and the state does not read as a core
+    /// running.
+    #[cfg(unix)]
+    #[test]
+    fn a_pid_another_process_reused_is_never_signalled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = std::process::Command::new("/bin/sleep");
+        command.arg("30");
+        let mut other = hide_platform::process::OwnedChild::spawn(&mut command).unwrap();
+        let pid = other.id();
+        let started = hide_platform::process::start_time(pid).unwrap();
+        let state = |pid_started| crate::state_file::DaemonState {
+            pid,
+            port: 1,
+            token: String::new(),
+            socket: None,
+            started_at: String::new(),
+            pid_started,
+        };
+        assert!(state(Some(started)).is_proven_running());
+        for unproven in [Some(started + 1), None] {
+            let state = state(unproven);
+            assert!(!state.is_proven_running());
+            crate::state_file::write_state(dir.path(), &state).unwrap();
+            CoreStarter::Fixture.stop(dir.path()).unwrap();
+            assert!(
+                other.try_wait().unwrap().is_none(),
+                "an unproven pid was signalled"
+            );
+        }
+    }
 
     /// A fixture HOME's core is never started by the account's login item,
     /// which reaches the real launchd domain whatever HOME is.

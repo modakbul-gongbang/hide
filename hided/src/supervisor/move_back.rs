@@ -449,18 +449,13 @@ pub(super) async fn retire_and_commit(
         "move.committed",
         json!({"intent": journal.intent, "direction": "back"}),
     );
-    if let Err(reason) = placement::remove(&env.state_dir) {
-        log(
-            "commit.unfinished",
-            json!({"intent": journal.intent, "reason": reason}),
-        );
-    }
-    if let Err(reason) = back::remove_staging(&env.state_dir, &journal.intent) {
-        log(
-            "commit.unfinished",
-            json!({"intent": journal.intent, "reason": reason}),
-        );
-    }
+    // The journal stays at Retiring until both are gone, so a start
+    // meanwhile commits again, which the peer answers as retired.
+    until_removed(seat, &journal.intent, "commit.unfinished", || {
+        placement::remove(&env.state_dir)?;
+        back::remove_staging(&env.state_dir, &journal.intent)
+    })
+    .await?;
     journal.phase = Phase::Back(BackPhase::Done);
     journal::write(&env.state_dir, &journal)?;
     drop(screen);
