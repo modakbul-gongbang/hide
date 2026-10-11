@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  hided, hide, hide-agent-hooks and the bundled Herdr run under the hardened
+  runtime with no exceptions (desktop/scripts/macos-signing.mjs): none of them
+  generates code at run time or loads a library another team signed.
+-->
+<plist version="1.0">
+  <dict/>
+</plist>

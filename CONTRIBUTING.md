@@ -219,7 +219,9 @@ The operator keeps immutable releases turned on in the repository's Settings; th
 The writer adds only missing assets to its exact verified draft and never deletes, overwrites, or publishes a release; legacy drafts require separate coverage review.
 A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
 A package checksum or headless daemon smoke check does not provide that native evidence.
-The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
+The macOS archive is signed with the Developer ID certificate and notarized (`HIDE_MACOS_SIGNING=developer-id`, [docs/BUILD.md](docs/BUILD.md)), and the release fails rather than ship it any other way.
+Its secrets belong to the repository's `release` environment, which only that job reads: `MACOS_DEVELOPER_ID_P12` (the certificate with its private key, as base64) and `MACOS_DEVELOPER_ID_P12_PASSWORD`, and the App Store Connect API key notarytool uses, `APPLE_NOTARY_KEY_P8` (the `.p8` file's text), `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`.
+The Windows and Linux packages are not signed, and [docs/INSTALL.md](docs/INSTALL.md) gives the SmartScreen and sandbox steps.
 `package.yml` also runs as `pr.yml`'s `package` lane on a pull request that changes what goes into a package (`PACKAGE_PATHS` in `scripts/ci-plan.py`: `desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows).
 There it also builds the macOS archive and runs the packaged app's own specs on it, keeps the packages for a week as the run's artifacts, and `verify` requires it like any planned lane.
 

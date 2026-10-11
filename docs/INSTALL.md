@@ -46,10 +46,10 @@ Expand the archive, move `hide.app` to `/Applications`, then launch it:
 open /Applications/hide.app
 ```
 
-The release is ad-hoc signed and is not notarized.
-On the first launch, Control-click `hide.app`, choose **Open**, and confirm the Gatekeeper dialog.
+Releases after v0.3.0 are signed with hide's Developer ID and notarized by Apple, so macOS opens them like any other downloaded app.
+v0.3.0 and earlier are ad-hoc signed and not notarized: on the first launch, Control-click `hide.app`, choose **Open**, and confirm the Gatekeeper dialog.
 
-If macOS still keeps the verified app in quarantine, remove the quarantine attribute only after confirming the downloaded checksum:
+If macOS still keeps one of those in quarantine, remove the quarantine attribute only after confirming the downloaded checksum:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/hide.app
@@ -158,6 +158,7 @@ Omit it to build from a checkout that a Git tag matching `v[0-9]*` already descr
 
 Packaging builds the web shell, builds the release `hided`, `hide` and `hide-agent-hooks` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
+A release signs with the Developer ID certificate and notarizes instead; [BUILD.md](BUILD.md) gives the switch and what it needs.
 The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
 
 Install the app into the system Applications directory and launch the installed bundle:
@@ -173,6 +174,12 @@ Verify the bundle signature:
 
 ```sh
 /usr/bin/codesign --verify --deep --strict --verbose=2 /Applications/hide.app
+```
+
+For a release after v0.3.0, also confirm Gatekeeper accepts it as notarized; the answer ends with `accepted` and `source=Notarized Developer ID`:
+
+```sh
+/usr/sbin/spctl --assess --type execute --verbose=4 /Applications/hide.app
 ```
 
 After opening hide, confirm the installed executable is the one running:
