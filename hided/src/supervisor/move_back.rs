@@ -5,8 +5,9 @@
 //! machine's own core starts. Before the commit every failure resumes the
 //! core's machine's core from its untouched folder and this machine goes
 //! back to its node role; while the core's machine cannot be reached after
-//! it stopped, this machine waits and starts no core, since that machine
-//! may still start its own.
+//! it stopped, or cannot start its core again, this machine waits, keeps
+//! what it placed, and starts no core, since that machine may still start
+//! its own.
 
 use super::*;
 use crate::core_move::abandoned::PeerStep;
@@ -63,6 +64,64 @@ pub(super) async fn release_core(
             &target,
             HandoverState::StoppedFor,
         ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Answers `release` and says whether the core stops for it: only when
+/// `record` wrote the stop and the core took the release's claim before its
+/// asker gave the wait up. A release given up while it waited in line is
+/// dropped unanswered, and one given up while the stop was being written is
+/// undone, so the core runs on with no record of a stop.
+pub(super) async fn answer_release(
+    state_dir: &Path,
+    release: &Release,
+    record: impl std::future::Future<Output = Result<(), String>>,
+) -> bool {
+    if release.claim.given_up() {
+        log(
+            "release.given_up",
+            json!({"intent": release.intent, "target": release.target, "recorded": false}),
+        );
+        return false;
+    }
+    let checked = record.await;
+    let refused = checked.as_ref().err().cloned();
+    log(
+        "release.checked",
+        json!({"intent": release.intent, "target": release.target, "refused": refused}),
+    );
+    if refused.is_none() && !release.claim.take() {
+        let unclean = undo_release(state_dir, &release.intent).await.err();
+        log(
+            "release.given_up",
+            json!({"intent": release.intent, "target": release.target, "recorded": true, "unclean": unclean}),
+        );
+        return false;
+    }
+    let _ = release.reply.send(checked);
+    refused.is_none()
+}
+
+/// Takes back the stop `release_core` recorded for `intent`: its record
+/// and its export go.
+async fn undo_release(state_dir: &Path, intent: &str) -> Result<(), String> {
+    let (state_dir, intent) = (state_dir.to_path_buf(), intent.to_owned());
+    tokio::task::spawn_blocking(move || {
+        let held = handover::hold(&state_dir)?;
+        if let Some(record) = held.read()?
+            && record.intent == intent
+            && record.state == HandoverState::StoppedFor
+        {
+            held.remove()?;
+        }
+        let export = back::export_path(&state_dir, &intent);
+        match std::fs::remove_file(&export) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("{}: {error}", export.display())),
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -324,6 +383,7 @@ pub(super) async fn back(env: &Env, seat: &seat::Seat, running: RunningNode) -> 
     match released {
         Ok(Released::Staged) => {}
         Ok(Released::Retired) => {
+            copy_placed(env, &journal)?;
             return retire_and_commit(env, seat, journal, remote, screen).await;
         }
         Err(cause) => {
@@ -441,22 +501,32 @@ pub(super) async fn retire_and_commit(
         Offered::Waited(retired) => retired,
         Offered::Abandoned => return take_here(env, seat, journal, screen).await,
     };
-    if let Err(cause) = retired {
-        return back_rollback(
-            env,
-            seat,
-            journal,
-            &remote,
-            screen,
-            MoveStep::StartTarget,
-            cause,
-        )
-        .await;
-    }
+    let leftover = match retired {
+        Ok(leftover) => leftover,
+        Err(cause) => {
+            return back_rollback(
+                env,
+                seat,
+                journal,
+                &remote,
+                screen,
+                MoveStep::StartTarget,
+                cause,
+            )
+            .await;
+        }
+    };
     log(
         "move.committed",
         json!({"intent": journal.intent, "direction": "back"}),
     );
+    // The commit stands; the next move's check there names what is left.
+    if let Some(reason) = leftover {
+        log(
+            "retire.leftover",
+            json!({"intent": journal.intent, "peer": journal.peer.node, "reason": reason}),
+        );
+    }
     commit_back(env, seat, journal, screen).await
 }
 
@@ -518,9 +588,12 @@ pub(super) async fn commit_back(
 
 /// Undoes a move back before its commit: the core's machine starts its
 /// core again, the placed copy is taken back out, and this machine's node
-/// role links to it. While that machine cannot be reached this machine
-/// waits; if it says it retired after all (a retirement whose answer was
-/// lost), the move goes forward on the copy still placed here.
+/// role links to it. Until that machine answers that its core runs, this
+/// machine waits and keeps what it placed, whether the machine cannot be
+/// reached or refuses (its core cannot start there): the window shows
+/// Waiting with the cause, and asking again once the cause is cleared
+/// resumes it. If it says it retired after all (a retirement whose answer
+/// was lost), the move goes forward on the copy still placed here.
 pub(super) async fn back_rollback(
     env: &Env,
     seat: &seat::Seat,
@@ -539,30 +612,32 @@ pub(super) async fn back_rollback(
         cause: Some(cause.clone()),
         ..MoveView::of(&journal, MoveState::RollingBack)
     });
+    // A refusal is asked again too: taking the copy out while the core's
+    // machine cannot start its core would leave no core on either machine.
     let resumed = wait_on_peer(
         &seat.stop,
         &seat.moves,
         "resume.failed",
         &journal.intent,
-        Permanent::Ends,
+        Permanent::AskedAgain,
         {
             let (remote, journal) = (Arc::clone(remote), journal.clone());
             move || back::resume(&remote, &journal)
         },
         |_| false,
     )
-    .await?;
+    .await?
+    .map_err(|failure| {
+        format!(
+            "the move back {} stopped asking the core's machine to resume: {failure:?}",
+            journal.intent
+        )
+    })?;
     match resumed {
-        Ok(Resumed::Running) => {}
-        Ok(Resumed::Retired) => {
+        Resumed::Running => {}
+        Resumed::Retired => {
             log("rollback.found_retired", json!({"intent": journal.intent}));
-            if copy::brain_present(&env.state_dir).is_empty() {
-                return Err(format!(
-                    "the move back {} committed on the core's machine with no copy placed here",
-                    journal.intent
-                )
-                .into());
-            }
+            copy_placed(env, &journal)?;
             return Box::pin(retire_and_commit(
                 env,
                 seat,
@@ -572,13 +647,6 @@ pub(super) async fn back_rollback(
             ))
             .await;
         }
-        // The core's machine answered, and asking again answers the same:
-        // this machine goes back to its node role, starting no core of its
-        // own, and the window names the failure.
-        Err(failure) => log(
-            "rollback.unclean",
-            json!({"intent": journal.intent, "peer": failure}),
-        ),
     }
     let undone = blocking({
         let (state_dir, settings, journal) = (
@@ -614,6 +682,20 @@ pub(super) async fn back_rollback(
         ..MoveView::of(&journal, MoveState::RolledBack)
     });
     Ok(Role::Node(node))
+}
+
+/// The core's machine says it retired its core for this move back, which
+/// committed it: the core starts here only on the copy placed here, never
+/// on an empty folder that would lose what the move carried.
+fn copy_placed(env: &Env, journal: &Journal) -> Result<(), Halt> {
+    if copy::brain_present(&env.state_dir).is_empty() {
+        return Err(format!(
+            "the move back {} committed on the core's machine with no copy placed here",
+            journal.intent
+        )
+        .into());
+    }
+    Ok(())
 }
 
 async fn blocking<T: Send + 'static>(

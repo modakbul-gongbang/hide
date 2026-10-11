@@ -5,7 +5,8 @@
 //! role this process mounts (the core, the move screen, the node) sends the
 //! frame to its windows.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
@@ -40,13 +41,58 @@ pub enum MoveRequest {
 
 /// The core's own machine asking its running core to stop for a move back
 /// (`attach`, from `hided core-move release`): the core answers once it
-/// has checked and recorded the stop, then stops.
+/// has checked and recorded the stop, then stops. The asker waits a bounded
+/// time, so the core stops only for a release whose `claim` it took before
+/// the asker gave the wait up; one the asker gave up asks nothing any more.
 #[derive(Debug)]
 pub struct Release {
     pub intent: String,
     /// The node the core goes back to.
     pub target: String,
+    pub claim: Arc<ReleaseClaim>,
     pub reply: std::sync::mpsc::Sender<Result<(), String>>,
+}
+
+/// Who decided a release: the core, which takes it once the stop is
+/// recorded, or the asker, which gives it up when its wait ends. Whichever
+/// comes first decides, so a release that waited in line past its asker
+/// never stops a core no move takes over.
+#[derive(Debug, Default)]
+pub struct ReleaseClaim(AtomicU8);
+
+const RELEASE_WAITING: u8 = 0;
+const RELEASE_TAKEN: u8 = 1;
+const RELEASE_GIVEN_UP: u8 = 2;
+
+impl ReleaseClaim {
+    /// The core's, once it recorded the stop: true while the asker still
+    /// waits, which then waits for the answer however late its wait ends.
+    pub fn take(&self) -> bool {
+        self.0
+            .compare_exchange(
+                RELEASE_WAITING,
+                RELEASE_TAKEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// The asker's, as its wait ends: true when the core had not taken it.
+    pub fn give_up(&self) -> bool {
+        self.0
+            .compare_exchange(
+                RELEASE_WAITING,
+                RELEASE_GIVEN_UP,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    pub fn given_up(&self) -> bool {
+        self.0.load(Ordering::Acquire) == RELEASE_GIVEN_UP
+    }
 }
 
 /// What the supervisor is asked.
@@ -424,15 +470,24 @@ impl MoveControl {
         within: std::time::Duration,
     ) -> Result<(), String> {
         let (reply, answer) = std::sync::mpsc::channel();
+        let claim = Arc::new(ReleaseClaim::default());
         self.ask(Asked::Release(Release {
             intent: intent.to_owned(),
             target: target.to_owned(),
+            claim: Arc::clone(&claim),
             reply,
         }))
         .map_err(|refusal| refusal.code().to_owned())?;
-        answer
-            .recv_timeout(within)
-            .map_err(|_| "the core did not answer the release".to_owned())?
+        let unanswered = || "the core did not answer the release".to_owned();
+        match answer.recv_timeout(within) {
+            Ok(answered) => answered,
+            // The core took the release as the wait ended: it answers next,
+            // before it stops.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !claim.give_up() => {
+                answer.recv().map_err(|_| unanswered())?
+            }
+            Err(_) => Err(unanswered()),
+        }
     }
 
     fn ask(&self, asked: Asked) -> Result<(), RequestRefusal> {

@@ -1275,9 +1275,15 @@ fi"#,
                 .record("core-handover.json")?
                 .filter(|handover| handover["state"]["state"] == "retired"))
         })?;
-        ensure!(!fixture.target.state.join("core-state.json").exists());
+        // The retirement answers once its state is set aside, after the
+        // record says retired.
         let ended = fixture.logged(&fixture.source, "abandon.ended")?;
         ensure!(ended["answer"] == "retired", "{ended}");
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        ensure!(
+            records(&fixture, "retire.leftover")?.is_empty(),
+            "the retirement left part of the folder"
+        );
         wait_for("nothing of the move left to ask", || {
             Ok(fixture
                 .source
@@ -1852,6 +1858,190 @@ fi"#,
         wait_for("this machine's core", || {
             Ok((fixture.role()? == "core").then_some(()))
         })?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// A retirement that commits and then cannot set the core machine's folder
+/// aside (a file is where it goes) still commits the move back: the
+/// leftover is logged and this machine runs the core, with no rollback that
+/// would resume a core already retired.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_retirement_that_cannot_set_its_folder_aside_still_commits_the_move_back() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let moved_out = fixture.target.state.join("moved-out");
+        ensure!(
+            !moved_out.exists(),
+            "the target set something aside already"
+        );
+        std::fs::write(&moved_out, b"")?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        let leftover = fixture.logged(&fixture.source, "retire.leftover")?;
+        ensure!(
+            leftover["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("moved-out")),
+            "{leftover}"
+        );
+        ensure!(
+            records(&fixture, "move.rolling_back")?.is_empty(),
+            "the move back rolled back"
+        );
+        let handover = fixture
+            .target
+            .record("core-handover.json")?
+            .context("the target's record")?;
+        ensure!(handover["state"]["state"] == "retired", "{handover}");
+        ensure!(
+            fixture.target_core()?.is_none(),
+            "a core runs on the retired machine"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// A move back the core's machine refuses to resume after (here both its
+/// retirement and its resume are asked of another move) waits with the copy
+/// it placed, rather than taking it out and leaving neither machine a core;
+/// once the resume is answered that machine runs its core again and this
+/// one is its node.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_back_whose_core_machine_refuses_to_resume_keeps_its_copy_and_waits() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let program = std::path::PathBuf::from(placed_program(&fixture)?);
+        let refuse = fixture.root.join("refuse-resume");
+        let asked = fixture.root.join("resumes-refused");
+        std::fs::write(&refuse, b"")?;
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"if [ "$1 $2" = "core-move resume" ] && [ -e '{refuse}' ]; then
+  echo refused >> '{asked}'
+fi
+if [ "$1 $2" = "core-move retire" ] || {{ [ "$1 $2" = "core-move resume" ] && [ -e '{refuse}' ]; }}; then
+  n=$#; i=0
+  while [ $i -lt $n ]; do
+    arg=$1; shift; i=$((i + 1))
+    if [ "$arg" = --intent ]; then
+      shift; i=$((i + 1)); set -- "$@" --intent another-move
+    else
+      set -- "$@" "$arg"
+    fi
+  done
+  exec "$0.real" "$@"
+fi"#,
+                refuse = refuse.display(),
+                asked = asked.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let failed = fixture.logged(&fixture.source, "resume.failed")?;
+        ensure!(
+            failed["failure"]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("another move")),
+            "{failed}"
+        );
+        // Asked again, with the copy still in place and no core anywhere.
+        wait_for("the refused resume asked again", || {
+            let refused = std::fs::read_to_string(&asked).unwrap_or_default();
+            Ok((refused.lines().count() >= 2).then_some(()))
+        })?;
+        ensure!(fixture.role()? == "moving");
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["phase"]["phase"] == "retiring", "{journal}");
+        ensure!(
+            fixture.source.state.join("core-state.json").is_file(),
+            "the placed copy was taken out"
+        );
+        ensure!(
+            fixture.target_core()?.is_none(),
+            "a core runs on the target"
+        );
+        std::fs::remove_file(&refuse)?;
+        back_journal_until(&fixture, "rolled_back")?;
+        wait_for("the window a node again", || {
+            Ok((fixture.role()? == "node").then_some(()))
+        })?;
+        ensure!(fixture.target_core()?.is_some(), "no core on the target");
+        ensure!(
+            !fixture.source.state.join("core-state.json").exists(),
+            "the copy is left here"
+        );
+        wait_for("the projects through the resumed core", || {
+            Ok((fixture.projects()?.len() == 2).then_some(()))
+        })?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The core's machine answers a move back's release as already retired
+/// for it (here its record is made to say so) before any copy reached this
+/// machine: the move back starts no core on an empty folder, whose commit
+/// would lose everything the core held, and its process ends naming why.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_back_told_it_retired_before_any_copy_came_starts_no_core() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let program = std::path::PathBuf::from(placed_program(&fixture)?);
+        let record = fixture.target.state.join("core-handover.json");
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"if [ "$1 $2" = "core-move release" ]; then
+  previous=
+  for arg in "$@"; do
+    [ "$previous" = --intent ] && intent=$arg
+    previous=$arg
+  done
+  # Private, as the record's own writer leaves it.
+  (umask 077; printf '{{"version":1,"intent":"%s","source":"{source}","target":"{target}","state":{{"state":"retired"}}}}' "$intent" > '{record}.planted')
+  mv '{record}.planted' '{record}'
+fi"#,
+                source = TARGET_NODE,
+                target = SOURCE_NODE,
+                record = record.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let ended = fixture.source_ended_within(std::time::Duration::from_secs(60))?;
+        ensure!(
+            !ended.success(),
+            "the source ended as if the move back were done"
+        );
+        let output = std::fs::read_to_string(fixture.root.join("source-hided.log"))?;
+        ensure!(
+            output.contains("committed on the core's machine with no copy placed here"),
+            "{output}"
+        );
+        ensure!(
+            !records(&fixture, "move.committed")?
+                .iter()
+                .any(|record| record["direction"] == "back"),
+            "the move back committed"
+        );
+        ensure!(
+            !fixture.source.state.join("core-state.json").exists(),
+            "a core started on an empty folder"
+        );
         Ok(())
     })();
     finish(fixture, journey)

@@ -95,7 +95,9 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
                     args.target.as_deref().ok_or(USAGE)?,
                 ),
                 "resume" => resume(&args.state_dir, intent),
-                "retire" => retire(&args.state_dir, intent),
+                "retire" => ai_settings().and_then(|settings| {
+                    retire(&args.state_dir, intent, account_starter, &settings)
+                }),
                 _ => return Err(USAGE.to_owned()),
             }
         }
@@ -489,14 +491,22 @@ fn remove_copy(state_dir: &Path, intent: &str) -> Result<(), StepAnswer> {
 /// Has this machine's core stop for the move back `intent` to `target` and
 /// stages its copy: the core checks the move, records the stop and its
 /// export, answers, and ends; the copy is made once it has ended, under the
-/// instance lock so no core starts on the folder meanwhile.
+/// instance lock so no core starts on the folder meanwhile. The record's
+/// lock is held for the decision and from the recorded stop to the staged
+/// copy, so no other change of the record (an abandon, an update) runs
+/// between them; it is let go only while the core records its stop, which
+/// takes the same lock.
 fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
-    match handover::read(state_dir).map_err(plain)? {
+    let held = hold(state_dir)?;
+    // Held to the staged copy.
+    let _held = match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
-            return Ok(StepAnswer::Retired);
+            return Ok(StepAnswer::Retired { leftover: None });
         }
         // Stopped already, by an earlier run of this step.
-        Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {}
+        Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {
+            held
+        }
         Some(record) if record.state != HandoverState::Retired => {
             return Err(plain(format!(
                 "another move ({}) holds this machine",
@@ -507,6 +517,7 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
             let running = crate::state_file::read_state(state_dir)
                 .map_err(|error| plain(error.to_string()))?
                 .ok_or_else(|| plain("no core runs here"))?;
+            drop(held);
             if let Err(reason) = crate::attach::release(state_dir, intent, target) {
                 // The answer can be lost as the core ends; its record says
                 // whether it stopped.
@@ -521,8 +532,21 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
                 }
             }
             wait_until_gone(&running)?;
+            let held = hold(state_dir)?;
+            match held.read().map_err(plain)? {
+                Some(record)
+                    if record.intent == intent && record.state == HandoverState::StoppedFor =>
+                {
+                    held
+                }
+                _ => {
+                    return Err(plain(
+                        "the core's stop for this move is no longer recorded here",
+                    ));
+                }
+            }
         }
-    }
+    };
     let _instance = acquire_instance(state_dir)?;
     let export = super::back::read_export(state_dir, intent).map_err(plain)?;
     let staging = herdr_core::node_migration::staging_dir(state_dir, intent);
@@ -548,7 +572,7 @@ fn resume(state_dir: &Path, intent: &str) -> Answered {
     let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
-            return Ok(StepAnswer::Retired);
+            return Ok(StepAnswer::Retired { leftover: None });
         }
         Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {
             super::back::remove_staging(state_dir, intent).map_err(plain)?;
@@ -577,16 +601,23 @@ fn resume(state_dir: &Path, intent: &str) -> Answered {
 }
 
 /// The commit of a move back: this machine's starter is removed, so no
-/// core of its starts again, and its brain state is set aside.
-fn retire(state_dir: &Path, intent: &str) -> Answered {
+/// core of its starts again, and its brain state is set aside. Once the
+/// record says retired the move has committed, so what of the folder cannot
+/// be set aside or removed is answered as left over, never as a refusal a
+/// rollback would undo.
+fn retire(
+    state_dir: &Path,
+    intent: &str,
+    starter: impl FnOnce() -> Result<CoreStarter, String>,
+    ai_settings: &Path,
+) -> Answered {
     let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {}
         Some(mut record)
             if record.intent == intent && record.state == HandoverState::StoppedFor =>
         {
-            let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
-            CoreStarter::for_account(&home)
+            starter()
                 .and_then(|starter| starter.stop(state_dir))
                 .map_err(busy)?;
             let _instance = acquire_instance(state_dir)?;
@@ -595,9 +626,16 @@ fn retire(state_dir: &Path, intent: &str) -> Answered {
         }
         _ => return Err(plain("this machine's core is not stopped for this move")),
     }
-    copy::set_aside(state_dir, intent, &ai_settings()?).map_err(refusal)?;
-    super::back::remove_staging(state_dir, intent).map_err(plain)?;
-    Ok(StepAnswer::Retired)
+    let set_aside = copy::set_aside(state_dir, intent, ai_settings)
+        .map_err(|refusal| format!("{}: {}", refusal.file.display(), refusal.reason))
+        .err();
+    let staging = super::back::remove_staging(state_dir, intent).err();
+    let leftover = match (set_aside, staging) {
+        (None, None) => None,
+        (Some(one), None) | (None, Some(one)) => Some(one),
+        (Some(set_aside), Some(staging)) => Some(format!("{set_aside}; {staging}")),
+    };
+    Ok(StepAnswer::Retired { leftover })
 }
 
 /// Waits until the core `running` names has ended; one that has not is
@@ -667,6 +705,56 @@ mod tests {
             !home.path().join("loaded").exists(),
             "the login item is still loaded"
         );
+    }
+
+    /// The retirement is the commit once its record says retired: a folder
+    /// it then cannot set aside is answered as left over, never as a refusal
+    /// a rollback would resume a retired core on, and the next retirement
+    /// sets aside what is left without stopping anything again.
+    #[test]
+    fn a_retirement_that_cannot_set_the_folder_aside_still_answers_retired() {
+        use herdr_core::node_migration::MARKER_FILE;
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let settings = home.path().join("account/hide/ai.json");
+        std::fs::write(state.join(MARKER_FILE), "{}").unwrap();
+        handover::hold(&state)
+            .unwrap()
+            .write(&handover::Handover::new(
+                "i1",
+                "mini",
+                "mbp",
+                HandoverState::StoppedFor,
+            ))
+            .unwrap();
+        // A file where the folder it sets aside into goes.
+        let moved_out = hide_kit::layout::moved_out(&state);
+        std::fs::write(&moved_out, "").unwrap();
+
+        let answered = retire(&state, "i1", || Ok(CoreStarter::Fixture), &settings);
+        let Ok(StepAnswer::Retired {
+            leftover: Some(leftover),
+        }) = &answered
+        else {
+            panic!("{answered:?}");
+        };
+        assert!(leftover.contains("moved-out"), "{leftover}");
+        assert_eq!(
+            handover::read(&state).unwrap().unwrap().state,
+            HandoverState::Retired
+        );
+
+        std::fs::remove_file(&moved_out).unwrap();
+        let again = retire(
+            &state,
+            "i1",
+            || -> Result<CoreStarter, String> { panic!("a retired core was stopped again") },
+            &settings,
+        );
+        assert_eq!(again, Ok(StepAnswer::Retired { leftover: None }));
+        assert!(moved_out.join("i1").join(MARKER_FILE).exists());
+        assert!(!state.join(MARKER_FILE).exists());
     }
 
     /// A start is given only what the lease leaves beyond a full pending

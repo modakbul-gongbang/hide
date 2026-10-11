@@ -65,8 +65,12 @@ pub enum StepAnswer {
     /// `release`: the core stopped for the move back and its copy is staged.
     Staged { files: usize },
     /// `release`, `resume`, `retire`: the core retired for this move back,
-    /// which is its commit.
-    Retired,
+    /// which is its commit. `leftover` is what `retire` could not set aside
+    /// or remove of the folder after the commit; the commit stands.
+    Retired {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        leftover: Option<String>,
+    },
     /// `resume`: the core runs on its folder.
     Running { pid: u32 },
     /// The step cannot act yet (a lock another change holds, a core still

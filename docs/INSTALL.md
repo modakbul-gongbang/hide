@@ -329,6 +329,7 @@ If the other machine stops answering after it may have taken the core, the windo
 If the other machine is only cut off, not gone, its core keeps running until this Mac reaches it.
 Moving the core back works the same way: if the core's machine does not answer once the copy is here, the window offers **Take it here**, and this Mac's core starts from that copy while the other machine's core stays stopped until this Mac reaches it and retires it.
 A move back whose copy has not reached this Mac yet only waits: while the core's machine never returns, this Mac runs no core.
+A move back that fails waits the same way until the core's machine says its core runs again, keeping the copy it placed here; when that machine answers but cannot start its core, the window shows Waiting with the reason, and the move back goes on once that reason is fixed.
 A machine the core moved back from runs no hided afterwards: its `core-handover.json` says the core retired there, so every start of its state folder, by the login item, a window or `hide connect`, ends at once and successfully.
 From then on this Mac is a node of that core: its panes, files and terminals stay here, and the rail marks the core's machine with a crown.
 This Mac's own `⋯` menu moves the core back, or disconnects from the core: while disconnected the core refuses this Mac's panes, files and browser, and **Reconnect** in the window's strip restores them.

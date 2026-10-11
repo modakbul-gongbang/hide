@@ -227,7 +227,7 @@ pub fn release(
         &[("intent", &journal.intent), ("target", own_node)],
     )? {
         StepAnswer::Staged { .. } => Ok(Released::Staged),
-        StepAnswer::Retired => Ok(Released::Retired),
+        StepAnswer::Retired { .. } => Ok(Released::Retired),
         other => Err(super::driver::unexpected("release", &other)),
     }
 }
@@ -380,10 +380,11 @@ pub fn unplace_here(state_dir: &Path, ai_settings: &Path, journal: &Journal) -> 
     remove_staging(state_dir, &journal.intent)
 }
 
-/// Has the core's machine retire its core held for the move back `intent`.
-pub fn retire(remote: &Remote, intent: &str) -> Result<(), MoveFailure> {
+/// Has the core's machine retire its core held for the move back `intent`;
+/// the answer is what that machine left of its folder after the commit.
+pub fn retire(remote: &Remote, intent: &str) -> Result<Option<String>, MoveFailure> {
     match remote.step("retire", &[("intent", intent)])? {
-        StepAnswer::Retired => Ok(()),
+        StepAnswer::Retired { leftover } => Ok(leftover),
         other => Err(super::driver::unexpected("retire", &other)),
     }
 }
@@ -400,7 +401,7 @@ pub enum Resumed {
 pub fn resume(remote: &Remote, journal: &Journal) -> Result<Resumed, MoveFailure> {
     match remote.step("resume", &[("intent", &journal.intent)])? {
         StepAnswer::Running { .. } => Ok(Resumed::Running),
-        StepAnswer::Retired => Ok(Resumed::Retired),
+        StepAnswer::Retired { .. } => Ok(Resumed::Retired),
         other => Err(super::driver::unexpected("resume", &other)),
     }
 }
