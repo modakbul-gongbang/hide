@@ -237,13 +237,15 @@ function EmptyHomeView({ state, actions }: { state: Exclude<EmptyHome, null>; ac
   const chord = commandLabel(command);
   const button = add ? (hostBridge() ? t("firstRun.home.addProject") : null) : t("firstRun.home.startAgent");
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center" data-main-empty-home={state}>
-      <p className="text-body text-muted-foreground">{add ? t("firstRun.home.noProject") : t("firstRun.home.noAgent")}</p>
+    <div className="flex flex-1 flex-col items-center justify-center gap-md p-xl text-center" data-main-empty-home={state}>
+      <p className="text-subhead text-subtle-foreground">{add ? t("firstRun.home.noProject") : t("firstRun.home.noAgent")}</p>
       {button ? (
-        <Button variant="secondary" onClick={() => (add ? actions.openAddProject() : actions.openStartPanel())} data-main-empty-home-action={command}>
-          {button}
+        <span className="flex items-center gap-sm">
+          <Button onClick={() => (add ? actions.openAddProject() : actions.openStartPanel())} data-main-empty-home-action={command}>
+            {button}
+          </Button>
           {chord ? <Kbd aria-hidden="true">{chord}</Kbd> : null}
-        </Button>
+        </span>
       ) : null}
     </div>
   );

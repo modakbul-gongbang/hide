@@ -5,6 +5,7 @@
 // (`ui_state.screen_intros_seen`), so another window or a restart does not
 // show it twice; this visit keeps the line it opened with.
 
+import { FactoryIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -16,8 +17,13 @@ const WORDS: Record<Screen, MessageKey> = {
   factory: "firstRun.intro.factory",
 };
 
-export function ScreenIntro({ screen, actions }: { screen: Screen; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
+/**
+ * Whether this visit shows `screen`'s introduction: decided once, when the
+ * first snapshot says whether it was seen, and kept for the visit, so the
+ * screen calls it where it stays mounted and draws `ScreenIntroLine` where
+ * its layout wants the line.
+ */
+export function useScreenIntro(screen: Screen, actions: Actions): boolean {
   // Unknown until the first snapshot says which screens were introduced.
   const seen = useShellStore((s) => (s.rest?.ui_state ? (s.rest.ui_state.screen_intros_seen ?? []).includes(screen) : null));
   const [shown, setShown] = useState<boolean | null>(null);
@@ -26,9 +32,16 @@ export function ScreenIntro({ screen, actions }: { screen: Screen; actions: Acti
     setShown(!seen);
     if (!seen) actions.markScreenIntroSeen(screen);
   }, [actions, screen, seen, shown]);
-  return shown ? (
-    <p className="px-lg pb-sm text-body text-muted-foreground" data-screen-intro={screen}>
+  return shown === true;
+}
+
+/** The line itself, under the screen's title. */
+export function ScreenIntroLine({ screen }: { screen: Screen }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <p className="mx-lg mb-md flex items-center gap-sm rounded-md bg-card px-md py-sm text-body text-subtle-foreground" data-screen-intro={screen}>
+      <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-subtle-foreground" />
       {t(WORDS[screen])}
     </p>
-  ) : null;
+  );
 }

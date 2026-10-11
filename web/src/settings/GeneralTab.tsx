@@ -9,7 +9,7 @@ import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdr
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
 import { hostBridge } from "../host";
-import { NotificationControls, usePermission } from "../NotificationControls";
+import { NotificationRows, useNotificationControl, usePermission } from "../NotificationControls";
 
 /** Language and look, the desktop app's notifications, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
 export function GeneralTab({ actions }: { actions: Actions }) {
@@ -27,12 +27,12 @@ export function GeneralTab({ actions }: { actions: Actions }) {
 /** Notify me when an agent needs me, and what macOS allows, read while this tab is open (B18, B30). */
 function NotificationsGroup({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const permission = usePermission();
+  const control = useNotificationControl(actions, "settings", usePermission());
+  if (!control) return null;
+  const sends = control.enabled && control.state !== "no_service";
   return (
-    <Group title={t("firstRun.settings.group")} data-settings-group="notifications">
-      <div className="px-md py-sm">
-        <NotificationControls actions={actions} place="settings" permission={permission} />
-      </div>
+    <Group title={t("firstRun.settings.group")} note={sends ? t("firstRun.settings.sentWhen") : undefined} data-settings-group="notifications">
+      <NotificationRows control={control} />
     </Group>
   );
 }

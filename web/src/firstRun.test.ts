@@ -42,14 +42,23 @@ describe("a tile's line (B8, B9)", () => {
 });
 
 describe("What changes (B11)", () => {
-  it("lists each piece's place for the agents on, skips a piece the agent lacks, and ends with the hide link", () => {
+  it("lists each place for the agents on, one row per place naming every agent that shares it, skips a piece the agent lacks, and ends with the hide link", () => {
     const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/home/.local/bin/hide" }] } as unknown as Kit;
+    const shared = { state: "off" as const, reason: null, location: "/home/.agents/skills/hide-browser/SKILL.md" };
     const agents = [
       agent("claude-code", { hook: { state: "off", reason: null, location: "/home/.claude/settings.json" }, herdr: { state: "absent", reason: "none", location: null } }),
-      agent("codex"),
+      agent("codex", { skill: shared, hook: { state: "off", reason: null, location: "/home/.codex/hooks.json" } }),
+      agent("opencode", { label: "OpenCode", skill: shared, hook: { state: "off", reason: null, location: "/home/.config/opencode/plugins/hide.js" } }),
+      agent("pi", { skill: shared }),
     ];
-    expect(whatChanges(agents, new Set(["claude-code"]), kit)).toEqual({
-      agents: [{ id: "claude-code", label: "claude-code", locations: ["/home/.claude/settings.json", "/home/.claude-code/skills/hide"] }],
+    expect(whatChanges(agents, new Set(["claude-code", "codex", "opencode"]), kit)).toEqual({
+      rows: [
+        { path: "/home/.claude/settings.json", labels: ["claude-code"], part: "hook" },
+        { path: "/home/.claude-code/skills/hide", labels: ["claude-code"], part: "skill" },
+        { path: "/home/.codex/hooks.json", labels: ["codex"], part: "hook" },
+        { path: "/home/.agents/skills/hide-browser/SKILL.md", labels: ["codex", "OpenCode"], part: "skill" },
+        { path: "/home/.config/opencode/plugins/hide.js", labels: ["OpenCode"], part: "plugin" },
+      ],
       cli: "/home/.local/bin/hide",
     });
   });
@@ -64,7 +73,10 @@ describe("What changes (B11)", () => {
     const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/Users/me/.local/bin/hide" }] } as unknown as Kit;
     const herdr = agent("claude-code", { skill: { state: "off", reason: null, location: "/Users/me/.claude/skills/hide" }, herdr: { state: "off", reason: null, location: "/Users/me/.config/herdr/integrations/claude" } });
     expect(whatChanges([herdr], new Set(["claude-code"]), kit, "/Users/me")).toEqual({
-      agents: [{ id: "claude-code", label: "claude-code", locations: ["~/.claude/skills/hide", "~/.config/herdr/integrations/claude"] }],
+      rows: [
+        { path: "~/.claude/skills/hide", labels: ["claude-code"], part: "skill" },
+        { path: "~/.config/herdr/integrations/claude", labels: ["claude-code"], part: "herdr" },
+      ],
       cli: "~/.local/bin/hide",
     });
   });

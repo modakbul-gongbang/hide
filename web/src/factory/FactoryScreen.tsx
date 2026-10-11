@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { CircleXIcon, ClockIcon, MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { ScreenIntro } from "../ScreenIntro";
+import { ScreenIntroLine, useScreenIntro } from "../ScreenIntro";
 import { useElapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -35,26 +35,28 @@ export const TAB_LABEL = { line: "factory.tab.line", board: "factory.tab.board",
 export function FactoryScreen({ actions }: { actions: Actions }) {
   const place = useUiStore((s) => (s.screen?.kind === "factory" ? s.screen.place : null));
   const summary = useShellStore((s) => s.factory?.summary ?? null);
+  // The first visit's line (PRD first-run-onboarding D-18) sits under the title, whichever body is drawn.
+  const intro = useScreenIntro("factory", actions);
   if (!place) return null;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-factory-screen={summary === null ? "loading" : "ready"}>
-      <ScreenIntro screen="factory" actions={actions} />
-      {summary === null ? <FactorySkeleton /> : <FactoryBody summary={summary} place={place} actions={actions} />}
+      {summary === null ? <FactorySkeleton /> : <FactoryBody summary={summary} place={place} intro={intro} actions={actions} />}
       <CreateSheet actions={actions} />
     </div>
   );
 }
 
-function FactoryBody({ summary, place, actions }: { summary: FactorySummary; place: FactoryPlace; actions: Actions }) {
+function FactoryBody({ summary, place, intro, actions }: { summary: FactorySummary; place: FactoryPlace; intro: boolean; actions: Actions }) {
   const open = summary.factories.filter((view) => !view.closed);
   // A filter naming a Factory that closed or went away shows them all.
   const factory = place.factory !== null && open.some((view) => view.id === place.factory) ? place.factory : null;
   const factories = useMemo(() => shownFactories(summary, factory), [summary, factory]);
-  if (open.length === 0) return <NoFactory />;
+  if (open.length === 0) return <NoFactory intro={intro} />;
   if (place.task) return <TaskPage summary={summary} place={place} actions={actions} />;
   return (
     <>
       <FactoryHeader factories={open} factory={factory} actions={actions} />
+      {intro ? <ScreenIntroLine screen="factory" /> : null}
       <div className="flex shrink-0 items-center gap-md px-lg pb-md">
         <Tabs value={place.tab} onValueChange={(value) => useUiStore.getState().setFactoryPlace({ tab: value as FactoryTab })}>
           <TabsList data-factory-tabs="true">
@@ -213,7 +215,20 @@ function FactorySkeleton() {
 }
 
 /** No Factory on this machine (B1): only the way to make one. */
-function NoFactory() {
+function NoFactory({ intro }: { intro: boolean }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <>
+      <div className="flex shrink-0 items-center px-lg pt-lg pb-sm">
+        <h1 className="text-title font-semibold">{t("factory.title")}</h1>
+      </div>
+      {intro ? <ScreenIntroLine screen="factory" /> : null}
+      <NoFactoryButton />
+    </>
+  );
+}
+
+function NoFactoryButton() {
   const { t } = useInterfaceTranslation();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-md" data-factory-empty="none">

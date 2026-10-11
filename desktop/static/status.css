@@ -66,6 +66,17 @@ button:hover {
   background: var(--color-accent);
 }
 
+/* Retry is the page's main button (the approved status board, b09). */
+#retry {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+#retry:hover {
+  background: color-mix(in oklab, var(--color-primary) 90%, transparent);
+}
+
 #actions {
   display: flex;
   justify-content: center;
@@ -74,7 +85,12 @@ button:hover {
 
 /* The diagnostics the clipboard refused, to select by hand (B2). */
 #diagnostics {
-  margin: var(--spacing-lg) 0 0;
+  margin: var(--spacing-md) 0 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: var(--size-hairline) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card);
+  font-size: var(--text-caption);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: left;
   white-space: pre-wrap;

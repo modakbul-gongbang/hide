@@ -97,7 +97,7 @@ it("holds Continue while its pass runs, and names a failed agent with its reason
   const failed = AGENTS.map((entry) => (entry.id === "codex" ? { ...entry, enabled: true, skill: { state: "failed" as const, reason: "permission denied", location: "/x" } } : { ...entry, enabled: entry.availability === "available" }));
   await act(async () => { useShellStore.setState(state(true, failed, [], { busy: false }, 3) as never); });
   expect(continueButton().disabled).toBe(false);
-  expect(document.querySelector('[data-first-run-failed="codex"]')?.textContent).toBe("Codex could not be set up: permission denied");
+  expect(document.querySelector('[data-first-run-failed="codex"]')?.textContent).toContain("Codex was not set up: permission denied");
   expect(continueButton().textContent).toBe("Try again");
   expect(choices(events).filter((event) => event.kind === "agent_onboarding_apply")).toHaveLength(1);
   await unmount();
@@ -108,10 +108,10 @@ it("lists under What changes where Hide writes for each agent left on, and the h
   const { unmount } = await mount(state(true, located));
   await act(async () => { (document.querySelector("[data-first-run-what-changes]") as HTMLElement).click(); });
   const rows = () => [...document.querySelectorAll("[data-first-run-change]")].map((row) => row.getAttribute("data-first-run-change"));
-  expect(rows()).toEqual(["claude-code", "codex", "cli"]);
-  expect(document.querySelector('[data-first-run-change="codex"]')?.textContent).toContain("/Users/me/.codex/skills/hide");
+  expect(rows()).toEqual(["/Users/me/.claude-code/skills/hide", "/Users/me/.codex/skills/hide", "cli"]);
+  expect(document.querySelector('[data-first-run-change="/Users/me/.codex/skills/hide"]')?.textContent).toContain("Codex · Skill");
   await act(async () => { tile("codex", "on")!.click(); });
-  expect(rows()).toEqual(["claude-code", "cli"]);
+  expect(rows()).toEqual(["/Users/me/.claude-code/skills/hide", "cli"]);
   await unmount();
 });
 
@@ -182,7 +182,7 @@ it("names under Continue the agent Hide AI will use, and says on each checked ti
   // A switched-on agent that is not signed in is passed over; with nobody signed in there is no line.
   const signedOut = await mount(state(true, AGENTS, [provider("claude", "Claude Code", "claude-code", false), provider("codex", "Codex", "codex", false)]));
   expect(document.querySelector("[data-onboarding-hide-ai]")).toBeNull();
-  expect(tile("codex", "on")?.querySelector("[data-onboarding-status]")?.textContent).toBe("Not signed in");
+  expect(tile("codex", "on")?.querySelector("[data-onboarding-status]")?.textContent).toContain("Not signed in");
   await signedOut.unmount();
 });
 
@@ -202,7 +202,7 @@ it("says why when its pass could not run here, and holds Continue until the agen
     (next.rest.navigator.devices[0]!.kit as { unavailable?: string }).unavailable = "timed out";
     useShellStore.setState({ ...next, revision: 2 } as never);
   });
-  expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toBe("Hide could not set up agents on this Mac: timed out");
+  expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toContain("Hide could not set up agents on this Mac: timed out");
   expect(continueButton().disabled).toBe(true);
   await act(async () => { useShellStore.setState(state(true, AGENTS, [], {}, 3) as never); });
   expect(continueButton().disabled).toBe(false);
@@ -252,6 +252,6 @@ it("shows an agent installed on a system Hide cannot attach to yet as a dimmed t
   expect(tileEl?.querySelector("[data-onboarding-status]")?.textContent).toMatch(/^Not on .+ yet$/);
   expect(document.querySelector('[data-onboarding-install="opencode"]')).toBeNull();
   await act(async () => { (document.querySelector("[data-first-run-what-changes]") as HTMLElement).click(); });
-  expect(document.querySelector('[data-first-run-change="opencode"]')).toBeNull();
+  expect(document.querySelector("[data-first-run-changes]")?.textContent).not.toContain("OpenCode");
   await unmount();
 });

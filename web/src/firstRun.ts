@@ -5,7 +5,8 @@
 import { AGENT_ADAPTERS } from "./agentAdapters";
 import type { ProviderKind } from "./agentPicker";
 import type { NotificationPermission } from "./host";
-import { FIRST_RUN_VERSION, type AiProvider, type FirstRunStep, type Kit, type KitAgent, type SnapshotRest } from "./snapshot";
+import { hookPart, type AgentPart } from "./settings/agentRows";
+import { FIRST_RUN_VERSION, type AiProvider, type FirstRunStep, type Kit, type KitAgent, type KitPiece, type SnapshotRest } from "./snapshot";
 
 /** The steps a wizard shows in order: the desktop app's three, a browser tab's first alone (D-14, B26). */
 export type WizardStep = Exclude<FirstRunStep, "done">;
@@ -48,13 +49,9 @@ export function noAgentInstalled(agents: readonly KitAgent[]): boolean {
 
 export const SUGGESTED_INSTALLS = ["claude-code", "codex"] as const;
 
-/** One agent's lines under What changes: where Hide writes for it (B11). */
-export type ChangeRow = { id: string; label: string; locations: string[] };
+/** One place under What changes: the path Hide writes, the agents it writes it for and which of their pieces it is (B11). */
+export type ChangeRow = { path: string; labels: string[]; part: AgentPart };
 
-/**
- * The account home of the machine whose Hide Home (`~/hide`) is registered at
- * `homeFolder`: the folder it sits in, in that machine's own spelling.
- */
 export function accountHome(homeFolder: string | null | undefined): string | null {
   if (!homeFolder) return null;
   const cut = Math.max(homeFolder.lastIndexOf("/"), homeFolder.lastIndexOf("\\"));
@@ -71,21 +68,27 @@ export function underHome(path: string, home: string | null): string {
 
 /**
  * What Continue changes on this Mac: for each agent left on, the files and
- * folders its pieces are written to (the hook file, the skill folder, a
- * plugin or extension, Herdr's integration), then the `hide` command's link,
- * where the kit reports them, with the account home as `~` (B11, D-26). A
- * piece the agent does not have here (`absent`) writes nothing.
+ * folders its pieces are written to (the hook file or its plugin or
+ * extension, the skill, Herdr's integration), one row per place, so a skill
+ * folder agents share is one row naming them all; then the `hide` command's
+ * link. Each place is where the kit reports it, with the account home as `~`
+ * (B11, D-26). A piece the agent does not have here (`absent`) writes nothing.
  */
-export function whatChanges(agents: readonly KitAgent[], on: ReadonlySet<string>, kit: Kit | null | undefined, home: string | null = null): { agents: ChangeRow[]; cli: string | null } {
-  const rows = agents
-    .filter((agent) => on.has(agent.id))
-    .map((agent) => ({
-      id: agent.id,
-      label: agent.label,
-      locations: [agent.hook, agent.skill, agent.herdr ?? null].flatMap((piece) => (piece && piece.state !== "absent" && piece.location ? [underHome(piece.location, home)] : [])),
-    }));
+export function whatChanges(agents: readonly KitAgent[], on: ReadonlySet<string>, kit: Kit | null | undefined, home: string | null = null): { rows: ChangeRow[]; cli: string | null } {
+  const rows: ChangeRow[] = [];
+  for (const agent of agents) {
+    if (!on.has(agent.id)) continue;
+    const pieces: [KitPiece | null | undefined, AgentPart][] = [[agent.hook, hookPart(agent)], [agent.skill, "skill"], [agent.herdr, "herdr"]];
+    for (const [piece, part] of pieces) {
+      if (!piece || piece.state === "absent" || !piece.location) continue;
+      const path = underHome(piece.location, home);
+      const shared = rows.find((row) => row.path === path);
+      if (shared) shared.labels.push(agent.label);
+      else rows.push({ path, labels: [agent.label], part });
+    }
+  }
   const cli = kit?.components.find((component) => component.id === "cli")?.location ?? null;
-  return { agents: rows, cli: cli === null ? null : underHome(cli, home) };
+  return { rows, cli: cli === null ? null : underHome(cli, home) };
 }
 
 /** A chosen agent whose piece failed to go in, with the first reason the kit gave (B12). */

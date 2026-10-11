@@ -7,30 +7,36 @@
 // own walk that closes with Escape and changes only what a step's button
 // sends (B45, B46).
 //
-// The visual layout follows the approved Pen design (D-20); until it lands
-// the steps keep to the shell's existing parts.
+// The layout is the operator-approved Pen design (D-20, `Screen / Onboarding`):
+// a dialog over the dimmed shell, the three-part progress above the title,
+// the step's main button at the footer's right with its ⌘↵ keycap.
 
-import { CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import type { Actions } from "./actions";
 import { AddProjectViews } from "./AddProjectDialog";
 import { agentLogo, monogram } from "./agentLogos";
 import { appliedAgents, hideAiFirstRunKey, selection, tileSwitchable, type TileStart } from "./agentOnboardingRules";
+import { Note, Status } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
-import { accountHome, failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, notificationState, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
+import { Kbd } from "./components/ui/kbd";
+import { accountHome, failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
 import { firstRunAgent } from "./hideAi";
-import { hostBridge } from "./host";
+import { hostBridge, keySystem } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import { NotificationControls, usePermission } from "./NotificationControls";
+import { cn } from "./lib/utils";
+import { NotificationLine, useNotificationControl, usePermission } from "./NotificationControls";
 import { NotOnSystem } from "./settings/AgentRow";
-import { installDocUrl, machineSystem, supportedAgents } from "./settings/agentRows";
+import { installDocUrl, machineSystem, supportedAgents, type AgentPart } from "./settings/agentRows";
 import { useAgentsDemand } from "./settings/useAgentsDemand";
 import { localDeviceId, type KitAgent, type WorkspaceRegistration } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { useShellStore } from "./store";
+import { fieldLabel } from "./shortcutLabels";
+import { holdsFieldModifier } from "./shortcuts";
 import { useUiStore } from "./ui";
 
 /** Help > Set up Hide's walk: this page's own, gone with a close (B46). */
@@ -67,22 +73,31 @@ function Wizard({ actions, step, reopened, desktop }: { actions: Actions; step: 
   primary.current = null;
   const close = () => useSetupWalk.getState().close();
   const number = STEPS.indexOf(step) + 1;
-  // Enter on the step itself presses its main button; a control with its own Enter keeps it (B40).
+  // Enter on the step itself, or ⌘↵ (Ctrl+Enter off macOS) anywhere in it, presses its main button; a control with its own Enter keeps it (B40).
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     const target = event.target as HTMLElement;
-    if (target.closest("button, a, input, textarea, select, [role=switch], [role=combobox]")) return;
+    if (!holdsFieldModifier(event, keySystem()) && target.closest("button, a, input, textarea, select, [role=switch], [role=combobox]")) return;
+    if (!primary.current) return;
     event.preventDefault();
-    primary.current?.();
+    primary.current();
   };
+  // Each step starts with the keyboard on the dialog itself, so Enter is the step's main button and
+  // not the first link (B40); a step that replaces the one holding the keyboard takes it back.
+  useEffect(() => {
+    const surface = document.querySelector<HTMLElement>("[data-first-run]");
+    if (surface && !surface.contains(document.activeElement)) surface.focus();
+  }, [step]);
   return (
     <Dialog open onOpenChange={(open) => { if (!open && reopened) close(); }}>
       <DialogContent
+        initialFocus="container"
         data-first-run={step}
         data-first-run-mode={reopened ? "setup" : "first_run"}
         showCloseButton={reopened}
         aria-describedby={undefined}
-        className="w-(--size-onboarding-dialog-w)"
+        // The step's own header sits a small gap under the progress line.
+        className="w-(--size-onboarding-dialog-w) [&_[data-slot=dialog-header]]:gap-sm [&_[data-slot=dialog-header]]:pt-sm [&_[data-slot=dialog-title]]:text-headline"
         onKeyDown={onKeyDown}
         // The first run closes only through its steps (B5).
         onEscapeKeyDown={(event) => { if (!reopened) event.preventDefault(); }}
@@ -91,9 +106,9 @@ function Wizard({ actions, step, reopened, desktop }: { actions: Actions; step: 
       >
         {desktop ? (
           <div className="flex items-center gap-sm px-lg pt-lg" data-first-run-progress={number}>
-            <div className="flex flex-1 gap-xxs" aria-hidden="true">
+            <div className="flex gap-xs" aria-hidden="true">
               {STEPS.map((row, index) => (
-                <span key={row} className={`h-xxs flex-1 rounded-full ${index < number ? "bg-primary" : "bg-secondary"}`} />
+                <span key={row} className={cn("h-xs w-xl rounded-full", index < number ? "bg-primary" : "bg-secondary")} />
               ))}
             </div>
             <span className="text-caption text-muted-foreground">{t("firstRun.progress", { step: number })}</span>
@@ -108,6 +123,16 @@ function Wizard({ actions, step, reopened, desktop }: { actions: Actions; step: 
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A step's main button with the keycap that presses it from anywhere in the step. */
+function MainButton({ variant = "default", ...props }: ComponentProps<typeof Button>) {
+  return (
+    <span className="flex items-center gap-sm">
+      <Button variant={variant} {...props} />
+      <Kbd>{fieldLabel("Enter")}</Kbd>
+    </span>
   );
 }
 
@@ -164,74 +189,86 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
     actions.applyAgentOnboarding(chosen, !desktop);
   };
   primary.current = proceed;
+  const label = applying ? t("firstRun.agents.applying") : failures.length > 0 || unavailable ? t("firstRun.agents.retry") : t("firstRun.agents.continue");
   return (
     <>
       <DialogHeader>
-        <DialogTitle className="text-headline">{t("firstRun.agents.title")}</DialogTitle>
+        <DialogTitle>{t("firstRun.agents.title")}</DialogTitle>
         <DialogDescription>{t("firstRun.agents.consent")}</DialogDescription>
       </DialogHeader>
-      <DialogBody data-agent-onboarding="true">
-        <div role="group" aria-label={t("onboarding.grid")} className="grid grid-cols-[repeat(auto-fill,minmax(var(--size-onboarding-tile),1fr))] gap-sm">
-          {agents.map((agent) => (
-            <AgentTile key={agent.id} agent={agent} on={on.has(agent.id)} status={tileStatus(agent, providers)} disabled={applying} onToggle={() => toggle(agent.id)} />
-          ))}
-        </div>
+      <DialogBody className="flex flex-col gap-md" data-agent-onboarding="true">
         {noAgentInstalled(agents) ? (
-          <p className="mt-md text-body text-muted-foreground" data-first-run-no-agent="true">
-            {t("firstRun.agents.noneInstalled")}{" "}
+          <p className="flex flex-wrap items-baseline gap-x-md gap-y-xs" data-first-run-no-agent="true">
+            <Status tone="muted">{t("firstRun.agents.noneInstalled")}</Status>
             {SUGGESTED_INSTALLS.map((id) => (
-              <a key={id} href={installDocUrl(id) ?? undefined} target="_blank" rel="noreferrer" className="mr-sm underline" data-first-run-install={id}>
-                {agents.find((agent) => agent.id === id)?.label ?? id} ↗
+              <a key={id} href={installDocUrl(id) ?? undefined} target="_blank" rel="noreferrer" className="text-body font-medium text-foreground hover:underline" data-first-run-install={id}>
+                {t("firstRun.agents.install", { agent: agents.find((agent) => agent.id === id)?.label ?? id })}
               </a>
             ))}
           </p>
         ) : null}
-        <div className="mt-md">
-          <button type="button" aria-expanded={showChanges} onClick={() => setShowChanges((open) => !open)} className="text-body text-muted-foreground underline" data-first-run-what-changes="true">
-            {t("firstRun.agents.whatChanges")} {showChanges ? "▾" : "▸"}
+        <div role="group" aria-label={t("onboarding.grid")} className="grid grid-cols-4 gap-sm">
+          {agents.map((agent) => (
+            <AgentTile key={agent.id} agent={agent} on={on.has(agent.id)} status={tileStatus(agent, providers)} disabled={applying} onToggle={() => toggle(agent.id)} />
+          ))}
+        </div>
+        <div className="flex flex-col gap-xs">
+          <button type="button" aria-expanded={showChanges} onClick={() => setShowChanges((open) => !open)} className="flex items-center gap-xs self-start rounded-xs text-body font-medium text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" data-first-run-what-changes="true">
+            <ChevronRightIcon aria-hidden="true" className={cn("size-(--size-icon) text-muted-foreground transition-transform", showChanges && "rotate-90")} />
+            {t("firstRun.agents.whatChanges")}
           </button>
           {showChanges ? (
-            <ul className="mt-xs flex flex-col gap-xs font-mono text-caption text-muted-foreground" data-first-run-changes="true">
-              {changes.agents.map((row) => (
-                <li key={row.id} data-first-run-change={row.id}>
-                  <span className="font-sans font-medium text-foreground">{row.label}</span>
-                  {row.locations.map((location) => (
-                    <div key={location}>{location}</div>
-                  ))}
+            <ul className="flex flex-col rounded-md bg-card px-md py-xs text-caption" data-first-run-changes="true">
+              {changes.rows.map((row) => (
+                <li key={row.path} className="flex min-h-(--size-sidebar-line) items-center gap-md" data-first-run-change={row.path}>
+                  <span className="min-w-0 flex-1 break-all font-mono text-foreground">{row.path}</span>
+                  <span className="shrink-0 text-muted-foreground">{row.labels.join(", ")} · {t(AGENT_PART[row.part])}</span>
                 </li>
               ))}
-              {changes.agents.length === 0 ? <li className="font-sans">{t("firstRun.agents.nothingChanges")}</li> : null}
-              {changes.cli ? <li data-first-run-change="cli">{changes.cli}</li> : null}
+              {changes.rows.length === 0 ? <li className="flex min-h-(--size-sidebar-line) items-center text-muted-foreground">{t("firstRun.agents.nothingChanges")}</li> : null}
+              {changes.cli ? (
+                <li className="flex min-h-(--size-sidebar-line) items-center gap-md" data-first-run-change="cli">
+                  <span className="min-w-0 flex-1 break-all font-mono text-foreground">{changes.cli}</span>
+                  <span className="shrink-0 text-muted-foreground">{t("firstRun.agents.cli")}</span>
+                </li>
+              ) : null}
             </ul>
           ) : null}
         </div>
+        <p className="text-caption text-muted-foreground">{t("onboarding.devices")}</p>
         {unavailable ? (
-          <p role="alert" className="mt-sm text-body text-destructive" data-first-run-unavailable="true">
-            {t("firstRun.agents.unavailable", { reason: unavailable })}
-          </p>
+          <Note tone="error" data-first-run-unavailable="true">
+            <Status tone="error">{t("firstRun.agents.unavailable", { reason: unavailable })}</Status>
+          </Note>
         ) : null}
         {failures.map((failure) => (
-          <p key={failure.id} role="alert" className="mt-sm text-body text-destructive" data-first-run-failed={failure.id}>
-            {failure.reason ? t("firstRun.agents.failed", { agent: failure.label, reason: failure.reason }) : t("firstRun.agents.failedNoReason", { agent: failure.label })}
-          </p>
+          <Note key={failure.id} tone="error" data-first-run-failed={failure.id}>
+            <Status tone="error">{failure.reason ? t("firstRun.agents.failed", { agent: failure.label, reason: failure.reason }) : t("firstRun.agents.failedNoReason", { agent: failure.label })}</Status>
+          </Note>
         ))}
-        <p className="mt-md text-caption text-muted-foreground">{t("onboarding.devices")}</p>
       </DialogBody>
-      <DialogFooter className="flex-col items-end">
-        {/* With no agent read yet there is no choice to send; the next read brings the tiles back. */}
-        <Button onClick={proceed} disabled={applying || agents.length === 0} aria-busy={applying} data-onboarding-apply="true">
-          {applying ? t("firstRun.agents.applying") : failures.length > 0 || unavailable ? t("firstRun.agents.retry") : t("firstRun.agents.continue")}
-        </Button>
+      <DialogFooter>
         {/* The agent Hide AI will run on under its first-run rule; no line when none of the chosen agents is signed in (B13). */}
-        {hideAi ? (
-          <p className="text-caption text-muted-foreground" data-onboarding-hide-ai={hideAi.id}>
-            {t(hideAiFirstRunKey(hideAi.agent), { agent: hideAi.label })}
-          </p>
-        ) : null}
+        <span className="min-w-0 flex-1 text-caption text-muted-foreground">
+          {hideAi ? <span data-onboarding-hide-ai={hideAi.id}>{t(hideAiFirstRunKey(hideAi.agent), { agent: hideAi.label })}</span> : null}
+        </span>
+        {/* With no agent read yet there is no choice to send; the next read brings the tiles back. */}
+        <MainButton onClick={proceed} disabled={applying || agents.length === 0} aria-busy={applying} data-onboarding-apply="true">
+          {label}
+        </MainButton>
       </DialogFooter>
     </>
   );
 }
+
+/** What each piece is called under What changes: the words Settings > Agents uses. */
+const AGENT_PART: Record<AgentPart, MessageKey> = {
+  hook: "agents.part.hook",
+  plugin: "agents.part.plugin",
+  extension: "agents.part.extension",
+  skill: "agents.part.skill",
+  herdr: "agents.part.herdr",
+};
 
 const TILE_STATUS: Record<Exclude<TileStatus, "unsupported">, MessageKey> = {
   checking: "firstRun.tile.checking",
@@ -254,30 +291,40 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
   const install = switchable || status === "unsupported" ? null : installDocUrl(agent.id);
   // The mark and the name dim; the line that says why stays legible.
   const dim = switchable ? "" : "opacity-(--opacity-dimmed)";
+  const line =
+    status === "ready" ? (
+      <Status tone="ok">{t(TILE_STATUS.ready)}</Status>
+    ) : status === "not_signed_in" ? (
+      <Status tone="warn">{t(TILE_STATUS.not_signed_in)}</Status>
+    ) : status === "unsupported" ? (
+      <NotOnSystem system={machineSystem(null)} />
+    ) : (
+      t(TILE_STATUS[status])
+    );
   const body: ReactNode = (
     <>
-      <span className={`flex size-(--size-agent-logo) items-center justify-center overflow-hidden rounded-md bg-(--logo-plate) ${dim}`} aria-hidden="true">
+      <span className={cn("flex size-(--size-agent-logo) items-center justify-center overflow-hidden rounded-md bg-(--logo-plate)", dim)} aria-hidden="true">
         {logo ? (
-          <img src={logo} alt="" className="size-full object-contain p-xxs" data-agent-logo={agent.id} />
+          <img src={logo} alt="" className="size-full object-contain p-xs" data-agent-logo={agent.id} />
         ) : (
           <span className="font-mono text-body font-semibold text-muted-foreground" data-agent-monogram={agent.id}>
             {monogram(agent.label)}
           </span>
         )}
       </span>
-      <span className={`max-w-full truncate text-body font-semibold ${dim}`}>{agent.label}</span>
-      <span className="text-caption text-muted-foreground" data-onboarding-status={status}>
-        {status === "unsupported" ? <NotOnSystem system={machineSystem(null)} /> : t(TILE_STATUS[status])}
+      <span className={cn("max-w-full truncate text-body font-semibold", switchable ? "text-foreground" : "text-muted-foreground")}>{agent.label}</span>
+      <span className={cn("text-caption [&>span]:text-caption", status === "checking" ? "text-subtle-foreground" : "text-muted-foreground")} data-onboarding-status={status}>
+        {line}
       </span>
     </>
   );
-  const base = "relative flex aspect-square flex-col items-center justify-center gap-xs rounded-md border p-sm text-center";
+  const base = "relative flex h-(--size-onboarding-tile) min-w-0 flex-col items-center justify-center gap-xs rounded-md border p-sm text-center";
   if (!switchable) {
     return (
-      <div className={`${base} border-border`} data-onboarding-tile={`${agent.id}:unavailable`}>
+      <div className={cn(base, "border-border")} data-onboarding-tile={`${agent.id}:unavailable`}>
         {body}
         {install ? (
-          <a href={install} target="_blank" rel="noreferrer" className="text-caption underline" data-onboarding-install={agent.id}>
+          <a href={install} target="_blank" rel="noreferrer" className="rounded-xs text-caption font-medium text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" data-onboarding-install={agent.id}>
             {t("firstRun.tile.install")}
           </a>
         ) : null}
@@ -292,10 +339,10 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
       aria-label={agent.label}
       disabled={disabled}
       onClick={onToggle}
-      className={`${base} cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "border-primary bg-card" : "border-border bg-transparent"}`}
+      className={cn(base, "cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default", on ? "border-primary bg-card" : "border-border bg-transparent hover:bg-accent")}
       data-onboarding-tile={`${agent.id}:${on ? "on" : "off"}`}
     >
-      <span className={`absolute right-xs top-xs flex size-md items-center justify-center rounded-full border ${on ? "border-primary bg-primary text-primary-foreground" : "border-border"}`} aria-hidden="true">
+      <span className={cn("absolute right-xs top-xs flex size-(--size-checkbox) items-center justify-center rounded-full border", on ? "border-primary bg-primary text-primary-foreground" : "border-border")} aria-hidden="true">
         {on ? <CheckIcon className="size-(--size-icon-sm)" /> : null}
       </span>
       {body}
@@ -305,37 +352,56 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
 
 function NotificationsStep({ actions, reopened, primary }: StepProps) {
   const { t } = useInterfaceTranslation();
-  const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
-  const permission = usePermission();
+  const control = useNotificationControl(actions, "wizard", usePermission());
+  const state = control?.state ?? "off";
+  const enabled = control?.enabled ?? false;
   // On a Mac that already allows Hide the step opens on, and Continue is what turns the switch on (B16).
-  const state = notificationState(enabled, permission, "wizard");
   const allowedOff = !enabled && state === "on";
-  // Where nothing can be shown the step only says so and goes on (B47).
-  const goesOn = enabled || allowedOff || state === "no_service";
+  // Where nothing can be shown the step only says so and goes on (B47); until the switch is on it offers Turn on and Not now.
+  const goesOn = (enabled && state !== "asking") || allowedOff || state === "no_service";
   const next = () => {
     if (reopened) {
       if (allowedOff) actions.setDesktopNotifications(true);
       useSetupWalk.getState().go("project");
     } else actions.advanceFirstRun("notifications", allowedOff);
   };
-  primary.current = next;
+  primary.current = goesOn ? next : state === "off" && control ? control.turnOn : null;
+  const system = machineSystem(null);
   return (
     <>
       <DialogHeader>
-        <DialogTitle className="text-headline">{t("firstRun.notifications.title")}</DialogTitle>
-        <DialogDescription>{t("firstRun.notifications.description")}</DialogDescription>
+        <DialogTitle>{t("firstRun.notifications.title")}</DialogTitle>
+        <DialogDescription>
+          {t(system === "macOS" ? "firstRun.notifications.descriptionMac" : system === "Windows" ? "firstRun.notifications.descriptionWindows" : "firstRun.notifications.description")}
+        </DialogDescription>
       </DialogHeader>
-      <DialogBody className="flex flex-col gap-sm">
-        <NotificationControls actions={actions} place="wizard" permission={permission} />
-        <button type="button" onClick={() => useUiStore.getState().openSettings("mobile")} className="self-start text-body text-muted-foreground underline" data-first-run-phone="true">
+      {control && state !== "off" ? (
+        <DialogBody>
+          <NotificationLine control={control} />
+        </DialogBody>
+      ) : null}
+      <DialogFooter className={cn(!control || state === "off" ? "pt-md" : null)}>
+        <button type="button" onClick={() => useUiStore.getState().openSettings("mobile")} className="mr-auto rounded-xs text-body font-medium text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" data-first-run-phone="true">
           {t("firstRun.notifications.phone")}
         </button>
-      </DialogBody>
-      <DialogFooter>
-        {/* Not now leaves the switch off; once it is on, the step goes on with Continue (B21). */}
-        <Button variant={goesOn ? "default" : "secondary"} onClick={next} data-first-run-next="notifications">
-          {goesOn ? t("firstRun.agents.continue") : t("firstRun.notifications.notNow")}
-        </Button>
+        {goesOn ? (
+          // A blocked Mac still goes on, without the weight of the main button.
+          <MainButton variant={state === "blocked" ? "secondary" : "default"} onClick={next} data-first-run-next="notifications">
+            {t("firstRun.agents.continue")}
+          </MainButton>
+        ) : (
+          <>
+            {/* Not now leaves the switch off (B21); Turn on waits while macOS asks (B14). */}
+            <Button variant="ghost" onClick={next} data-first-run-next="notifications">
+              {t("firstRun.notifications.notNow")}
+            </Button>
+            {control ? (
+              <Button onClick={control.turnOn} disabled={state === "asking"} data-notification-turn-on="true">
+                {t("firstRun.notifications.turnOn")}
+              </Button>
+            ) : null}
+          </>
+        )}
       </DialogFooter>
     </>
   );
@@ -367,7 +433,7 @@ function ProjectStep({ actions, reopened }: { actions: Actions; reopened: boolea
     <>
       <AddProjectViews actions={actions} title={(translate) => translate("firstRun.project.title")} onHost={setHost} />
       <DialogFooter>
-        <Button variant="secondary" onClick={finish} data-first-run-skip="true">
+        <Button variant="ghost" onClick={finish} data-first-run-skip="true">
           {t("firstRun.project.skip")}
         </Button>
       </DialogFooter>

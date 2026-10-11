@@ -116,10 +116,12 @@ export function checkFailedReason(code: string): "agents.checkReason.unreachable
 }
 
 /** The pieces of one agent that a Reinstall would repair, the failed ones first (B13, B20). */
-/** The hook piece is named by what the contract says it is: OpenCode's is a plugin, Pi's and omp's an extension. */
-export type AgentProblem = { part: "skill" | "hook" | "plugin" | "extension" | "herdr"; piece: KitPiece };
+/** An agent's piece by name; the hook piece is named by what the contract says it is: OpenCode's is a plugin, Pi's and omp's an extension. */
+export type AgentPart = "skill" | "hook" | "plugin" | "extension" | "herdr";
 
-function hookPart(agent: KitAgent): "hook" | "plugin" | "extension" {
+export type AgentProblem = { part: AgentPart; piece: KitPiece };
+
+export function hookPart(agent: KitAgent): "hook" | "plugin" | "extension" {
   const kind = agentAdapter(agent.id)?.hook_kind;
   return kind === "plugin" || kind === "extension" ? kind : "hook";
 }
