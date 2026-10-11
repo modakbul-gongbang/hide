@@ -4,7 +4,8 @@
 //! One pass at a time walks every Memory-enabled Project of this machine,
 //! whatever the screen shows. For each of its sessions it records the
 //! receipts a live pane's label read cannot see (a session started outside
-//! Herdr, or whose pane is gone), and analyzes a session once its file has
+//! Herdr, or whose pane is gone), from a JSONL file or OpenCode's database,
+//! and analyzes a session once its file has
 //! been quiet for [`MEMORY_QUIESCENCE_MS`] or its pane closed. A pass runs on
 //! a worker off the runtime lock; the lock is taken only to report a
 //! Project's state and to finish.
@@ -29,6 +30,7 @@ use hide_memory::{
     CursorReader, HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord,
     SessionSourceRecord,
 };
+use hide_node_link::protocol::Call;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -617,18 +619,35 @@ fn walk_project(
     if identity.id != project_id {
         return Err(format!("project_moved:{}", identity.id));
     }
-    // Memory reads only the sessions of agents this build has a Memory
-    // reader for; OpenCode's receipts ride its label read alone.
+    // Memory analyzes the sessions of agents this build has a Memory reader
+    // for (the JSONL ones: Claude Code, Codex, Grok, Pi, omp); an OpenCode
+    // session, kept in OpenCode's database, is walked for its receipts alone
+    // through the conversation reader (D-16).
     let readers = hide_node_link::sessions::ReaderFeatures::implemented();
-    let sessions = project_sessions(sessions_node, &identity)?
-        .into_iter()
-        .filter(|session| {
-            readers.supports(
-                session.agent.as_str(),
-                hide_node_link::sessions::ReaderFeature::Memory,
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut sessions = Vec::new();
+    for session in project_sessions(sessions_node, &identity)? {
+        if readers.supports(
+            session.agent.as_str(),
+            hide_node_link::sessions::ReaderFeature::Memory,
+        ) {
+            sessions.push(session);
+        } else if session.agent == hide_session::Agent::OpenCode
+            && matches!(session.availability, SessionAvailability::Available)
+            && !input
+                .live
+                .contains(&(session.agent.as_str(), session.id.clone()))
+            && !input.cancel.is_cancelled()
+            && let Err(message) = read_database_receipts(store, sessions_node, project_id, &session)
+        {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.walk_failed",
+                "project_id": project_id,
+                "provider": session.agent.as_str(),
+                "message": message,
+            }));
+        }
+    }
     let mut analyzing = false;
     let mut learned = 0;
     let mut batch_ids = Vec::new();
@@ -830,6 +849,84 @@ fn read_receipts(
                 checkpoint,
                 last_content_hash: None,
                 updated_at_unix_ms: now_ms(),
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+/// Records the receipts an OpenCode session stored past the receipt cursor,
+/// read message by message through the conversation reader the label read
+/// uses, so a receipt carries the same message index, and the same turn,
+/// whichever of the two found it. One bounded read per pass; the cursor keeps
+/// the session time it was read up to, or none while more remains.
+fn read_database_receipts(
+    store: &mut MemoryStore,
+    sessions_node: &dyn NodeLink,
+    project_id: &str,
+    session: &ProjectSession,
+) -> Result<(), String> {
+    let provider = session.agent.as_str();
+    let saved = store
+        .load_cursor(CursorReader::Receipts, project_id, provider, &session.id)
+        .map_err(|error| error.to_string())?;
+    if saved
+        .as_ref()
+        .is_some_and(|cursor| cursor.updated_at_unix_ms >= session.updated_at_unix_ms)
+    {
+        return Ok(());
+    }
+    let checkpoint = saved
+        .as_ref()
+        .filter(|record| !record.checkpoint.is_empty())
+        .map(|record| serde_json::from_slice(&record.checkpoint))
+        .transpose()
+        .map_err(|error| format!("session_checkpoint:{error}"))?;
+    let transcript: hide_session::label_transcript::LabelTranscript =
+        hide_node_link::link::call_as_reader(
+            sessions_node,
+            session.agent,
+            hide_node_link::sessions::ReaderFeature::Conversation,
+            Call::LabelTranscript {
+                request: hide_session::label_transcript::LabelTranscriptRequest {
+                    agent: session.agent,
+                    reference_kind: "id".into(),
+                    reference_value: session.id.clone(),
+                    cwd: Some(session.checkout_path.to_string_lossy().into_owned()),
+                    checkpoint,
+                    subagents: Default::default(),
+                    turns: None,
+                },
+            },
+            SESSION_CALL_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+    for receipt in &transcript.memory_receipts {
+        record_receipt(
+            store,
+            project_id,
+            provider,
+            &session.id,
+            true,
+            &receipt.text,
+            receipt.offset,
+        );
+    }
+    store
+        .save_cursor(
+            CursorReader::Receipts,
+            &SessionCursorRecord {
+                project_id: project_id.to_owned(),
+                provider: provider.to_owned(),
+                session_id: session.id.clone(),
+                byte_offset: transcript.checkpoint.offset(),
+                checkpoint: serde_json::to_vec(&transcript.checkpoint)
+                    .map_err(|error| error.to_string())?,
+                last_content_hash: None,
+                updated_at_unix_ms: if transcript.has_more {
+                    0
+                } else {
+                    session.updated_at_unix_ms
+                },
             },
         )
         .map_err(|error| error.to_string())
@@ -1539,8 +1636,17 @@ mod tests {
         }
 
         fn pass(&self, live: bool, closed: bool, weekly_used: Option<f64>) -> Vec<&'static str> {
+            self.pass_for(("claude", SESSION.to_owned()), live, closed, weekly_used)
+        }
+
+        fn pass_for(
+            &self,
+            key: MemorySession,
+            live: bool,
+            closed: bool,
+            weekly_used: Option<f64>,
+        ) -> Vec<&'static str> {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
-            let key = ("claude", SESSION.to_owned());
             let input = PassInput {
                 node: crate::node::test_node(),
                 sessions_node: Arc::clone(&self.node),
@@ -1636,6 +1742,74 @@ mod tests {
         drop(file);
         assert!(fixture.pass(false, false, None).is_empty());
         assert_eq!(fixture.calls(), 1);
+    }
+
+    #[test]
+    fn an_opencode_session_outside_a_pane_has_its_receipt_recorded_once_by_the_walk() {
+        // B13, D-16: OpenCode keeps its sessions in a database, read through
+        // the conversation reader the label read uses.
+        const OPENCODE: &str = "ses_0a1b2c3d4e5f60718293a4b5c6";
+        let fixture = Fixture::new();
+        let directory = fixture._temp.path().join("home/.local/share/opencode");
+        std::fs::create_dir_all(&directory).unwrap();
+        let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+            ))
+            .unwrap();
+        let checkout = fixture.root.to_string_lossy().into_owned();
+        connection
+            .execute(
+                "UPDATE session SET directory = ?1, time_updated = ?2",
+                rusqlite::params![checkout, now_ms() as i64],
+            )
+            .unwrap();
+        let auth = fixture
+            .store()
+            .receipt_auth_tag(
+                &fixture.project_id,
+                "opencode",
+                OPENCODE,
+                "UserPromptSubmit",
+                "m1@1",
+            )
+            .unwrap();
+        let receipt = format!(
+            "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"m1@1\" auth=\"{auth}\" />"
+        );
+        connection
+            .execute(
+                "INSERT INTO part VALUES ('prt_hide', 'msg_01', ?1, 1790989200001, 1790989200001, ?2)",
+                rusqlite::params![
+                    OPENCODE,
+                    json!({"type": "text", "synthetic": true,
+                        "text": format!("<system-reminder>\n{receipt}\n</system-reminder>")})
+                    .to_string()
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        let key = ("opencode", OPENCODE.to_owned());
+        let delivered = || {
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+                .provided_session_count
+        };
+
+        // A live pane's label read owns the session: the walk records only
+        // the fixture's Claude Code session.
+        fixture.pass_for(key.clone(), true, false, None);
+        assert_eq!(delivered(), 1);
+
+        fixture.pass_for(key.clone(), false, false, None);
+        assert_eq!(delivered(), 2);
+        fixture.pass_for(key, false, false, None);
+        assert_eq!(delivered(), 2);
+        assert_eq!(fixture.calls(), 0, "an OpenCode session is not analyzed");
     }
 
     #[test]
