@@ -441,10 +441,11 @@ pub enum Availability {
     /// None of its programs is found on this machine.
     NotInstalled,
     /// Installed, but neither the skill folder nor the hook is documented for
-    /// this system, so there is nothing for the switch to do. No supported
-    /// agent is in this state today: every one reads its skill folder on
-    /// every system (`docs/agent-hooks.md`, Support table). It stays for an
-    /// agent that does not, and for the shells that word it.
+    /// this system, so there is nothing for the switch to do. This build never
+    /// reports it, since every supported agent reads its skill folder on every
+    /// system (`docs/agent-hooks.md`, Support table); a connected device still
+    /// running an older build does, so it stays as the transition path and the
+    /// shells keep wording it.
     UnsupportedSystem,
 }
 
