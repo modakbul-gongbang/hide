@@ -641,6 +641,7 @@ mod tests {
             branch: Some("hide-memory-m1".into()),
             pr_number: None,
             target_path: None,
+            started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
         };
         fixture
@@ -660,6 +661,7 @@ mod tests {
             branch: Some("hide-memory-m1".into()),
             pr_number: None,
             target_path: None,
+            started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
         };
         fixture

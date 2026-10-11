@@ -184,6 +184,9 @@ impl Runtime {
                 self.project_memory = ProjectMemoryWork {
                     action: self.project_memory.action.take(),
                     enable_after_hook_update: self.project_memory.enable_after_hook_update.take(),
+                    // The tracker follows every Project's promotions and may
+                    // be mid-check; closing a read must not drop its flight.
+                    promotions: std::mem::take(&mut self.project_memory.promotions),
                     ..ProjectMemoryWork::default()
                 };
                 self.project_memory.reads.generation += 1;
@@ -1041,6 +1044,7 @@ mod tests {
             branch: Some("hide-memory-m1".to_owned()),
             pr_number,
             target_path: None,
+            started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
         };
         store

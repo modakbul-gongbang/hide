@@ -15,19 +15,36 @@ use crate::model::{
 use hide_memory::{MemoryLifecycle, MemoryStore, Promotion, PromotionState};
 use serde_json::json;
 
-/// How often the open promotions are checked against the agents and the pull
-/// requests while any is open.
+/// How often a running promotion's agent is checked; a pull request is
+/// followed on each GitHub answer instead.
 const TRACK_INTERVAL_MS: u64 = 60_000;
+/// How long a failed promotion is still matched to a pull request that
+/// reaches the PR catalog after its agent ended.
+const FAILED_RECHECK_MS: u64 = 60 * 60_000;
 /// How long a promotion may stay running with no agent: past it the start
 /// was cut short (Hide quit between writing the state and the spawn).
 const START_GRACE_MS: u64 = 5 * 60_000;
-/// How long before a running attempt's last write its pull request may have
-/// been made: the attempt is written running, then again with its agent.
+/// How much earlier than the attempt's start a pull request may say it was
+/// made, for a clock that runs a little behind GitHub's.
 const START_SLACK_MS: u64 = 60_000;
 
-/// The branch an attempt works on, which its pull request is found by.
-fn branch(number: u64) -> String {
-    format!("hide-memory-m{number}")
+/// The branch an attempt works on: its own per attempt, so a pull request an
+/// earlier attempt, or a card of the same number before the Project's data
+/// was deleted, left on a branch is never this one's.
+fn branch(number: u64, started_at_unix_ms: u64) -> String {
+    format!("hide-memory-m{number}-{}", base36(started_at_unix_ms))
+}
+
+fn base36(mut value: u64) -> String {
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit((value % 36) as u32, 36).unwrap_or('0'));
+        value /= 36;
+        if value == 0 {
+            break;
+        }
+    }
+    digits.iter().rev().collect()
 }
 
 /// The name the agent is listed under (`memory-promote-m7`).
@@ -68,17 +85,19 @@ pub(super) struct PromotionStart {
 pub(super) struct PromotionTracking {
     in_flight: bool,
     again: bool,
-    /// Any promotion may still be waiting on an agent or a pull request;
-    /// unknown until the first check, so it starts true.
-    open: Option<bool>,
+    /// Whether any promotion is followed (running, its pull request open, or
+    /// failed within the recheck); unknown until the first check.
+    followed: Option<bool>,
+    /// Whether one is running: only then does the minute tick check agents.
+    running: bool,
     next_unix_ms: u64,
 }
 
-/// The pull request an attempt's branch has, as the PR catalog last read it.
 impl PromotionTracking {
-    /// A read found a promotion still waiting: check it on the next tick.
+    /// A promotion started or a read found one followed: check it.
     pub(super) fn mark_open(&mut self) {
-        self.open = Some(true);
+        self.followed = Some(true);
+        self.running = true;
     }
 }
 
@@ -148,11 +167,11 @@ impl Runtime {
         })
     }
 
-    /// Checks the open promotions on the coordinator's tick, at most once a
-    /// minute and only while one may be open.
+    /// Checks the running promotions' agents on the coordinator's tick, at
+    /// most once a minute and only while one runs.
     pub(super) fn tick_memory_promotions(&mut self, now_unix_ms: u64) {
         let tracking = &self.project_memory.promotions;
-        if tracking.open == Some(false) || now_unix_ms < tracking.next_unix_ms {
+        if !tracking.running || now_unix_ms < tracking.next_unix_ms {
             return;
         }
         self.track_memory_promotions();
@@ -171,7 +190,7 @@ impl Runtime {
     /// during it runs one more after.
     pub(super) fn track_memory_promotions(&mut self) {
         let tracking = &mut self.project_memory.promotions;
-        if tracking.open == Some(false) {
+        if tracking.followed == Some(false) {
             return;
         }
         if tracking.in_flight {
@@ -188,7 +207,11 @@ impl Runtime {
         let spawn = thread::Builder::new()
             .name("hide-memory-promotions".to_owned())
             .spawn(move || {
-                let moved = track_promotions(&context, &node, &database);
+                // A panic in the check must not leave the single flight held.
+                let moved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    track_promotions(&context, &node, &database)
+                }))
+                .unwrap_or_else(|_| Err("tracker_panicked".to_owned()));
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -212,21 +235,28 @@ impl Runtime {
         let tracking = &mut self.project_memory.promotions;
         tracking.in_flight = false;
         let again = std::mem::take(&mut tracking.again);
-        match moved {
-            Ok(outcome) => {
-                tracking.open = Some(outcome.still_open);
-                for project_id in outcome.moved_projects {
-                    self.note_memory_change(
-                        &project_id,
-                        super::memory_analysis::MemoryChange::Other,
-                    );
-                }
+        let moved_projects = match moved {
+            // A check asked for during this one may see rows this one did not.
+            Ok(outcome) if again => {
+                tracking.mark_open();
+                outcome.moved_projects
             }
-            Err(message) => crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "promotions.track_failed",
-                "message": message,
-            })),
+            Ok(outcome) => {
+                tracking.followed = Some(outcome.followed);
+                tracking.running = outcome.running;
+                outcome.moved_projects
+            }
+            Err(message) => {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "promotions.track_failed",
+                    "message": message,
+                }));
+                BTreeSet::new()
+            }
+        };
+        for project_id in moved_projects {
+            self.note_memory_change(&project_id, super::memory_analysis::MemoryChange::Other);
         }
         if again {
             self.track_memory_promotions();
@@ -241,7 +271,7 @@ impl Runtime {
     fn promotion_pull_request(&self, root: &str, promotion: &Promotion) -> Option<PullRequestFact> {
         let project = self.github.project(root)?;
         let branch = promotion.branch.as_deref()?;
-        let started = promotion.updated_at_unix_ms.saturating_sub(START_SLACK_MS);
+        let started = promotion.started_at_unix_ms.saturating_sub(START_SLACK_MS);
         let mut on_branch = project
             .pull_requests
             .iter()
@@ -266,6 +296,14 @@ impl Runtime {
         })
     }
 
+    /// Whether the PR catalog's answer for `root` is a current read, so a
+    /// pull request missing from it is missing on GitHub too.
+    fn promotion_catalog_current(&self, root: &str) -> bool {
+        self.github
+            .project(root)
+            .is_some_and(|project| project.pull_requests_read && !project.status.stale)
+    }
+
     /// Whether the agent with coordination id `id` has ended: `None` while
     /// the ledger cannot be read, so an unread ledger never fails a card.
     fn promotion_agent_ended(&self, id: &str) -> Option<bool> {
@@ -281,126 +319,123 @@ impl Runtime {
 }
 
 struct TrackOutcome {
-    still_open: bool,
+    followed: bool,
+    running: bool,
     moved_projects: BTreeSet<String>,
 }
 
-/// One check of every open promotion (see `track_memory_promotions`).
+/// One check of every followed promotion (see `track_memory_promotions`).
 fn track_promotions(
     context: &RuntimeWorkerContext,
     node: &crate::node::NodeId,
     database: &Path,
 ) -> Result<TrackOutcome, String> {
+    let mut outcome = TrackOutcome {
+        followed: false,
+        running: false,
+        moved_projects: BTreeSet::new(),
+    };
     if !MemoryStore::exists(database) {
-        return Ok(TrackOutcome {
-            still_open: false,
-            moved_projects: BTreeSet::new(),
-        });
-    }
-    let open = MemoryStore::open_read_only(database)
-        .and_then(|store| store.open_promotions(node.as_str()))
-        .map_err(|error| error.to_string())?;
-    if open.is_empty() {
-        return Ok(TrackOutcome {
-            still_open: false,
-            moved_projects: BTreeSet::new(),
-        });
+        return Ok(outcome);
     }
     let now = super::memory::now_ms();
+    let followed = MemoryStore::open_read_only(database)
+        .and_then(|store| {
+            store.open_promotions(node.as_str(), now.saturating_sub(FAILED_RECHECK_MS))
+        })
+        .map_err(|error| error.to_string())?;
+    if followed.is_empty() {
+        return Ok(outcome);
+    }
     let moves = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
-        open.iter()
-            .filter_map(|(project_id, root, number, promotion)| {
+        followed
+            .iter()
+            .map(|(_, root, _, promotion)| {
                 let pull = guard.promotion_pull_request(root, promotion);
                 let ended = promotion
                     .agent_id
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
-                next_promotion(promotion, pull, ended, now)
-                    .map(|next| (project_id.clone(), *number, next))
+                let current = guard.promotion_catalog_current(root);
+                next_promotion(promotion, pull, ended, current, now)
             })
             .collect::<Vec<_>>()
     };
-    let mut still_open = false;
-    let mut moved_projects = BTreeSet::new();
-    let mut store = (!moves.is_empty())
+    let mut store = moves
+        .iter()
+        .any(Option::is_some)
         .then(|| MemoryStore::open(database))
         .transpose()
         .map_err(|error| error.to_string())?;
-    for (_, _, number, promotion) in &open {
-        let moved = moves
-            .iter()
-            .find(|(_, card, _)| card == number)
-            .map(|(_, _, next)| next);
-        still_open |= matches!(
-            moved.unwrap_or(promotion).state,
-            PromotionState::Running | PromotionState::PrOpen
-        );
-    }
-    for (project_id, number, next) in moves {
-        let Some(store) = store.as_mut() else {
-            break;
+    for ((project_id, _, number, promotion), next) in followed.iter().zip(moves) {
+        let state = match (next, store.as_mut()) {
+            (Some((state, pr_number)), Some(store)) => {
+                // Only the state and the pull request move: a file `placed`
+                // named meanwhile stays, and a row that moved on is left.
+                if store
+                    .move_promotion(project_id, *number, promotion, state, pr_number, now)
+                    .map_err(|error| error.to_string())?
+                {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "promotion.moved",
+                        "project_id": project_id,
+                        "card": hide_memory::card_name(*number),
+                        "state": state.as_str(),
+                        "pr_number": pr_number,
+                    }));
+                    outcome.moved_projects.insert(project_id.clone());
+                }
+                state
+            }
+            _ => promotion.state,
         };
-        crate::diagnostic!(json!({
-            "component": "memory",
-            "kind": "promotion.moved",
-            "project_id": project_id,
-            "card": hide_memory::card_name(number),
-            "state": next.state.as_str(),
-            "pr_number": next.pr_number,
-        }));
-        store
-            .set_promotion(&project_id, number, &next)
-            .map_err(|error| error.to_string())?;
-        moved_projects.insert(project_id);
+        outcome.followed |= matches!(
+            state,
+            PromotionState::Running | PromotionState::PrOpen | PromotionState::Failed
+        );
+        outcome.running |= state == PromotionState::Running;
     }
-    Ok(TrackOutcome {
-        still_open,
-        moved_projects,
-    })
+    Ok(outcome)
 }
 
-/// Where an open promotion goes next, or `None` when it stays (B31, B32): a
-/// pull request on its branch decides first; with none, a running promotion
-/// whose agent ended, or that never got an agent within the grace, failed.
+/// Where a followed promotion goes next, or `None` when it stays (B31, B32):
+/// the attempt's pull request decides first, even after the attempt was
+/// called failed; with none, a running promotion whose agent ended, or that
+/// never got an agent within the grace, failed, but only on a current read of
+/// the PR catalog, since a pull request just opened may not be in it yet.
 fn next_promotion(
     promotion: &Promotion,
     pull: Option<PullRequestFact>,
     agent_ended: Option<bool>,
+    catalog_current: bool,
     now_unix_ms: u64,
-) -> Option<Promotion> {
-    let moved = |state, pr_number| Promotion {
-        state,
-        pr_number,
-        updated_at_unix_ms: now_unix_ms,
-        ..promotion.clone()
-    };
+) -> Option<(PromotionState, Option<u64>)> {
     let next = match pull {
         Some(PullRequestFact {
             number,
             badge: PullRequestBadge::Merged,
-        }) => moved(PromotionState::Merged, Some(number)),
+        }) => (PromotionState::Merged, Some(number)),
         Some(PullRequestFact {
             number,
             badge: PullRequestBadge::Closed,
-        }) => moved(PromotionState::ClosedUnmerged, Some(number)),
-        Some(PullRequestFact { number, .. }) => moved(PromotionState::PrOpen, Some(number)),
+        }) => (PromotionState::ClosedUnmerged, Some(number)),
+        Some(PullRequestFact { number, .. }) => (PromotionState::PrOpen, Some(number)),
         None if promotion.state == PromotionState::Running => {
-            let started_long_ago =
-                now_unix_ms.saturating_sub(promotion.updated_at_unix_ms) >= START_GRACE_MS;
             let gone = match &promotion.agent_id {
                 Some(_) => agent_ended == Some(true),
-                None => started_long_ago,
+                None => now_unix_ms.saturating_sub(promotion.started_at_unix_ms) >= START_GRACE_MS,
             };
-            if !gone {
+            if !gone || !catalog_current {
                 return None;
             }
-            moved(PromotionState::Failed, None)
+            (PromotionState::Failed, None)
         }
         None => return None,
     };
-    (next.state != promotion.state || next.pr_number != promotion.pr_number).then_some(next)
+    (next != (promotion.state, promotion.pr_number)).then_some(next)
 }
 
 /// Starts card `number`'s promotion on the action worker (B30): the card must
@@ -440,7 +475,8 @@ pub(super) fn start_promotion(
         ));
     }
     let attempt = previous.map_or(0, |promotion| promotion.attempt) + 1;
-    let branch = branch(number);
+    let started = super::memory::now_ms();
+    let branch = branch(number, started);
     let mut promotion = Promotion {
         state: PromotionState::Running,
         revision: item.revision,
@@ -449,7 +485,8 @@ pub(super) fn start_promotion(
         branch: Some(branch.clone()),
         pr_number: None,
         target_path: None,
-        updated_at_unix_ms: super::memory::now_ms(),
+        started_at_unix_ms: started,
+        updated_at_unix_ms: started,
     };
     store
         .set_promotion(project_id, number, &promotion)
@@ -510,6 +547,7 @@ pub(super) fn dismiss_promotion(
         branch: None,
         pr_number: None,
         target_path: None,
+        started_at_unix_ms: super::memory::now_ms(),
         updated_at_unix_ms: super::memory::now_ms(),
     };
     store
@@ -567,16 +605,26 @@ fn stable_digest(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn running(agent_id: Option<&str>, updated_at_unix_ms: u64) -> Promotion {
+    fn running(agent_id: Option<&str>, started_at_unix_ms: u64) -> Promotion {
         Promotion {
             state: PromotionState::Running,
             revision: 1,
             attempt: 1,
             agent_id: agent_id.map(str::to_owned),
-            branch: Some(branch(7)),
+            branch: Some(branch(7, started_at_unix_ms)),
             pr_number: None,
             target_path: None,
-            updated_at_unix_ms,
+            started_at_unix_ms,
+            updated_at_unix_ms: started_at_unix_ms,
+        }
+    }
+
+    fn after(promotion: &Promotion, next: Option<(PromotionState, Option<u64>)>) -> Promotion {
+        let (state, pr_number) = next.unwrap();
+        Promotion {
+            state,
+            pr_number,
+            ..promotion.clone()
         }
     }
 
@@ -585,66 +633,70 @@ mod tests {
         // B31, B32.
         let now = 10 * START_GRACE_MS;
         let pull = |badge| Some(PullRequestFact { number: 924, badge });
-        let state = |next: Option<Promotion>| next.map(|next| (next.state, next.pr_number));
         let promotion = running(Some("agent-7"), now);
 
         assert_eq!(
-            state(next_promotion(&promotion, None, Some(false), now)),
+            next_promotion(&promotion, None, Some(false), true, now),
             None
         );
         assert_eq!(
-            state(next_promotion(&promotion, None, None, now)),
+            next_promotion(&promotion, None, None, true, now),
             None,
             "unread ledger"
         );
         assert_eq!(
-            state(next_promotion(&promotion, None, Some(true), now)),
-            Some((PromotionState::Failed, None))
+            next_promotion(&promotion, None, Some(true), false, now),
+            None,
+            "a pull request just opened may not be in a stale catalog yet"
         );
+        let failed = next_promotion(&promotion, None, Some(true), true, now);
+        assert_eq!(failed, Some((PromotionState::Failed, None)));
         assert_eq!(
-            state(next_promotion(
-                &promotion,
+            next_promotion(
+                &after(&promotion, failed),
                 pull(PullRequestBadge::Open),
                 Some(true),
+                true,
                 now
-            )),
+            ),
             Some((PromotionState::PrOpen, Some(924))),
-            "a pull request outlives its agent"
+            "a pull request that reaches the catalog late takes a failed attempt back"
         );
-        let open = next_promotion(&promotion, pull(PullRequestBadge::Review), None, now).unwrap();
+        let open = after(
+            &promotion,
+            next_promotion(&promotion, pull(PullRequestBadge::Review), None, true, now),
+        );
+        assert_eq!(open.state, PromotionState::PrOpen);
         assert_eq!(
-            next_promotion(&open, pull(PullRequestBadge::Open), None, now),
+            next_promotion(&open, pull(PullRequestBadge::Open), None, true, now),
             None,
             "no move, no write"
         );
         assert_eq!(
-            state(next_promotion(
-                &open,
-                pull(PullRequestBadge::Merged),
-                None,
-                now
-            )),
+            next_promotion(&open, pull(PullRequestBadge::Merged), None, true, now),
             Some((PromotionState::Merged, Some(924)))
         );
         assert_eq!(
-            state(next_promotion(
-                &open,
-                pull(PullRequestBadge::Closed),
-                None,
-                now
-            )),
+            next_promotion(&open, pull(PullRequestBadge::Closed), None, true, now),
             Some((PromotionState::ClosedUnmerged, Some(924)))
         );
 
         let cut_short = running(None, now - START_GRACE_MS);
         assert_eq!(
-            state(next_promotion(&cut_short, None, None, now)),
+            next_promotion(&cut_short, None, None, true, now),
             Some((PromotionState::Failed, None))
         );
         assert_eq!(
-            state(next_promotion(&running(None, now - 1), None, None, now)),
+            next_promotion(&running(None, now - 1), None, None, true, now),
             None
         );
+    }
+
+    #[test]
+    fn each_attempt_works_on_its_own_branch() {
+        assert_eq!(branch(7, 0), "hide-memory-m7-0");
+        assert_eq!(branch(7, 36 * 36 + 35), "hide-memory-m7-10z");
+        assert_ne!(branch(7, 1_791_700_000_000), branch(7, 1_791_700_000_001));
     }
 
     #[test]
@@ -720,7 +772,11 @@ mod tests {
         let failed = promotion(&store).unwrap();
         assert_eq!(
             (failed.state, failed.attempt, failed.branch.as_deref()),
-            (PromotionState::Failed, 1, Some("hide-memory-m1")),
+            (
+                PromotionState::Failed,
+                1,
+                Some(branch(1, failed.started_at_unix_ms).as_str())
+            ),
             "no Herdr here, so no agent was made"
         );
         let ledger = runtime.lock().unwrap().delivery_state().unwrap();

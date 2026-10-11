@@ -375,6 +375,18 @@ fn output_schema() -> Value {
     })
 }
 
+/// Why a provider answer did not parse, without any of its values: serde's
+/// message quotes the offending value, which is session text, and the reason
+/// reaches the diagnostic log.
+fn shape_error(error: &serde_json::Error) -> String {
+    format!(
+        "{:?} at line {} column {}",
+        error.classify(),
+        error.line(),
+        error.column()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,16 +511,4 @@ mod tests {
         assert_eq!(output.backfill[0].target_id, "memory:seven");
         assert_eq!(output.backfill[0].aliases, ["테스트", "nextest"]);
     }
-}
-
-/// Why a provider answer did not parse, without any of its values: serde's
-/// message quotes the offending value, which is session text, and the reason
-/// reaches the diagnostic log.
-fn shape_error(error: &serde_json::Error) -> String {
-    format!(
-        "{:?} at line {} column {}",
-        error.classify(),
-        error.line(),
-        error.column()
-    )
 }

@@ -314,6 +314,9 @@ pub struct Promotion {
     pub pr_number: Option<u64>,
     /// The repository-relative file the agent said it put the card in.
     pub target_path: Option<String>,
+    /// When this attempt started: only a pull request opened after it is
+    /// the attempt's.
+    pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
 }
 
@@ -1616,7 +1619,7 @@ impl MemoryStore {
     /// Every promotion of a Project's cards, by card number.
     pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.updated_at_ms \
+            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms \
              FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 ORDER BY i.number",
         )?;
         let rows = statement
@@ -1632,7 +1635,8 @@ impl MemoryStore {
                         branch: row.get(5)?,
                         pr_number: row.get(6)?,
                         target_path: row.get(7)?,
-                        updated_at_unix_ms: row.get(8)?,
+                        started_at_unix_ms: row.get(8)?,
+                        updated_at_unix_ms: row.get(9)?,
                     },
                 ))
             })?
@@ -1651,17 +1655,20 @@ impl MemoryStore {
     }
 
     /// The promotions still waiting on an agent or a pull request, in every
-    /// Project on `device`, with the Project's root.
+    /// Project on `device`, with the Project's root; a failed one stays for
+    /// `failed_since`, since its pull request may reach the catalog late.
     pub fn open_promotions(
         &self,
         device: &str,
+        failed_since: u64,
     ) -> Result<Vec<(String, String, u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
             "SELECT pr.id,pr.root,i.number FROM card_promotions p JOIN memory_items i ON i.id=p.item_id \
-             JOIN projects pr ON pr.id=i.project_id WHERE pr.device_id=?1 AND p.state IN ('running','pr_open') ORDER BY pr.id,i.number",
+             JOIN projects pr ON pr.id=i.project_id WHERE pr.device_id=?1 \
+             AND (p.state IN ('running','pr_open') OR (p.state='failed' AND p.updated_at_ms>=?2)) ORDER BY pr.id,i.number",
         )?;
         let rows = statement
-            .query_map([device], |row| {
+            .query_map(params![device, failed_since], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1680,6 +1687,36 @@ impl MemoryStore {
             open.push((project_id, root, number, promotion));
         }
         Ok(open)
+    }
+
+    /// Moves card `number`'s promotion from the attempt and state `from` to
+    /// `state` with `pr_number`, leaving everything else as it stands now (a
+    /// file `placed` named meanwhile is kept); answers false when the row
+    /// moved on since it was read.
+    pub fn move_promotion(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        state: PromotionState,
+        pr_number: Option<u64>,
+        now_unix_ms: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let moved = self.connection.execute(
+            "UPDATE card_promotions SET state=?1,pr_number=?2,updated_at_ms=?3 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?4 AND number=?5) AND state=?6 AND attempt=?7",
+            params![
+                state.as_str(),
+                pr_number,
+                now_unix_ms,
+                project_id,
+                number,
+                from.state.as_str(),
+                from.attempt
+            ],
+        )?;
+        Ok(moved == 1)
     }
 
     /// Writes card `number`'s promotion as the core decided it.
@@ -1707,8 +1744,8 @@ impl MemoryStore {
             .optional()?
             .ok_or(MemoryError::MemoryMissing)?;
         self.connection.execute(
-            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) \
-             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,updated_at_ms=excluded.updated_at_ms",
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms",
             params![
                 item_id,
                 promotion.state.as_str(),
@@ -1718,6 +1755,7 @@ impl MemoryStore {
                 promotion.branch,
                 promotion.pr_number,
                 promotion.target_path,
+                promotion.started_at_unix_ms,
                 promotion.updated_at_unix_ms
             ],
         )?;
@@ -2379,7 +2417,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 ALTER TABLE memory_sources ADD COLUMN at_ms INTEGER;
 UPDATE memory_sources SET at_ms=(SELECT MIN(b.created_at_ms) FROM analysis_batches b WHERE b.provider=memory_sources.provider AND b.session_id=memory_sources.session_id AND b.content_hash=memory_sources.content_hash);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);"#,
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);"#,
         )?;
         let items = {
             let mut statement = connection.prepare(
@@ -2414,7 +2452,8 @@ UPDATE memory_items SET lifecycle='active' WHERE lifecycle='conflicting' AND con
             let mut statement = connection.prepare(
                 "SELECT p.id,p.current_revision,x.id FROM memory_items p \
                  JOIN memory_items x ON x.id=p.conflict_with_id \
-                 WHERE p.lifecycle='conflicting' AND x.lifecycle='active'",
+                 WHERE p.lifecycle='conflicting' AND x.lifecycle='active' \
+                 ORDER BY x.id,p.created_at_ms DESC,p.id DESC",
             )?;
             statement
                 .query_map([], |row| {
@@ -2426,7 +2465,13 @@ UPDATE memory_items SET lifecycle='active' WHERE lifecycle='conflicting' AND con
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
+        // Only the newest pending card replaces the card it was held against; the
+        // others stay conflicting and are tombstoned with the rest below.
+        let mut replaced = std::collections::HashSet::new();
         for (pending, pending_revision, existing) in pairs {
+            if !replaced.insert(existing.clone()) {
+                continue;
+            }
             connection.execute(
                 "UPDATE memory_items SET lifecycle='active' WHERE id=?1",
                 [&pending],
@@ -2682,7 +2727,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
 "#;
 
@@ -3759,6 +3804,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             branch: None,
             pr_number: None,
             target_path: None,
+            started_at_unix_ms: now,
             updated_at_unix_ms: now,
         };
         store.set_promotion(&project, 1, &dismissed(1)).unwrap();
@@ -3815,9 +3861,10 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             revision: 1,
             attempt: 1,
             agent_id: Some("agent-7".to_owned()),
-            branch: Some("hide-memory-m1".to_owned()),
+            branch: Some("hide-memory-m1-1".to_owned()),
             pr_number: Some(924),
             target_path: target_path.map(str::to_owned),
+            started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
         };
         store.set_promotion(&project, 1, &merged(None)).unwrap();
@@ -3834,6 +3881,44 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             store.promotion_suggestions(&project, 1, 3).unwrap(),
             [],
             "a promoted card is not suggested again"
+        );
+
+        // The tracker moves the row it read; a file named meanwhile stays, and a
+        // move from a state the row already left is refused.
+        let read = Promotion {
+            state: PromotionState::Running,
+            pr_number: None,
+            ..merged(None)
+        };
+        store
+            .set_promotion(&project, 1, &merged(Some("AGENTS.md")))
+            .unwrap();
+        store
+            .set_promotion(
+                &project,
+                1,
+                &Promotion {
+                    state: PromotionState::Running,
+                    pr_number: None,
+                    ..merged(Some("AGENTS.md"))
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .move_promotion(&project, 1, &read, PromotionState::PrOpen, Some(925), 2)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .move_promotion(&project, 1, &read, PromotionState::Failed, None, 3)
+                .unwrap(),
+            "the row moved on since it was read"
+        );
+        let (_, now) = store.promotions(&project).unwrap().remove(0);
+        assert_eq!(
+            (now.state, now.pr_number, now.target_path.as_deref()),
+            (PromotionState::PrOpen, Some(925), Some("AGENTS.md"))
         );
     }
 
@@ -4619,6 +4704,57 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             MemoryStore::open_hook_read_only(&temp.path().join("memory.sqlite3")),
             Err(MemoryError::Integrity(reason)) if reason == "memory_projection_stale"
         ));
+    }
+
+    #[test]
+    fn version_seven_migration_keeps_only_the_newest_of_several_cards_held_against_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(&format!(
+                r#"{SCHEMA_V7}
+                INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1,2);
+                INSERT INTO project_receipt_keys VALUES('p',randomblob(32));
+                INSERT INTO memory_items VALUES('blue','p','active',1,0.9,0.8,NULL,10,10);
+                INSERT INTO memory_items VALUES('red','p','conflicting',1,0.9,0.8,'blue',20,20);
+                INSERT INTO memory_items VALUES('green','p','conflicting',1,0.9,0.8,'blue',30,30);
+                INSERT INTO memory_revisions VALUES('r1','blue',1,'Use blue buttons','rule','active',10,'b');
+                INSERT INTO memory_revisions VALUES('r2','red',1,'Use red buttons','rule','conflicting',20,'b');
+                INSERT INTO memory_revisions VALUES('r3','green',1,'Use green buttons','rule','conflicting',30,'b');
+                PRAGMA user_version=7;"#
+            ))
+            .unwrap();
+        drop(connection);
+
+        let store = MemoryStore::open(&path).unwrap();
+        let lifecycles = (1..=3)
+            .map(|number| {
+                store
+                    .item_by_number("p", number)
+                    .unwrap()
+                    .unwrap()
+                    .lifecycle
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycles,
+            [
+                MemoryLifecycle::Tombstoned,
+                MemoryLifecycle::Tombstoned,
+                MemoryLifecycle::Active
+            ]
+        );
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::prompt("p", "buttons", vec![]))
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Use green buttons"]
+        );
     }
 
     #[test]
