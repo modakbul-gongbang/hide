@@ -39,7 +39,7 @@ The schema digest is canonical JSON (sorted keys, UTF-8, two-space indentation a
 A configured nightly matrix proves no executed job, native input or package launch by itself.
 Record the actual head, attempt, job URLs, failures and skips; a package smoke with a private HOME or simulated hook does not prove a physical IME, an operator PATH or a real agent session.
 The macOS package job (nightly, and a pull request's `package` lane) extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
-The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
+The Windows/Linux package lanes check the real archive's headless daemon/kit behavior, and the Windows lane also opens the unpacked `hide.exe` with its window and keeps a screenshot of the shell it draws (`desktop/e2e/packaged-window.spec.ts`); physical input, and the Linux package's window, still need device evidence.
 
 `hide-platform/tests/it/process.rs` exercises `run_to_end` with a real parent that starts a same-group helper inheriting both outputs and exits 0.
 The call must return the parent's code and both markers within the original five-second deadline, with the helper gone; test recovery is armed with that helper's identity before its parent exits.
