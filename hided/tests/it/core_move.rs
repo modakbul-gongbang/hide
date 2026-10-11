@@ -12,7 +12,7 @@ use crate::support::core_move::{ALIAS, DEVICE_ID, Fixture, SOURCE_NODE, TARGET_N
 use crate::support::fake_tailscale::FakeTailscale;
 use crate::support::remote_delivery::renderer::Renderer;
 use crate::support::remote_delivery::{wait_for, wait_within};
-use crate::support::screen::{screen_socket, send, type_and_read};
+use crate::support::screen::{first_snapshot, screen_socket, send, type_and_read};
 
 /// B4: the move stops the source's core, places its brain state on the
 /// target and starts the core there, and the source's window, at the same
@@ -1853,6 +1853,9 @@ fn typed_through_window(
     runtime
         .block_on(async {
             let mut socket = screen_socket(port, &token).await?;
+            // A window draws a pane only once its first state has come, and
+            // only then does its view of the pane have output to draw.
+            first_snapshot(&mut socket, std::time::Duration::from_secs(30)).await?;
             send(
                 &mut socket,
                 "focus_device",

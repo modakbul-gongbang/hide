@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -64,6 +64,19 @@ pub async fn next_frame(socket: &mut Socket, deadline: Instant) -> Result<Option
             Some(Ok(_)) => {}
             Some(Err(error)) => bail!("the screen socket failed: {error}"),
             None => bail!("the screen socket ended"),
+        }
+    }
+}
+
+/// The first snapshot frame `socket` receives within `bound`.
+pub async fn first_snapshot(socket: &mut Socket, bound: Duration) -> Result<Value> {
+    let deadline = Instant::now() + bound;
+    loop {
+        let frame = next_frame(socket, deadline)
+            .await?
+            .context("no snapshot reached the screen")?;
+        if frame["type"] == "snapshot" {
+            return Ok(frame);
         }
     }
 }

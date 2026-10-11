@@ -16,7 +16,8 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::support::remote_core::{CORE_NODE, Fixture, Herdr};
 use crate::support::remote_delivery::{quote, successful, wait_for};
 use crate::support::screen::{
-    Socket, chunks, next_frame, plain, screen_socket, screen_socket_of, send, type_and_read,
+    Socket, chunks, first_snapshot, next_frame, plain, screen_socket, screen_socket_of, send,
+    type_and_read,
 };
 
 const LINK_BOUND: Duration = Duration::from_secs(30);
@@ -223,19 +224,6 @@ async fn node_link(port: u16, phase: &str, bound: Duration) -> Result<Value> {
             "the node's link never reached {phase}: {health}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-/// The first snapshot frame `socket` receives within `bound`.
-async fn first_snapshot(socket: &mut Socket, bound: Duration) -> Result<Value> {
-    let deadline = Instant::now() + bound;
-    loop {
-        let frame = next_frame(socket, deadline)
-            .await?
-            .context("no snapshot reached the screen")?;
-        if frame["type"] == "snapshot" {
-            return Ok(frame);
-        }
     }
 }
 
