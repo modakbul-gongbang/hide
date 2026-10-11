@@ -1539,6 +1539,7 @@ impl Mobile {
                     _ = stopping.changed() => return,
                 }
             }
+            let mut changed = false;
             let core = Arc::clone(&self.config.core);
             let have_revision = cursor;
             let read = tokio::task::spawn_blocking(move || core.snapshot(have_revision)).await;
@@ -1586,7 +1587,7 @@ impl Mobile {
                                 changed
                             });
                             let next = projection::project(&rest, self.node().as_str());
-                            let changed = self.projection.send_if_modified(|current| {
+                            changed = self.projection.send_if_modified(|current| {
                                 if **current == next {
                                     false
                                 } else {
@@ -1594,29 +1595,20 @@ impl Mobile {
                                     true
                                 }
                             });
-                            if changed && self.keep_alive() {
-                                let (notices, seen) = transitions.observe(&next);
-                                self.deliver(notices, seen, &next);
-                            }
-                            if changed && self.config.desktop.wanted() {
-                                self.config.desktop.observe(&next);
-                            }
                         }
                     }
                 }
             }
-            // While the follower runs for one side only, the other's
-            // transitions wait unseeded; once it is wanted, what this follower
-            // last read seeds them, so a wait that began unwatched is never
-            // announced late (B33).
-            if !self.keep_alive() {
-                transitions.reset();
-            } else if cursor != 0 && !transitions.seeded() {
-                transitions.observe(&self.projection.borrow());
-            }
-            if cursor != 0 && self.config.desktop.seed_pending() {
-                let current = Arc::clone(&self.projection.borrow());
-                self.config.desktop.observe(&current);
+            let current = Arc::clone(&self.projection.borrow());
+            if let Some((notices, seen)) = judge_pass(
+                &mut transitions,
+                self.keep_alive(),
+                &self.config.desktop,
+                &current,
+                changed,
+                cursor != 0,
+            ) {
+                self.deliver(notices, seen, &current);
             }
             tokio::select! {
                 changed = changes.recv() => {
@@ -1731,5 +1723,152 @@ impl Mobile {
                 }
             }
         });
+    }
+}
+
+/// One follower pass's judgement of the projection `current` for each side
+/// that wants it: the phones' push transitions while Mobile keeps the
+/// follower (`phone_on`), the desktop windows' while one asks (B38). A
+/// projection that `changed` is observed by each side on; once `read`, a side
+/// that is on but unseeded is seeded from what this follower last read, so a
+/// wait that began while that side was off is never announced late (B33). The
+/// phones' notices to deliver are returned; the desktop's go out as a frame.
+fn judge_pass(
+    phone: &mut push::Transitions,
+    phone_on: bool,
+    desktop: &crate::desktop_notices::DesktopNotices,
+    current: &Projection,
+    changed: bool,
+    read: bool,
+) -> Option<(Vec<push::Notice>, BTreeSet<AgentKey>)> {
+    let mut delivered = None;
+    if changed && phone_on {
+        delivered = Some(phone.observe(current));
+    }
+    if changed && desktop.wanted() {
+        desktop.observe(current);
+    }
+    if !phone_on {
+        phone.reset();
+    } else if read && !phone.seeded() {
+        phone.observe(current);
+    }
+    if read && desktop.seed_pending() {
+        desktop.observe(current);
+    }
+    delivered.filter(|(notices, seen)| !notices.is_empty() || !seen.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::desktop_notices::DesktopNotices;
+    use herdr_core::agent_state::phone::project;
+
+    fn projected(group: &str, demand: &str) -> Projection {
+        project(
+            &json!({
+                "navigator": {
+                    "agents": [{
+                        "pane_id": "w1:p1", "group": group, "symbol": "●",
+                        "identity_label": "Add a dark mode switch", "agent_kind": "claude",
+                        "changed_at_unix_ms": 1_790_000_000_000_u64, "status_code": "idle",
+                        "demand": demand,
+                    }],
+                    "workspaces": [{"label": "my-app", "is_git": true, "checkouts": [
+                        {"label": "main", "branch": "main", "tabs": [{"panes": [{"id": "w1:p1"}]}]},
+                    ]}],
+                    "devices": [{"id": "node", "label": "This Mac"}],
+                },
+            }),
+            "node",
+        )
+    }
+
+    /// What one pass hands each side: the phones' notice count, and whether
+    /// a desktop frame went out.
+    fn pass(
+        phone: &mut push::Transitions,
+        phone_on: bool,
+        desktop: &DesktopNotices,
+        current: &Projection,
+    ) -> (usize, bool) {
+        let mut frames = desktop.subscribe();
+        let phones = judge_pass(phone, phone_on, desktop, current, true, true)
+            .map_or(0, |(notices, _)| notices.len());
+        (phones, frames.try_recv().is_ok())
+    }
+
+    /// B38, B33: each side judges the shared projection only while it is on,
+    /// a side turned on later is seeded by what was already waiting, and the
+    /// other side's switch never changes what a side announces.
+    #[test]
+    fn each_side_announces_only_while_on_and_a_late_side_is_seeded_not_told() {
+        for (phone_on, desktop_on) in [(true, true), (true, false), (false, true), (false, false)] {
+            let label = format!("phone {phone_on}, desktop {desktop_on}");
+            let mut phone = push::Transitions::default();
+            let desktop = DesktopNotices::default();
+            desktop.set(1, desktop_on);
+            assert_eq!(
+                pass(
+                    &mut phone,
+                    phone_on,
+                    &desktop,
+                    &projected("working", "none")
+                ),
+                (0, false),
+                "{label}: the first read only seeds"
+            );
+            assert_eq!(
+                pass(
+                    &mut phone,
+                    phone_on,
+                    &desktop,
+                    &projected("needs_you", "approval")
+                ),
+                (usize::from(phone_on), desktop_on),
+                "{label}: a new wait is announced by each side that is on"
+            );
+        }
+
+        // A side turned on while an agent already waits is seeded, not told,
+        // and the other side keeps announcing as before.
+        let mut phone = push::Transitions::default();
+        let desktop = DesktopNotices::default();
+        let waiting = projected("needs_you", "approval");
+        assert_eq!(
+            pass(&mut phone, true, &desktop, &projected("working", "none")),
+            (0, false)
+        );
+        assert_eq!(pass(&mut phone, true, &desktop, &waiting), (1, false));
+        desktop.set(1, true);
+        let mut frames = desktop.subscribe();
+        assert!(judge_pass(&mut phone, true, &desktop, &waiting, false, true).is_none());
+        assert!(
+            frames.try_recv().is_err(),
+            "the desktop is seeded with the wait that was there"
+        );
+        assert!(
+            pass(&mut phone, true, &desktop, &projected("seen", "none")).1,
+            "and clears it once seen"
+        );
+
+        let mut phone = push::Transitions::default();
+        let desktop = DesktopNotices::default();
+        desktop.set(1, true);
+        assert_eq!(
+            pass(&mut phone, false, &desktop, &projected("working", "none")),
+            (0, false)
+        );
+        assert_eq!(pass(&mut phone, false, &desktop, &waiting), (0, true));
+        assert!(
+            judge_pass(&mut phone, true, &desktop, &waiting, false, true).is_none(),
+            "Mobile turned on later is seeded with the wait, not told"
+        );
+        assert_eq!(
+            pass(&mut phone, true, &desktop, &projected("working", "none")),
+            (0, false)
+        );
+        assert_eq!(pass(&mut phone, true, &desktop, &waiting), (1, true));
     }
 }

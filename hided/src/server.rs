@@ -816,8 +816,9 @@ async fn screen_loop(
         return;
     }
     // A desktop window shows the agent notifications (`agent_notice`); a
-    // browser tab never does (PRD first-run-onboarding D-14).
-    let mut agent_notices = state.desktop_notices.subscribe();
+    // browser tab never does (PRD first-run-onboarding D-14), so it keeps no
+    // receiver that would hold frames it never reads.
+    let mut agent_notices = desktop.then(|| state.desktop_notices.subscribe());
     // Settings > Mobile reads one `mobile` frame, sent now and on each change.
     let mut mobile_frames = state.mobile.subscribe_frame();
     if renderer {
@@ -933,7 +934,12 @@ async fn screen_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
-            notice = agent_notices.recv(), if desktop => {
+            notice = async {
+                match agent_notices.as_mut() {
+                    Some(notices) => notices.recv().await,
+                    None => std::future::pending().await,
+                }
+            }, if desktop => {
                 match notice {
                     Ok(frame) => {
                         if socket.send(Message::Text(frame.as_ref().into())).await.is_err() {

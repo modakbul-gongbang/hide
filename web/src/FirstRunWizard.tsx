@@ -62,6 +62,8 @@ export function FirstRunWizard({ actions }: { actions: Actions }) {
 function Wizard({ actions, step, reopened, desktop }: { actions: Actions; step: WizardStep; reopened: boolean; desktop: boolean }) {
   const { t } = useInterfaceTranslation();
   const primary = useRef<(() => void) | null>(null);
+  // Each render's step names its own main button; a step without one (the project step) leaves Enter to its controls.
+  primary.current = null;
   const close = () => useSetupWalk.getState().close();
   const number = STEPS.indexOf(step) + 1;
   // Enter on the step itself presses its main button; a control with its own Enter keeps it (B40).
@@ -337,7 +339,9 @@ function ProjectStep({ actions, reopened }: { actions: Actions; reopened: boolea
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
   // The projects that were there when the step opened; the first one after them is the operator's (B23).
   const [known] = useState(() => new Set(registrations.map((row) => row.id)));
-  const added = registrations.find((row) => !row.home && !known.has(row.id)) ?? null;
+  // Only on the host the step adds to: a device's own registrations arriving meanwhile are not the operator's pick.
+  const [host, setHost] = useState<string | null>(null);
+  const added = registrations.find((row) => !row.home && !known.has(row.id) && row.device_id === host) ?? null;
   const finish = () => {
     if (reopened) useSetupWalk.getState().close();
     else actions.advanceFirstRun("project");
@@ -353,7 +357,7 @@ function ProjectStep({ actions, reopened }: { actions: Actions; reopened: boolea
   }, [added?.id]);
   return (
     <>
-      <AddProjectViews actions={actions} title={(translate) => translate("firstRun.project.title")} onLeave={() => {}} />
+      <AddProjectViews actions={actions} title={(translate) => translate("firstRun.project.title")} onHost={setHost} />
       <DialogFooter>
         <Button variant="secondary" onClick={finish} data-first-run-skip="true">
           {t("firstRun.project.skip")}

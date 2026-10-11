@@ -65,7 +65,8 @@ const ADD_DEVICE = "__add_device__";
  * The ways to add a project, inside a dialog that holds them: Add a project's
  * own, or the first-run wizard's third step (PRD first-run-onboarding B22),
  * which titles it and watches the project appear itself. `onLeave` closes
- * the holder when Add device takes its place.
+ * the holder when Add device takes its place; a holder without one (the
+ * wizard, which keeps its steps) has no Add device entry.
  */
 export function AddProjectViews({
   actions,
@@ -75,12 +76,11 @@ export function AddProjectViews({
 }: {
   actions: Actions;
   title: (t: TFunction<"translation">) => string;
-  onLeave: () => void;
+  onLeave?: () => void;
   /** The host the views add to, for the holder to name. */
   onHost?: (host: string) => void;
 }) {
   const { t } = useInterfaceTranslation();
-  const close = onLeave;
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id);
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
@@ -152,7 +152,7 @@ export function AddProjectViews({
                   onValueChange={(next) => {
                     // The list's last entry is Add device, the one form every entry point opens (PRD home-device-rail B13).
                     if (next === ADD_DEVICE) {
-                      close();
+                      onLeave?.();
                       actions.openAddDevice();
                       return;
                     }
@@ -178,10 +178,14 @@ export function AddProjectViews({
                         {row.label}
                       </SelectItem>
                     ))}
-                    <SelectSeparator />
-                    <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
-                      {t("sidebar.addDevice")}
-                    </SelectItem>
+                    {onLeave ? (
+                      <>
+                        <SelectSeparator />
+                        <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
+                          {t("sidebar.addDevice")}
+                        </SelectItem>
+                      </>
+                    ) : null}
                   </SelectContent>
                 </Select>
               </div>

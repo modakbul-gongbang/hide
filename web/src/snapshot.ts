@@ -1073,7 +1073,6 @@ export type KitComponentState = "installed" | "outdated" | "not_installed" | "re
 /** Whether an agent can be switched on where a machine runs (`contracts/snapshot-wire-enums.json`: `kit_agent_availability`). */
 export type KitAgentAvailability = "available" | "not_installed" | "unsupported_system";
 
-/** One piece of an agent (its skill or its hook) on its machine. */
 /** The first-run wizard's steps (`contracts/snapshot-wire-enums.json`: `first_run_step`). */
 export type FirstRunStep = "agents" | "notifications" | "project" | "done";
 
@@ -1085,6 +1084,7 @@ export const FIRST_RUN_VERSION = 1;
 /** The screens introduced once (`contracts/snapshot-wire-enums.json`: `screen_intro`). */
 export type ScreenIntro = "factory" | "devices";
 
+/** One piece of an agent (its skill or its hook) on its machine. */
 export type KitPiece = {
   state: KitComponentState;
   reason: string | null;
