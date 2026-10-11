@@ -2964,18 +2964,34 @@ pub fn repository_path(path: &str) -> bool {
         && !path.starts_with('/')
         && !path.contains('\\')
         && !path.chars().any(|c| c.is_control() || invisible(c))
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != ".." && part != ".git")
+        && path.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git")
+        })
 }
 
-/// A character that changes how a path reads without showing itself: the
-/// bidirectional controls and zero-width marks a path in an agent's prompt
-/// could hide behind.
+/// A character that changes how a path reads without showing itself, or
+/// carries text no one sees: bidirectional controls, zero-width and other
+/// format marks, line and paragraph separators, variation selectors and the
+/// Unicode tag block a path in an agent's prompt could hide words in.
 fn invisible(c: char) -> bool {
     matches!(
         c,
-        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
 }
 
@@ -5747,6 +5763,50 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     }
 
     #[test]
+    fn merged_cards_take_no_live_cards_place_among_a_prompts_candidates() {
+        // B12: a card in the repository's files is read there, and a full
+        // candidate list of them must not crowd out the live card.
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "live", "h-live"),
+                &[candidate(
+                    "Deploy lint checks before release",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+        let merged = (0..HOOK_CANDIDATE_LIMIT)
+            .map(|index| candidate(&format!("Deploy lint step {index}"), CandidateRelation::New))
+            .collect::<Vec<_>>();
+        let mut later = batch(&project, "merged", "h-merged");
+        later.created_at_unix_ms = 200;
+        store.apply_candidates(&later, &merged).unwrap();
+        for number in 2..=(HOOK_CANDIDATE_LIMIT as u64 + 1) {
+            let promotion = Promotion {
+                state: PromotionState::Merged,
+                revision: 1,
+                attempt: 1,
+                agent_id: None,
+                branch: None,
+                pr_number: Some(number),
+                target_path: None,
+                started_at_unix_ms: 1,
+                updated_at_unix_ms: 1,
+            };
+            store.set_promotion(&project, number, &promotion).unwrap();
+        }
+        let given = store
+            .retrieve(&RetrievalQuery::prompt(&project, "deploy lint", vec![]))
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.number)
+            .collect::<Vec<_>>();
+        assert_eq!(given, [1]);
+    }
+
+    #[test]
     fn a_repository_path_stays_inside_the_working_tree_and_reads_as_written() {
         for path in [
             "AGENTS.md",
@@ -5768,6 +5828,10 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             "docs/\u{202E}dm.SDRAWKCAB",
             "AGENTS\u{200B}.md",
             "line\nbreak",
+            ".GIT/config",
+            "docs/README\u{E0041}\u{E0042}.md",
+            "soft\u{00AD}hyphen.md",
+            "a\u{2028}b",
         ] {
             assert!(!repository_path(path), "{path:?}");
         }

@@ -210,9 +210,19 @@ impl PreparedMemory {
                 }))
             }
             MemoryCommand::Placed { number, path } => {
-                let (_, promotion) = store
+                let promotions = store
                     .promotions(&identity.id)
-                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .map_err(|error| store_failure(&identity.id, &error))?;
+                // An attempt whose agent Hide has not seen yet records it on
+                // a later check: its agent asks again then.
+                if promotions.iter().any(|(card, promotion)| {
+                    *card == number
+                        && promotion.state == hide_memory::PromotionState::Running
+                        && promotion.agent_id.is_none()
+                }) {
+                    return Err("memory_promotion_agent_pending".into());
+                }
+                let (_, promotion) = promotions
                     .into_iter()
                     .find(|(card, _)| *card == number)
                     .filter(|(_, promotion)| {
@@ -460,6 +470,9 @@ pub fn next_action(code: &str) -> &'static str {
         "memory_card_not_promoting" => {
             "Only the agent Hide started to put this card in the repository names its file"
         }
+        "memory_promotion_agent_pending" => {
+            "Hide has not confirmed this agent yet; run the same command again in a minute"
+        }
         "memory_path_not_found" => {
             "Name a file that exists in this checkout, relative to its root, and retry"
         }
@@ -655,6 +668,23 @@ mod tests {
         assert_eq!(
             placed("src/lib.rs"),
             Err("memory_card_not_promoting".into())
+        );
+
+        // An attempt whose agent Hide has not confirmed yet: ask again later.
+        fixture
+            .store()
+            .set_promotion(
+                &fixture.project_id,
+                1,
+                &hide_memory::Promotion {
+                    agent_id: None,
+                    ..theirs.clone()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            placed("src/lib.rs"),
+            Err("memory_promotion_agent_pending".into())
         );
 
         let running = hide_memory::Promotion {

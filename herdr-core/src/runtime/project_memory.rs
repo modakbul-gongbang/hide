@@ -255,7 +255,34 @@ impl Runtime {
 
     /// Shows one card of the opened Project in full, or none.
     pub(super) fn expand_memory_card(&mut self, workspace_id: &str, number: Option<u64>) -> bool {
-        if !self.memory_opened(workspace_id) || self.project_memory.expanded == number {
+        if !self.memory_opened(workspace_id) {
+            return false;
+        }
+        // A card opened from elsewhere (a conversation's card line, B33) that
+        // the standing search does not show for certain clears the search, so
+        // it is shown: the search's answer may not have landed yet.
+        let shown = |project: &crate::model::ProjectMemorySnapshot, query: &str, number: u64| {
+            project
+                .search
+                .as_ref()
+                .is_some_and(|search| search.query == query && search.numbers.contains(&number))
+        };
+        let mut cleared = false;
+        if let Some(number) = number
+            && let Some(query) = self.project_memory.search.clone()
+            && !self
+                .memory_section()
+                .project
+                .as_ref()
+                .is_some_and(|project| shown(project, &query, number))
+        {
+            self.project_memory.search = None;
+            if let Some(project) = self.memory_section().project.as_mut() {
+                project.search = None;
+            }
+            cleared = true;
+        }
+        if self.project_memory.expanded == number && !cleared {
             return false;
         }
         self.project_memory.expanded = number;
@@ -263,18 +290,6 @@ impl Runtime {
             && let Some(project) = self.memory_section().project.as_mut()
         {
             project.expanded = None;
-        }
-        // A card opened from elsewhere (a conversation's card line, B33) that
-        // the standing search leaves out clears the search, so it is shown.
-        if let Some(number) = number
-            && let Some(project) = self.memory_section().project.as_mut()
-            && project
-                .search
-                .as_ref()
-                .is_some_and(|search| !search.numbers.contains(&number))
-        {
-            project.search = None;
-            self.project_memory.search = None;
         }
         self.refresh_project_memory();
         true

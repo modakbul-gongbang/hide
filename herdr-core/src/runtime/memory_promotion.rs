@@ -273,7 +273,11 @@ impl Runtime {
         let tracking = &mut self.project_memory.promotions;
         tracking.in_flight = false;
         let again = std::mem::take(&mut tracking.again);
-        if let Ok(outcome) = &mut moved {
+        // A start comes back only while its attempt is still followed; a row
+        // that moved during the ask leaves it behind.
+        if let Ok(outcome) = &mut moved
+            && (outcome.followed || again)
+        {
             tracking.unseen.extend(outcome.unseen.drain(..));
         }
         let moved_projects = match moved {
@@ -507,10 +511,28 @@ fn track_promotions(
         });
         (moves, asks)
     };
-    let mut store = (moves.iter().any(Option::is_some) || !asks.is_empty())
+    let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| MemoryStore::open(database))
         .transpose()
-        .map_err(|error| error.to_string())?;
+    {
+        Ok(store) => store,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotions.store_unavailable",
+                "message": error.to_string(),
+            }));
+            // Nothing moved: the rows stay followed, and the starts taken to
+            // ask again go back for the next check.
+            outcome.followed = true;
+            outcome.running = true;
+            outcome.unseen = asks
+                .into_iter()
+                .map(|(key, _, start)| (key, start))
+                .collect();
+            return Ok(outcome);
+        }
+    };
     for ((project_id, _, number, promotion), next) in followed.iter().zip(moves) {
         let state = match (next, store.as_mut()) {
             // Only the state and the pull request move: a file `placed`
@@ -583,7 +605,8 @@ fn adopt_agent(
             }
             None
         }
-        Err(reason) if reason == UNSEEN => Some(start),
+        // Not seen yet, or another spawn held the lock: ask again next check.
+        Err(reason) if reason == UNSEEN || reason == BUSY => Some(start),
         Err(reason) => {
             crate::diagnostic!(json!({
                 "component": "memory",
