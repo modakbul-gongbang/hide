@@ -68,7 +68,7 @@ function issueProjects(workspaces: readonly Workspace[] | undefined): Workspace[
   return (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source);
 }
 
-/** `herdr-ide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
+/** `hide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
 export function sourcePlace(workspace: Workspace): string {
   const source = workspace.tasks?.source;
   if (!source) return workspace.label;

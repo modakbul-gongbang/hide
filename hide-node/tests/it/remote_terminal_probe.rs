@@ -25,8 +25,8 @@ use hide_node_link::terminal::{GridSize, KeyTarget, TerminalControl, TerminalRep
 use serde_json::json;
 
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
-const TAIL_MARKER: &str = "HERDR_IDE_SCROLL_080";
-const HISTORY_MARKER: &str = "HERDR_IDE_SCROLL_001";
+const TAIL_MARKER: &str = "HIDE_SCROLL_080";
+const HISTORY_MARKER: &str = "HIDE_SCROLL_001";
 
 /// What the probe heard from the device, and who waits on it. Herdr sends
 /// a repaint as the cells that changed, so the markers are read from the
@@ -301,7 +301,7 @@ fn official_remote_terminal_session_fixture_probe() {
             .expect("HERDR_TEST_REMOTE_HELPER_DIR names the folder of the build the device runs"),
     );
     assert!(
-        cwd.starts_with("/tmp/herdr-ide-verify-"),
+        cwd.starts_with("/tmp/hide-verify-"),
         "remote terminal fixture must use the owned fixture namespace"
     );
 
@@ -348,7 +348,7 @@ fn official_remote_terminal_session_fixture_probe() {
     assert!(
         owned_workspace["label"]
             .as_str()
-            .is_some_and(|label| label.starts_with("herdr-ide-verify-")),
+            .is_some_and(|label| label.starts_with("hide-verify-")),
         "remote terminal refused a workspace outside the owned fixture namespace"
     );
     assert!(snapshot["panes"].as_array().is_some_and(|panes| {
@@ -401,7 +401,7 @@ fn official_remote_terminal_session_fixture_probe() {
         .as_millis() as u64;
     terminals.key(
         KeyTarget::Pane(pane_id.clone()),
-        b"for i in {1..80}; do printf 'HERDR_IDE_SCROLL_%03d\\n' $i; done\r".to_vec(),
+        b"for i in {1..80}; do printf 'HIDE_SCROLL_%03d\\n' $i; done\r".to_vec(),
         now,
     );
     wait_for(&heard_progress, "tail", Duration::from_secs(15));

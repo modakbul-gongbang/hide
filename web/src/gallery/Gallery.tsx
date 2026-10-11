@@ -143,7 +143,7 @@ const renderers: Renderers = {
     "Focus": () => <Input aria-label="Purpose" defaultValue="결제 모듈 리팩터링" data-gallery-state="focus" className="w-(--size-settings-control-w)" />,
     "Invalid": () => <Input aria-label="Branch" defaultValue="main" aria-invalid className="w-(--size-settings-control-w)" mono />,
     "Disabled": () => <Input aria-label="Branch" defaultValue="feature/login" disabled className="w-(--size-settings-control-w)" mono />,
-    "Mono": () => <Input aria-label="Path" defaultValue="~/projects/herdr-ide" className="w-(--size-settings-control-w)" mono />,
+    "Mono": () => <Input aria-label="Path" defaultValue="~/projects/hide" className="w-(--size-settings-control-w)" mono />,
   },
   "Select": {
     "Default": () => <GallerySelect value="claude" />,
@@ -425,7 +425,7 @@ function GalleryDialog({ closeButton }: { closeButton?: boolean }) {
       <DialogContent showCloseButton={closeButton} onInteractOutside={(event) => event.preventDefault()}>
         <DialogHeader>
           <DialogTitle>New worktree</DialogTitle>
-          <DialogDescription>A branch checked out in its own folder beside herdr-ide.</DialogDescription>
+          <DialogDescription>A branch checked out in its own folder beside hide.</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-sm">
           <Input aria-label="Branch" defaultValue="feature/결제-리팩터" mono />

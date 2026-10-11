@@ -487,7 +487,7 @@ mod tests {
 
     fn rest(agents: Value) -> Value {
         json!({"navigator": {"agents": agents, "workspaces": [
-            {"label": "herdr-ide", "is_git": true, "checkouts": [{"label": "main", "branch": "main", "tabs": [{"panes": [{"id": "w1:p1"}, {"id": "w1:p2"}]}]}]}
+            {"label": "hide", "is_git": true, "checkouts": [{"label": "main", "branch": "main", "tabs": [{"panes": [{"id": "w1:p1"}, {"id": "w1:p2"}]}]}]}
         ]}})
     }
 
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "task w1:p1");
         assert_eq!(notices[0].state, NoticeState::NeedsYou);
-        assert_eq!(notices[0].place, "herdr-ide");
+        assert_eq!(notices[0].place, "hide");
         assert!(
             transitions.observe(&asking).0.is_empty(),
             "no repeat without a transition"
@@ -529,7 +529,7 @@ mod tests {
         let done = project(&rest(json!([row("w1:p1", "done", "none", None)])), "local");
         let finished = transitions.observe(&done).0;
         assert_eq!(finished[0].state, NoticeState::Done);
-        assert_eq!(finished[0].place, "herdr-ide");
+        assert_eq!(finished[0].place, "hide");
         let seen = project(&rest(json!([row("w1:p1", "seen", "none", None)])), "local");
         let (notices, cleared) = transitions.observe(&seen);
         assert!(notices.is_empty());

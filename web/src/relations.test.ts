@@ -15,7 +15,7 @@ const ids = (rest: SnapshotRest | null, target: Parameters<typeof relationsOf>[1
 describe("relations of an agent (PRD cmdk-navigation B2-B4)", () => {
   it("lists the issue, the checkout's group with its pull request, the agent in front and its parent in another checkout", () => {
     expect(ids(RICH, { kind: "agent", paneId: CHILD.pane_id }, true)).toEqual([
-      "issue:github:acme/herdr-ide#273",
+      "issue:github:acme/hide#273",
       "checkout:c-sand",
       "pr:w1:275",
       "agent:p-child *",
@@ -55,12 +55,12 @@ describe("relations of an agent (PRD cmdk-navigation B2-B4)", () => {
 
 describe("relations of other things", () => {
   it("draws a checkout's issue, itself and its pull request, with no agents (B5)", () => {
-    expect(ids(RICH, { kind: "checkout", checkoutId: "c-sand" })).toEqual(["issue:github:acme/herdr-ide#273", "checkout:c-sand", "pr:w1:275"]);
+    expect(ids(RICH, { kind: "checkout", checkoutId: "c-sand" })).toEqual(["issue:github:acme/hide#273", "checkout:c-sand", "pr:w1:275"]);
   });
 
   it("finds the checkout that carries a pull request or an issue", () => {
     expect(ids(RICH, { kind: "pr", workspaceId: "w1", number: 275 })).toEqual(ids(RICH, { kind: "checkout", checkoutId: "c-sand" }));
-    expect(ids(RICH, { kind: "issue", taskKey: "github:acme/herdr-ide#273" })).toEqual(ids(RICH, { kind: "checkout", checkoutId: "c-sand" }));
+    expect(ids(RICH, { kind: "issue", taskKey: "github:acme/hide#273" })).toEqual(ids(RICH, { kind: "checkout", checkoutId: "c-sand" }));
   });
 
   it("has none for a pull request no checkout carries", () => {

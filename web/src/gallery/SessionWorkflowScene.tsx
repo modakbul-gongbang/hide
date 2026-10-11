@@ -31,8 +31,8 @@ const BANDS: [string, PaneHeader["band"]][] = [
   ["device", { kind: "device_offline", tone: "muted", reason: "mini", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["approval", { kind: "approval", tone: "warning", reason: "검증 명령 실행 권한이 필요합니다", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["answer", { kind: "answer", tone: "warning", reason: "기존 stdin 종료 경로도 남길까요?", since_unix_ms: null, action: null, more: 0, exit_code: null }],
-  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null }],
-  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null }],
+  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "hide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null }],
+  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "hide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null }],
   ["raised", { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: { kind: "child", pane_id: "a1c1", label: RAISED.title }, more: 1, exit_code: null, raised: RAISED }],
   ["result", { kind: "result", tone: "success", reason: "보고서가 준비됐습니다", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["working", null], ["idle", null],
@@ -52,7 +52,7 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
   const actions = useMemo(() => createActions(() => true), []);
   const fixture = useMemo(() => {
     const base = sidebarScene(content, REFERENCE_FOLDS, Date.now());
-    const project = base.rest.navigator!.workspaces!.find((row) => row.id === "herdr-ide")!;
+    const project = base.rest.navigator!.workspaces!.find((row) => row.id === "hide")!;
     const checkout = project.checkouts[0]!;
     const pane = checkout.tabs[0]!.panes[0]!;
     const seed = base.agents.find((row) => row.pane_id === "a1")!;

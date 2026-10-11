@@ -915,12 +915,12 @@ function buildAgentGraphBox(tokens) {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 1}),
         ...rowsOn({symbol: '●', fill: '$--agent-working', title: 'agent-tab-groups', age: '8m', tucked: 2}),
       }),
-      // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← herdr-ide` on a child's.
+      // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← hide` on a child's.
       state('cross', 'Rows with cross-project chips', {}, {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
         ...rowsOn(
           {symbol: '●', fill: '$--agent-working', title: 'Lead', age: '1m', cross: {direction: 'out', project: 'sasu', count: 2}},
-          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'herdr-ide', count: 1}},
+          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'hide', count: 1}},
         ),
       }),
       state('selected', 'Selected', {stroke: '$--primary'}, {

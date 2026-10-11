@@ -12,7 +12,7 @@ function project(label: string, isGit: boolean, checkouts: Checkout[]): Workspac
 }
 
 const local = [
-  project("herdr-ide", true, [checkout("main", "main", "herdr-ide", ["p1"]), checkout("wt", "feat/sidebar", "sidebar", ["p2"])]),
+  project("hide", true, [checkout("main", "main", "hide", ["p1"]), checkout("wt", "feat/sidebar", "sidebar", ["p2"])]),
   project("notes", false, [checkout("notes", null, "notes", ["p3"])]),
 ];
 const devices = [{ id: "studio", label: "Studio Mac" }] as Device[];
@@ -22,8 +22,8 @@ const remote = (state: string) =>
 describe("the Agents list's context line (sidebar-readability B5)", () => {
   it("names the project and the checkout's branch, and a plain folder by its project alone", () => {
     const place = agentPlaces(local, [], devices);
-    expect(place(null, "p1")).toBe("herdr-ide › main");
-    expect(place(null, "p2")).toBe("herdr-ide › feat/sidebar");
+    expect(place(null, "p1")).toBe("hide › main");
+    expect(place(null, "p2")).toBe("hide › feat/sidebar");
     expect(place(null, "p3")).toBe("notes");
   });
 

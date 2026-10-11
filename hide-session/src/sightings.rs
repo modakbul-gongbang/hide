@@ -80,16 +80,16 @@ mod tests {
     #[test]
     fn addresses_are_read_once_each_and_anything_else_is_not_one() {
         let output = "Creating pull request for prd/x into main\n\
-                      https://github.com/herdrdev/herdr-ide/pull/341\n\
-                      see https://github.com/herdrdev/herdr-ide/pull/341.\n\
+                      https://github.com/herdrdev/hide/pull/341\n\
+                      see https://github.com/herdrdev/hide/pull/341.\n\
                       https://github.com/other/repo/pull/7#issuecomment-1\n\
-                      https://github.com/herdrdev/herdr-ide/issues/12\n\
-                      https://github.com/herdrdev/herdr-ide/pull/\n\
+                      https://github.com/herdrdev/hide/issues/12\n\
+                      https://github.com/herdrdev/hide/pull/\n\
                       https://github.com/a b/c/pull/9";
         assert_eq!(
             pull_request_addresses(output),
             [
-                ("herdrdev/herdr-ide".to_owned(), 341),
+                ("herdrdev/hide".to_owned(), 341),
                 ("other/repo".to_owned(), 7)
             ]
         );
