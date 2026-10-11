@@ -1124,7 +1124,16 @@ impl Runtime {
             &self.snapshot.ui_state,
             unix_milliseconds(),
         );
+        // A node that dials this core lists its pane-less worktrees, so its
+        // projects fold them as this machine's do (D-29); a dialed device's
+        // session shows only the checkouts it opens.
+        let nodes: BTreeSet<String> = self
+            .node_sessions()
+            .map(|(node, _)| node.to_owned())
+            .collect();
+        let now = unix_milliseconds();
         for remote in &mut self.snapshot.status.remote {
+            let node = nodes.contains(&remote.target_id);
             if let Some(session) = &mut remote.session {
                 let agents = session
                     .agents
@@ -1133,14 +1142,33 @@ impl Runtime {
                     .collect();
                 let focused = session.focused_checkout_id.as_deref();
                 for workspace in &mut session.workspaces {
-                    let before = workspace.session_folds.clone();
+                    let before = (
+                        workspace.session_folds.clone(),
+                        workspace.inactive_checkouts.clone(),
+                    );
+                    if node {
+                        workspace.inactive_checkouts =
+                            crate::project_context::inactive_checkout_group(
+                                workspace,
+                                &agents,
+                                focused,
+                                self.snapshot
+                                    .ui_state
+                                    .expanded_inactive_checkout_project_paths
+                                    .contains(&workspace.path),
+                                now,
+                            );
+                    }
                     crate::project_context::refresh_session_folds(
                         workspace,
                         &agents,
                         &self.snapshot.ui_state,
                         focused,
                     );
-                    changed |= workspace.session_folds != before;
+                    changed |= (
+                        workspace.session_folds.clone(),
+                        workspace.inactive_checkouts.clone(),
+                    ) != before;
                 }
             }
         }

@@ -1073,6 +1073,7 @@ Projects and their checkouts sort by the latest authoritative agent activity tim
 Inside a project the primary checkout comes first whatever its activity, because it is the one checkout that never folds, and the rest follow in that activity order.
 Activity orders projects inside one device group and never across two.
 A project's secondary checkouts that are merged (as the Overview says) or whose pull request closed, and those inactive for seven days, move behind a trailing `Inactive N` disclosure, while its primary checkout and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
+A project of a node that dials the core lists every worktree that node reports, one with no pane open included, and folds them by these same rules; a device the core dials shows only the checkouts its session opens.
 When every checkout in a project is inactive, the project itself moves behind the device's `Inactive projects N` disclosure.
 Both folds default closed and remember their expansion independently.
 Search continues to index the complete project tree; choosing a folded result brings the focused row back into the active list without opening either fold.

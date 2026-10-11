@@ -37,6 +37,10 @@ impl Runtime {
             &self.snapshot.ui_state.workspace_registrations,
             facts,
         );
+        let reports_own_facts = self
+            .link_origin(target)
+            .is_some_and(LinkOrigin::reports_own_facts);
+        let own_rows = reports_own_facts.then_some(target);
         if let Some(worktrees) = self.device_worktrees.get(target) {
             let measured = self.device_disk.get(target);
             for project in &mut session.workspaces {
@@ -47,11 +51,11 @@ impl Runtime {
                     Some(disk) => {
                         let mut listed = listed.clone();
                         super::projects::measure_worktrees(&mut listed, disk);
-                        device_catalog::apply_worktrees(project, &listed);
+                        device_catalog::apply_worktrees(project, &listed, own_rows);
                         let named = self.device_disk_project.get(target) == Some(&project.path);
                         project.disk = super::projects::project_disk(Some(&listed), named);
                     }
-                    None => device_catalog::apply_worktrees(project, listed),
+                    None => device_catalog::apply_worktrees(project, listed, own_rows),
                 }
                 if let Some(found) = self
                     .device_github
@@ -62,10 +66,7 @@ impl Runtime {
                 }
             }
         }
-        if self
-            .link_origin(target)
-            .is_some_and(LinkOrigin::reports_own_facts)
-        {
+        if reports_own_facts {
             self.project_node_issues(target, &mut session);
             for project in &mut session.workspaces {
                 project.cleanup = self

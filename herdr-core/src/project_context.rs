@@ -144,6 +144,31 @@ fn checkout_is_inactive(
     settled || stale
 }
 
+/// A project's Inactive fold: its checkouts, other than the primary one,
+/// that nothing works in now (`checkout_is_inactive`), open as the operator
+/// left it. This machine's projects and those of a node that dials the core
+/// share it (PRD core-host-node-move D-29).
+pub(crate) fn inactive_checkout_group(
+    workspace: &WorkspaceSnapshot,
+    by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
+    focused_checkout_id: Option<&str>,
+    expanded: bool,
+    now_unix_ms: u64,
+) -> InactiveCheckoutGroupSnapshot {
+    InactiveCheckoutGroupSnapshot {
+        expanded,
+        checkout_ids: workspace
+            .checkouts
+            .iter()
+            .filter(|checkout| {
+                !checkout.is_primary
+                    && checkout_is_inactive(checkout, by_pane, focused_checkout_id, now_unix_ms)
+            })
+            .map(|checkout| checkout.id.clone())
+            .collect(),
+    }
+}
+
 /// Rebuilds core-owned inactive membership without moving the authoritative
 /// project or checkout rows. The shell maps these ordered IDs back to the
 /// existing rows, while search and focus continue to see the full collections.
@@ -183,19 +208,13 @@ pub(crate) fn refresh_inactive_groups(
 
     let mut inactive_projects = Vec::<InactiveProjectGroupSnapshot>::new();
     for workspace in &mut navigator.workspaces {
-        let inactive_checkout_ids = workspace
-            .checkouts
-            .iter()
-            .filter(|checkout| {
-                !checkout.is_primary
-                    && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
-            })
-            .map(|checkout| checkout.id.clone())
-            .collect();
-        workspace.inactive_checkouts = InactiveCheckoutGroupSnapshot {
-            expanded: expanded_checkout_projects.contains(workspace.path.as_str()),
-            checkout_ids: inactive_checkout_ids,
-        };
+        workspace.inactive_checkouts = inactive_checkout_group(
+            workspace,
+            &by_pane,
+            focused_checkout_id,
+            expanded_checkout_projects.contains(workspace.path.as_str()),
+            now_unix_ms,
+        );
         refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
         workspace
             .inactive_checkouts

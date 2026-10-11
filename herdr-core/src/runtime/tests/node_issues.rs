@@ -791,8 +791,10 @@ fn the_overview_in_front_of_a_node_checkout_reads_the_node_s_project() {
 /// A node's project is cleaned up on the node, as one of this machine's is
 /// here: the review lists its worktrees through the node's link and its
 /// Herdr, a worktree merged into main is removed there, and one that picked
-/// up a change after the review is refused by the node's recheck. This
-/// machine's node, which has none of these folders, is asked nothing.
+/// up a change after the review is refused by the node's recheck. Neither
+/// worktree has a pane open, so neither has a Herdr workspace: each is a row
+/// of the project only because the node lists it. This machine's node,
+/// which has none of these folders, is asked nothing.
 #[test]
 fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused() {
     // `lsof` answers nothing and exits 1 on a machine with no listener it
@@ -820,13 +822,25 @@ fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused(
         own.clone(),
         Default::default(),
         Arc::new(herdr.connector()),
-        vec![
-            herdr_workspace(NODE, "w1", &repo.root, &[]),
-            herdr_workspace(NODE, "w2", &repo.linked, &[]),
-            herdr_workspace(NODE, "w3", &changed, &[]),
-        ],
+        vec![herdr_workspace(NODE, "w1", &repo.root, &[])],
     );
-    let workspace_id = node_project(&shared.lock().unwrap()).unwrap().id.clone();
+    let workspace_id = {
+        let runtime = shared.lock().unwrap();
+        let project = node_project(&runtime).unwrap();
+        let rows: Vec<_> = project
+            .checkouts
+            .iter()
+            .map(|checkout| (checkout.id.as_str(), checkout.path.as_str()))
+            .collect();
+        assert!(
+            [&repo.linked, &changed].iter().all(|path| rows.contains(&(
+                crate::device_catalog::checkout_id(NODE, path).as_str(),
+                path.as_str()
+            ))),
+            "{rows:?}"
+        );
+        project.id.clone()
+    };
     dispatch(
         &shared,
         "cleanup_review",
@@ -886,6 +900,112 @@ fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused(
         own.calls.lock().unwrap().is_empty(),
         "{:?}",
         own.calls.lock().unwrap()
+    );
+}
+
+/// A node's worktree with no pane open is one of its project's checkouts,
+/// as a worktree of this machine's own project is: its row has the id a
+/// core move gave the checkout the MacBook had when it ran the core, so the
+/// links, label and fold kept under that id still meet it, and once nothing
+/// has worked in it for a week it folds under Inactive as this machine's do,
+/// a fold the sidebar opens. A device this core dials keeps only the
+/// checkouts its session opens.
+#[test]
+fn a_node_s_worktree_with_no_pane_keeps_its_id_from_before_the_move_and_folds_when_idle() {
+    let repo = repo(None, "parked");
+    let committed = std::process::Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "-c", "user.name=t"])
+        .args(["-c", "user.email=t@t", "-C", &repo.linked])
+        .args(["commit", "-q", "--allow-empty", "-m", "parked"])
+        .env("GIT_COMMITTER_DATE", "1700000000 +0000")
+        .status()
+        .unwrap();
+    assert!(committed.success());
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+        connector,
+        vec![herdr_workspace(
+            NODE,
+            "w1",
+            &repo.root,
+            &[("t1", &repo.root)],
+        )],
+    );
+
+    // The MacBook's own project and checkout as its core named them, and the
+    // ids the move gave them when the MacBook became a node of the mini.
+    let own_project = crate::workspace::workspace_id_for_path(Path::new(&repo.root));
+    let before = crate::workspace::checkout_id_for_path(&own_project, Path::new(&repo.linked));
+    let change = crate::node_migration::OwnerChange {
+        old_owner: "macbook".to_owned(),
+        old_owner_as: NODE.to_owned(),
+        new_owner: "mini".to_owned(),
+        new_owner_was: "mini-device".to_owned(),
+        old_owner_registration: crate::model::DeviceRegistration {
+            id: NODE.to_owned(),
+            label: "MacBook".to_owned(),
+            origin: crate::model::LinkOrigin::Inbound,
+            herdr_socket_path: None,
+            host_consent: None,
+        },
+        old_owner_herdr_socket: "/tmp/macbook-herdr.sock".to_owned(),
+        new_owner_herdr_socket: "/tmp/mini-herdr.sock".to_owned(),
+    };
+    let moved = crate::node_migration::id_table(
+        &change,
+        [crate::node_migration::KnownProject {
+            id: &own_project,
+            device_id: "macbook",
+            path: &repo.root,
+            root: Path::new(&repo.root),
+            checkouts: vec![(before.as_str(), repo.linked.as_str())],
+        }],
+    )
+    .checkouts[&before]
+        .clone();
+
+    {
+        let runtime = shared.lock().unwrap();
+        let project = node_project(&runtime).unwrap();
+        let row = project
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == repo.linked)
+            .unwrap_or_else(|| panic!("{:?}", project.checkouts));
+        assert_eq!((row.id.as_str(), row.tabs.len()), (moved.as_str(), 0));
+        assert_eq!(project.inactive_checkouts.checkout_ids, [moved.as_str()]);
+        assert!(!project.inactive_checkouts.expanded);
+    }
+    dispatch(
+        &shared,
+        "inactive_checkouts_toggle",
+        serde_json::json!({"project_path": repo.root}),
+    );
+    let mut runtime = shared.lock().unwrap();
+    assert!(
+        node_project(&runtime).unwrap().inactive_checkouts.expanded,
+        "{:?}",
+        runtime.snapshot.status.last_error
+    );
+
+    runtime.snapshot.ui_state.device_registrations[0].origin = crate::model::LinkOrigin::Dialed {
+        ssh_alias: "macbook".to_owned(),
+    };
+    runtime.refresh_device_catalog(NODE);
+    let project = node_project(&runtime).unwrap();
+    assert!(
+        project
+            .checkouts
+            .iter()
+            .all(|checkout| checkout.path != repo.linked),
+        "{:?}",
+        project.checkouts
     );
 }
 

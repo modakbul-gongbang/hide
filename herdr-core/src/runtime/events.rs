@@ -2298,22 +2298,29 @@ impl Runtime {
                 true
             }
             Event::InactiveCheckoutsToggle(payload) => {
-                let Some(group) = self
+                // The fold is this machine's projects' and those of a node
+                // that dials the core (D-29), keyed by the project's folder.
+                let nodes = self
+                    .node_sessions()
+                    .flat_map(|(_, session)| &session.workspaces);
+                let folds: Vec<bool> = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
-                    .find(|workspace| workspace.path == payload.project_path)
-                    .map(|workspace| &workspace.inactive_checkouts)
-                else {
+                    .chain(nodes)
+                    .filter(|workspace| workspace.path == payload.project_path)
+                    .map(|workspace| !workspace.inactive_checkouts.checkout_ids.is_empty())
+                    .collect();
+                if folds.is_empty() {
                     self.set_error(
                         "inactive_checkouts.unknown_project",
                         format!("Project {} is not available", payload.project_path),
                         false,
                     );
                     return true;
-                };
-                if group.checkout_ids.is_empty() {
+                }
+                if !folds.contains(&true) {
                     self.set_error(
                         "inactive_checkouts.unavailable",
                         format!("Project {} has no inactive checkouts", payload.project_path),
