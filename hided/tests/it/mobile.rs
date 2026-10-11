@@ -420,11 +420,26 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
     running.stop();
 }
 
-/// Pairs a phone with the core `running` exposes at `dns` and answers its
-/// credential.
-async fn pair_at(running: &hided::RunningDaemon, shell: &mut Socket, dns: &str) -> String {
+/// Pairs a phone with the core `running` exposes at `dns`, where `paired`
+/// phones are listed already, and answers its credential.
+async fn pair_at(
+    running: &hided::RunningDaemon,
+    shell: &mut Socket,
+    dns: &str,
+    paired: usize,
+) -> String {
     event(shell, "mobile_show_code", json!({})).await;
-    let shown = mobile_frame(shell, |frame| frame["qr"].is_string()).await;
+    // A frame published before the last pairing can still be unread and
+    // carries the code that pairing spent; the pairing that spent it also
+    // listed its phone, so the code shown for this one is the first beside
+    // `paired` phones.
+    let shown = mobile_frame(shell, |frame| {
+        frame["qr"].is_string()
+            && frame["phones"]
+                .as_array()
+                .is_some_and(|phones| phones.len() == paired)
+    })
+    .await;
     let code = pair_code_at(shown["qr"].as_str().unwrap(), dns);
     let (_paired, answer) = pair(running.port, &loopback(running.port), &code).await;
     answer["credential"].as_str().unwrap().to_owned()
@@ -451,7 +466,7 @@ async fn a_moved_core_lets_in_only_the_phones_paired_at_its_address() {
     event(&mut shell, "mobile_observe", json!({"observing": true})).await;
     event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
     mobile_frame(&mut shell, exposed).await;
-    let at_mac = pair_at(&running, &mut shell, DNS).await;
+    let at_mac = pair_at(&running, &mut shell, DNS, 0).await;
     running.mobile.shutdown().await;
     running.stop();
     drop((shell, running));
@@ -463,8 +478,8 @@ async fn a_moved_core_lets_in_only_the_phones_paired_at_its_address() {
     assert_eq!(frame["phones"], json!([]), "{frame}");
     let (_socket, answer) = phone_at(running.port, MINI, &at_mac).await;
     assert_eq!(answer, json!({"type": "refused", "reason": "mobile_off"}));
-    for _ in 0..4 {
-        pair_at(&running, &mut shell, MINI).await;
+    for paired in 0..4 {
+        pair_at(&running, &mut shell, MINI, paired).await;
     }
     let frame = mobile_frame(&mut shell, |frame| {
         frame["phones"]
