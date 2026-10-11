@@ -401,7 +401,7 @@ pub fn send(
     let total = manifest.total_bytes();
     let sent = std::sync::atomic::AtomicU64::new(0);
     let mut wanted = differing(remote, journal, manifest)?;
-    let held = manifest.files.len() - wanted.len();
+    let held = manifest.files.len().saturating_sub(wanted.len());
     let mut uploaded: Vec<String> = Vec::new();
     for attempt in 0..2 {
         if wanted.is_empty() {
@@ -497,6 +497,19 @@ fn differs_of(answer: StepAnswer, manifest: &copy::Manifest) -> Result<Vec<Strin
         return Err(MoveFailure::Refused {
             step: "verify".to_owned(),
             reason: format!("the answer names files the copy does not hold: {unsent:?}"),
+        });
+    }
+    // The peer names these paths, so its answer is read as untrusted: a
+    // path named twice would be sent twice.
+    let mut named = std::collections::BTreeSet::new();
+    let twice: Vec<&String> = differs
+        .iter()
+        .filter(|path| !named.insert(path.as_str()))
+        .collect();
+    if !twice.is_empty() {
+        return Err(MoveFailure::Refused {
+            step: "verify".to_owned(),
+            reason: format!("the answer names files more than once: {twice:?}"),
         });
     }
     if differs.is_empty() {
@@ -659,8 +672,8 @@ mod tests {
     }
 
     /// The peer names the files it wants sent; only files the copy holds
-    /// are read from this machine, and an answer that names another is
-    /// refused with it named.
+    /// are read from this machine, and an answer that names another, or one
+    /// twice, is refused with it named.
     #[test]
     fn a_verify_answer_naming_a_file_the_copy_does_not_hold_is_refused() {
         let manifest = manifest(&["labels.json", "factory-files/a.prd"]);
@@ -684,6 +697,13 @@ mod tests {
                 }
                 other => panic!("{path}: {other:?}"),
             }
+        }
+        match differs_of(differs(&["labels.json", "labels.json"]), &manifest) {
+            Err(MoveFailure::Refused { step, reason }) => {
+                assert_eq!(step, "verify");
+                assert!(reason.contains("more than once"), "{reason}");
+            }
+            other => panic!("a path named twice: {other:?}"),
         }
     }
 
