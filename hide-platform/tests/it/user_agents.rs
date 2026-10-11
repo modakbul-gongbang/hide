@@ -44,8 +44,8 @@ fn systems_without_login_agents_need_no_command() {
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
-/// A bootout returns once its job has ended, which a job may take launchd's
-/// whole exit allowance for: one past the bound of every other command
+/// A bootout may take as long to answer as its job takes to end, which can be
+/// launchd's whole exit allowance: one past the bound of every other command
 /// still unloads it.
 #[cfg(unix)]
 #[test]
@@ -63,6 +63,58 @@ fn a_job_that_takes_its_time_to_stop_is_still_unloaded() {
         .unload("example.agent", directory.path(), &AtomicBool::new(false))
         .unwrap();
     assert!(!directory.path().join("loaded").exists());
+}
+
+/// A bootout that answers before launchd has finished the teardown (0, or
+/// 36 "Operation now in progress") leaves the job loaded while it exits: the
+/// unload waits until launchd no longer knows it.
+#[cfg(unix)]
+#[test]
+fn an_unload_waits_out_a_teardown_the_bootout_left_under_way() {
+    use std::sync::atomic::AtomicBool;
+    for answer in [0, 36] {
+        let directory = tempfile::tempdir().unwrap();
+        let command = directory.path().join("launchctl-fixture");
+        // `print` answers loaded twice more after the bootout, then gone.
+        crate::stand_ins::program(
+            &command,
+            &format!(
+                "#!/bin/sh\ncase \"$1\" in\n  print)\n    [ -f \"$HOME/left\" ] || exit 0\n    left=$(cat \"$HOME/left\")\n    [ \"$left\" -eq 0 ] && exit 113\n    echo $((left - 1)) > \"$HOME/left\"\n    exit 0 ;;\n  bootout) echo 2 > \"$HOME/left\"; exit {answer} ;;\nesac\nexit 0\n"
+            ),
+        );
+        let boundary = UserAgents::fixture(command, "isolated-domain".into());
+        boundary
+            .unload("example.agent", directory.path(), &AtomicBool::new(false))
+            .unwrap_or_else(|error| panic!("bootout answering {answer}: {error}"));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("left")).unwrap(),
+            "0\n",
+            "bootout answering {answer}"
+        );
+    }
+}
+
+/// A bootout that fails with the job still loaded is reported at once, not
+/// waited out.
+#[cfg(unix)]
+#[test]
+fn a_failed_bootout_with_the_job_still_loaded_is_reported() {
+    use std::sync::atomic::AtomicBool;
+    let directory = tempfile::tempdir().unwrap();
+    let command = directory.path().join("launchctl-fixture");
+    crate::stand_ins::program(
+        &command,
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\n[ \"$1\" = bootout ] && exit 5\nexit 0\n",
+    );
+    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let error = boundary
+        .unload("example.agent", directory.path(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert_eq!(error.to_string(), "bootout failed (exit Some(5))");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("calls")).unwrap(),
+        "print\nbootout\nprint\n"
+    );
 }
 
 /// An install replaces what is loaded, then loads the written list; a

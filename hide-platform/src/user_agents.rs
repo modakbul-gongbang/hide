@@ -10,15 +10,22 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long one `launchctl` command may take that waits on nothing but
 /// launchd: `print`, `bootstrap`, `kickstart`.
 const COMMAND_WITHIN: Duration = Duration::from_secs(5);
-/// How long a `bootout` may take: it returns once the job has ended, which
-/// launchd allows its default `ExitTimeOut` (20 s) before it kills the job,
-/// so a job that takes its time to stop is not reported as still loaded.
+/// How long an unload may take, from its `bootout` until launchd no longer
+/// knows the job: launchd allows a job its default `ExitTimeOut` (20 s)
+/// before it kills it, so a job that takes its time to stop is not reported
+/// as still loaded.
 const STOPPED_WITHIN: Duration = Duration::from_secs(30);
+/// How often an unload asks whether a job whose teardown is under way is
+/// gone.
+const UNLOAD_POLL: Duration = Duration::from_millis(100);
+/// `bootout`'s exit when launchd has begun to tear the job down and has not
+/// finished (`EINPROGRESS`, "Operation now in progress").
+const BOOTOUT_IN_PROGRESS: i32 = 36;
 
 #[derive(Clone, Debug)]
 pub struct UserAgents {
@@ -189,6 +196,13 @@ impl UserAgents {
         }
     }
 
+    /// Unloads the agent `label`, which ends its process, and returns once
+    /// launchd no longer knows it. A `bootout` that answers 0 or
+    /// [`BOOTOUT_IN_PROGRESS`] has begun the teardown, which launchd finishes
+    /// after it answers while the job exits, so the job is asked about until
+    /// it is gone, within [`STOPPED_WITHIN`] of the `bootout`. Any other
+    /// answer with the job still loaded is a failed `bootout`.
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
     pub fn unload(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
         if self.command.is_none() {
             return Ok(());
@@ -197,19 +211,30 @@ impl UserAgents {
         if !self.loaded(&name, home, stop)? {
             return Ok(());
         }
+        let started = Instant::now();
         let result = self.run_within(&["bootout", &name], home, stop, STOPPED_WITHIN)?;
-        if result.code != Some(0) && self.loaded(&name, home, stop)? {
-            return Err(io::Error::other(format!(
-                "bootout failed (exit {:?})",
-                result.code
-            )));
+        let under_way = matches!(result.code, Some(0 | BOOTOUT_IN_PROGRESS));
+        loop {
+            if !self.loaded(&name, home, stop)? {
+                return Ok(());
+            }
+            if !under_way {
+                return Err(io::Error::other(format!(
+                    "bootout failed (exit {:?})",
+                    result.code
+                )));
+            }
+            let waited = started.elapsed();
+            if waited >= STOPPED_WITHIN {
+                return Err(io::Error::other(format!(
+                    "the login agent is still loaded {} ms after bootout (exit {:?})",
+                    waited.as_millis(),
+                    result.code
+                )));
+            }
+            // A raised `stop` ends the wait at the next question.
+            std::thread::sleep(UNLOAD_POLL.min(STOPPED_WITHIN - waited));
         }
-        if self.loaded(&name, home, stop)? {
-            return Err(io::Error::other(
-                "the login agent is still loaded after bootout",
-            ));
-        }
-        Ok(())
     }
 
     fn loaded(&self, name: &str, home: &Path, stop: &AtomicBool) -> io::Result<bool> {
