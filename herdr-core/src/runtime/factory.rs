@@ -780,7 +780,7 @@ impl Runtime {
         marker: &str,
     ) -> Result<u32, String> {
         if let Ok(store) = &self.local_issues
-            && let Some(existing) = store.project(project).and_then(|project| {
+            && let Some(existing) = store.project(None, project).and_then(|project| {
                 project
                     .issues
                     .iter()
@@ -800,7 +800,7 @@ impl Runtime {
         self.local_issues
             .as_ref()
             .ok()
-            .and_then(|store| store.issue(project, number))
+            .and_then(|store| store.issue(None, project, number))
             .cloned()
     }
 

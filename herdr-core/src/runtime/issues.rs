@@ -271,7 +271,9 @@ impl Runtime {
             } else if kind == crate::tasks::SourceKind::Local {
                 let read = match store {
                     Err(reason) => crate::tasks::LocalRead::Failed(reason),
-                    Ok(store) => crate::tasks::LocalRead::Ready(store.project(&workspace.path)),
+                    Ok(store) => {
+                        crate::tasks::LocalRead::Ready(store.project(None, &workspace.path))
+                    }
                 };
                 crate::tasks::local_tasks(&workspace.path, read, choice.is_some())
             } else {
@@ -364,7 +366,7 @@ impl Runtime {
             String::new()
         } else if local_source {
             let known = crate::local_issues::parse_id(text).filter(|number| {
-                matches!(&self.local_issues, Ok(store) if store.issue(&workspace.path, *number).is_some())
+                matches!(&self.local_issues, Ok(store) if store.issue(None, &workspace.path, *number).is_some())
             });
             match known {
                 Some(number) => crate::local_issues::display_id(number),
@@ -543,7 +545,7 @@ fn local_issue_detail(
     match store {
         Err(reason) => Err(reason.clone()),
         Ok(store) => store
-            .issue(path, number)
+            .issue(None, path, number)
             .map(|issue| crate::tasks::TaskDetail {
                 body: issue.body.clone(),
                 created_at_unix_ms: Some(issue.created_at_unix_ms),
@@ -784,7 +786,7 @@ impl Runtime {
                     "로컬 이슈 파일을 읽지 못해 새 이슈를 만들 수 없습니다: {reason}"
                 ));
             }
-            Ok(store) => store.create(project_path, title, body, unix_milliseconds())?,
+            Ok(store) => store.create(None, project_path, title, body, unix_milliseconds())?,
         };
         self.persist_local_issues();
         self.apply_pull_requests();
@@ -1216,7 +1218,7 @@ impl Runtime {
             );
             return true;
         };
-        if !store.set_open(path, number, payload.open, unix_milliseconds()) {
+        if !store.set_open(None, path, number, payload.open, unix_milliseconds()) {
             return false;
         }
         self.persist_local_issues();
@@ -1240,7 +1242,7 @@ impl Runtime {
                 "로컬 이슈 파일을 읽지 못해 고칠 수 없습니다: {reason}"
             )),
             (Some((path, number)), Ok(store)) => {
-                store.update(path, number, &payload.title, &payload.body, now)
+                store.update(None, path, number, &payload.title, &payload.body, now)
             }
         };
         crate::diagnostic!(serde_json::json!({

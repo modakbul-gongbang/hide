@@ -1886,7 +1886,7 @@ mod tests {
         reown(state, &forward(), &forward_ids()).unwrap();
         let mut store = crate::local_issues::load(&path).unwrap();
         assert_eq!(
-            store.create(C_ROOT, "made on the mini's core", "", 10),
+            store.create(None, C_ROOT, "made on the mini's core", "", 10),
             Ok(2)
         );
         crate::local_issues::save(&path, &store).unwrap();
