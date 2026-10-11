@@ -108,6 +108,7 @@ The lookup performs no provider or embedding call, transcript scan, child-proces
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context, and the hook still exits zero.
 The hook waits for the answer until 1,250 ms after it starts, where the letter pull ends too, so Memory never makes a turn wait longer; the core spends at most 1 s on it once admitted, and candidate, item, and token counts are hard bounded.
 A node whose link to the core is down refuses at once with `hide_unavailable`; the hook then records `memory.unavailable`, or `memory.deadline` for an answer that did not come in time, at most once per ten minutes in its private diagnostics, and the turn goes on without Memory.
+A panic on the thread that asks is recorded the same way as `memory.panicked`.
 Stdin is read through a nonblocking descriptor until EOF, the size cap, or the 500 ms payload wait.
 Windows has no nonblocking read of a pipe, so there a reader thread collects stdin and the helper stops waiting for it at the same point.
 Current Claude Code and Codex `UserPromptSubmit` input and output shapes are fixed by sanitized fixtures in `hide-agent-hooks/tests/fixtures/`.

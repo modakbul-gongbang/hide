@@ -214,7 +214,10 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
             None
         });
         let (memory, start) = match asking {
-            Some(Ok(asked)) => asked.join().unwrap_or((None, false)),
+            Some(Ok(asked)) => asked.join().unwrap_or_else(|_| {
+                memory::record_panic(home);
+                (None, false)
+            }),
             Some(Err(())) | None => (None, false),
         };
         (memory, start, intake)

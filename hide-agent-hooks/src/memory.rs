@@ -147,7 +147,8 @@ impl From<HookOutcome> for HookMemoryOutcome {
 
 /// [`MemoryContext`] for `request` from the core, bounded by `deadline` and
 /// failing open; a failure to ask is recorded under `home` (`memory_hook`
-/// `memory.unavailable` or `memory.deadline`).
+/// `memory.unavailable` or `memory.deadline`; a panic on the thread that
+/// asks is the caller's to record, with [`record_panic`]).
 pub fn memory_context_until(
     request: MemoryRequest<'_>,
     home: &Path,
@@ -215,15 +216,29 @@ pub fn memory_context_until(
 }
 
 fn record(home: &Path, failure: &Failure) {
-    let (cause, kind) = if failure.code == "deadline" {
-        ("memory_deadline", "memory.deadline")
+    if failure.code == "deadline" {
+        note(home, "memory_deadline", "memory.deadline", failure.code);
     } else {
-        ("memory_unavailable", "memory.unavailable")
-    };
+        note(
+            home,
+            "memory_unavailable",
+            "memory.unavailable",
+            failure.code,
+        );
+    }
+}
+
+/// Records that the thread asking for Memory panicked, which the turn goes
+/// on without: the hook's other work never waits on it.
+pub fn record_panic(home: &Path) {
+    note(home, "memory_panicked", "memory.panicked", "panicked");
+}
+
+fn note(home: &Path, cause: &str, kind: &str, code: &str) {
     if delivery::claim(home, cause) {
         eprintln!(
             "{}",
-            serde_json::json!({"component":"memory_hook","kind":kind,"code":failure.code,"diagnostic_saved":true})
+            serde_json::json!({"component":"memory_hook","kind":kind,"code":code,"diagnostic_saved":true})
         );
     }
 }
@@ -238,6 +253,21 @@ mod tests {
         let (retained, exceeded) = read_bounded(bytes.as_slice()).unwrap();
         assert_eq!(retained.len(), HOOK_INPUT_LIMIT_BYTES);
         assert!(exceeded);
+    }
+
+    /// A panic on the Memory thread leaves its record, once per ten minutes
+    /// like every other hook failure.
+    #[test]
+    fn a_memory_thread_panic_is_recorded_once() {
+        let home = tempfile::tempdir().unwrap();
+        record_panic(home.path());
+        let path = home
+            .path()
+            .join(".hide/agent-hooks/delivery-diagnostics.json");
+        let recorded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(recorded["last"]["memory_panicked"].is_u64(), "{recorded}");
+        assert!(!delivery::claim(home.path(), "memory_panicked"));
     }
 
     #[test]

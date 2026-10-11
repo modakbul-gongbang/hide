@@ -245,7 +245,7 @@ struct Diagnostics {
 /// plugin's one (`plugin`: it skipped or gave up on a helper call) and
 /// Memory's two (`crate::memory`: the core could not be asked, or did not
 /// answer in time).
-const CAUSES: [&str; 12] = [
+const CAUSES: [&str; 13] = [
     "cli",
     "deadline",
     "format",
@@ -258,6 +258,7 @@ const CAUSES: [&str; 12] = [
     "plugin",
     "memory_unavailable",
     "memory_deadline",
+    "memory_panicked",
 ];
 
 /// Fixed causes ([`CAUSES`]), private storage and a nonblocking cross-process lock.

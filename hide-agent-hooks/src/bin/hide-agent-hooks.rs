@@ -445,7 +445,10 @@ fn run_hook(arguments: &[String], started: Instant) {
             None
         };
         let memory_output = match asking {
-            Some(Ok(asked)) => asked.join().ok().flatten(),
+            Some(Ok(asked)) => asked.join().unwrap_or_else(|_| {
+                hide_agent_hooks::memory::record_panic(&home);
+                None
+            }),
             // No thread to ask on: the pull has had its turn, and Memory's
             // deadline still bounds this one.
             Some(Err(runtime)) => memory(runtime),
