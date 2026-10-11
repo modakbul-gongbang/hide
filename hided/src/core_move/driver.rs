@@ -22,7 +22,9 @@ const STEP_OUTPUT_CAP: usize = 64 * 1024;
 /// waits up to 30 s for it to take links.
 const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The other machine, reached over one SSH connection for the move.
+/// The other machine, reached over one SSH connection for the move. The
+/// connection ends when this is dropped, on every way a move's turn ends
+/// (the SSH connection's own drop disconnects it).
 pub struct Remote {
     /// The account's SSH config and the alias the move reaches the peer
     /// by, read at the first step that reaches it.
@@ -136,12 +138,6 @@ impl Remote {
             .map_err(|error| MoveFailure::Copy {
                 reason: error.to_string(),
             })
-    }
-
-    pub fn close(&self) {
-        if let Some(upstream) = self.upstream.get() {
-            upstream.close();
-        }
     }
 }
 
