@@ -6,9 +6,8 @@
 //! is kept apart from them: it reuses the same pure readers
 //! (`load_sessions`, `load_session_detail`) and the same fence - a
 //! generation per read, one read in flight and at most one waiting - but
-//! nothing here reads the focus. The Project's Memory rides the same read
-//! (`project_memory.rs`); naming a Project never starts or stops analysis,
-//! which runs for every Memory-enabled Project (`memory_analysis.rs`).
+//! nothing here reads the focus. Project Memory is its own section
+//! (`project_memory.rs`), opened by its own event.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -85,8 +84,6 @@ impl Runtime {
                 failure: None,
                 rows: Arc::new(Vec::new()),
                 detail: None,
-                mode: self.sessions_mode_for(workspace_id),
-                memory: None,
             });
             self.project_sessions_work.project_id = None;
             self.project_sessions_work.detail_generation += 1;
@@ -110,7 +107,6 @@ impl Runtime {
                     sessions.failure = None;
                     sessions.rows = Arc::new(Vec::new());
                     sessions.detail = None;
-                    sessions.memory = None;
                 }
                 true
             }
@@ -285,7 +281,6 @@ impl Runtime {
                     .known
                     .insert(sessions.workspace_id.clone(), history.kept);
                 self.project_sessions_work.project_id = Some(history.project_id);
-                self.land_project_memory(history.memory);
                 // A Retry reads the history and then the open session against
                 // its fresh row, so a source that came back opens and one that
                 // went away says so: one action, one event (A6).
@@ -506,7 +501,6 @@ pub(super) struct ProjectHistory {
     project_id: String,
     rows: Vec<SessionRowSnapshot>,
     kept: Arc<Vec<SessionRowSnapshot>>,
-    memory: Option<memory::ProjectMemoryLoad>,
 }
 
 /// Settles a history read on its worker (B5, D-04): each reason in words,
@@ -546,10 +540,7 @@ pub(super) fn settle_history(
     missing: &mut dyn FnMut(&[String]) -> HashSet<String>,
 ) -> ProjectHistory {
     let memory::SessionsLoad {
-        project_id,
-        rows,
-        memory,
-        ..
+        project_id, rows, ..
     } = load;
     let mut rows = rows
         .into_iter()
@@ -598,7 +589,6 @@ pub(super) fn settle_history(
         project_id,
         kept: Arc::new(rows.clone()),
         rows,
-        memory,
     }
 }
 

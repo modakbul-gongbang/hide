@@ -933,8 +933,6 @@ mod tests {
             failure: None,
             rows: Arc::new(vec![]),
             detail: None,
-            mode: Default::default(),
-            memory: None,
         });
         r.project_sessions_work.project_id = Some(project.into());
     }

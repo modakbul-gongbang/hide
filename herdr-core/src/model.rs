@@ -110,6 +110,11 @@ pub struct Snapshot {
     pub project_sessions: Option<ProjectSessionsSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_search: Option<SessionSearchSnapshot>,
+    /// Project Memory (PRD project-memory-v2): the Project a shell opened
+    /// Memory for, and the cards each live agent session on this Mac was
+    /// given. Its own revisioned section, absent until there is either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemorySnapshot>,
     /// Each project's link counts and session chips (PRD link-graph D-45),
     /// absent until the link worker first answers. Its own revisioned
     /// section, off `rest`, so an agent row's change never resends it.
@@ -1525,7 +1530,6 @@ pub enum StripTabKind {
     File,
     Diff,
     Session,
-    Memory,
 }
 
 impl StripTabSnapshot {
@@ -1577,18 +1581,6 @@ impl StripTabSnapshot {
         }
     }
 
-    pub fn memory(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
-        let source_id = source_id.into();
-        Self {
-            id: format!("memory:{source_id}"),
-            kind: StripTabKind::Memory,
-            source_id,
-            label: label.into(),
-            preview,
-            agent_identity: None,
-        }
-    }
-
     /// The strip entry an editor tab stands behind, so a replaced preview tab
     /// can hand its slot to the tab that took its place.
     pub fn editor(tab: &EditorTabSnapshot) -> Self {
@@ -1596,7 +1588,6 @@ impl StripTabSnapshot {
             EditorTabKind::File => Self::file(tab.id.clone(), tab.label.clone(), tab.preview),
             EditorTabKind::Diff => Self::diff(tab.id.clone(), tab.label.clone(), tab.preview),
             EditorTabKind::Session => Self::session(tab.id.clone(), tab.label.clone(), tab.preview),
-            EditorTabKind::Memory => Self::memory(tab.id.clone(), tab.label.clone(), tab.preview),
         }
     }
 
@@ -2324,7 +2315,6 @@ pub enum EditorTabKind {
     File,
     Diff,
     Session,
-    Memory,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2335,7 +2325,6 @@ pub struct ArchiveDetailSnapshot {
     pub provider: Option<String>,
     pub unavailable_reason: Option<String>,
     pub events: Vec<ArchiveEventSnapshot>,
-    pub memory: Option<MemoryDetailSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2345,39 +2334,11 @@ pub struct ArchiveEventSnapshot {
     pub kind: String,
     pub at_unix_ms: u64,
     pub text: String,
-    pub memory_attached_count: Option<usize>,
-    pub memory_attached_item_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryDetailSnapshot {
-    pub id: String,
-    pub body: String,
-    pub lifecycle: String,
-    pub revision: u64,
-    pub source_count: usize,
-    pub provided_session_count: usize,
-    pub learned_at_unix_ms: u64,
-    pub conflict_existing_id: Option<String>,
-    pub conflict_candidate_id: Option<String>,
-    pub sources: Vec<MemorySourceSnapshot>,
-    pub revisions: Vec<MemoryRevisionSnapshot>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemorySourceSnapshot {
-    pub provider: String,
-    pub session_id: String,
-    pub event_offset: u64,
-    pub available: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryRevisionSnapshot {
-    pub revision: u64,
-    pub body: String,
-    pub lifecycle: String,
-    pub created_at_unix_ms: u64,
+    /// The cards a prompt hook gave the agent in full at this prompt, by
+    /// number (PRD project-memory-v2 B13).
+    pub memory_received: Vec<u64>,
+    /// The cards Memory learned from this event and still keeps, by number.
+    pub memory_learned: Vec<u64>,
 }
 
 /// Where the first-run agent choice stands (`ui_state.agent_onboarding`).
@@ -2423,14 +2384,6 @@ impl ThemePreference {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionsMode {
-    #[default]
-    Sessions,
-    Memory,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SessionsProviderFilter {
     #[default]
     All,
@@ -2469,10 +2422,8 @@ pub struct SessionRowSnapshot {
 /// Project's session history and the one session read beside it.
 ///
 /// It is kept apart from [`SessionsSnapshot`], which follows the focused
-/// checkout for the right panel and carries Project Memory, so neither
-/// the operator's focus nor Memory analysis ever moves it, and naming a
-/// Project here changes nothing Memory reads or schedules. A Project stays
-/// named until a shell names another.
+/// checkout for the right panel, so the operator's focus never moves it. A
+/// Project stays named until a shell names another.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProjectSessionsSnapshot {
     pub device_id: String,
@@ -2490,19 +2441,31 @@ pub struct ProjectSessionsSnapshot {
     #[serde(serialize_with = "serialize_session_rows")]
     pub rows: Arc<Vec<SessionRowSnapshot>>,
     pub detail: Option<ProjectSessionDetailSnapshot>,
-    /// Which of the Project's Sessions and Memory the screen shows, kept
-    /// per Project (`ui_state.sessions_mode_by_project`, D-17).
-    pub mode: SessionsMode,
-    /// The Project's Memory once its history read answered for it; `None`
-    /// before then and for a Project not read here.
-    pub memory: Option<ProjectMemorySnapshot>,
 }
 
-/// One Project's Memory as its Sessions screen shows it (PRD
-/// project-memory-v2 B21-B24): the switch, the cards, what analysis needs
+/// Project Memory on the wire: the Project a shell opened Memory for, and
+/// what each live agent session on this Mac was given.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct MemorySnapshot {
+    pub project: Option<ProjectMemorySnapshot>,
+    /// One entry per live agent session given at least one card in full, so a
+    /// pane's menu can name them without opening its Project.
+    #[serde(serialize_with = "serialize_memory_received")]
+    pub received: Arc<Vec<MemoryReceivedSnapshot>>,
+}
+
+/// One Project's Memory as a shell opened it with `memory_open` (PRD
+/// project-memory-v2 B20-B24): the switch, the cards, what analysis needs
 /// from the operator, and the last change with its Undo.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectMemorySnapshot {
+    /// The catalog Project the shell named.
+    pub workspace_id: String,
+    /// Why this Project has no Memory here: it is on another device, or it
+    /// left the catalog.
+    pub unavailable_reason: Option<String>,
+    /// The first read of the Project's Memory has not answered yet.
+    pub loading: bool,
     pub enabled: bool,
     /// Live cards, needing-review ones included, against the store's cap.
     pub capacity_reached: bool,
@@ -2513,7 +2476,172 @@ pub struct ProjectMemorySnapshot {
     pub notice: Option<MemoryNoticeSnapshot>,
     /// The operator's Memory action still running for this Project; another
     /// waits for it.
-    pub pending_action: Option<String>,
+    pub pending_action: Option<MemoryAction>,
+    /// The one card shown in full (`memory_expand`).
+    pub expanded: Option<MemoryCardSnapshot>,
+    /// The matcher's answer to the shell's `memory_search`.
+    pub search: Option<MemorySearchSnapshot>,
+}
+
+/// One card of a Project's Memory list (B21).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryRowSnapshot {
+    /// `m<number>` names it to agents (`hide memory show`) and to every
+    /// Memory event.
+    pub number: u64,
+    pub title: String,
+    pub kind: MemoryCardKind,
+    pub state: MemoryCardState,
+    pub source_count: usize,
+    /// Sources that are the operator's own words.
+    pub human_source_count: usize,
+    /// Distinct sessions given the card in full (D-18).
+    pub provided_session_count: usize,
+    /// Reads with `hide memory show`.
+    pub pull_count: u64,
+    pub last_used_at_unix_ms: Option<u64>,
+    pub updated_at_unix_ms: u64,
+    /// The other card of a needs-review pair, by number.
+    pub conflict_number: Option<u64>,
+    /// The card's text, carried only for a card in a needs-review pair, so
+    /// the two can be compared before one is chosen (B20).
+    pub body: Option<String>,
+}
+
+/// What a card is; the same words the extraction and `hide memory show`
+/// use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryCardKind {
+    Rule,
+    Decision,
+    Lesson,
+    Fact,
+}
+
+/// A live card is in use, or waits for the operator's review of the card it
+/// contradicts; `hide memory show` names the states the same way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryCardState {
+    Active,
+    NeedsReview,
+}
+
+impl MemoryCardState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::NeedsReview => "needs_review",
+        }
+    }
+}
+
+/// One card in full, as a row expanded in place shows it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryCardSnapshot {
+    pub number: u64,
+    pub body: String,
+    /// Repository-relative files the card rests on (B27).
+    pub cited_paths: Vec<String>,
+    pub sources: Vec<MemorySourceSnapshot>,
+}
+
+/// Where a card came from: one event of one session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemorySourceSnapshot {
+    pub provider: String,
+    pub session_id: String,
+    pub event_offset: u64,
+    /// The operator's own words.
+    pub human: bool,
+}
+
+/// The cards a `memory_search` matched, best first.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemorySearchSnapshot {
+    pub query: String,
+    pub numbers: Vec<u64>,
+}
+
+/// The cards the agent session in one pane was given in full, for the
+/// pane's menu; a forget from it names the pane's Project.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryReceivedSnapshot {
+    pub pane_id: String,
+    pub cards: Vec<MemoryReceivedCardSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryReceivedCardSnapshot {
+    pub number: u64,
+    pub title: String,
+}
+
+/// What a Project's Memory analysis needs the operator to see (B23). A
+/// failure the operator cannot act on is logged and never shown.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct MemoryAnalysisSnapshot {
+    pub state: MemoryAnalysisState,
+    pub message: Option<String>,
+    /// The one action that unblocks `needs_action`.
+    pub action: Option<MemoryFix>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAnalysisState {
+    #[default]
+    Idle,
+    Analyzing,
+    NeedsAction,
+}
+
+/// What the operator does to unblock analysis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryFix {
+    SignIn,
+    OpenSettings,
+    UpdateHooks,
+}
+
+/// One operator action on a Project's Memory (`memory_action`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryAction {
+    Enable,
+    Disable,
+    Delete,
+    Forget,
+    Undo,
+    ResolveConflict,
+    UpdateHooks,
+    Retry,
+}
+
+impl MemoryAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Enable => "enable",
+            Self::Disable => "disable",
+            Self::Delete => "delete",
+            Self::Forget => "forget",
+            Self::Undo => "undo",
+            Self::ResolveConflict => "resolve_conflict",
+            Self::UpdateHooks => "update_hooks",
+            Self::Retry => "retry",
+        }
+    }
+}
+
+/// The operator's answer to a needs-review pair; no answer is the default.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryReviewChoice {
+    KeepExisting,
+    ReplaceWithNew,
+    ForgetBoth,
 }
 
 fn serialize_memory_rows<S: serde::Serializer>(
@@ -2521,6 +2649,13 @@ fn serialize_memory_rows<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     rows.as_ref().serialize(serializer)
+}
+
+fn serialize_memory_received<S: serde::Serializer>(
+    received: &Arc<Vec<MemoryReceivedSnapshot>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    received.as_ref().serialize(serializer)
 }
 
 fn serialize_session_rows<S: serde::Serializer>(
@@ -2571,45 +2706,6 @@ fn serialize_shared_archive<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     archive.as_deref().serialize(serializer)
-}
-
-/// One card of a Project's Memory list (B21).
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MemoryRowSnapshot {
-    pub id: String,
-    /// `m<number>` names it to agents (`hide memory show`).
-    pub number: u64,
-    pub title: String,
-    /// `rule`, `decision`, `lesson` or `fact`.
-    pub kind: String,
-    /// `active`, or `conflicting` for a card needing review.
-    pub lifecycle: String,
-    pub source_count: usize,
-    /// Sources that are the operator's own words.
-    pub human_source_count: usize,
-    /// Distinct sessions given the card in full (D-18).
-    pub provided_session_count: usize,
-    /// Reads with `hide memory show`.
-    pub pull_count: u64,
-    pub last_used_at_unix_ms: Option<u64>,
-    pub updated_at_unix_ms: u64,
-    /// The other card of a needs-review pair, by number.
-    pub conflict_number: Option<u64>,
-    /// The card's text, carried only for a card in a needs-review pair, so
-    /// the two can be compared before one is chosen (B20).
-    pub body: Option<String>,
-}
-
-/// What a Project's Memory analysis needs the operator to see (B23): an
-/// `analyzing` progress state, or `needs_action` with the one action that
-/// unblocks it; `idle` otherwise. A failure the operator cannot act on is
-/// logged and never shown.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct MemoryAnalysisSnapshot {
-    pub state: String,
-    pub message: Option<String>,
-    /// `sign_in`, `open_settings`, `update_hooks` or `retry`.
-    pub action: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2760,8 +2856,6 @@ pub struct UiStateSnapshot {
     /// and the section has to come back the way it was left.
     #[serde(default)]
     pub right_panel_section: RightPanelSection,
-    #[serde(default)]
-    pub sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     pub expanded_paths: Vec<String>,
     /// Folders expanded in each SSH device's Explorer, by device id; this
     /// machine's are `expanded_paths`. A path means something only on its
@@ -3308,7 +3402,6 @@ impl Default for UiStateSnapshot {
             device_rail_visible: true,
             right_panel_visible: true,
             right_panel_section: RightPanelSection::default(),
-            sessions_mode_by_project: BTreeMap::new(),
             expanded_paths: Vec::new(),
             device_expanded_paths: BTreeMap::new(),
             collapsed_workspace_ids: Vec::new(),
@@ -4761,6 +4854,7 @@ impl Snapshot {
             browser_views_revision: None,
             project_sessions: None,
             session_search: None,
+            memory: None,
             link_summaries: None,
             link_panel: None,
             factory: None,
@@ -4928,6 +5022,7 @@ pub struct SnapshotDeltaPayload {
     pub documents: Option<DocumentsDelta>,
     pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
     pub session_search: Option<Arc<SessionSearchSnapshot>>,
+    pub memory: Option<Arc<MemorySnapshot>>,
     pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
     pub factory: Option<crate::factory::screen::FactorySection>,
@@ -4973,6 +5068,10 @@ pub struct SnapshotDeltaWire<'a> {
     pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_search: Option<&'a SessionSearchSnapshot>,
+    /// Omitted until Memory has a Project open or a live session given a
+    /// card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<&'a MemorySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_summaries: Option<&'a crate::links::LinkSummariesSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5008,6 +5107,7 @@ impl<'a> SnapshotDeltaWire<'a> {
             }),
             project_sessions: payload.project_sessions.as_deref(),
             session_search: payload.session_search.as_deref(),
+            memory: payload.memory.as_deref(),
             link_summaries: payload.link_summaries.as_deref(),
             link_panel: payload.link_panel.as_deref(),
             factory: payload.factory.as_ref(),
@@ -5409,14 +5509,10 @@ mod wire_enum_tests {
             EditorTabKind::File,
             EditorTabKind::Diff,
             EditorTabKind::Session,
-            EditorTabKind::Memory,
         ];
         for variant in tab_kinds {
             match variant {
-                EditorTabKind::File
-                | EditorTabKind::Diff
-                | EditorTabKind::Session
-                | EditorTabKind::Memory => {}
+                EditorTabKind::File | EditorTabKind::Diff | EditorTabKind::Session => {}
             }
         }
         assert_wire(&contract, "editor_tab_kind", &tab_kinds);
@@ -5512,19 +5608,99 @@ mod wire_enum_tests {
             StripTabKind::File,
             StripTabKind::Diff,
             StripTabKind::Session,
-            StripTabKind::Memory,
         ];
         for variant in strip_kinds {
             match variant {
                 StripTabKind::Herdr
                 | StripTabKind::File
                 | StripTabKind::Diff
-                | StripTabKind::Session
-                | StripTabKind::Memory => {}
+                | StripTabKind::Session => {}
             }
         }
         assert_wire(&contract, "strip_tab_kind", &strip_kinds);
         checked.insert("strip_tab_kind");
+
+        let card_kinds = [
+            MemoryCardKind::Rule,
+            MemoryCardKind::Decision,
+            MemoryCardKind::Lesson,
+            MemoryCardKind::Fact,
+        ];
+        for variant in card_kinds {
+            match variant {
+                MemoryCardKind::Rule
+                | MemoryCardKind::Decision
+                | MemoryCardKind::Lesson
+                | MemoryCardKind::Fact => {}
+            }
+        }
+        assert_wire(&contract, "memory_card_kind", &card_kinds);
+        checked.insert("memory_card_kind");
+
+        let card_states = [MemoryCardState::Active, MemoryCardState::NeedsReview];
+        for variant in card_states {
+            match variant {
+                MemoryCardState::Active | MemoryCardState::NeedsReview => {}
+            }
+            // `hide memory show` names a state the way the snapshot does.
+            assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
+        }
+        assert_wire(&contract, "memory_card_state", &card_states);
+        checked.insert("memory_card_state");
+
+        let analysis_states = [
+            MemoryAnalysisState::Idle,
+            MemoryAnalysisState::Analyzing,
+            MemoryAnalysisState::NeedsAction,
+        ];
+        for variant in analysis_states {
+            match variant {
+                MemoryAnalysisState::Idle
+                | MemoryAnalysisState::Analyzing
+                | MemoryAnalysisState::NeedsAction => {}
+            }
+        }
+        assert_wire(&contract, "memory_analysis_state", &analysis_states);
+        checked.insert("memory_analysis_state");
+
+        let fixes = [
+            MemoryFix::SignIn,
+            MemoryFix::OpenSettings,
+            MemoryFix::UpdateHooks,
+        ];
+        for variant in fixes {
+            match variant {
+                MemoryFix::SignIn | MemoryFix::OpenSettings | MemoryFix::UpdateHooks => {}
+            }
+        }
+        assert_wire(&contract, "memory_fix", &fixes);
+        checked.insert("memory_fix");
+
+        let actions = [
+            MemoryAction::Enable,
+            MemoryAction::Disable,
+            MemoryAction::Delete,
+            MemoryAction::Forget,
+            MemoryAction::Undo,
+            MemoryAction::ResolveConflict,
+            MemoryAction::UpdateHooks,
+            MemoryAction::Retry,
+        ];
+        for variant in actions {
+            match variant {
+                MemoryAction::Enable
+                | MemoryAction::Disable
+                | MemoryAction::Delete
+                | MemoryAction::Forget
+                | MemoryAction::Undo
+                | MemoryAction::ResolveConflict
+                | MemoryAction::UpdateHooks
+                | MemoryAction::Retry => {}
+            }
+            assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
+        }
+        assert_wire(&contract, "memory_action", &actions);
+        checked.insert("memory_action");
 
         let find_routes = [PaneFindRoute::Agent, PaneFindRoute::Bar];
         for variant in find_routes {

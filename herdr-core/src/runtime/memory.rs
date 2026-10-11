@@ -1,8 +1,5 @@
 use super::*;
-use crate::model::{
-    ArchiveEventSnapshot, MemoryDetailSnapshot, MemoryRevisionSnapshot, MemoryRowSnapshot,
-    MemorySourceSnapshot, SessionsProviderFilter, SessionsSnapshot,
-};
+use crate::model::{ArchiveEventSnapshot, SessionsProviderFilter, SessionsSnapshot};
 use crate::node::NodeId;
 use crate::node_access::{NodeLink, call_as};
 use hide_memory::{MemoryStore, SessionCursorRecord, SessionSourceRecord};
@@ -20,14 +17,6 @@ pub(super) struct SessionsLoad {
     pub(super) project_id: String,
     pub(super) checkout_path: String,
     pub(super) rows: Vec<SessionRowSnapshot>,
-    /// The Project's Memory when the store knows the Project.
-    pub(super) memory: Option<ProjectMemoryLoad>,
-}
-
-/// A Project's Memory as one read of the store found it.
-pub(super) struct ProjectMemoryLoad {
-    pub(super) state: hide_memory::ProjectMemoryState,
-    pub(super) rows: Vec<MemoryRowSnapshot>,
 }
 
 fn sessions_load_matches_scope(
@@ -255,12 +244,6 @@ impl Runtime {
             .iter()
             .find(|row| row.id == id)
             .cloned();
-        let available_sources = self
-            .session_catalog_rows
-            .iter()
-            .filter(|row| row.unavailable_reason.is_none())
-            .map(|row| (row.provider.clone(), row.id.clone()))
-            .collect::<HashSet<_>>();
         let database = self.memory_database_path();
         let project_id = self.snapshot.sessions.project_id.clone();
         let sessions_node = self.own_node();
@@ -280,11 +263,6 @@ impl Runtime {
                                         row,
                                     )
                                 })
-                        }),
-                    "memory" => project_id
-                        .ok_or_else(|| "Project Memory is unavailable".to_owned())
-                        .and_then(|project_id| {
-                            load_memory_detail(&database, &project_id, &id, &available_sources)
                         }),
                     _ => Err("Archive detail kind is unsupported".to_owned()),
                 };
@@ -470,72 +448,34 @@ pub(super) fn load_sessions(
         .into_iter()
         .map(project_session_row)
         .collect::<Vec<_>>();
-    let memory = if MemoryStore::exists(database) {
+    // The sessions Memory recorded for the Project and no longer finds
+    // stay listed as unavailable, with Memory's reason.
+    if MemoryStore::exists(database) {
         let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
-        match load_project_memory(&store, &identity.id)? {
-            Some(memory) => {
-                let current = rows
-                    .iter()
-                    .map(|row| (row.provider.clone(), row.id.clone()))
-                    .collect::<HashSet<_>>();
-                for source in store
-                    .list_session_sources(&identity.id)
-                    .map_err(|error| error.to_string())?
-                {
-                    if !current.contains(&(source.provider.clone(), source.id.clone())) {
-                        rows.push(persisted_unavailable_session_row(source));
-                    }
-                }
-                rows.sort_by(|left, right| {
-                    right
-                        .updated_at_unix_ms
-                        .cmp(&left.updated_at_unix_ms)
-                        .then_with(|| left.id.cmp(&right.id))
-                });
-                Some(memory)
+        let current = rows
+            .iter()
+            .map(|row| (row.provider.clone(), row.id.clone()))
+            .collect::<HashSet<_>>();
+        for source in store
+            .list_session_sources(&identity.id)
+            .map_err(|error| error.to_string())?
+        {
+            if !current.contains(&(source.provider.clone(), source.id.clone())) {
+                rows.push(persisted_unavailable_session_row(source));
             }
-            None => None,
         }
-    } else {
-        None
-    };
+        rows.sort_by(|left, right| {
+            right
+                .updated_at_unix_ms
+                .cmp(&left.updated_at_unix_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+    }
     Ok(SessionsLoad {
         project_id: identity.id,
         checkout_path: checkout_path.to_owned(),
         rows,
-        memory,
     })
-}
-
-/// The Project's Memory switch and cards, or `None` when the store has never
-/// held the Project.
-pub(super) fn load_project_memory(
-    store: &MemoryStore,
-    project_id: &str,
-) -> Result<Option<ProjectMemoryLoad>, String> {
-    let state = match store.project_state(project_id) {
-        Ok(state) => state,
-        Err(hide_memory::MemoryError::ProjectMissing) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    let items = store
-        .list_memories(project_id)
-        .map_err(|error| error.to_string())?;
-    // A card in a needs-review pair carries its text, and so does the card
-    // it contradicts, so the two read side by side (B20).
-    let paired = items
-        .iter()
-        .filter_map(|item| item.conflict_number)
-        .collect::<HashSet<_>>();
-    let rows = items
-        .into_iter()
-        .map(|item| {
-            let compared = paired.contains(&item.number)
-                || item.lifecycle == hide_memory::MemoryLifecycle::Conflicting;
-            memory_row(item, compared)
-        })
-        .collect();
-    Ok(Some(ProjectMemoryLoad { state, rows }))
 }
 
 fn persisted_unavailable_session_row(source: SessionSourceRecord) -> SessionRowSnapshot {
@@ -578,28 +518,6 @@ fn project_session_row(session: ProjectSession) -> SessionRowSnapshot {
     }
 }
 
-fn memory_row(item: hide_memory::MemoryItem, with_body: bool) -> MemoryRowSnapshot {
-    MemoryRowSnapshot {
-        id: item.id,
-        number: item.number,
-        title: item.title,
-        kind: item.kind.as_str().to_owned(),
-        lifecycle: lifecycle_name(item.lifecycle),
-        source_count: item.source_count,
-        human_source_count: item.human_source_count,
-        provided_session_count: item.provided_session_count,
-        pull_count: item.pull_count,
-        last_used_at_unix_ms: item.last_used_at_unix_ms,
-        updated_at_unix_ms: item.updated_at_unix_ms,
-        conflict_number: item.conflict_number,
-        body: with_body.then_some(item.body),
-    }
-}
-
-fn lifecycle_name(value: hide_memory::MemoryLifecycle) -> String {
-    format!("{value:?}").to_ascii_lowercase()
-}
-
 pub(super) fn load_session_detail(
     sessions_node: &dyn NodeLink,
     database: &Path,
@@ -617,7 +535,6 @@ pub(super) fn load_session_detail(
             provider: Some(row.provider_label),
             unavailable_reason: Some(reason),
             events: Vec::new(),
-            memory: None,
         });
     }
     if Agent::from_kind(&row.provider) == Some(Agent::OpenCode) {
@@ -711,7 +628,9 @@ pub(super) fn load_session_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    // A message a format splits into records is one message to read.
+    let learned = learned_by_offset(store.as_ref(), project_id, &row.provider, &row.id)?;
+    // A message a format splits into records is one message to read, and
+    // analysis names a card's source by the same joined message.
     parsed.coalesce();
     let events = parsed
         .events
@@ -728,22 +647,18 @@ pub(super) fn load_session_detail(
                     &event.text,
                 )
             });
-            let attached = receipt.as_ref().map(|receipt| receipt.count);
-            let item_ids = receipt
-                .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
-                .unwrap_or_default();
             ArchiveEventSnapshot {
                 source_offset: Some(source_offset),
                 role: event.role.to_owned(),
                 kind: event.kind.as_str().to_owned(),
                 at_unix_ms: event.at_unix_ms,
-                text: if attached.is_some() {
+                text: if receipt.is_some() {
                     strip_memory_receipt(&event.text)
                 } else {
                     event.text
                 },
-                memory_attached_count: attached,
-                memory_attached_item_ids: item_ids,
+                memory_received: receipt.map(|receipt| receipt.numbers()).unwrap_or_default(),
+                memory_learned: learned.get(&source_offset).cloned().unwrap_or_default(),
             }
         })
         .collect();
@@ -757,8 +672,28 @@ pub(super) fn load_session_detail(
         provider: Some(row.provider_label),
         unavailable_reason: None,
         events,
-        memory: None,
     })
+}
+
+/// The cards learned from a session that are still kept, by the offset of
+/// the event each came from.
+fn learned_by_offset(
+    store: Option<&MemoryStore>,
+    project_id: &str,
+    provider: &str,
+    session_id: &str,
+) -> Result<HashMap<u64, Vec<u64>>, String> {
+    let mut learned: HashMap<u64, Vec<u64>> = HashMap::new();
+    let Some(store) = store else {
+        return Ok(learned);
+    };
+    for (offset, number) in store
+        .learned_from(project_id, provider, session_id)
+        .map_err(|error| error.to_string())?
+    {
+        learned.entry(offset).or_default().push(number);
+    }
+    Ok(learned)
 }
 
 /// The most bounded reads one OpenCode archive detail takes: a session read
@@ -821,6 +756,7 @@ fn load_opencode_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
+    let learned = learned_by_offset(store.as_ref(), project_id, &row.provider, &row.id)?;
     let events = events
         .into_iter()
         .map(|event| {
@@ -849,10 +785,8 @@ fn load_opencode_detail(
                 }
                 .to_owned(),
                 at_unix_ms: event.at_unix_ms,
-                memory_attached_count: receipt.as_ref().map(|receipt| receipt.count),
-                memory_attached_item_ids: receipt
-                    .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
-                    .unwrap_or_default(),
+                memory_received: receipt.map(|receipt| receipt.numbers()).unwrap_or_default(),
+                memory_learned: learned.get(&event.offset).cloned().unwrap_or_default(),
                 text: event.text,
             }
         })
@@ -867,13 +801,11 @@ fn load_opencode_detail(
         provider: Some(row.provider_label),
         unavailable_reason: None,
         events,
-        memory: None,
     })
 }
 
 pub(super) struct MemoryReceipt {
     event: String,
-    count: usize,
     item_key: String,
     items: Vec<(String, u64)>,
     auth: String,
@@ -889,6 +821,14 @@ impl MemoryReceipt {
     /// The cards it names as `m<number>@<revision>`, comma-separated.
     pub(super) fn item_key(&self) -> &str {
         &self.item_key
+    }
+
+    /// The numbers of the cards it names.
+    fn numbers(&self) -> Vec<u64> {
+        self.items
+            .iter()
+            .filter_map(|(name, _)| hide_memory::parse_card_name(name))
+            .collect()
     }
 }
 
@@ -947,7 +887,6 @@ fn memory_receipt(text: &str) -> Option<MemoryReceipt> {
     let auth = marker[auth_start..].split_once('"')?.0.to_owned();
     (items.len() == count).then_some(MemoryReceipt {
         event,
-        count,
         item_key: raw_items.to_owned(),
         items,
         auth,
@@ -959,68 +898,4 @@ fn strip_memory_receipt(text: &str) -> String {
         .filter(|line| !line.trim_start().starts_with("<hide-memory-receipt "))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn load_memory_detail(
-    database: &Path,
-    project_id: &str,
-    item_id: &str,
-    available_sources: &HashSet<(String, String)>,
-) -> Result<ArchiveDetailSnapshot, String> {
-    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
-    let detail = store
-        .detail(project_id, item_id)
-        .map_err(|error| error.to_string())?;
-    let (conflict_existing_id, conflict_candidate_id) = detail
-        .conflict_pair
-        .clone()
-        .map(|(existing, candidate)| (Some(existing), Some(candidate)))
-        .unwrap_or((None, None));
-    let title = detail.item.body.chars().take(48).collect();
-    Ok(ArchiveDetailSnapshot {
-        id: detail.item.id.clone(),
-        kind: "memory".to_owned(),
-        title,
-        provider: None,
-        unavailable_reason: None,
-        events: Vec::new(),
-        memory: Some(MemoryDetailSnapshot {
-            id: detail.item.id,
-            body: detail.item.body,
-            lifecycle: lifecycle_name(detail.item.lifecycle),
-            revision: detail.item.revision,
-            source_count: detail.item.source_count,
-            provided_session_count: detail.item.provided_session_count,
-            learned_at_unix_ms: detail.item.learned_at_unix_ms,
-            conflict_existing_id,
-            conflict_candidate_id,
-            sources: detail
-                .sources
-                .into_iter()
-                .map(|source| {
-                    let available = source.available
-                        && available_sources
-                            .contains(&(source.provider.clone(), source.session_id.clone()));
-                    MemorySourceSnapshot {
-                        provider: source.provider,
-                        session_id: source.session_id,
-                        event_offset: source.event_offset,
-                        available,
-                    }
-                })
-                .collect(),
-            revisions: detail
-                .revisions
-                .into_iter()
-                .map(
-                    |(revision, body, lifecycle, created_at_unix_ms)| MemoryRevisionSnapshot {
-                        revision,
-                        body,
-                        lifecycle: lifecycle_name(lifecycle),
-                        created_at_unix_ms,
-                    },
-                )
-                .collect(),
-        }),
-    })
 }

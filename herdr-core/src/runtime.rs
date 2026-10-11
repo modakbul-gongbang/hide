@@ -32,7 +32,7 @@ mod op_timing;
 mod operations;
 mod pane_prediction;
 mod pane_reopen;
-mod project_memory;
+pub(crate) mod project_memory;
 mod project_sessions;
 mod projects;
 mod pull_requests;
@@ -1380,7 +1380,7 @@ pub struct Runtime {
     /// (`runtime/memory_analysis.rs`).
     memory_work: memory_analysis::MemoryWork,
     /// The named Project's Memory reads and action (`runtime/project_memory.rs`).
-    project_memory_reads: project_memory::ProjectMemoryReads,
+    project_memory: project_memory::ProjectMemoryWork,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
@@ -2001,7 +2001,7 @@ impl Runtime {
             search_generation: 0,
             links_work: links::LinksWork::default(),
             memory_work: Default::default(),
-            project_memory_reads: Default::default(),
+            project_memory: Default::default(),
             editor_tab_history: Vec::new(),
             worker_context: None,
             pending_session_resolutions: BTreeMap::new(),

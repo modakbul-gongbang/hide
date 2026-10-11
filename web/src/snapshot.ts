@@ -524,7 +524,7 @@ export type Tab = {
 
 export type StripTab = {
   id: string;
-  kind: "herdr" | "file" | "diff" | "session" | "memory";
+  kind: "herdr" | "file" | "diff" | "session";
   source_id: string;
   label: string;
   preview: boolean;
@@ -874,7 +874,7 @@ export type PaneFindRoute = "agent" | "bar";
 /** What kind of document the core decided an open file is (`files::open`). */
 export type DocumentKind = "text" | "markdown" | "image" | "pdf" | "binary";
 
-export type EditorTabKind = "file" | "diff" | "session" | "memory";
+export type EditorTabKind = "file" | "diff" | "session";
 
 /** One editor tab the core holds. Its id is the strip entry's `source_id`. */
 export type EditorTabSnapshot = {

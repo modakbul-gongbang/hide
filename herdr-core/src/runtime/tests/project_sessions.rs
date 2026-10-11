@@ -259,7 +259,6 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
         project_id: "zeta".to_owned(),
         checkout_path: String::new(),
         rows: zeta_rows.to_vec(),
-        memory: None,
     };
     let landed = runtime.ingest_project_sessions(
         stale,
@@ -480,7 +479,6 @@ fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
         project_id: "older".to_owned(),
         checkout_path: String::new(),
         rows: Vec::new(),
-        memory: None,
     };
     runtime.ingest_project_sessions(
         running,
@@ -778,8 +776,6 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
         failure: None,
         rows: Arc::new(vec![]),
         detail: None,
-        mode: Default::default(),
-        memory: None,
     });
     r.project_sessions_work.project_id = Some("p".into());
     let shared = SharedRuntime::new(r);
@@ -852,8 +848,6 @@ fn search_capacity_reason_survives_publication() {
         failure: None,
         rows,
         detail: None,
-        mode: Default::default(),
-        memory: None,
     });
     r.project_sessions_work.project_id = Some("p".into());
     let shared = SharedRuntime::new(r);

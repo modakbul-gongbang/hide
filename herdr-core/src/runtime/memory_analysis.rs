@@ -21,7 +21,7 @@ use super::memory::{
 };
 use super::*;
 use crate::labels::worker::{MemoryHandoff, MemorySession, SightedMemoryReceipt};
-use crate::model::{MemoryAnalysisSnapshot, MemoryNoticeSnapshot};
+use crate::model::{MemoryAnalysisSnapshot, MemoryAnalysisState, MemoryFix, MemoryNoticeSnapshot};
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
@@ -182,14 +182,17 @@ impl Runtime {
                     }));
                 }
             }
-            if closed
-                || live
-                    .iter()
-                    .any(|session| !work.live_sessions.contains(session))
-            {
+            let opened = live
+                .iter()
+                .any(|session| !work.live_sessions.contains(session));
+            if closed || opened {
                 work.next_pass_unix_ms = 0;
             }
+            let moved = live != work.live_sessions;
             work.live_sessions = live;
+            if moved {
+                self.refresh_memory_received();
+            }
         }
         if !handoff.receipts.is_empty() {
             self.record_memory_receipts(handoff.receipts);
@@ -222,6 +225,7 @@ impl Runtime {
         let spawn = thread::Builder::new()
             .name("hide-memory-receipts".to_owned())
             .spawn(move || {
+                let mut recorded_any = false;
                 loop {
                     let Some(runtime) = context.runtime.upgrade() else {
                         return;
@@ -232,6 +236,11 @@ impl Runtime {
                             let batch = std::mem::take(&mut work.receipts_pending);
                             if batch.is_empty() {
                                 work.receipts_in_flight = false;
+                                // What a pane's session was given is read
+                                // again for its menu.
+                                if recorded_any {
+                                    guard.refresh_memory_received();
+                                }
                             }
                             batch
                         }
@@ -243,6 +252,7 @@ impl Runtime {
                     }
                     // A defect in one batch must not leave the flag set, which
                     // would stop every later batch from starting a worker.
+                    recorded_any = true;
                     let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         record_sighted_receipts(&node, sessions_node.as_ref(), &database, batch)
                     }));
@@ -366,7 +376,7 @@ impl Runtime {
         }
         let mut changed = false;
         for project in work.projects.values_mut() {
-            if project.analysis.state == "analyzing" {
+            if project.analysis.state == MemoryAnalysisState::Analyzing {
                 project.analysis = MemoryAnalysisSnapshot::default();
                 changed = true;
             }
@@ -410,6 +420,11 @@ impl Runtime {
         };
         work.usage_unread_since_unix_ms = None;
         usage
+    }
+
+    /// The sessions this Mac's live panes hold now.
+    pub(super) fn live_memory_sessions(&self) -> &BTreeSet<MemorySession> {
+        &self.memory_work.live_sessions
     }
 
     /// Whether the usage reader reads with no window attached: a pass wants
@@ -461,10 +476,12 @@ impl Runtime {
         }
         let mut changed = false;
         for project in self.memory_work.projects.values_mut() {
-            if project.retry_at_unix_ms != 0 || project.analysis.state == "needs_action" {
+            if project.retry_at_unix_ms != 0
+                || project.analysis.state == MemoryAnalysisState::NeedsAction
+            {
                 project.retry_at_unix_ms = 0;
                 project.failures = 0;
-                if project.analysis.state == "needs_action" {
+                if project.analysis.state == MemoryAnalysisState::NeedsAction {
                     project.analysis = MemoryAnalysisSnapshot::default();
                 }
                 changed = true;
@@ -486,7 +503,7 @@ impl Runtime {
             .or_default();
         project.retry_at_unix_ms = 0;
         project.failures = 0;
-        if project.analysis.state == "needs_action" {
+        if project.analysis.state == MemoryAnalysisState::NeedsAction {
             project.analysis = MemoryAnalysisSnapshot::default();
         }
         self.memory_work.next_pass_unix_ms = 0;
@@ -519,6 +536,7 @@ impl Runtime {
             self.sync_project_memory();
             self.refresh_project_memory();
         }
+        self.refresh_memory_received();
     }
 
     /// Applies one report; answers whether the screen changed.
@@ -534,7 +552,7 @@ impl Runtime {
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = MemoryAnalysisSnapshot {
-                    state: "analyzing".to_owned(),
+                    state: MemoryAnalysisState::Analyzing,
                     message: None,
                     action: None,
                 };
@@ -605,17 +623,17 @@ fn analysis_after_failure(
     match error {
         AiError::NotAuthenticated => (
             MemoryAnalysisSnapshot {
-                state: "needs_action".to_owned(),
+                state: MemoryAnalysisState::NeedsAction,
                 message: Some("Sign in to the agent Hide AI runs on".to_owned()),
-                action: Some("sign_in".to_owned()),
+                action: Some(MemoryFix::SignIn),
             },
             now_unix_ms.saturating_add(SIGN_IN_RETRY_MS),
         ),
         AiError::NoProvider(_) | AiError::Unsupported(_) => (
             MemoryAnalysisSnapshot {
-                state: "needs_action".to_owned(),
+                state: MemoryAnalysisState::NeedsAction,
                 message: Some("Choose an agent for Hide AI".to_owned()),
-                action: Some("open_settings".to_owned()),
+                action: Some(MemoryFix::OpenSettings),
             },
             now_unix_ms.saturating_add(SIGN_IN_RETRY_MS),
         ),
@@ -2005,6 +2023,45 @@ mod tests {
     }
 
     #[test]
+    fn a_conversation_names_the_cards_a_prompt_received_and_the_ones_learned_from_it() {
+        // P1-2: the Sessions conversation's quiet lines, by card number.
+        let fixture = Fixture::new();
+        fixture.answer(&[]);
+        assert_eq!(
+            fixture.pass(false, true, WeeklyUsage::Unknown),
+            ["analyzing", "learned one"]
+        );
+        let row = crate::model::SessionRowSnapshot {
+            id: SESSION.to_owned(),
+            provider: "claude".to_owned(),
+            provider_label: "Claude Code".to_owned(),
+            locator: fixture.locator.to_string_lossy().into_owned(),
+            checkout_path: fixture.root.to_string_lossy().into_owned(),
+            first_human_request: None,
+            started_at_unix_ms: None,
+            updated_at_unix_ms: 1,
+            title: None,
+            unavailable_reason: None,
+        };
+
+        let detail = super::super::memory::load_session_detail(
+            fixture.node.as_ref(),
+            &fixture.database,
+            &fixture.project_id,
+            row,
+        )
+        .unwrap();
+
+        let marks = detail
+            .events
+            .iter()
+            .map(|event| (event.memory_learned.clone(), event.memory_received.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(marks, [(vec![2], vec![]), (vec![], vec![1])]);
+        assert!(!detail.events[1].text.contains("hide-memory-receipt"));
+    }
+
+    #[test]
     fn a_session_quiet_for_thirty_minutes_is_analyzed_and_one_quiet_a_moment_less_waits() {
         // B1, D-07.
         let fixture = Fixture::new();
@@ -2226,8 +2283,8 @@ mod tests {
         let now = 1_000_000;
         let (shown, retry) = analysis_after_failure(&AiError::NotAuthenticated, 1, now);
         assert_eq!(
-            (shown.state.as_str(), shown.action.as_deref()),
-            ("needs_action", Some("sign_in"))
+            (shown.state, shown.action),
+            (MemoryAnalysisState::NeedsAction, Some(MemoryFix::SignIn))
         );
         assert_eq!(retry, now + SIGN_IN_RETRY_MS);
 

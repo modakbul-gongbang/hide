@@ -529,8 +529,6 @@ fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() 
         failure: None,
         rows: Arc::new(vec![row; 2000]),
         detail: None,
-        mode: Default::default(),
-        memory: None,
     });
     r.snapshot.session_search = Some(crate::model::SessionSearchSnapshot {
         workspace_id: "p".into(),

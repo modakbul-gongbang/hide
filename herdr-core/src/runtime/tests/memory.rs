@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{
-    ArchiveDetailSnapshot, MemoryDetailSnapshot, RightPanelSection, SessionRowSnapshot,
-    SessionsMode, SessionsProviderFilter,
+    ArchiveDetailSnapshot, MemoryAction, MemoryFix, ProjectMemorySnapshot, RightPanelSection,
+    SessionRowSnapshot, SessionsProviderFilter,
 };
 
 fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> SessionRowSnapshot {
@@ -24,26 +24,30 @@ fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> 
     }
 }
 
-/// A runtime whose screen names the fixture's first Project, as the history
+/// A runtime with the fixture's first Project's Memory open, as its first
 /// read leaves it, with Memory's Project id `project-1`.
-fn named_project() -> (Runtime, String) {
+fn opened_project() -> (Runtime, String) {
     let mut runtime = runtime();
     runtime.ingest_session(Ok(context_payload()));
     let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
-    runtime.refresh_project_sessions(None, &workspace);
-    runtime.project_sessions_work.project_id = Some("project-1".to_owned());
+    assert!(runtime.open_project_memory(Some(workspace.clone())));
+    runtime.project_memory.project_id = Some("project-1".to_owned());
     runtime.snapshot.status.last_error = None;
     (runtime, workspace)
 }
 
-fn action(workspace: &str, action: &str) -> crate::runtime::events::MemoryActionPayload {
+fn opened(runtime: &Runtime) -> Option<&ProjectMemorySnapshot> {
+    runtime.snapshot.memory.as_ref()?.project.as_ref()
+}
+
+fn action(workspace: &str, action: MemoryAction) -> crate::runtime::events::MemoryActionPayload {
     crate::runtime::events::MemoryActionPayload {
         workspace_id: workspace.to_owned(),
-        action: action.to_owned(),
-        item_id: None,
-        candidate_id: None,
+        action,
+        number: None,
+        other_number: None,
         batch_id: None,
-        conflict_choice: None,
+        choice: None,
     }
 }
 
@@ -102,46 +106,7 @@ fn the_agent_sessions_tool_does_not_activate_the_memory_reader() {
 }
 
 #[test]
-fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
-    let mut runtime = runtime();
-    let detail = |revision: u64, body: &str| ArchiveDetailSnapshot {
-        id: "memory-1".to_owned(),
-        kind: "memory".to_owned(),
-        title: "Memory".to_owned(),
-        provider: None,
-        unavailable_reason: None,
-        events: Vec::new(),
-        memory: Some(MemoryDetailSnapshot {
-            id: "memory-1".to_owned(),
-            body: body.to_owned(),
-            lifecycle: "active".to_owned(),
-            revision,
-            source_count: 0,
-            provided_session_count: 0,
-            learned_at_unix_ms: 1,
-            conflict_existing_id: None,
-            conflict_candidate_id: None,
-            sources: Vec::new(),
-            revisions: Vec::new(),
-        }),
-    };
-
-    runtime.show_archive_tab("workspace", "checkout", detail(1, "First"), true);
-    runtime.show_archive_tab("workspace", "checkout", detail(2, "Updated"), false);
-
-    let memory = runtime
-        .snapshot
-        .editor
-        .archive_detail
-        .as_ref()
-        .and_then(|archive| archive.memory.as_ref())
-        .expect("active memory detail");
-    assert_eq!(memory.revision, 2);
-    assert_eq!(memory.body, "Updated");
-}
-
-#[test]
-fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
+fn session_tabs_share_the_preview_slot_and_promote_in_place() {
     let mut runtime = runtime();
     let archive = |kind: &str, id: &str, title: &str| ArchiveDetailSnapshot {
         id: id.to_owned(),
@@ -150,7 +115,6 @@ fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
         provider: None,
         unavailable_reason: None,
         events: Vec::new(),
-        memory: None,
     };
 
     runtime.show_diff_tab("workspace", "checkout", "/fixture/notes.md", false, true);
@@ -175,13 +139,11 @@ fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
     runtime.show_archive_tab(
         "workspace",
         "checkout",
-        archive("memory", "m1", "Memory"),
+        archive("session", "s2", "Claude Code · Review"),
         true,
     );
     assert_eq!(runtime.snapshot.editor.tabs.len(), 2);
-    assert_eq!(runtime.snapshot.editor.tabs[0].kind, EditorTabKind::Session);
     assert!(!runtime.snapshot.editor.tabs[0].preview);
-    assert_eq!(runtime.snapshot.editor.tabs[1].kind, EditorTabKind::Memory);
     assert!(runtime.snapshot.editor.tabs[1].preview);
 }
 
@@ -224,63 +186,70 @@ fn session_filter_and_query_keep_the_catalogs_existing_order() {
 }
 
 #[test]
-fn a_projects_sessions_or_memory_choice_is_kept_per_project() {
-    // D-17: the switch follows the named Project, and a screen still showing
-    // another Project changes nothing.
-    let (mut runtime, workspace) = named_project();
-    assert_eq!(
-        runtime.snapshot.project_sessions.as_ref().unwrap().mode,
-        SessionsMode::Sessions
-    );
+fn memory_opens_for_a_project_without_its_sessions_and_closes() {
+    // The Memory screen names its own Project and waits for no Sessions
+    // history read; opening another leaves nothing of the first.
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
 
-    assert!(!runtime.set_sessions_mode("another-project", "memory"));
-    assert!(runtime.set_sessions_mode(&workspace, "memory"));
-    assert!(!runtime.set_sessions_mode(&workspace, "memory"));
+    assert!(runtime.open_project_memory(Some(workspace.clone())));
+    assert!(runtime.snapshot.project_sessions.is_none());
+    let project = opened(&runtime).expect("Memory is open");
+    assert_eq!(project.workspace_id, workspace);
+    assert_eq!(project.unavailable_reason, None);
 
+    assert!(runtime.open_project_memory(Some("gone-project".to_owned())));
+    let project = opened(&runtime).unwrap();
+    assert_eq!(project.workspace_id, "gone-project");
     assert_eq!(
-        runtime.snapshot.project_sessions.as_ref().unwrap().mode,
-        SessionsMode::Memory
+        project.unavailable_reason.as_deref(),
+        Some("This Project is no longer registered.")
     );
-    assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .sessions_mode_by_project
-            .get(&workspace),
-        Some(&SessionsMode::Memory)
+    assert_eq!(runtime.named_memory_project(), None);
+
+    assert!(runtime.open_project_memory(None));
+    assert!(opened(&runtime).is_none());
+    assert!(!runtime.open_project_memory(None));
+}
+
+#[test]
+fn expanding_or_searching_a_project_memory_does_not_open_shows_nothing() {
+    let (mut runtime, workspace) = opened_project();
+
+    assert!(!runtime.expand_memory_card("another-project", Some(3)));
+    assert!(!runtime.search_project_memory("another-project", "lint".to_owned()));
+    assert!(runtime.expand_memory_card(&workspace, Some(3)));
+    assert!(
+        !runtime.expand_memory_card(&workspace, Some(3)),
+        "already shown"
     );
-    runtime.snapshot.project_sessions = None;
-    runtime.refresh_project_sessions(None, &workspace);
+    assert!(runtime.search_project_memory(&workspace, " lint ".to_owned()));
+    assert!(!runtime.search_project_memory(&workspace, "lint".to_owned()));
+    assert!(runtime.search_project_memory(&workspace, "x".repeat(2_000)));
     assert_eq!(
-        runtime.snapshot.project_sessions.as_ref().unwrap().mode,
-        SessionsMode::Memory,
-        "naming the Project again shows what it showed last"
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "memory.search_too_long"
     );
 }
 
 #[test]
-fn a_memory_action_for_a_project_the_screen_no_longer_names_changes_nothing() {
-    let (mut runtime, _) = named_project();
+fn a_memory_action_for_a_project_no_longer_registered_says_so() {
+    let (mut runtime, _) = opened_project();
 
-    assert!(!runtime.apply_memory_action(action("another-project", "disable")));
-    assert!(runtime.snapshot.status.last_error.is_none());
-    assert!(runtime.project_memory_reads.action.is_none());
+    assert!(runtime.apply_memory_action(action("another-project", MemoryAction::Disable)));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "memory.project_unavailable"
+    );
+    assert!(runtime.project_memory.action.is_none());
 }
 
 #[test]
-fn a_cli_change_shows_its_notice_on_the_named_project_only() {
+fn a_cli_change_shows_its_notice_on_the_opened_project_only() {
     // `hide memory add|forget` writes off the lock; the screen reads again.
-    let (mut runtime, _) = named_project();
-    runtime.snapshot.project_sessions.as_mut().unwrap().memory =
-        Some(crate::model::ProjectMemorySnapshot::default());
-    let shown = |runtime: &Runtime| {
-        runtime
-            .snapshot
-            .project_sessions
-            .as_ref()
-            .and_then(|sessions| sessions.memory.as_ref())
-            .and_then(|memory| memory.notice.clone())
-    };
+    let (mut runtime, _) = opened_project();
+    let shown = |runtime: &Runtime| opened(runtime).and_then(|project| project.notice.clone());
     let notice = |message: &str| crate::model::MemoryNoticeSnapshot {
         message: message.to_owned(),
         undo_batch_id: Some("batch-1".to_owned()),
@@ -291,6 +260,34 @@ fn a_cli_change_shows_its_notice_on_the_named_project_only() {
 
     runtime.note_memory_change("project-1", Some(notice("Forgot m5")));
     assert_eq!(shown(&runtime), Some(notice("Forgot m5")));
+}
+
+#[test]
+fn a_panes_menu_lists_what_its_live_session_was_given() {
+    // P1-2: the received cards ride the pane that holds the session.
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let pane = runtime.snapshot.navigator.agents[0].pane_id.clone();
+    runtime.snapshot.navigator.agents[0].agent_kind = "codex".to_owned();
+    runtime.snapshot.navigator.agents[0].session_id = Some("s-1".to_owned());
+    let cards = vec![crate::model::MemoryReceivedCardSnapshot {
+        number: 5,
+        title: "Lint before tests".to_owned(),
+    }];
+    runtime
+        .project_memory
+        .received
+        .insert(("codex", "s-1".to_owned()), cards.clone());
+
+    assert!(runtime.publish_memory_received());
+    assert_eq!(
+        *runtime.snapshot.memory.as_ref().unwrap().received,
+        vec![crate::model::MemoryReceivedSnapshot {
+            pane_id: pane,
+            cards
+        }]
+    );
+    assert!(!runtime.publish_memory_received(), "nothing moved");
 }
 
 #[test]
@@ -469,7 +466,7 @@ fn the_largest_comparison_set_and_event_group_fit_one_request() {
 
 #[test]
 fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
-    let (mut runtime, workspace) = named_project();
+    let (mut runtime, workspace) = opened_project();
     let diagnosis = |status| hide_agent_hooks::Diagnosis {
         runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
             runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -505,28 +502,18 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
         },
     );
 
-    runtime.apply_memory_action(action(&workspace, "enable"));
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
     assert_eq!(
-        runtime
-            .snapshot
-            .project_sessions
-            .as_ref()
-            .and_then(|sessions| sessions.memory.as_ref())
-            .map(|memory| memory.analysis.action.clone()),
-        None,
-        "no history read has landed Memory yet"
+        opened(&runtime).and_then(|project| project.analysis.action),
+        Some(MemoryFix::UpdateHooks),
+        "Memory waits for the hook update the screen offers"
     );
-    assert!(
-        runtime
-            .project_memory_reads
-            .enable_after_hook_update
-            .is_none()
-    );
+    assert!(runtime.project_memory.enable_after_hook_update.is_none());
     assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
 
-    runtime.apply_memory_action(action(&workspace, "update_hooks"));
+    runtime.apply_memory_action(action(&workspace, MemoryAction::UpdateHooks));
     assert_eq!(
-        runtime.project_memory_reads.enable_after_hook_update,
+        runtime.project_memory.enable_after_hook_update,
         Some(workspace.clone())
     );
     assert_eq!(
@@ -539,12 +526,9 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
     runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
     }));
-    assert!(
-        runtime
-            .project_memory_reads
-            .enable_after_hook_update
-            .is_none()
-    );
+    assert!(runtime.project_memory.enable_after_hook_update.is_none());
+    // Past the hook gate the enable goes to the store writer, which this
+    // fixture has none of: the refusal is the writer's, not the gate's.
     assert_eq!(
         runtime
             .snapshot
@@ -554,7 +538,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             .expect("the approved enable intent resumed")
             .kind,
         "memory.worker_unavailable",
-        "the approved enable resumed once the hooks carry Memory"
+        "the approved enable passed the hook gate once the hooks carry Memory"
     );
 }
 

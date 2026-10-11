@@ -638,14 +638,6 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) usage_popover_open: Option<bool>,
 }
 
-/// Shows the named Project's Sessions or its Memory (PRD project-memory-v2
-/// D-17).
-#[derive(Debug, Deserialize)]
-pub(super) struct SessionsModePayload {
-    pub(super) workspace_id: String,
-    pub(super) mode: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct SessionsFilterPayload {
     pub(super) provider: String,
@@ -690,20 +682,46 @@ fn default_true() -> bool {
     true
 }
 
-/// One operator action on a Project's Memory, named by the catalog Project
-/// its Sessions screen shows (PRD project-memory-v2 B20-B24).
+/// One operator action on a catalog Project's Memory (PRD
+/// project-memory-v2 B20-B24), from the screen that opened it or a pane's
+/// menu. Cards are named by number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
     pub(super) workspace_id: String,
-    pub(super) action: String,
+    pub(super) action: crate::model::MemoryAction,
+    /// The card a forget or a review names; for a review, the card in use.
     #[serde(default)]
-    pub(super) item_id: Option<String>,
+    pub(super) number: Option<u64>,
+    /// For a review, the card that contradicts it.
     #[serde(default)]
-    pub(super) candidate_id: Option<String>,
+    pub(super) other_number: Option<u64>,
     #[serde(default)]
     pub(super) batch_id: Option<String>,
     #[serde(default)]
-    pub(super) conflict_choice: Option<String>,
+    pub(super) choice: Option<crate::model::MemoryReviewChoice>,
+}
+
+/// Opens a catalog Project's Memory for a screen; none closes it.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct MemoryOpenPayload {
+    #[serde(default)]
+    pub(super) workspace_id: Option<String>,
+}
+
+/// Shows one card of the opened Project in full; none folds it.
+#[derive(Debug, Deserialize)]
+pub(super) struct MemoryExpandPayload {
+    pub(super) workspace_id: String,
+    #[serde(default)]
+    pub(super) number: Option<u64>,
+}
+
+/// Searches the opened Project's cards; empty words clear the search.
+#[derive(Debug, Deserialize)]
+pub(super) struct MemorySearchPayload {
+    pub(super) workspace_id: String,
+    #[serde(default)]
+    pub(super) query: String,
 }
 
 /// Which changed file the changes view is showing the diff for. `None`
@@ -1292,10 +1310,12 @@ pub(super) enum Event {
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
     FactorySecretarySet(PaneTargetPayload),
-    SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
     MemoryAction(MemoryActionPayload),
+    MemoryOpen(MemoryOpenPayload),
+    MemoryExpand(MemoryExpandPayload),
+    MemorySearch(MemorySearchPayload),
     RetryConnect(RetryConnectPayload),
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
@@ -1503,7 +1523,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_refresh" => serde_json::from_value::<Option<SessionsRefreshPayload>>(payload)
             .map(|payload| Event::SessionsRefresh(payload.unwrap_or_default()))
             .map_err(|_| invalid_payload(&kind)),
-        "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
@@ -1516,6 +1535,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
+        "memory_open" => decode!(MemoryOpenPayload, MemoryOpen),
+        "memory_expand" => decode!(MemoryExpandPayload, MemoryExpand),
+        "memory_search" => decode!(MemorySearchPayload, MemorySearch),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
@@ -1671,9 +1693,6 @@ impl Runtime {
             Event::FactoryTaskClose => self.factory_task_close(),
             Event::FactorySecretarySet(payload) => self.factory_secretary_set(payload.pane_id),
             Event::LinksClose => self.close_links(),
-            Event::SessionsSetMode(payload) => {
-                self.set_sessions_mode(&payload.workspace_id, &payload.mode)
-            }
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
             }
@@ -1684,6 +1703,13 @@ impl Runtime {
                 None => self.open_archive_detail(&payload.kind, &payload.id, payload.preview),
             },
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
+            Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
+            Event::MemoryExpand(payload) => {
+                self.expand_memory_card(&payload.workspace_id, payload.number)
+            }
+            Event::MemorySearch(payload) => {
+                self.search_project_memory(&payload.workspace_id, payload.query)
+            }
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
@@ -3529,7 +3555,6 @@ impl Runtime {
                         .as_deref()
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
-                    sessions_mode_by_project: current.sessions_mode_by_project,
                     resolved_sessions: current.resolved_sessions,
                     session_resolution_inputs: current.session_resolution_inputs,
                     session_collapsed_checkout_ids: current.session_collapsed_checkout_ids,

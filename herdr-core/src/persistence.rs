@@ -5,8 +5,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, SessionsMode,
-    ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
+    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, ThemePreference,
+    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
     default_pane_text_scale, default_panel_visible, default_sidebar_width,
 };
 
@@ -31,8 +31,6 @@ struct StoredUiState {
     right_panel_visible: bool,
     #[serde(default)]
     right_panel_section: RightPanelSection,
-    #[serde(default)]
-    sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     expanded_paths: Vec<String>,
     #[serde(default)]
     device_expanded_paths: BTreeMap<String, Vec<String>>,
@@ -310,7 +308,6 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_rail_visible: stored.device_rail_visible,
             right_panel_visible: stored.right_panel_visible,
             right_panel_section: stored.right_panel_section,
-            sessions_mode_by_project: stored.sessions_mode_by_project,
             expanded_paths: stored.expanded_paths,
             device_expanded_paths: stored.device_expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
@@ -414,7 +411,6 @@ pub fn save(
         device_rail_visible: state.device_rail_visible,
         right_panel_visible: state.right_panel_visible,
         right_panel_section: state.right_panel_section,
-        sessions_mode_by_project: state.sessions_mode_by_project.clone(),
         expanded_paths: state.expanded_paths.clone(),
         device_expanded_paths: state.device_expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
@@ -694,26 +690,20 @@ mod tests {
     }
 
     #[test]
-    fn sessions_mode_defaults_for_an_older_store_and_survives_a_restart() {
-        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
-        let (older_state, _sizes, disposition) = decode(older);
+    fn a_stored_sessions_mode_from_an_older_build_loads_and_is_not_saved_again() {
+        // The Overview's Sessions/Memory switch is gone (PRD
+        // project-memory-v2): its per-Project choice is read past and dropped.
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null,"sessions_mode_by_project":{"project-1":"memory"}}"#;
+        let (state, _sizes, disposition) = decode(older);
         assert_eq!(disposition, LoadDisposition::Loaded);
-        assert!(older_state.sessions_mode_by_project.is_empty());
 
         let folder = tempfile::tempdir().unwrap();
-        let root = folder.path().to_path_buf();
-        let path = root.join("state.json");
-        let mut state = older_state;
-        state
-            .sessions_mode_by_project
-            .insert("project-1".to_owned(), SessionsMode::Memory);
+        let path = folder.path().join("state.json");
         save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");
-
-        let (reloaded, _sizes, disposition) = load(&path);
-        assert_eq!(disposition, LoadDisposition::Loaded);
-        assert_eq!(
-            reloaded.sessions_mode_by_project.get("project-1"),
-            Some(&SessionsMode::Memory)
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("sessions_mode_by_project")
         );
     }
 

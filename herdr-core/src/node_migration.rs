@@ -74,11 +74,6 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
         "/device_expanded_paths/{key}",
         Mechanism::Rewritten,
     ),
-    (
-        CORE_STATE,
-        "/sessions_mode_by_project/{key}",
-        Mechanism::Rewritten,
-    ),
     (CORE_STATE, "/selected_pane_id", Mechanism::Owned),
     (CORE_STATE, "/expanded_agent_pane_ids/*", Mechanism::Owned),
     (
@@ -578,7 +573,7 @@ fn rename_key(object: Option<&mut Value>, node: &str) -> bool {
     true
 }
 
-fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String, String>) -> bool {
+fn convert_core_state(value: &mut Value, node: &str, _projects: &BTreeMap<String, String>) -> bool {
     let mut changed = false;
     for row in each(value, "workspace_registrations") {
         match row.get_mut("device_id") {
@@ -608,21 +603,6 @@ fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String,
         changed |= rewrite(row.get_mut("device_id"), node);
     }
     changed |= rename_key(value.get_mut("device_expanded_paths"), node);
-    if let Some(modes) = value
-        .get_mut("sessions_mode_by_project")
-        .and_then(Value::as_object_mut)
-    {
-        let moving: Vec<(String, String)> = modes
-            .keys()
-            .filter_map(|old| projects.get(old).map(|new| (old.clone(), new.clone())))
-            .collect();
-        for (old, new) in moving {
-            if let Some(mode) = modes.remove(&old) {
-                modes.entry(new).or_insert(mode);
-                changed = true;
-            }
-        }
-    }
     changed
 }
 
@@ -829,7 +809,6 @@ mod tests {
                 "expanded_inactive_project_device_ids": ["local", "mini"],
                 "recent_checkouts": [{"device_id": "local", "device_name": "This Mac", "path": root}],
                 "device_expanded_paths": {"local": ["/x"], "mini": ["/srv/p"]},
-                "sessions_mode_by_project": {old_project.clone(): "memory"},
                 "selected_pane_id": "w1:p1",
                 "expanded_agent_pane_ids": ["w1:p1"],
                 "sessions_expanded_agent_pane_ids": ["w1:p1"],
@@ -1030,10 +1009,6 @@ mod tests {
         );
         assert_eq!(core_state["device_expanded_paths"][NODE], json!(["/x"]));
         let new_project = hide_project::project_id(NODE, &legacy.project);
-        assert_eq!(
-            core_state["sessions_mode_by_project"][&new_project],
-            "memory"
-        );
         assert_eq!(
             read(&legacy.state.join(LABELS))["targets"][NODE]["w1:p1"]["owner"],
             "v1:a"

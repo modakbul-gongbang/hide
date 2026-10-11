@@ -343,8 +343,11 @@ fn card(item: &MemoryItem) -> Value {
         "card": card_name(item.number),
         "title": item.title,
         "kind": item.kind.as_str(),
+        // A live card's state is spelled as the snapshot spells it.
         "state": match item.lifecycle {
-            MemoryLifecycle::Conflicting => "needs_review",
+            MemoryLifecycle::Active | MemoryLifecycle::Conflicting => {
+                crate::runtime::project_memory::card_state(item.lifecycle).as_str()
+            }
             lifecycle => lifecycle.as_str(),
         },
         "body": item.body,

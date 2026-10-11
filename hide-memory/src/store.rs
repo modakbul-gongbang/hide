@@ -967,6 +967,41 @@ impl MemoryStore {
         Ok(Some(given))
     }
 
+    /// The live cards a session was given in full, by number, with their
+    /// titles, whichever Project it belongs to: what its pane's menu lists.
+    pub fn received_cards(
+        &self,
+        runtime: &str,
+        session_id: &str,
+    ) -> Result<Vec<(u64, String)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT i.number,r.title FROM injection_receipts ir JOIN injection_receipt_items rii ON rii.receipt_id=ir.id JOIN memory_items i ON i.id=rii.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE ir.runtime=?1 AND ir.session_id=?2 AND i.lifecycle IN('active','conflicting') ORDER BY i.number",
+        )?;
+        Ok(statement
+            .query_map(params![runtime, session_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The live cards learned from a session, as `(event offset, number)`:
+    /// the conversation marks the event each card came from.
+    pub fn learned_from(
+        &self,
+        project_id: &str,
+        provider: &str,
+        session_id: &str,
+    ) -> Result<Vec<(u64, u64)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT s.event_offset,i.number FROM memory_sources s JOIN memory_items i ON i.id=s.item_id WHERE i.project_id=?1 AND s.provider=?2 AND s.session_id=?3 AND i.lifecycle IN('active','conflicting') ORDER BY s.event_offset,i.number",
+        )?;
+        Ok(statement
+            .query_map(params![project_id, provider, session_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// The Projects of `device_id` with Memory on, as `(id, root)`.
     pub fn enabled_projects(&self, device_id: &str) -> Result<Vec<(String, String)>, MemoryError> {
         let mut statement = self.connection.prepare(
@@ -2147,7 +2182,8 @@ ALTER TABLE memory_sources ADD COLUMN human INTEGER NOT NULL DEFAULT 0;
 DROP TABLE session_topics;
 ALTER TABLE hook_projection_cursors RENAME TO receipt_cursors;
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
-CREATE INDEX injection_receipts_session ON injection_receipts(project_id,runtime,session_id);
+CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id,project_id);
+CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);"#,
         )?;
         let items = {
@@ -2412,7 +2448,8 @@ CREATE TABLE memory_revisions(id TEXT PRIMARY KEY,item_id TEXT NOT NULL REFERENC
 CREATE TABLE memory_sources(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,provider TEXT NOT NULL,session_id TEXT NOT NULL,event_offset INTEGER NOT NULL,content_hash TEXT NOT NULL,available INTEGER NOT NULL DEFAULT 1,human INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(item_id,provider,session_id,event_offset,content_hash));
 CREATE TABLE batch_changes(batch_id TEXT NOT NULL,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,previous_lifecycle TEXT,previous_revision INTEGER,PRIMARY KEY(batch_id,item_id));
 CREATE TABLE injection_receipts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,runtime TEXT NOT NULL,session_id TEXT NOT NULL,turn_id TEXT,outcome TEXT NOT NULL,created_at_ms INTEGER NOT NULL);
-CREATE INDEX injection_receipts_session ON injection_receipts(project_id,runtime,session_id);
+CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id,project_id);
+CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
@@ -3875,6 +3912,51 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             store.record_receipt(&project, "codex", "session-3", "event:1", "m9@1", 4_000),
             Err(MemoryError::CrossProjectTarget)
         ));
+    }
+
+    #[test]
+    fn a_session_lists_the_live_cards_it_was_given_and_the_ones_learned_from_it() {
+        // P1-2: a pane's menu and a conversation's quiet lines.
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "b1", "session-1"),
+                &[
+                    candidate("Keep the first rule", CandidateRelation::New),
+                    candidate("Keep the second rule", CandidateRelation::New),
+                ],
+            )
+            .unwrap();
+        for item in ["m1@1", "m2@1", "m1@1"] {
+            store
+                .record_receipt(&project, "codex", "session-2", "event:4", item, 1)
+                .unwrap();
+        }
+        let titles = store
+            .received_cards("codex", "session-2")
+            .unwrap()
+            .into_iter()
+            .map(|(number, _)| number)
+            .collect::<Vec<_>>();
+        assert_eq!(titles, [1, 2]);
+        assert_eq!(
+            store.learned_from(&project, "codex", "session-1").unwrap(),
+            [(7, 1), (7, 2)]
+        );
+
+        let second = store.item_by_number(&project, 2).unwrap().unwrap();
+        store.forget(&project, &second.id).unwrap();
+        assert_eq!(store.received_cards("codex", "session-2").unwrap().len(), 1);
+        assert_eq!(
+            store.learned_from(&project, "codex", "session-1").unwrap(),
+            [(7, 1)]
+        );
+        assert!(
+            store
+                .received_cards("claude", "session-2")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

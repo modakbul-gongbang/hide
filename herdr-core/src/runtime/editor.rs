@@ -79,7 +79,7 @@ impl Runtime {
                 }
                 None
             }
-            EditorTabKind::Session | EditorTabKind::Memory => None,
+            EditorTabKind::Session => None,
         };
         if let Some(active_id) = self.snapshot.editor.active_tab_id.as_deref()
             && active_id != tab_id
@@ -107,7 +107,7 @@ impl Runtime {
                 self.snapshot.editor.document = None;
                 self.snapshot.ui_state.selected_path = None;
             }
-            EditorTabKind::Session | EditorTabKind::Memory => {
+            EditorTabKind::Session => {
                 self.snapshot.editor.document = None;
                 self.snapshot.editor.archive_detail = self.archive_documents.get(tab_id).cloned();
                 self.snapshot.ui_state.selected_path = None;
@@ -578,11 +578,7 @@ impl Runtime {
         detail: ArchiveDetailSnapshot,
         preview: bool,
     ) {
-        let kind = if detail.kind == "memory" {
-            EditorTabKind::Memory
-        } else {
-            EditorTabKind::Session
-        };
+        let kind = EditorTabKind::Session;
         let tab_id = format!(
             "{}:{}:{}:{}",
             detail.kind, workspace_id, checkout_id, detail.id
@@ -611,20 +607,6 @@ impl Runtime {
         }
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("archive.focus_failed", message, false);
-        }
-    }
-
-    pub(super) fn close_memory_archive_tabs(&mut self) {
-        let tab_ids = self
-            .snapshot
-            .editor
-            .tabs
-            .iter()
-            .filter(|tab| tab.kind == EditorTabKind::Memory)
-            .map(|tab| tab.id.clone())
-            .collect::<Vec<_>>();
-        for tab_id in tab_ids {
-            self.close_file_tab_now(&tab_id);
         }
     }
 
