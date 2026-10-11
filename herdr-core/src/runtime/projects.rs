@@ -3244,8 +3244,9 @@ impl Runtime {
     }
 
     /// `create_worktree`, on a new branch or, `existing_branch`, on a branch
-    /// that already exists here or on `origin` (a pull request's, PRD
-    /// overview-lenses-prs D-46), which only this machine's repositories do.
+    /// that already exists in the repository or on its `origin` (a pull
+    /// request's, PRD overview-lenses-prs D-46), on this machine or a node's
+    /// through its link and its Herdr (D-29).
     pub(super) fn start_worktree_task(
         &mut self,
         mut payload: CreateWorktreePayload,
@@ -3399,12 +3400,10 @@ impl Runtime {
                     .ingest_task_operation_result(id, Err(format!("create worktree: {message}")));
             }
         };
-        let spawned = match (existing_branch, device.is_some()) {
-            (true, true) => Err(
-                "create worktree: an existing branch is checked out only on this Mac".to_owned(),
-            ),
-            (true, false) => live::spawn_existing_branch_worktree(context, request),
-            (false, _) => live::spawn_worktree_create(context, request),
+        let spawned = if existing_branch {
+            live::spawn_existing_branch_worktree(context, request)
+        } else {
+            live::spawn_worktree_create(context, request)
         };
         if let Err(message) = spawned {
             return self.ingest_task_operation_result(id, Err(message));

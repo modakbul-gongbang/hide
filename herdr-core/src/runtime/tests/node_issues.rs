@@ -1666,6 +1666,71 @@ fn a_node_pull_request_is_handed_to_an_agent_on_the_node() {
     );
 }
 
+/// A node pull request whose branch has no checkout is handed to an agent
+/// on the node too: the branch is checked over the node's link and the
+/// worktree is asked of the node's Herdr, never of this machine.
+#[test]
+fn a_node_pull_request_with_no_checkout_gets_its_worktree_on_the_node() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    git(&repo.root, &["branch", "pr-branch"]);
+    let node = Recording::of(Some(FakeDevice::new()));
+    let own = Recording::of(None);
+    let herdr =
+        crate::fake_herdr::FakeHerdr::start_with_errors("node-delegate-new", |method, _| {
+            Err((
+                "unsupported".to_owned(),
+                format!("the fixture answers no {method}"),
+            ))
+        });
+    let shared = node_runtime_with(
+        &repo,
+        node.clone(),
+        own.clone(),
+        Default::default(),
+        Arc::new(herdr.connector()),
+        vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+            herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
+        ],
+    );
+    let workspace_id = {
+        let mut runtime = shared.lock().unwrap();
+        ingest_node_pull_request(&mut runtime, &repo);
+        let mut github = runtime.device_github[NODE].clone();
+        github.projects[0].pull_requests[0].head_branch = "pr-branch".to_owned();
+        runtime.ingest_device_github(NODE, github);
+        node_project(&runtime).unwrap().id.clone()
+    };
+    dispatch(
+        &shared,
+        "pr_delegate",
+        serde_json::json!({"workspace_id": workspace_id, "pr_number": 7, "provider": "claude",
+            "prompt": "Fix the failing checks"}),
+    );
+    herdr.wait_for_requests(1, Duration::from_secs(10));
+    let asked = herdr.calls();
+    assert_eq!(
+        asked
+            .iter()
+            .map(|(method, params)| (method.as_str(), params["branch"].as_str()))
+            .collect::<Vec<_>>(),
+        [("worktree.create", Some("pr-branch"))],
+        "{asked:?}"
+    );
+    let checked = node.calls.lock().unwrap().iter().any(|call| {
+        matches!(call, Call::Git { root, command } if *root == repo.root
+            && format!("{command:?}").contains("HasLocalBranch"))
+    });
+    assert!(checked, "the branch is checked over the node's link");
+    assert!(own.calls.lock().unwrap().is_empty());
+    let runtime = shared.lock().unwrap();
+    let operation = runtime.snapshot.task_operation.as_ref().unwrap();
+    assert_eq!(
+        (operation.kind.as_str(), operation.device_id.as_deref()),
+        ("worktree_create", Some(NODE))
+    );
+}
+
 /// A GitHub issue #number of acme/app as the issue read answers it.
 fn graphql_issue(number: u32) -> String {
     format!(

@@ -667,7 +667,8 @@ pub fn spawn_worktree_create(
 /// overview-lenses-prs D-46): Herdr checks out an existing local branch, and
 /// a branch only `origin` has is fetched first and made from its
 /// remote-tracking ref, which git sets as the new branch's upstream. No other
-/// branch name is ever made. This machine's repositories only.
+/// branch name is ever made. The checks run on the repository's own machine
+/// (`context.host`), this one's or a node's.
 pub fn spawn_existing_branch_worktree(
     context: WorktreeTarget,
     request: WorktreeTaskRequest,
