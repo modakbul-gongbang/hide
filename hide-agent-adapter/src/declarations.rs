@@ -59,7 +59,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["codex"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::UNIX,
+        skill_os: Os::ALL,
         hook: HookInstall::Runtime(HookDialect::Codex),
         herdr: HerdrIntegration {
             name: "codex",
@@ -105,7 +105,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["grok"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::UNIX,
+        skill_os: Os::ALL,
         hook: HookInstall::Guidance(GuidanceDialect::Grok),
         herdr: HerdrIntegration {
             name: "grok",
@@ -150,7 +150,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["opencode"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::UNIX,
+        skill_os: Os::ALL,
         hook: HookInstall::Plugin(PluginDialect::OpenCode),
         herdr: HerdrIntegration {
             name: "opencode",
@@ -247,7 +247,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["omp"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::UNIX,
+        skill_os: Os::ALL,
         hook: HookInstall::Plugin(PluginDialect::Omp),
         herdr: HerdrIntegration {
             name: "omp",
@@ -296,7 +296,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["cursor-agent"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::UNIX,
+        skill_os: Os::ALL,
         hook: HookInstall::Guidance(GuidanceDialect::Cursor),
         herdr: HerdrIntegration {
             name: "cursor",

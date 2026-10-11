@@ -450,8 +450,8 @@ fn report_agent(
     parts: &[PartView],
 ) -> AgentReport {
     let installed = detection.installed(adapter);
-    // The switch works while either piece can be put here: Codex on a system
-    // with no documented skill folder still has its hook to switch off.
+    // The switch works while either piece can be put here: an agent on a
+    // system with no documented skill folder still has its hook to switch off.
     let availability = availability(
         installed,
         adapter.skill_supported(),

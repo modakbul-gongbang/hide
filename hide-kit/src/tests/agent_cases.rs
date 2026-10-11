@@ -617,7 +617,7 @@ fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
     use crate::agents::availability;
     assert_eq!(availability(false, true, true), Availability::NotInstalled);
     assert_eq!(availability(true, true, false), Availability::Available);
-    // A system with no documented skill folder but a working hook (Codex).
+    // A system with no documented skill folder but a working hook.
     assert_eq!(availability(true, false, true), Availability::Available);
     assert_eq!(
         availability(true, false, false),

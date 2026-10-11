@@ -394,7 +394,6 @@ impl Os {
         Self::Linux
     };
     pub const ALL: &'static [Self] = &[Self::Macos, Self::Linux, Self::Windows];
-    pub const UNIX: &'static [Self] = &[Self::Macos, Self::Linux];
 }
 
 #[derive(Clone, Copy, Debug)]
