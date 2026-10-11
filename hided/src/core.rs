@@ -158,11 +158,17 @@ pub struct CoreHandle {
     /// What every pane's output reaches: the hub, and the terminals relay
     /// of each linked node (`relay`).
     pub outputs: Arc<crate::relay::ScreenOutputs>,
-    /// This machine's terminal service, which `terminals` routes its panes
-    /// to; closed with the core, since what else holds the router may
-    /// outlive it.
+    /// What a shutdown ends, taken out by the first one, so a second
+    /// shutdown or the `Drop` after it finds nothing left to close.
+    running: Mutex<Option<Running>>,
+}
+
+/// The core's owner thread and this machine's terminal service, which
+/// `terminals` routes its panes to; the service is closed with the core,
+/// since what else holds the router may outlive it.
+struct Running {
+    thread: JoinHandle<()>,
     local: Arc<Service>,
-    thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl CoreHandle {
@@ -340,8 +346,7 @@ impl CoreHandle {
             terminals,
             hub,
             outputs,
-            local,
-            thread: Mutex::new(Some(thread)),
+            running: Mutex::new(Some(Running { thread, local })),
         })
     }
 
@@ -637,13 +642,20 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped snapshot reply".to_owned())?
     }
 
+    /// Ends the core once: the first call takes what it ends, so `Drop`
+    /// after an explicit shutdown closes nothing again and never waits out
+    /// a timed-out close a second time. A second caller waits under the lock
+    /// until the first has finished.
     pub fn shutdown(&self) {
+        let mut running = self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(Running { thread, local }) = running.take() else {
+            return;
+        };
         let _ = self.commands.send(Command::Shutdown);
-        if let Ok(mut thread) = self.thread.lock()
-            && let Some(thread) = thread.take()
-        {
-            let _ = thread.join();
-        }
+        let _ = thread.join();
         // The core that installs devices is gone: a device's terminals end,
         // and so do this machine's sessions and their attach children, now
         // rather than when the last holder of the router lets it go. A core
@@ -651,7 +663,7 @@ impl CoreHandle {
         // sessions would otherwise find each pane held and draw it only
         // read-only.
         self.terminals.remove_every_device();
-        self.local.close();
+        local.close();
     }
 }
 
