@@ -55,6 +55,8 @@ export type OnboardingSceneParams = {
   state: OnboardingState;
   system: OnboardingSystem;
   language: "en" | "ko";
+  /** The interface text scale Appearance's font size sets (`--interface-scale`); the largest is 17/13 (B41). */
+  scale: number;
 };
 
 export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneParams {
@@ -64,7 +66,9 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   if (system !== "mac" && system !== "windows" && system !== "linux") throw new Error(`Unknown onboarding scene system ${system}`);
   // The long content is the Korean copy, the longest of the four languages (B41).
   const language = params.get("lang") === "ko" || params.get("content") === "long" ? "ko" : "en";
-  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language };
+  const scale = Number(params.get("scale") ?? "1");
+  if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale };
 }
 
 const HOME = "/Users/me";
@@ -169,7 +173,7 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
   } as unknown as SnapshotRest;
 }
 
-export function OnboardingScene({ theme, state, system, language }: OnboardingSceneParams) {
+export function OnboardingScene({ theme, state, system, language, scale }: OnboardingSceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   // The host and the stores are in place before the first render, since the wizard asks the host which one it is in.
   useMemo(() => {
@@ -216,6 +220,13 @@ export function OnboardingScene({ theme, state, system, language }: OnboardingSc
     root.classList.toggle("dark", theme === "dark");
     root.classList.toggle("light", theme === "light");
   }, [theme]);
+
+  // The shell sets the same property from the stored font size (App.tsx).
+  useLayoutEffect(() => {
+    const root = document.documentElement.style;
+    if (scale === 1) root.removeProperty("--interface-scale");
+    else root.setProperty("--interface-scale", String(scale));
+  }, [scale]);
 
   return (
     <TooltipProvider>

@@ -942,6 +942,10 @@
       "contents": [
         "reference",
         "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
       ]
     },
     "urlStates": {
