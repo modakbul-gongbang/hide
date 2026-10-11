@@ -318,7 +318,7 @@ impl Query {
             }
         }
         // A stable sort keeps first occurrence as the tie-break.
-        counts.sort_by(|left, right| right.1.cmp(&left.1));
+        counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         Self {
             terms: counts
                 .into_iter()
