@@ -182,7 +182,14 @@ impl Runtime {
                 continue;
             }
             let choice = sources.get(&workspace.path).map(String::as_str);
-            changed |= project_tasks(workspace, choice, store, None, &self.local_issue_links);
+            changed |= project_tasks(
+                workspace,
+                None,
+                choice,
+                store,
+                None,
+                &self.local_issue_links,
+            );
         }
         changed
     }
@@ -1569,6 +1576,7 @@ impl Runtime {
             &self.invalid_links,
         );
         let (read, _) = self.node_github_repositories(target);
+        let unread = crate::issues::ProjectIssuesSnapshot::default();
         for workspace in &mut session.workspaces {
             let found = github.and_then(|github| github.project(&workspace.path));
             let asked = read.iter().any(|(root, _)| *root == workspace.path);
@@ -1578,7 +1586,13 @@ impl Runtime {
                 found,
                 asked,
             );
-            workspace.home_issues = found.map(|found| found.issues.clone()).unwrap_or_default();
+            // The rows carry the issues as tasks; `home_issues` names only the
+            // repository, which is all the shell reads of a node's.
+            let issues = found.map_or(&unread, |found| &found.issues);
+            workspace.home_issues = crate::issues::ProjectIssuesSnapshot {
+                repository: issues.repository.clone(),
+                ..Default::default()
+            };
             let notes = listed.and_then(|listed| listed.notes.get(&workspace.path));
             let choice = sources.get(&workspace.path).map(String::as_str);
             let local = crate::tasks::source_kind(
@@ -1611,8 +1625,7 @@ impl Runtime {
                     }
                     Some(ChainLink::Github(candidate)) => {
                         linked.insert(candidate.reference.clone());
-                        workspace
-                            .home_issues
+                        issues
                             .issues
                             .iter()
                             .find(|issue| issue.reference == candidate.reference)
@@ -1634,6 +1647,7 @@ impl Runtime {
             }
             project_tasks(
                 workspace,
+                Some(issues),
                 choice,
                 &self.local_issues,
                 Some(target),
@@ -1858,11 +1872,13 @@ fn chain_link(
 
 /// A project's task list from the source it reads, and each checkout's task
 /// by its key, for this machine's project (`node` is `None`) and a node's
-/// alike. `local_links` are the Local issue numbers the chain named, by
-/// checkout; a GitHub checkout's task is the issue `sync_issues` or
+/// alike. `issues` is the project's GitHub list when its row does not carry
+/// it (a node's); `local_links` are the Local issue numbers the chain named,
+/// by checkout; a GitHub checkout's task is the issue `sync_issues` or
 /// `project_node_issues` linked it to.
 fn project_tasks(
     workspace: &mut crate::model::WorkspaceSnapshot,
+    issues: Option<&crate::issues::ProjectIssuesSnapshot>,
     choice: Option<&str>,
     store: &Result<crate::local_issues::LocalIssueStore, String>,
     node: Option<&str>,
@@ -1874,7 +1890,8 @@ fn project_tasks(
         .first()
         .map(|checkout| checkout.github.clone())
         .unwrap_or_default();
-    let kind = crate::tasks::source_kind(choice, workspace.is_git, &workspace.home_issues, &status);
+    let issues = issues.unwrap_or(&workspace.home_issues);
+    let kind = crate::tasks::source_kind(choice, workspace.is_git, issues, &status);
     let local = kind == crate::tasks::SourceKind::Local;
     let tasks = if local {
         let read = match store {
@@ -1883,7 +1900,7 @@ fn project_tasks(
         };
         crate::tasks::local_tasks(&workspace.path, read, choice.is_some())
     } else {
-        crate::tasks::github_tasks(&workspace.home_issues, &status, choice.is_some())
+        crate::tasks::github_tasks(issues, &status, choice.is_some())
     };
     if workspace.tasks != tasks {
         workspace.tasks = tasks;

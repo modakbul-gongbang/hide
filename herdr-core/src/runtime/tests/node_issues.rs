@@ -2255,3 +2255,25 @@ fn reading_a_node_project_again_reads_nothing_of_this_machine() {
             .any(|call| matches!(call, Call::Worktrees { .. }))
     );
 }
+
+/// A node project's rows carry its GitHub issues once, as tasks: what the
+/// shell reads of its `home_issues` is the repository's name alone.
+#[test]
+fn a_node_project_sends_its_issues_once_as_tasks() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    ingest_node_issues(&mut runtime, &repo, &[14, 12]);
+    let project = node_project(&runtime).unwrap();
+    assert_eq!(project.tasks.tasks.len(), 2);
+    let sent = serde_json::to_value(&project.home_issues).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"repository": "acme/app", "issues": [], "overflow": false})
+    );
+}
