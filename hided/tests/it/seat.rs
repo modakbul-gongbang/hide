@@ -63,7 +63,12 @@ async fn a_role_change_keeps_the_port_and_token_and_health_answers_throughout() 
     let listener = hided::server::bind("127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();
-    let seat = hided::seat::Seat::serve(listener, "seat-token".to_owned()).unwrap();
+    let seat = hided::seat::Seat::serve(
+        listener,
+        "seat-token".to_owned(),
+        hided::ending::Ending::new(),
+    )
+    .unwrap();
     let parts = seat.parts();
 
     let core = hided::start_core_role(env(dir.path()), parts.clone())

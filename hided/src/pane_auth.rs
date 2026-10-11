@@ -27,7 +27,6 @@ use hide_node_link::protocol::Call;
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::Notify;
 
 use crate::core::CoreHandle;
 use crate::state_file::new_token;
@@ -817,7 +816,7 @@ pub async fn serve(
     core: Arc<CoreHandle>,
     herdr_socket: Option<PathBuf>,
     port: u16,
-    shutdown: Arc<Notify>,
+    shutdown: crate::ending::Ending,
 ) {
     use tokio::sync::Semaphore;
     // Closed however this future ends, a drop included, so the accept
@@ -866,7 +865,7 @@ pub async fn serve(
                 tokio::task::spawn_blocking(move || registry.sweep(&core));
                 continue;
             }
-            _ = shutdown.notified() => break,
+            () = shutdown.ended() => break,
         };
         let stream = match arrival {
             Some(Ok(stream)) => stream,

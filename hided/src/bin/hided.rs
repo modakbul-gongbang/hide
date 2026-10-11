@@ -1,3 +1,7 @@
+/// How long the process waits, once its roles ended, for blocking work
+/// still running before it exits.
+const EXIT_WITHIN: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn main() {
     // Taken before anything else, as every cooperative child takes it: a
     // starter that passes an owner channel (the web e2e fixture) ends this
@@ -85,5 +89,10 @@ fn run() -> Result<(), String> {
         .thread_name("hided")
         .build()
         .map_err(|error| error.to_string())?;
-    runtime.block_on(hided::run_daemon(env))
+    let ran = runtime.block_on(hided::run_daemon(env));
+    // The roles have ended and saved; a step a stop abandoned (an SSH step
+    // to a peer that stalls) is not waited for, so `hide stop` sees the
+    // process end rather than kill it.
+    runtime.shutdown_timeout(EXIT_WITHIN);
+    ran
 }

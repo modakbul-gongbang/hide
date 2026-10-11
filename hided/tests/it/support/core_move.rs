@@ -543,6 +543,16 @@ impl Fixture {
         })
     }
 
+    /// Asks the source's hided to stop, as `hide stop` does.
+    pub fn stop_source(&self) -> Result<()> {
+        let daemon = self
+            .daemon
+            .as_ref()
+            .context("the source's hided is not running")?;
+        hide_platform::process::terminate(daemon.id())?;
+        Ok(())
+    }
+
     /// Waits until the source's hided ends on its own, within `bound`, and
     /// answers how it ended.
     pub fn source_ended_within(

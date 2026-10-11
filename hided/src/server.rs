@@ -17,7 +17,6 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::Notify;
 
 use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
@@ -100,7 +99,7 @@ pub struct AppState {
     /// sends, so two windows coming and going at once cannot leave the core
     /// told the opposite of the final count.
     pub renderer_transitions: Arc<Mutex<()>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     /// Turns true once, when this role ends (`RunningDaemon` dropped): every
     /// socket of the role is closed with 1012 `role_ended`, so a window
     /// reconnects to the role mounted next on the same seat rather than wait
@@ -3674,7 +3673,7 @@ fn log_refusal(reason: CloseReason, extra: Option<usize>) {
 /// Mounts the core's routes on `seat` and starts the clock that ends the
 /// daemon once no screen is left; the role aborts the clock when it ends.
 pub fn mount(seat: &crate::seat::SeatParts, state: AppState) -> tokio::task::JoinHandle<()> {
-    let shutdown = Arc::clone(&state.shutdown);
+    let shutdown = state.shutdown.clone();
     let mobile = Arc::clone(&state.mobile);
     let idle_task = watch_idle(
         Idle {
@@ -3682,7 +3681,7 @@ pub fn mount(seat: &crate::seat::SeatParts, state: AppState) -> tokio::task::Joi
             keep_alive: state.keep_alive,
             clients: Arc::clone(&state.clients),
             last_client_gone: Arc::clone(&state.last_client_gone),
-            shutdown: Arc::clone(&shutdown),
+            shutdown,
             herdr_socket: state.herdr_socket.clone(),
         },
         // Mobile on with a phone paired: the phone may come back at any
@@ -3700,7 +3699,7 @@ pub(crate) struct Idle {
     pub keep_alive: bool,
     pub clients: Arc<AtomicUsize>,
     pub last_client_gone: Arc<Mutex<Instant>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     pub herdr_socket: Option<PathBuf>,
 }
 
@@ -3747,7 +3746,7 @@ pub(crate) fn watch_idle(
             }
             let gone = *idle.last_client_gone.lock().expect("client timestamp");
             if gone.elapsed() >= Duration::from_secs(idle.idle_secs) {
-                idle.shutdown.notify_waiters();
+                idle.shutdown.end();
                 return;
             }
         }

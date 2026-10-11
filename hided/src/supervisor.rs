@@ -53,6 +53,21 @@ enum Role {
     Node(RunningNode),
 }
 
+/// Why the process's roles end with no next one.
+#[derive(Debug)]
+enum Halt {
+    /// The process was asked to stop (`Seat::stop`); a move under way
+    /// resumes from its journal at the next start, as after a kill.
+    Stopped,
+    Failed(String),
+}
+
+impl From<String> for Halt {
+    fn from(reason: String) -> Self {
+        Self::Failed(reason)
+    }
+}
+
 pub async fn run(env: Env) -> Result<(), String> {
     let state_dir = env.state_dir.clone();
     if let Some(error) = crate::env::herdr_bin_error(&env) {
@@ -67,7 +82,10 @@ pub async fn run(env: Env) -> Result<(), String> {
             json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
         );
     }
-    let seat = seat::Seat::serve(server::bind(env.bind).await?, state_file::new_token())?;
+    // Listened for before anything else waits, so a stop at any moment of
+    // the process's life is kept.
+    let stop = crate::ending::Ending::on_stop_signal();
+    let seat = seat::Seat::serve(server::bind(env.bind).await?, state_file::new_token(), stop)?;
     let mut requests = seat
         .moves
         .take_requests()
@@ -84,9 +102,17 @@ pub async fn run(env: Env) -> Result<(), String> {
                 Role::Node(running) => node_turn(&env, &seat, running, &mut requests).await?,
             };
         }
-        Ok::<(), String>(())
+        Ok::<(), Halt>(())
     }
     .await;
+    let ran = match ran {
+        Ok(()) => Ok(()),
+        Err(Halt::Stopped) => {
+            log("process.stopped", json!({}));
+            Ok(())
+        }
+        Err(Halt::Failed(reason)) => Err(reason),
+    };
     seat.close().await;
     // Its own state only, before the instance lock is released: a daemon
     // started after it writes its own.
@@ -101,7 +127,7 @@ async fn core_turn(
     seat: &seat::Seat,
     running: RunningDaemon,
     requests: &mut tokio::sync::mpsc::Receiver<Asked>,
-) -> Result<Option<Role>, String> {
+) -> Result<Option<Role>, Halt> {
     enum Event {
         Stop,
         Request(MoveRequest),
@@ -110,8 +136,8 @@ async fn core_turn(
     }
     let gate = Arc::clone(&running.move_gate);
     let event = tokio::select! {
-        _ = running.shutdown.notified() => Event::Stop,
-        () = crate::stop_requested() => Event::Stop,
+        () = running.shutdown.ended() => Event::Stop,
+        () = seat.stop.ended() => Event::Stop,
         Some(asked) = requests.recv() => match asked {
             Asked::Window(request) => Event::Request(request),
             Asked::Release(release) => Event::Release(release),
@@ -152,7 +178,13 @@ async fn core_turn(
             Ok(None)
         }
         Event::Request(MoveRequest::Check { device }) => {
-            match prepare(env, &running, &device, &seat.moves).await {
+            let Some(prepared) =
+                unless_stopped(&seat.stop, prepare(env, &running, &device, &seat.moves)).await
+            else {
+                stop_core(&env.state_dir, running).await;
+                return Err(Halt::Stopped);
+            };
+            match prepared {
                 Ok(_) => seat.moves.set(MoveView {
                     state: MoveState::Ready,
                     device: Some(device),
@@ -186,11 +218,11 @@ async fn node_turn(
     seat: &seat::Seat,
     running: RunningNode,
     requests: &mut tokio::sync::mpsc::Receiver<Asked>,
-) -> Result<Option<Role>, String> {
+) -> Result<Option<Role>, Halt> {
     loop {
         tokio::select! {
-            _ = running.shutdown.notified() => break,
-            () = crate::stop_requested() => {
+            () = running.shutdown.ended() => break,
+            () = seat.stop.ended() => {
                 running.stop();
                 break;
             }
@@ -199,7 +231,13 @@ async fn node_turn(
                     let _ = release.reply.send(Err("this machine runs no core".to_owned()));
                 }
                 Asked::Window(MoveRequest::CheckBack) => {
-                    match prepare_back(env, &running, &seat.moves).await {
+                    let Some(prepared) =
+                        unless_stopped(&seat.stop, prepare_back(env, &running, &seat.moves)).await
+                    else {
+                        running.stop();
+                        break;
+                    };
+                    match prepared {
                         Ok(prepared) => seat.moves.set(MoveView {
                             state: MoveState::Ready,
                             direction: Some(Direction::Back),
@@ -341,22 +379,26 @@ enum Permanent {
 /// `give_up` takes it; a permanent one is `permanent`'s to end or ask again
 /// after a wait that grows to a minute. The window shows Waiting with the
 /// failure meanwhile, and a failure is logged as `kind` when it changes.
+/// A stop of the process ends the wait at once, the ask in flight
+/// included: the journal resumes the move at the next start.
 async fn wait_on_peer<T: Send + 'static>(
+    stop: &crate::ending::Ending,
     moves: &MoveControl,
     kind: &str,
     intent: &str,
     permanent: Permanent,
     ask: impl Fn() -> Result<T, MoveFailure> + Send + Sync + 'static,
     mut give_up: impl FnMut(&MoveFailure) -> bool,
-) -> Result<Result<T, MoveFailure>, String> {
+) -> Result<Result<T, MoveFailure>, Halt> {
     let ask = Arc::new(ask);
     let mut last: Option<MoveFailure> = None;
     let mut slower = crate::backoff::Backoff::default();
     loop {
         let asked = {
             let ask = Arc::clone(&ask);
-            tokio::task::spawn_blocking(move || ask())
+            unless_stopped(stop, tokio::task::spawn_blocking(move || ask()))
                 .await
+                .ok_or(Halt::Stopped)?
                 .map_err(|error| error.to_string())?
         };
         let failure = match asked {
@@ -375,7 +417,23 @@ async fn wait_on_peer<T: Send + 'static>(
             view.state = MoveState::Waiting;
             view.cause = Some(failure.clone());
         });
-        tokio::time::sleep(wait).await;
+        unless_stopped(stop, tokio::time::sleep(wait))
+            .await
+            .ok_or(Halt::Stopped)?;
+    }
+}
+
+/// Runs `work` unless the process is asked to stop first; `None` when it
+/// was, with `work` dropped. Blocking work it started runs on to its own
+/// end, which the process's exit bounds (`hided` main).
+async fn unless_stopped<T>(
+    stop: &crate::ending::Ending,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        () = stop.ended() => None,
+        done = work => Some(done),
     }
 }
 
@@ -408,7 +466,7 @@ fn now_unix_ms() -> u64 {
 
 /// The role a start runs: a move the journal left unresolved first, then
 /// the placement record's choice.
-async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, String> {
+async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, Halt> {
     // A core this folder stopped or retired for a move back starts again
     // only when that move resumes it; a start meanwhile (a login, launchd's
     // keep-alive) ends at once and successfully, so it is not retried.
@@ -461,7 +519,7 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, String> {
     resume_forward(env, seat).await.map(Some)
 }
 
-async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
+async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, Halt> {
     if let Some(journal) = journal::read(&env.state_dir)?
         && journal.phase.holds_the_core()
     {
@@ -757,9 +815,14 @@ async fn forward(
     seat: &seat::Seat,
     running: RunningDaemon,
     device: &str,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     let moves = Arc::clone(&seat.moves);
-    let prepared = match prepare(env, &running, device, &moves).await {
+    let Some(prepared) = unless_stopped(&seat.stop, prepare(env, &running, device, &moves)).await
+    else {
+        stop_core(&env.state_dir, running).await;
+        return Err(Halt::Stopped);
+    };
+    let prepared = match prepared {
         Ok(prepared) => prepared,
         Err(failed) => {
             checks_failed(&moves, device, failed);
@@ -809,13 +872,16 @@ async fn forward(
             copy_and_start(&state_dir, &settings, journal, &labels, &remote, &moves)
         })
     };
-    let journal = match steps.await {
+    let journal = match unless_stopped(&seat.stop, steps)
+        .await
+        .ok_or(Halt::Stopped)?
+    {
         Ok(Ok(journal)) => journal,
         Ok(Err((journal, step, cause))) => {
             drop(screen);
             return rollback(env, seat, *journal, &remote, step, cause).await;
         }
-        Err(error) => return Err(format!("the move's steps failed: {error}")),
+        Err(error) => return Err(format!("the move's steps failed: {error}").into()),
     };
     link(env, seat, journal, remote, screen).await
 }
@@ -899,7 +965,7 @@ async fn link(
     mut journal: Journal,
     remote: Arc<Remote>,
     screen: MoveScreen,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     seat.moves.update(|view| view.state = MoveState::Linking);
     let written = placement::write(
         &env.state_dir,
@@ -961,9 +1027,9 @@ async fn link_outcome(
     journal: Journal,
     remote: Arc<Remote>,
     node: RunningNode,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     let role = node.node.role_handle();
-    let phase = tokio::task::spawn_blocking(move || {
+    let linked = tokio::task::spawn_blocking(move || {
         role.wait_for(LINK_WITHIN, |phase| {
             matches!(
                 phase,
@@ -973,9 +1039,12 @@ async fn link_outcome(
                     }
             )
         })
-    })
-    .await
-    .map_err(|error| error.to_string())?;
+    });
+    let Some(phase) = unless_stopped(&seat.stop, linked).await else {
+        stop_node(node).await;
+        return Err(Halt::Stopped);
+    };
+    let phase = phase.map_err(|error| error.to_string())?;
     if matches!(phase, crate::node_role::Phase::Live(_)) {
         commit(env, &seat.moves, journal, &remote).await;
         return Ok(Role::Node(node));
@@ -996,8 +1065,9 @@ async fn resolve_unlinked(
     journal: Journal,
     remote: Arc<Remote>,
     mut node: Option<RunningNode>,
-) -> Result<Role, String> {
-    let said = wait_on_peer(
+) -> Result<Role, Halt> {
+    let said = match wait_on_peer(
+        &seat.stop,
         &seat.moves,
         "status.failed",
         &journal.intent,
@@ -1008,7 +1078,16 @@ async fn resolve_unlinked(
         },
         |_| false,
     )
-    .await?
+    .await
+    {
+        Err(Halt::Stopped) => {
+            if let Some(node) = node {
+                stop_node(node).await;
+            }
+            return Err(Halt::Stopped);
+        }
+        asked => asked?,
+    }
     .map_err(|failure| {
         format!(
             "the move {} stopped asking its peer: {failure:?}",
@@ -1122,7 +1201,7 @@ async fn rollback(
     remote: &Arc<Remote>,
     step: MoveStep,
     cause: MoveFailure,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     log(
         "move.rolling_back",
         json!({"intent": journal.intent, "step": step, "cause": cause}),
@@ -1148,6 +1227,7 @@ async fn rollback(
         // on it is given back by the next try's checks.
         let lease_until = journal.target_lease_until_unix_ms;
         let aborted = wait_on_peer(
+            &seat.stop,
             &seat.moves,
             "abort.failed",
             &journal.intent,
@@ -1254,6 +1334,48 @@ mod tests {
             .await
             .expect("the lease did not end at its deadline");
         assert_eq!(gate.expire(now_unix_ms()), Some("i1".to_owned()));
+    }
+
+    /// A stop ends a wait on the peer that would ask forever, both between
+    /// two asks and while one is under way.
+    #[tokio::test]
+    async fn a_stop_ends_a_wait_on_the_peer() {
+        for asking_blocks in [false, true] {
+            let stop = crate::ending::Ending::new();
+            // An ask that blocks answers only once this is dropped.
+            let (answer, answered) = std::sync::mpsc::channel::<()>();
+            let answered = std::sync::Mutex::new(answered);
+            let waiting = {
+                let stop = stop.clone();
+                tokio::spawn(async move {
+                    wait_on_peer(
+                        &stop,
+                        &MoveControl::default(),
+                        "status.failed",
+                        "i1",
+                        Permanent::AskedAgain,
+                        move || -> Result<(), MoveFailure> {
+                            if asking_blocks {
+                                let _ = answered.lock().unwrap().recv();
+                            }
+                            Err(MoveFailure::Unreachable {
+                                reason: "down".to_owned(),
+                            })
+                        },
+                        |_| false,
+                    )
+                    .await
+                })
+            };
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stop.end();
+            let ended = tokio::time::timeout(Duration::from_secs(1), waiting)
+                .await
+                .expect("the wait did not hear the stop")
+                .unwrap();
+            assert!(matches!(ended, Err(Halt::Stopped)), "{ended:?}");
+            drop(answer);
+        }
     }
 
     /// A failure asking again cannot change ends a wait before the link

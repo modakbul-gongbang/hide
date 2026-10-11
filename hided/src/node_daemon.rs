@@ -109,7 +109,7 @@ pub struct NodeState {
     pub clients: Arc<AtomicUsize>,
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     /// Frames screens sent while the link was down, dropped.
     pub held_frames: Arc<AtomicU64>,
     /// This machine's paths a screen may read without the core: the
@@ -237,7 +237,7 @@ impl NodeDaemon {
         )));
         let desktop_screens = Arc::new(AtomicUsize::new(0));
         let reaper =
-            browser_routes.spawn_reaper(Arc::clone(&desktop_screens), Arc::clone(&server.shutdown));
+            browser_routes.spawn_reaper(Arc::clone(&desktop_screens), server.shutdown.clone());
         Ok(Self {
             state: NodeState {
                 token: server.token,
@@ -299,7 +299,7 @@ pub struct ServerParts {
     pub version: &'static str,
     pub build: Option<Arc<str>>,
     pub seat: crate::seat::SeatParts,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     /// This machine's state folder, where its screens' uploads are staged.
     pub state_dir: PathBuf,
     /// The loopback port the browser relay listens on alone

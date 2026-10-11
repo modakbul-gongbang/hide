@@ -736,6 +736,48 @@ fn a_source_killed_while_its_core_stops_starts_it_again() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// A stop asked while a move's check waits on a peer that stalls ends the
+/// process within `hide stop`'s grace, after its core stopped as any stop
+/// stops it, and the next start runs the core unchanged.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_stop_during_a_stalled_check_ends_the_process_with_its_core_stopped() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        fixture.device_ready()?;
+        let program = fixture.helper_program()?;
+        let asked = fixture.root.join("inspect-asked");
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"if [ "$1 $2" = "core-move inspect" ]; then : > '{asked}'; exec sleep 20; fi"#,
+                asked = asked.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "check", "device": ALIAS}))?;
+        wait_for("the check on the peer", || Ok(asked.exists().then_some(())))?;
+        fixture.stop_source()?;
+        let ended = fixture.source_ended_within(std::time::Duration::from_secs(5))?;
+        ensure!(ended.success(), "the source's hided: {ended}");
+        fixture.logged(&fixture.source, "process.stopped")?;
+        ensure!(
+            records(&fixture, "core.stop_unconfirmed")?.is_empty(),
+            "the core's stop was not confirmed"
+        );
+        ensure!(
+            fixture.source.record("hided.json")?.is_none(),
+            "the stopped process left its record"
+        );
+        fixture.start_source()?;
+        ensure!(fixture.role()? == "core");
+        fixture.device_ready()?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The source's core does not stop for the move (a fixture makes its stop
 /// hang): past the stop's bound the process ends unsuccessfully, which a
 /// login item restarts, and its next start undoes the move and runs the core

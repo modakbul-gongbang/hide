@@ -268,13 +268,14 @@ pub(super) async fn prepare_back(
 }
 
 /// A move of the core back to this machine, from its node role.
-pub(super) async fn back(
-    env: &Env,
-    seat: &seat::Seat,
-    running: RunningNode,
-) -> Result<Role, String> {
+pub(super) async fn back(env: &Env, seat: &seat::Seat, running: RunningNode) -> Result<Role, Halt> {
     let moves = Arc::clone(&seat.moves);
-    let BackPrepared { journal, remote } = match prepare_back(env, &running, &moves).await {
+    let Some(prepared) = unless_stopped(&seat.stop, prepare_back(env, &running, &moves)).await
+    else {
+        stop_node(running).await;
+        return Err(Halt::Stopped);
+    };
+    let BackPrepared { journal, remote } = match prepared {
         Ok(prepared) => prepared,
         Err(failed) => {
             back_checks_failed(&moves, failed);
@@ -312,11 +313,15 @@ pub(super) async fn back(
     stop_node(running).await;
     let remote = Arc::new(remote);
     let own = herdr_core::node::NodeId::of_this_machine()?;
-    let released = blocking({
-        let (remote, journal) = (Arc::clone(&remote), journal.clone());
-        move || back::release(&remote, &journal, own.as_str())
-    })
-    .await?;
+    let released = unless_stopped(
+        &seat.stop,
+        blocking({
+            let (remote, journal) = (Arc::clone(&remote), journal.clone());
+            move || back::release(&remote, &journal, own.as_str())
+        }),
+    )
+    .await
+    .ok_or(Halt::Stopped)??;
     let mut journal = journal;
     match released {
         Ok(Released::Staged) => {}
@@ -342,45 +347,50 @@ pub(super) async fn back(
         return back_rollback(env, seat, journal, &remote, screen, MoveStep::Copy, cause).await;
     }
     moves.set(view(MoveState::Copying));
-    let copied = blocking({
-        let (state_dir, settings, remote, journal, moves) = (
-            env.state_dir.clone(),
-            herdr_core::hide_ai_settings_path(&env.home),
-            Arc::clone(&remote),
-            journal.clone(),
-            Arc::clone(&moves),
-        );
-        move || -> Result<Journal, MoveFailure> {
-            let progress = |sent: u64, total: u64| {
-                moves.update(|view| {
-                    view.sent = sent;
-                    view.total = total;
-                });
-            };
-            back::pull(&remote, &state_dir, &journal, &progress)?;
-            let mut journal = journal;
-            journal.ids = back::rekey(&state_dir, &journal)?;
-            // Recorded first: a placement whose end is not seen is taken
-            // back out all the same.
-            journal.phase = Phase::Back(BackPhase::PlacedHere);
-            journal::write(&state_dir, &journal).map_err(|reason| MoveFailure::Local { reason })?;
-            if let Err(not_placed) = back::place_here(&state_dir, &settings, &journal) {
-                // Nothing of the copy is in the folder, so what it holds is
-                // this machine's own and the rollback takes none of it.
-                if not_placed.left.is_empty() {
-                    journal.phase = Phase::Back(BackPhase::Released);
-                    journal::write(&state_dir, &journal)
-                        .map_err(|reason| MoveFailure::Local { reason })?;
+    let copied = unless_stopped(
+        &seat.stop,
+        blocking({
+            let (state_dir, settings, remote, journal, moves) = (
+                env.state_dir.clone(),
+                herdr_core::hide_ai_settings_path(&env.home),
+                Arc::clone(&remote),
+                journal.clone(),
+                Arc::clone(&moves),
+            );
+            move || -> Result<Journal, MoveFailure> {
+                let progress = |sent: u64, total: u64| {
+                    moves.update(|view| {
+                        view.sent = sent;
+                        view.total = total;
+                    });
+                };
+                back::pull(&remote, &state_dir, &journal, &progress)?;
+                let mut journal = journal;
+                journal.ids = back::rekey(&state_dir, &journal)?;
+                // Recorded first: a placement whose end is not seen is taken
+                // back out all the same.
+                journal.phase = Phase::Back(BackPhase::PlacedHere);
+                journal::write(&state_dir, &journal)
+                    .map_err(|reason| MoveFailure::Local { reason })?;
+                if let Err(not_placed) = back::place_here(&state_dir, &settings, &journal) {
+                    // Nothing of the copy is in the folder, so what it holds is
+                    // this machine's own and the rollback takes none of it.
+                    if not_placed.left.is_empty() {
+                        journal.phase = Phase::Back(BackPhase::Released);
+                        journal::write(&state_dir, &journal)
+                            .map_err(|reason| MoveFailure::Local { reason })?;
+                    }
+                    return Err(MoveFailure::Staging {
+                        file: not_placed.refusal.file.display().to_string(),
+                        reason: not_placed.refusal.reason,
+                    });
                 }
-                return Err(MoveFailure::Staging {
-                    file: not_placed.refusal.file.display().to_string(),
-                    reason: not_placed.refusal.reason,
-                });
+                Ok(journal)
             }
-            Ok(journal)
-        }
-    })
-    .await?;
+        }),
+    )
+    .await
+    .ok_or(Halt::Stopped)??;
     match copied {
         Ok(journal) => retire_and_commit(env, seat, journal, remote, screen).await,
         Err(cause) => {
@@ -400,7 +410,7 @@ pub(super) async fn retire_and_commit(
     mut journal: Journal,
     remote: Arc<Remote>,
     screen: MoveScreen,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     seat.moves.update(|view| {
         view.state = MoveState::Starting;
         view.direction = Some(Direction::Back);
@@ -411,6 +421,7 @@ pub(super) async fn retire_and_commit(
         journal::write(&env.state_dir, &journal)?;
     }
     let retired = wait_on_peer(
+        &seat.stop,
         &seat.moves,
         "retire.failed",
         &journal.intent,
@@ -481,7 +492,7 @@ pub(super) async fn back_rollback(
     screen: MoveScreen,
     step: MoveStep,
     cause: MoveFailure,
-) -> Result<Role, String> {
+) -> Result<Role, Halt> {
     log(
         "move.rolling_back",
         json!({"intent": journal.intent, "direction": "back", "step": step, "cause": cause}),
@@ -496,6 +507,7 @@ pub(super) async fn back_rollback(
         ..MoveView::default()
     });
     let resumed = wait_on_peer(
+        &seat.stop,
         &seat.moves,
         "resume.failed",
         &journal.intent,
@@ -515,7 +527,8 @@ pub(super) async fn back_rollback(
                 return Err(format!(
                     "the move back {} committed on the core's machine with no copy placed here",
                     journal.intent
-                ));
+                )
+                .into());
             }
             return Box::pin(retire_and_commit(
                 env,

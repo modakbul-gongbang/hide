@@ -36,7 +36,6 @@ use hide_node::terminal::device::DeviceSink;
 use hide_platform::ipc::LocalStream;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::Notify;
 
 use crate::core::CoreHandle;
 use crate::relay::RelayRequests;
@@ -387,7 +386,7 @@ impl Drop for AttachingNode<'_> {
 pub async fn serve(
     listener: BootstrapListener,
     service: Arc<AttachService>,
-    shutdown: Arc<Notify>,
+    shutdown: crate::ending::Ending,
 ) {
     // Closed however this future ends, a drop included, so the accept
     // thread never outlives it.
@@ -410,7 +409,7 @@ pub async fn serve(
     loop {
         let arrival = tokio::select! {
             arrival = arrivals.recv() => arrival,
-            _ = shutdown.notified() => break,
+            () = shutdown.ended() => break,
         };
         let Some(stream) = arrival else {
             break;

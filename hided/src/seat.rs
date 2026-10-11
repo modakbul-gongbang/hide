@@ -26,6 +26,10 @@ pub struct Seat {
     pub token: String,
     /// A move of the core, which outlives the role that took its request.
     pub moves: Arc<crate::core_move::control::MoveControl>,
+    /// The process's stop request, which outlives its roles as the seat
+    /// does; never announced on a seat a caller other than the process's
+    /// supervisor holds.
+    pub stop: crate::ending::Ending,
     mounted: Arc<Mounted>,
     stopping: Arc<Notify>,
     served: Option<tokio::task::JoinHandle<()>>,
@@ -73,7 +77,11 @@ impl SeatParts {
 impl Seat {
     /// Serves `listener` with `token` until the seat is dropped. A request
     /// that arrives before the first role mounts waits for it.
-    pub fn serve(listener: tokio::net::TcpListener, token: String) -> Result<Self, String> {
+    pub fn serve(
+        listener: tokio::net::TcpListener,
+        token: String,
+        stop: crate::ending::Ending,
+    ) -> Result<Self, String> {
         let port = listener
             .local_addr()
             .map_err(|error| error.to_string())?
@@ -87,10 +95,10 @@ impl Seat {
         let app = Router::new()
             .fallback(forward)
             .with_state(Arc::clone(&mounted));
-        let stop = Arc::clone(&stopping);
+        let graceful = Arc::clone(&stopping);
         let served = tokio::spawn(async move {
             let served = axum::serve(listener, app)
-                .with_graceful_shutdown(async move { stop.notified().await })
+                .with_graceful_shutdown(async move { graceful.notified().await })
                 .await;
             if let Err(error) = served {
                 eprintln!(
@@ -103,6 +111,7 @@ impl Seat {
             port,
             token,
             moves: Arc::default(),
+            stop,
             mounted,
             stopping,
             served: Some(served),
@@ -112,10 +121,10 @@ impl Seat {
     /// Stops serving once `role` announces its end, and then forgets the
     /// daemon's state file: a daemon started on its own seat closes its port
     /// when it stops, as it did before seats.
-    pub fn end_with(&self, role: Arc<Notify>, state_dir: std::path::PathBuf) {
+    pub fn end_with(&self, role: crate::ending::Ending, state_dir: std::path::PathBuf) {
         let stopping = Arc::clone(&self.stopping);
         tokio::spawn(async move {
-            role.notified().await;
+            role.ended().await;
             stopping.notify_one();
             crate::state_file::forget_daemon(&state_dir, std::process::id());
         });
