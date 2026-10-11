@@ -804,7 +804,7 @@ An edit confined to a working-tree file is reflected when the Overview opens aga
 Each issue card and List row shows its creation age in the same compact relative-time form used for activity, or no age when its source did not provide creation time; the backlog remains sorted by latest update.
 The Home Overview keeps its tab row, `Agents · Tasks · Projects`: Agents is the same graph over the device's projects with the project's name on a header line above each project's boxes, the Tasks board mixes their issues, and Projects is the device's registered projects; the device's Home folder is none of them.
 Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
-Its title row carries Add project in the desktop app and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
+Its title row carries 새 이슈 (for the project in front, else the first one with a source) and no Add project, which is the sidebar's (B52), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
@@ -1009,7 +1009,8 @@ Delegated children are reached through their root's tree, including work in anot
 The same root-only sidebar and Sessions rules apply while an SSH device is in front.
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project by its row or chevron, or using a checkout chevron changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
-Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and in the desktop app a local Projects list with no registered project offers Add project.
+Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project says so in a line with no button of its own.
+In the desktop app the Projects section title (`Projects · Recent activity · N`) ends in a + that opens Add a project, drawn whether or not a project is registered, with the hint `Add project ⇧⌘N` (`Alt+Shift+N` off macOS) on pointer or keyboard focus; it is the sidebar's one Add project (PRD first-run-onboarding D-27, B51, B52).
 The Home row stands for the device's Home (see Home) at every device count (PRD home-device-rail D-13): the house glyph, `Home`, and `N projects`, the device's registered projects with its Home not among them (no count before the first snapshot), in the project row's height, font and focus ring.
 It opens the shared Overview at All projects by click, Enter or Space; the shared Overview row owns selection while that page is in front.
 Home is drawn before the device has a Home folder, since the count comes from the registrations.
@@ -1024,7 +1025,7 @@ Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored wit
 A device that is not connected shows the top line and its reconnect view with no tab strip.
 The list shows the device's Needs You and Done, Home and projects with their operator-owned roots.
 Choosing a tile keeps each device's list apart, and ⌥n numbers its visible root rows in physical order.
-Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
+Search, the top line's one button, opens the ⌘K palette on this machine or a selected SSH device alike; Add project sits on the Projects title instead (see Adding a project), and there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
 The web Projects list is the scope picker, starting at its first project.
 The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; Home and project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
@@ -1130,7 +1131,8 @@ Hover, filter and checkbox changes are local: they dispatch no core event and st
 ### Adding a project
 
 Web owner: `web/src/AddProjectDialog.tsx`, `web/src/addProject.ts`; desktop owner: the `hide:pick-folder` channel in `desktop/src/main/host.ts`.
-Add project opens one centered `Add a project` dialog from each of its entry points: the sidebar strip's +, the Overview's title row and empty state, the empty local Projects list, ⌘⇧N and the File menu; Escape and × close it.
+Add project opens one centered `Add a project` dialog from each of its entry points: the + on the sidebar's Projects title, the empty Home's center button (B27), ⌘⇧N and the File menu; Escape and × close it.
+With projects registered the Projects title's + is the only one on screen; with none it and the empty Home's button are the two (PRD first-run-onboarding B51, B52).
 Only the desktop app offers it, because the native folder picker is how a local project is added: a plain browser tab draws none of those entry points and has no chord for it.
 The Host selector lists this Mac and every registered device, and starts on the focused device.
 On this Mac the primary `Browse folder` row holds the keyboard, so Enter activates it; it opens macOS's own folder picker as a sheet on the window, which can also make a new folder, and a cancelled pick leaves the dialog as it was.

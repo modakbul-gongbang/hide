@@ -139,12 +139,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
               {deviceName}
             </span>
           </h1>
-          {hostBridge() ? (
-            <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
-              <PlusIcon aria-hidden="true" />
-              {t("commands.new_workspace")} <span className="text-muted-foreground">{commandLabel("new_workspace")}</span>
-            </Button>
-          ) : null}
           {issueProject ? (
             <Button onClick={newIssue} data-main-new-issue="true">
               <PlusIcon aria-hidden="true" />
@@ -219,11 +213,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>{t("overview.empty")}</p>
-          {hostBridge() ? (
-            <Button variant="secondary" onClick={() => actions.openAddProject()} data-main-empty-add="true">
-              {t("commands.new_workspace")}
-            </Button>
-          ) : null}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-lg overflow-auto p-md" data-main-projects="true">

@@ -8,8 +8,6 @@ import { useUiStore } from "./ui";
 function header({
   rail = true,
   title = { name: "This Mac", note: null as string | null },
-  addProject = true,
-  canAdd = true,
 } = {}) {
   return renderToStaticMarkup(
     createElement(
@@ -18,7 +16,6 @@ function header({
       createElement(SidebarHeader, {
         rail,
         title,
-        addProject,
         deviceMenu: {
           devices: [
             { id: "local", label: "This Mac", remote: false, connected: true },
@@ -30,9 +27,7 @@ function header({
           onShowRail: () => undefined,
         },
         searchChord: "⌘K",
-        newWorkspaceChord: "⇧⌘N",
         onSearch: () => undefined,
-        onNewWorkspace: canAdd ? () => undefined : null,
       }),
     ),
   );
@@ -56,7 +51,6 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(html).toContain("Remote");
     expect(html).not.toContain("data-sidebar-mode");
     expect(html).not.toContain("data-sidebar-strip");
-    expect(html.indexOf("data-sidebar-new-workspace")).toBeLessThan(html.indexOf("data-sidebar-search"));
   });
 
   it("turns the name into the device menu while the rail is hidden (B6)", () => {
@@ -66,21 +60,13 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(header({ rail: true })).not.toContain("data-sidebar-device-menu");
   });
 
-  it("puts Search at the line's end, and Add project before it where the caller offers it, on Projects only (B4, B5)", () => {
-    const projects = header();
-    const newWorkspace = tag(projects, "data-sidebar-new-workspace");
-    const search = tag(projects, "data-sidebar-search");
-    expect(newWorkspace).toContain('aria-label="Add project"');
-    // A browser tab has no folder picker, so it offers no Add project.
-    expect(header({ canAdd: false })).not.toContain("data-sidebar-new-workspace");
-    expect(search).toContain('aria-label="Search"');
-    expect(projects.indexOf("data-sidebar-new-workspace")).toBeLessThan(projects.indexOf("data-sidebar-search"));
-    const agents = header({ addProject: false });
-    expect(agents).not.toContain("data-sidebar-new-workspace");
-    expect(tag(agents, "data-sidebar-search")).toContain('aria-label="Search"');
+  it("ends the line with Search alone: Add project sits on the Projects title (B4, first-run-onboarding B52)", () => {
+    const html = header();
+    expect(tag(html, "data-sidebar-search")).toContain('aria-label="Search"');
+    expect(html).not.toContain("data-sidebar-new-workspace");
     // No Search field: the chord is the hint's, never typed in the strip, and nothing takes text.
-    expect(projects).not.toContain("⌘K");
-    expect(projects).not.toContain("<input");
+    expect(html).not.toContain("⌘K");
+    expect(html).not.toContain("<input");
   });
 
 });
