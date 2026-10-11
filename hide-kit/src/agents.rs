@@ -247,7 +247,7 @@ impl AgentAdapter {
         match self.hook {
             HookSupport::Part(_) => true,
             HookSupport::Guidance(agent) => agent.supported_here().is_ok(),
-            HookSupport::Plugin(_) => hide_agent_hooks::plugin::supported_here().is_ok(),
+            HookSupport::Plugin(_) => true,
             HookSupport::None => false,
         }
     }
