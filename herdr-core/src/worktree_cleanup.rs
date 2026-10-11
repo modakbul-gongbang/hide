@@ -227,12 +227,13 @@ pub(crate) struct CleanupPlace {
     notifier: ChangeNotifier,
     api_connector: Arc<dyn ApiConnector>,
     node: Arc<dyn NodeLink>,
-    github: Option<GhPlace>,
+    /// Where merge proofs are read, or why they cannot be.
+    github: Result<GhPlace, String>,
 }
 
 impl CleanupPlace {
     /// This machine's project: its Herdr and the core's own node.
-    pub(crate) fn local(context: super::LiveContext, github: Option<GhPlace>) -> Self {
+    pub(crate) fn local(context: super::LiveContext, github: Result<GhPlace, String>) -> Self {
         Self {
             runtime: context.runtime,
             notifier: context.notifier,
@@ -246,7 +247,7 @@ impl CleanupPlace {
     pub(crate) fn node(
         control: &super::RemoteControlContext,
         node: Arc<dyn NodeLink>,
-        github: Option<GhPlace>,
+        github: Result<GhPlace, String>,
     ) -> Self {
         Self {
             runtime: control.runtime.clone(),
@@ -655,9 +656,10 @@ fn inspect(
 ) -> Result<CleanupSnapshot, String> {
     let node = context.node.as_ref();
     inspect_with_merge_proofs(node, root, current, panes, usage, only, |branch| {
-        let github = context.github.as_ref().ok_or(
-            "GitHub merge proof is unavailable: the repository's origin names no GitHub repository",
-        )?;
+        let github = context
+            .github
+            .as_ref()
+            .map_err(|why| format!("GitHub merge proof is unavailable: {why}"))?;
         github::merged_pull_request_proofs(github.node.as_ref(), &github.place, branch)
     })
 }

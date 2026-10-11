@@ -590,11 +590,11 @@ impl Runtime {
         node: Option<&str>,
         root: &str,
     ) -> Result<live::cleanup::CleanupPlace, String> {
-        // A node's project whose `origin` names no GitHub repository has no
-        // squash-merge proof to read; its worktrees merged by Git still go.
+        // A node's project whose GitHub repository is not named has no
+        // squash-merge proof to read, and its rows say why; its worktrees
+        // merged by Git still go.
         let github = self
             .github_place(node, root)
-            .ok()
             .map(|place| crate::live::GhPlace {
                 node: self.own_node(),
                 place,

@@ -2040,3 +2040,68 @@ fn a_cleanup_on_another_project_takes_a_node_project_s_review_off_its_rows() {
     );
     assert_eq!(node_project(&runtime).unwrap().cleanup, None);
 }
+
+/// A node worktree whose merge only GitHub could prove, in a project whose
+/// repository the node has not named, is kept with that reason, not with a
+/// claim about its `origin`.
+#[test]
+fn a_node_cleanup_says_why_github_cannot_prove_a_merge() {
+    // `lsof` needs a listener to report; see the cleanup test above.
+    let _listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port is bindable");
+    let repo = repo(None, "feature");
+    git(
+        &repo.linked,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "work",
+        ],
+    );
+    let herdr = crate::fake_herdr::FakeHerdr::start("node-cleanup-why", |method, _| match method {
+        "session.snapshot" => serde_json::json!({"type": "session_snapshot", "snapshot": {
+            "version": "fixture", "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+            "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": []
+        }}),
+        other => panic!("the node's Herdr is asked {other}"),
+    });
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+        Arc::new(herdr.connector()),
+        vec![herdr_workspace(NODE, "w1", &repo.root, &[])],
+    );
+    let workspace_id = node_project(&shared.lock().unwrap()).unwrap().id.clone();
+    dispatch(
+        &shared,
+        "cleanup_review",
+        serde_json::json!({"workspace_id": workspace_id}),
+    );
+    wait(&shared, "the review", |runtime| {
+        runtime
+            .cleanup
+            .as_ref()
+            .is_some_and(|review| review.phase != "loading")
+    });
+    let review = shared.lock().unwrap().cleanup.clone().unwrap();
+    let row = review
+        .rows
+        .iter()
+        .find(|row| row.path == repo.linked)
+        .unwrap_or_else(|| panic!("{:?}", review.rows));
+    assert_eq!(
+        row.exclusion.as_deref(),
+        Some(
+            "GitHub merge proof is unavailable: The node has not named this project's GitHub repository yet"
+        ),
+        "{review:?}"
+    );
+}
