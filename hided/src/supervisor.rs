@@ -98,9 +98,6 @@ pub async fn run(env: Env) -> Result<(), String> {
     // runs, the move screen included; a request before the first role
     // waits for it (`seat`).
     crate::record_daemon(&state_dir, &seat.parts(), env.herdr_socket_path.clone())?;
-    // Its panes find it by their Herdr whatever folder it runs on.
-    let located =
-        crate::daemon_locator::announce(&env.home, env.herdr_socket_path.as_deref(), &state_dir);
     // Whatever role runs, the moves given up here are ended on their
     // machines.
     let ending_abandoned = tokio::spawn(end_abandoned(env.clone(), seat.stop.clone()));
@@ -128,7 +125,6 @@ pub async fn run(env: Env) -> Result<(), String> {
     // Its own state only, before the instance lock is released: a daemon
     // started after it writes its own.
     state_file::forget_daemon(&state_dir, std::process::id());
-    drop(located);
     drop(lock);
     ran
 }
