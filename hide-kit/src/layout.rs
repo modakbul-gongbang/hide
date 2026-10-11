@@ -132,6 +132,14 @@ pub fn core_move_journal(state_dir: &Path) -> PathBuf {
     state_dir.join("core-move.json")
 }
 
+/// The forward moves this machine gave up while their other machine had
+/// not said whether they committed, each kept until that machine has no
+/// core of it; its owner is the daemon's supervisor
+/// (`hided::core_move::abandoned`).
+pub fn core_move_abandoned(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-move-abandoned.json")
+}
+
 /// The record on a machine taking or giving the core in a move: a core
 /// waiting for its first link, active, stopped for the move, or retired;
 /// its owner is `hided core-move` (`hided::core_move::handover`).

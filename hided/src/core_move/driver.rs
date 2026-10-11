@@ -75,6 +75,22 @@ impl Remote {
         self
     }
 
+    /// Installs this machine's build from `packages` beside the `hided` it
+    /// runs there, through the core update's install (the version folder
+    /// under the same helper root, at most two builds kept), and answers
+    /// the installed `hided`.
+    pub fn install_build(&self, packages: &Path) -> Result<String, MoveFailure> {
+        let root = hide_kit::build_of(&self.program)
+            .map_err(|reason| MoveFailure::Local { reason })?
+            .root;
+        self.upstream()?
+            .install_build(
+                &hide_node::ssh::host::HelperPackages::new(Some(packages.to_path_buf())),
+                &root,
+            )
+            .map_err(|reason| MoveFailure::Copy { reason })
+    }
+
     /// Runs `hided core-move <step>` there and answers its line. A line of
     /// another build is `OtherBuild`, a refusal `Refused` (`Load` for a
     /// file the verify could not load), and a busy answer `Busy`.
@@ -590,6 +606,25 @@ pub fn finish_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailu
     match remote.step("finish", &[("intent", &journal.intent)])? {
         StepAnswer::Finished => Ok(()),
         other => Err(unexpected("finish", &other)),
+    }
+}
+
+/// What the peer of a move this machine gave up on says once reached.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Abandoned {
+    /// No core of the move runs there, and what one ran on is set aside.
+    Ended,
+    /// Another move's record holds the machine, so this move holds nothing
+    /// there.
+    OtherMove { intent: String },
+}
+
+/// Has the peer end what the move `intent`, given up on here, left there.
+pub fn abandon_target(remote: &Remote, intent: &str) -> Result<Abandoned, MoveFailure> {
+    match remote.step("abandon", &[("intent", intent)])? {
+        StepAnswer::Abandoned => Ok(Abandoned::Ended),
+        StepAnswer::OtherMove { intent } => Ok(Abandoned::OtherMove { intent }),
+        other => Err(unexpected("abandon", &other)),
     }
 }
 

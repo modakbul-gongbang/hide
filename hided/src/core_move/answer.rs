@@ -45,8 +45,8 @@ pub enum StepAnswer {
     Started { pid: u32, lease_left_ms: u64 },
     /// `status`: this move's handover there, none when it holds none.
     Status { handover: Option<Handover> },
-    /// `status`, `abort`: another move's record holds the machine, so this
-    /// move holds nothing there.
+    /// `status`, `abort`, `abandon`: another move's record holds the
+    /// machine, so this move holds nothing there.
     OtherMove { intent: String },
     /// `abort`: no core of this move runs there and its copy is back in
     /// `move-incoming`.
@@ -58,6 +58,10 @@ pub enum StepAnswer {
     StoppedNotReturned { reason: String },
     /// `finish`: the move's records there are gone.
     Finished,
+    /// `abandon`: no core of the move the driver gave up on runs there,
+    /// what one ran on is set aside under its intent, and its starter,
+    /// handover and copy are gone.
+    Abandoned,
     /// `release`: the core stopped for the move back and its copy is staged.
     Staged { files: usize },
     /// `release`, `resume`, `retire`: the core retired for this move back,
@@ -137,6 +141,7 @@ mod tests {
             StepAnswer::StoppedNotReturned {
                 reason: "labels.json: busy".to_owned(),
             },
+            StepAnswer::Abandoned,
             StepAnswer::Busy {
                 reason: "held".to_owned(),
             },

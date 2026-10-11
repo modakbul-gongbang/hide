@@ -12,9 +12,20 @@ use tokio::sync::{mpsc, watch};
 
 use super::journal::{MoveFailure, MoveStep};
 
-/// What a window asks of the move.
+/// What a window's `core_move` event asks: a request the supervisor takes,
+/// or the abandon of the move its wait offers, which the wait itself hears.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "action")]
+enum WindowAsk {
+    Check { device: String },
+    Start { device: String },
+    CheckBack,
+    Back,
+    Abandon,
+}
+
+/// What a window asks of the move's supervisor.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MoveRequest {
     /// Run the checks for moving the core to `device`; nothing changes.
     Check { device: String },
@@ -72,6 +83,10 @@ pub enum MoveState {
     /// The other machine cannot be reached at a step where the move can
     /// neither go on nor be undone without it: this machine waits for it.
     Waiting,
+    /// The operator gave the waiting move up: this machine's core runs on
+    /// its folder as the move found it, and the other machine's core of the
+    /// move is stopped once this machine reaches it.
+    Abandoned,
 }
 
 impl MoveState {
@@ -189,6 +204,9 @@ pub struct MoveView {
     /// The node the window becomes after the move, so the page names it in
     /// its address.
     pub node: Option<String>,
+    /// Whether the move's wait takes an `abandon` request now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub abandon: bool,
 }
 
 /// The supervisor's side of the move: one request waiting at most, and the
@@ -197,6 +215,14 @@ pub struct MoveControl {
     view: watch::Sender<MoveView>,
     requests: mpsc::Sender<Asked>,
     receiver: Mutex<Option<mpsc::Receiver<Asked>>>,
+    /// The move whose wait offers an abandon now, which a resumed move's
+    /// view does not name; changed only with the view's `abandon`, inside
+    /// the view's own lock.
+    offered: Mutex<Option<String>>,
+    /// The intent of the move the operator gave up, for the wait that
+    /// offered it; level-triggered, so a wait between two looks still
+    /// hears it.
+    abandoned: watch::Sender<Option<String>>,
 }
 
 /// Why a request was not taken.
@@ -207,6 +233,8 @@ pub enum RequestRefusal {
     /// No supervisor takes moves in this process (a daemon started on its
     /// own seat).
     Unavailable,
+    /// An abandon asked while no move waits on its other machine.
+    NotWaiting,
 }
 
 impl RequestRefusal {
@@ -214,6 +242,7 @@ impl RequestRefusal {
         match self {
             Self::Busy => "move_busy",
             Self::Unavailable => "move_unavailable",
+            Self::NotWaiting => "move_not_waiting",
         }
     }
 }
@@ -225,6 +254,8 @@ impl Default for MoveControl {
             view: watch::Sender::new(MoveView::default()),
             requests,
             receiver: Mutex::new(Some(receiver)),
+            offered: Mutex::new(None),
+            abandoned: watch::Sender::new(None),
         }
     }
 }
@@ -237,18 +268,18 @@ impl MoveControl {
         if !self.has_supervisor() {
             return Err(RequestRefusal::Unavailable);
         }
+        let (direction, device) = match &request {
+            MoveRequest::Check { device } | MoveRequest::Start { device } => {
+                (None, Some(device.clone()))
+            }
+            MoveRequest::CheckBack | MoveRequest::Back => {
+                (Some(super::journal::Direction::Back), None)
+            }
+        };
         let checking = MoveView {
             state: MoveState::Checking,
-            direction: match request {
-                MoveRequest::Check { .. } | MoveRequest::Start { .. } => None,
-                MoveRequest::CheckBack | MoveRequest::Back => Some(super::journal::Direction::Back),
-            },
-            device: match &request {
-                MoveRequest::Check { device } | MoveRequest::Start { device } => {
-                    Some(device.clone())
-                }
-                MoveRequest::CheckBack | MoveRequest::Back => None,
-            },
+            direction,
+            device,
             ..MoveView::default()
         };
         let mut before = None;
@@ -269,6 +300,68 @@ impl MoveControl {
         })
     }
 
+    /// Gives up the move whose wait offers it (amendment 4), as one change
+    /// with the look at the view: the move goes on to end itself here, and
+    /// a second abandon is busy.
+    pub fn abandon(&self) -> Result<(), RequestRefusal> {
+        if !self.has_supervisor() {
+            return Err(RequestRefusal::Unavailable);
+        }
+        let mut taken = None;
+        let mut refusal = RequestRefusal::NotWaiting;
+        self.view.send_if_modified(|view| {
+            let mut offered = self
+                .offered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if view.state == MoveState::Waiting
+                && view.abandon
+                && let Some(intent) = offered.take()
+            {
+                view.state = MoveState::RollingBack;
+                view.abandon = false;
+                taken = Some(intent);
+                return true;
+            }
+            if view.state.busy() {
+                refusal = RequestRefusal::Busy;
+            }
+            false
+        });
+        let Some(intent) = taken else {
+            return Err(refusal);
+        };
+        self.abandoned.send_replace(Some(intent));
+        Ok(())
+    }
+
+    /// Offers an abandon of the move `intent` from its wait, or with `None`
+    /// ends the offer, dropping an abandon its wait did not hear because the
+    /// peer answered first: the answer says what is so.
+    pub fn offer_abandon(&self, intent: Option<&str>) {
+        if intent.is_none() {
+            self.abandoned.send_replace(None);
+        }
+        self.view.send_if_modified(|view| {
+            *self
+                .offered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = intent.map(str::to_owned);
+            let changed = view.abandon != intent.is_some();
+            view.abandon = intent.is_some();
+            changed
+        });
+    }
+
+    /// Returns once the operator gave up the move `intent`.
+    pub async fn abandoned(&self, intent: &str) {
+        let mut abandoned = self.abandoned.subscribe();
+        // The sender is this value's own, so the wait cannot lose it.
+        let _ = abandoned
+            .wait_for(|abandoned| abandoned.as_deref() == Some(intent))
+            .await;
+    }
+
     /// Whether this process's supervisor takes requests (it took the
     /// receiver at its start).
     fn has_supervisor(&self) -> bool {
@@ -280,13 +373,20 @@ impl MoveControl {
 
     /// Takes a window's `core_move` event; the refusal is its reason code.
     pub fn request_event(&self, event: &serde_json::Value) -> Result<(), &'static str> {
-        let request: MoveRequest = serde_json::from_value(
+        let ask: WindowAsk = serde_json::from_value(
             event
                 .get("payload")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null),
         )
         .map_err(|_| "move_malformed")?;
+        let request = match ask {
+            WindowAsk::Check { device } => MoveRequest::Check { device },
+            WindowAsk::Start { device } => MoveRequest::Start { device },
+            WindowAsk::CheckBack => MoveRequest::CheckBack,
+            WindowAsk::Back => MoveRequest::Back,
+            WindowAsk::Abandon => return self.abandon().map_err(RequestRefusal::code),
+        };
         self.request(request).map_err(RequestRefusal::code)
     }
 
@@ -400,5 +500,38 @@ mod tests {
             ..MoveView::default()
         });
         assert_eq!(control.request(MoveRequest::CheckBack), Ok(()));
+    }
+
+    /// Amendment 4: an abandon is taken only while a move's wait offers it;
+    /// anywhere else it is refused, as busy while a move runs, and once
+    /// taken a second one is busy. The wait that offered it hears it.
+    #[tokio::test]
+    async fn an_abandon_is_taken_only_from_the_wait_that_offers_it() {
+        let control = MoveControl::default();
+        let _requests = control.take_requests().unwrap();
+        let abandon =
+            || control.request_event(&serde_json::json!({"payload": {"action": "abandon"}}));
+        assert_eq!(abandon(), Err("move_not_waiting"));
+        // A move resumed after a restart, whose view names no intent.
+        control.set(MoveView {
+            state: MoveState::Copying,
+            ..MoveView::default()
+        });
+        assert_eq!(abandon(), Err("move_busy"));
+        // A wait that does not offer it, as the move back's.
+        control.update(|view| view.state = MoveState::Waiting);
+        assert_eq!(abandon(), Err("move_busy"));
+        control.offer_abandon(Some("move-1"));
+        assert_eq!(abandon(), Ok(()));
+        let view = control.view();
+        assert_eq!(view.state, MoveState::RollingBack);
+        assert!(!view.abandon);
+        assert_eq!(abandon(), Err("move_busy"));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            control.abandoned("move-1"),
+        )
+        .await
+        .expect("the wait did not hear the abandon");
     }
 }

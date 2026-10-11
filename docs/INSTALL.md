@@ -325,6 +325,8 @@ This Mac needs that device connected, no other machine linked to this core, its 
 The move stops the core here, copies its state to the other machine and starts it there; the window keeps its address, refuses input for those seconds and then reconnects as a window of that core.
 Phones scan the core machine's QR once again in Settings > Mobile.
 If a step fails, the core starts again here and the window shows which step failed.
+If the other machine stops answering after it may have taken the core, the window waits for it and offers **Stop waiting**: this Mac's core starts again as it was, and once this Mac reaches the other machine it stops that machine's core of the move and sets its state aside rather than merging it.
+If the other machine is only cut off, not gone, its core keeps running until this Mac reaches it.
 From then on this Mac is a node of that core: its panes, files and terminals stay here, and the rail marks the core's machine with a crown.
 This Mac's own `⋯` menu moves the core back, or disconnects from the core: while disconnected the core refuses this Mac's panes, files and browser, and **Reconnect** in the window's strip restores them.
 
@@ -335,10 +337,12 @@ What the move leaves on each machine:
 | This Mac | `~/.hide/state/core-placement.json` | Where the core runs (the SSH alias, the machine, the core's program and state folder), and `disconnected` while you disconnected from it; present only while the core is elsewhere |
 | This Mac | `~/.hide/state/moved-out/<move>/` | The state this Mac held before its core moved away, the latest move's only |
 | The machine giving the core | `~/.hide/state/core-move.json` | The move's record, written before each step that cannot be undone; a move cut short resumes or undoes itself from it at the next start |
+| The machine giving the core | `~/.hide/state/core-move-abandoned.json` | The moves you stopped waiting for whose other machine has not been reached yet to stop its core, at most 8; present only while one is left |
 | The core machine | `~/.hide/state/core-handover.json` | Whether its core waits for the move's first link, runs, or stopped or retired for a move back |
 | The core machine | `~/Library/LaunchAgents/dev.withhide.core.plist` | The login item that runs `hided core-login` at login and keeps the core running |
 | The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` at a start once it passes 1 MiB, replacing the one before |
 | The core machine | `~/.hide/state/move-incoming/` | A copy being received; empty once the move ends |
+| The core machine | `~/.hide/state/moved-out/<move>/` | The state of the core of a move you stopped waiting for, set aside there when this Mac reached it |
 
 Hide AI's settings move with the core and come back with it.
 

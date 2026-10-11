@@ -487,6 +487,12 @@ impl Fixture {
         Renderer::connect(self.port, &self.token)?.event(kind, payload)
     }
 
+    /// A window on whatever role the source's address mounts, the move's
+    /// screen or a node holding its screen included.
+    pub fn held_window(&self) -> Result<Renderer> {
+        Renderer::connect_held(self.port, &self.token)
+    }
+
     /// The registered projects the source's window shows, as (machine,
     /// path), in order.
     pub fn projects(&self) -> Result<Vec<(String, String)>> {

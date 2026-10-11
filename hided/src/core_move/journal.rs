@@ -96,6 +96,11 @@ pub enum ForwardPhase {
         failed: MoveStep,
         cause: MoveFailure,
     },
+    /// The operator gave the move up while the peer had not said whether
+    /// it committed: this machine's core runs on its folder again, and the
+    /// peer's core of the move is ended once this machine reaches it
+    /// (`abandoned`).
+    Abandoned,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -143,7 +148,8 @@ impl Phase {
         !self.is_rolled_back()
             && !matches!(
                 self,
-                Self::Forward(ForwardPhase::Done) | Self::Back(BackPhase::Done)
+                Self::Forward(ForwardPhase::Done | ForwardPhase::Abandoned)
+                    | Self::Back(BackPhase::Done)
             )
     }
 
@@ -154,9 +160,10 @@ impl Phase {
                 ForwardPhase::Stopping => MoveStep::StopCore,
                 ForwardPhase::Sent | ForwardPhase::Placed => MoveStep::Copy,
                 ForwardPhase::TargetStarted => MoveStep::StartTarget,
-                ForwardPhase::AttachSent | ForwardPhase::Committed | ForwardPhase::Done => {
-                    MoveStep::Reattach
-                }
+                ForwardPhase::AttachSent
+                | ForwardPhase::Committed
+                | ForwardPhase::Done
+                | ForwardPhase::Abandoned => MoveStep::Reattach,
                 ForwardPhase::RolledBack { failed, .. } => *failed,
             },
             Self::Back(phase) => match phase {

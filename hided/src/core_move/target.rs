@@ -4,7 +4,7 @@
 //! refusal included; a usage error exits non-zero.
 //!
 //! On the machine taking the core: `inspect`, `verify`, `place`, `start`,
-//! `status`, `abort` and `finish`, and `check`, which `inspect` runs in the
+//! `status`, `abort`, `finish` and `abandon`, and `check`, which `inspect` runs in the
 //! account's GUI session (`preflight`). On the machine giving the core back to
 //! the node that dialed it (`back`): `release`, `resume` and `retire`.
 //! Every step that changes the state folder runs under the handover
@@ -34,7 +34,7 @@ struct Args {
     answer: Option<PathBuf>,
 }
 
-const USAGE: &str = "usage: hided core-move <inspect|check|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>] [--ai <json>] [--answer <file>]";
+const USAGE: &str = "usage: hided core-move <inspect|check|verify|place|start|status|abort|finish|abandon|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>] [--ai <json>] [--answer <file>]";
 
 /// How long a released core may take to end once it answered.
 const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
@@ -88,6 +88,7 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
                 "status" => status(&args.state_dir, intent),
                 "abort" => abort(&args.state_dir, intent, account_starter),
                 "finish" => finish(&args.state_dir, intent),
+                "abandon" => abandon(&args.state_dir, intent, account_starter),
                 "release" => release(
                     &args.state_dir,
                     intent,
@@ -413,6 +414,60 @@ fn finish(state_dir: &Path, intent: &str) -> Answered {
         }
         _ => {}
     }
+    remove_copy(state_dir, intent)?;
+    Ok(StepAnswer::Finished)
+}
+
+/// Ends what a move its driver gave up on left here (PRD core-host-node-move
+/// amendment 4): a pending or active core of `intent` is stopped, what it
+/// ran on is set aside under `intent`, and its starter, handover and copy
+/// go, so this machine is back in the role it had before the move and no
+/// link carrying `intent` is taken again. A core is stopped only by its
+/// proven pid (`CoreStarter::stop`); one that cannot be confirmed stopped
+/// is busy, and nothing of it is set aside while it may run. Another
+/// move's record is left alone.
+fn abandon(
+    state_dir: &Path,
+    intent: &str,
+    starter: impl FnOnce() -> Result<CoreStarter, String>,
+) -> Answered {
+    let held = hold(state_dir)?;
+    match held.read().map_err(plain)? {
+        Some(record) if record.intent != intent => {
+            return Ok(StepAnswer::OtherMove {
+                intent: record.intent,
+            });
+        }
+        Some(record)
+            if matches!(
+                record.state,
+                HandoverState::Pending { .. } | HandoverState::Active
+            ) =>
+        {
+            starter()
+                .and_then(|starter| starter.stop(state_dir))
+                .map_err(busy)?;
+            // No core starts on the folder while what it ran on is set
+            // aside.
+            let _instance = acquire_instance(state_dir)?;
+            copy::set_aside(state_dir, intent, &ai_settings()?).map_err(refusal)?;
+            held.remove().map_err(plain)?;
+        }
+        Some(_) => return Err(plain("this machine gave its core back in this move")),
+        // The pending core gave its copy back at its lease's end, or none
+        // was placed: no core of the move runs, and no login starts one.
+        None => {
+            starter()
+                .and_then(|starter| starter.remove(state_dir))
+                .map_err(busy)?;
+        }
+    }
+    remove_copy(state_dir, intent)?;
+    Ok(StepAnswer::Abandoned)
+}
+
+/// Removes the copy `intent` was placed from and its manifest.
+fn remove_copy(state_dir: &Path, intent: &str) -> Result<(), StepAnswer> {
     for path in [
         incoming(state_dir, intent),
         manifest_path(state_dir, intent),
@@ -428,7 +483,7 @@ fn finish(state_dir: &Path, intent: &str) -> Answered {
             Err(error) => return Err(plain(format!("{}: {error}", path.display()))),
         }
     }
-    Ok(StepAnswer::Finished)
+    Ok(())
 }
 
 /// Has this machine's core stop for the move back `intent` to `target` and

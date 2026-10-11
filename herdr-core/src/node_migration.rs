@@ -643,6 +643,7 @@ pub const UNBOUND: &[&str] = &[
     "move-incoming",
     "moved-out",
     "core-move.json",
+    "core-move-abandoned.json",
     "core-handover.json",
     "core-handover.lock",
     "core-placement.json",

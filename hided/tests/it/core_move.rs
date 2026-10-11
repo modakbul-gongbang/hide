@@ -983,6 +983,226 @@ fn a_refused_first_link_rolls_back() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The abandon a move's wait offers, sent from a window on whatever role
+/// the address mounts; answers why it was refused, none when it was taken.
+fn abandon(window: &mut Renderer) -> Result<Option<String>> {
+    window.ask_ending("core_move", json!({"action": "abandon"}))
+}
+
+/// Waits on `window` for the move's wait to offer an abandon.
+fn abandon_offered(window: &mut Renderer) -> Result<Value> {
+    window.core_move_until(std::time::Duration::from_secs(60), |view| {
+        view["state"] == "waiting" && view["abandon"] == true
+    })
+}
+
+/// Amendment 4: the peer took the move's link but its answer was lost, and
+/// the peer is then cut off, so this machine cannot know whether the move
+/// committed. The operator gives the wait up: this machine's core starts
+/// at once on its own folder as the move found it, while the cut-off
+/// peer's core keeps running. Once the peer is reached again, running
+/// another build by then, this build is installed there and stops that
+/// core, its state set aside, so one core runs. An abandon asked outside
+/// such a wait is refused; a second one is the control's unit test, since
+/// here the window it would come from closes with the move.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_given_up_while_its_peer_is_cut_off_ends_the_peer_s_core_once_it_is_back() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = fixture.projects()?;
+        ensure!(
+            abandon(&mut fixture.held_window()?)?.as_deref() == Some("move_not_waiting"),
+            "an abandon with no move waiting was taken"
+        );
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let mut journal = fixture.journal_until("done")?;
+        let stray = fixture.target_core()?.context("the target's core")?;
+        fixture.kill_source()?;
+        let intent = journal["intent"].as_str().context("intent")?.to_owned();
+        // The answer was lost before this machine committed, so its folder
+        // is as the move found it: what the commit set aside is put back.
+        let aside = fixture.source.state.join("moved-out").join(&intent);
+        for entry in std::fs::read_dir(&aside)? {
+            let entry = entry?;
+            std::fs::rename(entry.path(), fixture.source.state.join(entry.file_name()))?;
+        }
+        std::fs::remove_dir(&aside)?;
+        // By the time it is reached again the peer runs an older build,
+        // which has no abandon step: it answers its usage as its own build's
+        // line and does nothing.
+        let helper = std::path::PathBuf::from(
+            journal["peer"]["program"]
+                .as_str()
+                .context("the peer's program")?,
+        );
+        let folder = helper
+            .parent()
+            .and_then(std::path::Path::parent)
+            .context("the peer's helper root")?
+            .join("0000000000000000");
+        std::fs::create_dir_all(&folder)?;
+        let older = folder.join("hided");
+        std::fs::write(
+            &older,
+            "#!/bin/sh\necho '{\"build\":\"older\",\"answer\":{\"kind\":\"refused\",\"reason\":\"usage\"}}'\nexit 2\n",
+        )?;
+        std::fs::set_permissions(&older, std::fs::Permissions::from_mode(0o755))?;
+        journal["peer"]["program"] = json!(folder.join("hided"));
+        // The state a lost link answer leaves.
+        journal["phase"] = json!({"direction": "forward", "phase": "attach_sent"});
+        write_record(&fixture.source.state.join("core-move.json"), &journal)?;
+        let mut placement = fixture
+            .source
+            .record("core-placement.json")?
+            .context("placement")?;
+        placement["move_intent"] = json!(intent);
+        write_record(
+            &fixture.source.state.join("core-placement.json"),
+            &placement,
+        )?;
+        write_record(
+            &fixture.target.state.join("core-handover.json"),
+            &json!({"version": 1, "intent": intent, "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "active"}}),
+        )?;
+        fixture.ssh.online(false)?;
+        fixture.start_source()?;
+        fixture.logged(&fixture.source, "status.failed")?;
+        ensure!(fixture.role()? == "node");
+        let mut window = fixture.held_window()?;
+        let offered = abandon_offered(&mut window)?;
+        let refused = abandon(&mut window)?;
+        if refused.is_some() {
+            let now = fixture
+                .held_window()?
+                .core_move_until(std::time::Duration::from_secs(5), |_| true)?;
+            bail!("the offered abandon was refused: {refused:?}; offered {offered}; now {now}");
+        }
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(fixture.source.record("core-placement.json")?.is_none());
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["phase"]["phase"] == "abandoned", "{journal}");
+        let kept = fixture
+            .source
+            .record("core-move-abandoned.json")?
+            .context("the moves given up")?;
+        ensure!(kept["moves"][0]["intent"] == intent.as_str(), "{kept}");
+        wait_for("this machine's projects", || {
+            Ok((fixture.projects()? == before).then_some(()))
+        })?;
+        ensure!(
+            hide_platform::process::is_alive(stray),
+            "the cut-off peer's core ended before it was reached"
+        );
+        fixture.ssh.online(true)?;
+        wait_for("the peer's core stopped, leaving one core", || {
+            Ok((!hide_platform::process::is_alive(stray)).then_some(()))
+        })?;
+        ensure!(fixture.target_core()?.is_none(), "a core runs on the peer");
+        let installed = fixture.logged(&fixture.source, "abandon.installed")?;
+        ensure!(
+            installed["intent"] == intent.as_str() && installed["was"] == json!(older),
+            "{installed}"
+        );
+        fixture.logged(&fixture.source, "abandon.ended")?;
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        ensure!(
+            fixture
+                .target
+                .state
+                .join("moved-out")
+                .join(&intent)
+                .join("core-state.json")
+                .is_file(),
+            "the peer's core state was not set aside"
+        );
+        ensure!(fixture.source.record("core-move-abandoned.json")?.is_none());
+        ensure!(fixture.role()? == "core");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// Amendment 4: the pending core cannot record the commit, so it refuses
+/// the link, and the rollback's abort waits on it while it is busy. The
+/// operator gives the wait up: this machine's core starts, and once the
+/// peer can act its pending core is stopped and its state set aside,
+/// leaving nothing of the move on either machine.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_given_up_while_its_pending_peer_is_busy_leaves_nothing_of_it() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = fixture.projects()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        wait_for("the copy placed on the target", || {
+            Ok(fixture
+                .target
+                .record("core-handover.json")?
+                .filter(|record| record["state"]["state"] == "pending"))
+        })?;
+        let held = fixture.hold_target_handover()?;
+        fixture.logged(&fixture.target, "attach.refused")?;
+        fixture.logged(&fixture.source, "abort.failed")?;
+        ensure!(fixture.role()? == "moving");
+        let pending = fixture
+            .target_core()?
+            .context("the target's pending core")?;
+        let intent = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?["intent"]
+            .as_str()
+            .context("intent")?
+            .to_owned();
+        let mut window = fixture.held_window()?;
+        abandon_offered(&mut window)?;
+        ensure!(
+            abandon(&mut window)?.is_none(),
+            "the offered abandon was refused"
+        );
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        wait_for("this machine's projects", || {
+            Ok((fixture.projects()? == before).then_some(()))
+        })?;
+        // The peer cannot act while its record is held: its core waits.
+        fixture.logged(&fixture.source, "abandon.failed")?;
+        ensure!(hide_platform::process::is_alive(pending));
+        drop(held);
+        wait_for("the pending core stopped", || {
+            Ok((!hide_platform::process::is_alive(pending)).then_some(()))
+        })?;
+        ensure!(fixture.target_core()?.is_none());
+        fixture.logged(&fixture.source, "abandon.ended")?;
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        ensure!(
+            !fixture
+                .target
+                .state
+                .join("move-incoming")
+                .join(&intent)
+                .exists(),
+            "the move's copy is left on the peer"
+        );
+        ensure!(fixture.source.record("core-move-abandoned.json")?.is_none());
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["phase"]["phase"] == "abandoned", "{journal}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The target stops its pending core for the rollback but cannot take the
 /// copy back out of its folder: it says so, and this machine, knowing no
 /// core of the move runs or starts there, starts its own core rather than

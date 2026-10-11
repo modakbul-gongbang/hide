@@ -88,13 +88,19 @@ pub(super) async fn screen(
 }
 
 /// Waits for a live link, holding the screen: it is told where the link
-/// stands each time that changes (`core_link` frame), and what it sends
-/// meanwhile is dropped and counted, but for the operator's reconnect
-/// (B16). `None` when the screen left first.
+/// stands each time that changes (`core_link` frame), and where a move of
+/// the core stands from the moment one is under way (`core_move` frame), a
+/// window shown nothing of a move until then; what it sends meanwhile is
+/// dropped and counted, but for the operator's reconnect (B16) and a move's
+/// asks, such as giving up a move whose peer never answers. `None` when the
+/// screen left first.
 async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>> {
     let mut live = state.live.clone();
     let mut phases = state.phases.clone();
     let mut told: Option<Value> = None;
+    let mut move_frames = state.seat.moves.subscribe();
+    move_frames.mark_changed();
+    let mut move_told = false;
     loop {
         if let Some(link) = live.borrow_and_update().clone() {
             return Some(link);
@@ -123,13 +129,34 @@ async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>
                     return None;
                 }
             }
+            changed = move_frames.changed() => {
+                if changed.is_err() {
+                    return None;
+                }
+                let view = move_frames.borrow_and_update().clone();
+                move_told |= view.state.busy();
+                if move_told {
+                    let frame = crate::core_move::control::frame(&view);
+                    if socket.send(Message::Text(frame.into())).await.is_err() {
+                        return None;
+                    }
+                }
+            }
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return None,
                 Some(Ok(Message::Text(text))) => {
-                    match screen_event::read(&text, &[Kind::CoreLink]) {
-                        Some(routed) => {
+                    match screen_event::read(&text, &[Kind::CoreLink, Kind::CoreMove]) {
+                        Some(routed) if routed.kind == Kind::CoreLink => {
                             if control_link(socket, state, &routed.event).await.is_err() {
                                 return None;
+                            }
+                        }
+                        Some(routed) => {
+                            if let Err(reason) = state.seat.moves.request_event(&routed.event) {
+                                let frame = crate::core_move::control::refusal_frame(reason);
+                                if socket.send(Message::Text(frame.into())).await.is_err() {
+                                    return None;
+                                }
                             }
                         }
                         None => {

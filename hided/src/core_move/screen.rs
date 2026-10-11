@@ -3,8 +3,10 @@
 //! with `role: "moving"`, so the desktop host never reads the daemon as
 //! lost, and a window's socket hears the move's `core_move` frames. It is
 //! mounted before the role it replaces stops, so a window whose socket that
-//! role closes (1012 `role_ended`) reconnects here. Ending this role closes
-//! every socket with 1012, and the page reconnects to the role mounted next.
+//! role closes (1012 `role_ended`) reconnects here. A window's `core_move`
+//! events reach the move (the abandon its wait offers among them); every
+//! other event waits for the role after it. Ending this role closes every
+//! socket with 1012, and the page reconnects to the role mounted next.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -143,10 +145,16 @@ async fn serve(mut socket: WebSocket, mut state: ScreenState, origin: Option<Str
             }
             () = async { let _ = state.ended.wait_for(|ended| *ended).await; } => break,
             incoming = socket.recv() => match incoming {
-                // A window's events wait for the role after the move.
-                Some(Ok(Message::Text(_))) => {
-                    let refused = json!({"type": "error", "payload": {"kind": "core_move", "reason": "moving"}, "message": "moving"});
-                    if socket.send(Message::Text(refused.to_string().into())).await.is_err() {
+                Some(Ok(Message::Text(text))) => {
+                    let taken = crate::screen_event::read(&text, &[crate::screen_event::Kind::CoreMove])
+                        .map(|routed| state.moves.request_event(&routed.event));
+                    let refused = match taken {
+                        Some(Ok(())) => continue,
+                        Some(Err(reason)) => super::control::refusal_frame(reason),
+                        // Every other event waits for the role after the move.
+                        None => json!({"type": "error", "payload": {"kind": "core_move", "reason": "moving"}, "message": "moving"}).to_string(),
+                    };
+                    if socket.send(Message::Text(refused.into())).await.is_err() {
                         return;
                     }
                 }
