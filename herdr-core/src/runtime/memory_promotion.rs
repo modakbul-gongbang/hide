@@ -2018,7 +2018,8 @@ mod tests {
     #[test]
     fn a_failed_attempt_whose_work_may_still_come_keeps_its_worktree() {
         let first = branch(7, 1);
-        let cases: [(&str, fn(&mut Repository)); 3] = [
+        type Case = (&'static str, fn(&mut Repository));
+        let cases: [Case; 3] = [
             ("an agent in its pane", |repository| {
                 repository.agents.push("w2:p1".into())
             }),
