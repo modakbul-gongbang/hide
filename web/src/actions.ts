@@ -1043,6 +1043,10 @@ export function createActions(send: DispatchFn) {
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
     },
+    /** The usage limit (PRD hide-ai-usage-limit D-01): a percent, or `"none"`; the core refuses a number outside 1 to 100. */
+    setAiUsageLimit(limit: number | "none") {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { usage_limit: limit } });
+    },
     /** Use Hide AI (PRD settings-cleanup D-14): off, no model is asked anything and the other Hide AI values stay stored. */
     setHideAiEnabled(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { enabled: on } });

@@ -498,7 +498,7 @@ impl Runtime {
             .as_ref()
             .filter(|(workspace_id, _)| self.memory_opened(workspace_id))
             .map(|(_, action)| *action);
-        let ai_ready = self.ai_active() && self.ai_settings.is_some();
+        let ai_ready = self.ai_active() && self.ai_settings.is_some() && !self.usage_paused();
         let Some(project) = self
             .snapshot
             .memory

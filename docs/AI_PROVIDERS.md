@@ -20,9 +20,9 @@ No third-party memory engine or prompt asset is part of it.
 The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps; only an operator's own words can supersede a card.
 It sends locally redacted, normalized human and assistant events after the durable session cursor, or an agent's note from `hide memory add`, plus the existing cards the model-free matcher finds most like them, so a same-meaning card is found across Korean and English.
 The comparison set is bounded by cards and serialized bytes so it and one event group fit the 64 KiB request-input cap, and both pass through the current local redactor again at the final provider egress boundary.
-Background analysis counts against a machine-wide 1,000 calls a UTC day and waits while the provider's weekly usage is at 80% or more; `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
+Background analysis counts against a machine-wide 1,000 calls a UTC day and is asked only of an agent under the operator's usage limit (see [The usage limit](#the-usage-limit)); `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
-Two more features use the same boundary and the same call cap and weekly deferral (PRD memory-card-quality D-07, D-08, D-11): `project_memory_verify` asks whether a card whose evidence moved still holds, and `project_memory_promote_check` asks whether a rule or lesson about to be suggested for the repository's documents is already said there (`hide-memory/src/verify.rs`).
+Two more features use the same boundary and the same call cap and usage limit (PRD memory-card-quality D-07, D-08, D-11): `project_memory_verify` asks whether a card whose evidence moved still holds, and `project_memory_promote_check` asks whether a rule or lesson about to be suggested for the repository's documents is already said there (`hide-memory/src/verify.rs`).
 Each sends the card, what the repository answers now for its evidence, and bounded excerpts (at most five cited files of 8 KiB for the first; at most five instruction documents of 8 KiB and three of the operator's own global instruction files of 5 KiB for the second), each a whole file when it fits and otherwise the sections (a heading and what follows) that share the most words with the card, read from at most the first 96 KiB of the file, all passed through the local redactor, within the 64 KiB request input (the last excerpts are dropped before a request is refused); a file named for credentials (`.env*`, keys and certificates, names containing `secret` or `credential`) is never read into a request, whatever a card cites; an answer that arrives but cannot be used (not the schema, a correction with no text, a document never shown) spends the card's day and the pass goes on to the next card, while a provider failure spends nothing and holds the Project; the answer is a strict-schema verdict and a corrected card when it is outdated, and a document named by an `in_docs` verdict must be one the request carried.
 A card is asked about at most once a day.
 The logs carry card numbers and verdicts, never card text, file text or a path.
@@ -152,9 +152,12 @@ The file names a provider, a model per provider, whether Hide AI is on, an order
   "models": { "claude": "sonnet", "codex": "gpt-5.6-luna" },
   "enabled": true,
   "fallback": [{ "provider": "codex", "model": "gpt-5.6-luna" }],
-  "agent_summary": true
+  "agent_summary": true,
+  "usage_limit": 95
 }
 ```
+
+`usage_limit` is a percent from 1 to 100 or `"none"`, written only when it is not the default 90; a file without it reads 90, and any other value makes the file malformed, which is reported and not guessed around.
 
 `enabled` is the Settings › Hide AI switch and is on when the field is absent.
 Off, `AiRouter::execute` returns `AiError::Disabled` at once and asks no provider anything, and a feature treats it as nothing to do, never as a failure.
@@ -332,6 +335,24 @@ A completion-unknown outcome is final: one call, no second attempt on the same p
 An answer the schema refused is retried on the same provider only.
 There is no silent fallback: the result names the provider that answered, the log names it too, and a failure says why none did.
 
+## The usage limit
+
+One setting, `usage_limit` (`hide-ai/src/usage_limit.rs`), says how much of an agent's week Hide AI may use for what it starts on its own: agent labels, Memory analysis, the card recheck and the pre-promotion check.
+An agent whose weekly figure is at or past the limit cannot answer such a request, so the router moves on to the next agent of the same priority list as for any agent that cannot, and logs the move as `ai.usage_limit` with `reason=usage_limit`, the agent, its usage, the limit and `action=fallback` or `action=paused`, never any content.
+It is not a second order and not a second list.
+The judgment is a request-time check against a shared `UsageLimits` cell, not a flag on `AiRequest` (which crosses to the node): the core writes the limit and each agent's reading when either moves, a router reads them on its own worker thread, and a router built without the cell, or a request that names its agent with `pick`, is never judged.
+The routers for what the operator waits on (worktree names, issue intake review), `hide memory add` and the Factory's judgments are built without the cell, so the limit never delays them (PRD hide-ai-usage-limit D-03).
+`statuses()` and `availability()` stay ungated, so Settings still lists a past-limit agent as signed in; only `active` in `provider_state()` skips it.
+
+The figures are the weekly rows the toolbar's usage read already produces (`navigator.provider_usage`, the seven-day window with a percent); no new read command exists.
+With no window attached the same reader also runs while a limit is set and Hide AI is on and either the order is paused (only a fresh figure can lift it) or an agent worked in the last 30 minutes, so labels are not judged by a figure that is days old; that is at most one read per agent every five minutes and none while nothing runs.
+Until the first read lands (one second after launch) an agent has no figure and is not limited.
+An agent with no figure, or whose reading belongs to a window that has already reset, is never past the limit, and No limit judges nothing.
+When every agent of the list is past the limit, or the list is empty because Hide AI is off, nothing is sent: `Runtime::usage_paused()` folds into the same states as Hide AI off, so labels show each session's own text, Memory analysis reports `AiNotReady` and the pass builds no router, and both resume on the next usage read, settings change or coordinator wake after the limit is raised or the week turns.
+Entering and leaving the pause is one `usage_limit.paused` or `usage_limit.resumed` diagnostic each.
+The limit belongs to the core machine like the rest of `ai.json`, so a window on another device shows the core's value and its choice is applied there.
+The snapshot carries `status.background_ai.usage_limit`, each agent row's `weekly` and `past_limit`, and the refusal's `past_limit` reason with `used_percent` and `limit`; they change only when a figure, the limit or the refusal changes, so an unchanged usage read publishes nothing.
+
 ## Retry policy
 
 - `Transient`: exponential backoff, at most four attempts on the same provider.
@@ -349,7 +370,7 @@ The label worker parks a turn for good on a settled failure and asks again after
 
 ## Logging
 
-The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
+The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.usage_limit`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
 Every `ai.request.finished` of a provider that declares itself measurable (`AiBackend::measurable()`, today only codex, whose app-server is resident) also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.

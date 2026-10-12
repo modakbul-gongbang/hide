@@ -1124,6 +1124,10 @@ pub(super) struct AiSettingsPayload {
     /// An agent to take out of that list.
     #[serde(default)]
     pub(super) fallback_remove: Option<String>,
+    /// The Usage limit (PRD hide-ai-usage-limit D-01): a percent from 1 to
+    /// 100, or `"none"`. A value that is neither is refused with the event.
+    #[serde(default)]
+    pub(super) usage_limit: Option<hide_ai::UsageLimit>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its

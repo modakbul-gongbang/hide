@@ -40,6 +40,40 @@ export function modelsFailed(provider: AiProvider): boolean {
   return reason !== null && reason !== "not_asked" && reason !== "not_observed" && !provider.models_fixed;
 }
 
+/** The limit a settings file without the field uses (PRD hide-ai-usage-limit D-01). */
+export const DEFAULT_USAGE_LIMIT = 90;
+/** The limits the menu offers; a stored value outside them is still shown. */
+const USAGE_LIMIT_CHOICES = [80, 90, 95];
+/** The select value of No limit. */
+export const NO_USAGE_LIMIT = "none";
+
+/** The limit the core reports: a percent, `null` for No limit, an older daemon's absence for the default. */
+export function usageLimitOf(ai: BackgroundAi | undefined): number | null {
+  if (ai?.usage_limit === undefined) return DEFAULT_USAGE_LIMIT;
+  return ai.usage_limit;
+}
+
+/** The select value for the stored limit. */
+export function usageLimitToValue(limit: number | null): string {
+  return limit === null ? NO_USAGE_LIMIT : String(limit);
+}
+
+/** The usage-limit menu: 80, 90, 95 and No limit, plus the stored percent when it is none of them. */
+export function usageLimitChoices(limit: number | null): string[] {
+  const percents = limit !== null && !USAGE_LIMIT_CHOICES.includes(limit) ? [...USAGE_LIMIT_CHOICES, limit].sort((a, b) => a - b) : USAGE_LIMIT_CHOICES;
+  return [...percents.map(String), NO_USAGE_LIMIT];
+}
+
+/** The event value for a select value. */
+export function valueToUsageLimit(value: string): number | "none" {
+  return value === NO_USAGE_LIMIT ? NO_USAGE_LIMIT : Number(value);
+}
+
+/** A percent as the screen writes it: the figure the agent gave, rounded to whole percents. */
+export function percentOf(used: number): number {
+  return Math.round(used);
+}
+
 export function providerById(ai: BackgroundAi | undefined, id: string | null | undefined): AiProvider | null {
   return ai?.providers.find((provider) => provider.id === id) ?? null;
 }

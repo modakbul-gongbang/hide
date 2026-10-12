@@ -821,6 +821,8 @@ impl Runtime {
             return false;
         }
         self.snapshot.navigator.provider_usage = provider_usage;
+        // The usage limit is judged by these figures.
+        self.refresh_background_ai();
         true
     }
 
@@ -828,7 +830,9 @@ impl Runtime {
         crate::usage::UsageActivity {
             // Background Memory analysis reads the weekly figure with no
             // window attached (D-10 b).
-            window_visible: self.usage_window_visible || self.memory_reads_usage(),
+            window_visible: self.usage_window_visible
+                || self.memory_reads_usage()
+                || self.limit_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
         }
     }
@@ -843,6 +847,7 @@ impl Runtime {
         let summary = crate::agent_state::summarize(agents, connected);
         if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
+            self.agent_worked_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
@@ -1566,6 +1571,9 @@ impl Runtime {
         if let Some(on) = payload.agent_summary {
             next.agent_summary = on;
         }
+        if let Some(limit) = payload.usage_limit {
+            next.usage_limit = limit;
+        }
         if let Some(id) = payload.provider.as_deref() {
             let Some(provider) = self.ai_provider_named(id) else {
                 return true;
@@ -1645,6 +1653,10 @@ impl Runtime {
         self.ai_settings
             .as_ref()
             .is_some_and(|settings| settings.agent_summary && self.ai_active())
+            // The pause as the last refresh found it: this runs every
+            // coordinator tick, and the refresh runs on each usage read,
+            // settings change and wake that can move it.
+            && !self.usage_pause_announced
     }
 
     /// Whether the label worker asks a provider now: agent summaries are on
@@ -1887,7 +1899,6 @@ impl Runtime {
                     .unwrap_or_else(|| settings.model(provider).to_owned());
             }
         }
-        let refusal = self.ai_refusal(&settings);
         let snapshot = &mut self.snapshot.status.background_ai;
         snapshot.enabled = settings.enabled;
         snapshot.chosen = settings.chosen;
@@ -1904,7 +1915,10 @@ impl Runtime {
             })
             .collect();
         snapshot.providers = providers;
-        snapshot.refusal = refusal;
+        // The figures and the refusal read the rows just stored.
+        self.refresh_usage_limit();
+        let refusal = self.ai_refusal(&settings);
+        self.snapshot.status.background_ai.refusal = refusal;
     }
 
     /// What the label analyzer last found about Runs on (B41, B42): shown
@@ -1916,17 +1930,37 @@ impl Runtime {
         if !settings.chosen || !settings.enabled {
             return None;
         }
+        // Every agent past the limit is what the screen must say, whatever the
+        // analyzer last recorded: labels are not asked while it holds, so that
+        // record is not refreshed.
+        if self.usage_pause_announced
+            && let Some(refusal) = self.usage_refusal(settings)
+        {
+            return Some(refusal);
+        }
         let standing = self
             .label_services
             .as_ref()
-            .and_then(|services| services.standing.current())?;
-        (standing.selected == settings.provider).then(|| {
-            crate::model::BackgroundAiRefusalSnapshot {
-                provider: standing.selected.as_str().to_owned(),
-                reason: standing.reason.to_owned(),
-                retry_at_ms: standing.retry_at_ms,
-                using: standing.using.map(|using| using.as_str().to_owned()),
-            }
+            .and_then(|services| services.standing.current())
+            .filter(|standing| standing.selected == settings.provider);
+        let Some(standing) = standing else {
+            // Nothing is wrong with Runs on except, maybe, the usage limit.
+            return self.usage_refusal(settings);
+        };
+        // The analyzer's record is as old as its last job: an agent it named
+        // as answering that is past the limit now does not answer.
+        let using = standing.using.filter(|using| {
+            self.usage_gate()
+                .past_limit(*using, unix_milliseconds())
+                .is_none()
+        });
+        Some(crate::model::BackgroundAiRefusalSnapshot {
+            provider: standing.selected.as_str().to_owned(),
+            reason: standing.reason.to_owned(),
+            retry_at_ms: standing.retry_at_ms,
+            using: using.map(|using| using.as_str().to_owned()),
+            used_percent: None,
+            limit: None,
         })
     }
 
@@ -1934,9 +1968,12 @@ impl Runtime {
     /// snapshot last said. One mutex read per coordinator wake, no provider.
     pub(crate) fn refresh_ai_standing(&mut self) -> bool {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        // A window that reset or a figure that crossed the limit moves these
+        // with the clock, not with a usage read.
+        let figures = self.refresh_usage_limit();
         let next = self.ai_refusal(&settings);
         if self.snapshot.status.background_ai.refusal == next {
-            return false;
+            return figures;
         }
         self.snapshot.status.background_ai.refusal = next;
         true

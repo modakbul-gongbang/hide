@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::router::RouterConfig;
+use crate::usage_limit::UsageLimit;
 use crate::{AiError, Availability, PROVIDERS, ProviderId};
 
 /// What the operator chose. A field that is absent from the file takes the
@@ -51,6 +52,11 @@ pub struct AiSettings {
     /// Empty by default, for an existing file too: nothing moves to another
     /// vendor unless the operator added it here.
     pub fallback: Vec<FallbackEntry>,
+    /// How much of an agent's week Hide AI may use before it moves to the
+    /// next agent of the order (Settings › Hide AI › Usage limit). One value
+    /// for every feature Hide AI starts on its own; absent from the file it
+    /// is 90%, and it is written only when the operator chose another.
+    pub usage_limit: UsageLimit,
 }
 
 /// One agent the operator added under "If <Runs on> can't answer".
@@ -80,6 +86,8 @@ struct RawSettingsOut {
     agent_summary: bool,
     enabled: bool,
     fallback: Vec<FallbackEntry>,
+    #[serde(skip_serializing_if = "UsageLimit::is_default")]
+    usage_limit: UsageLimit,
 }
 
 impl From<AiSettings> for RawSettingsOut {
@@ -90,6 +98,7 @@ impl From<AiSettings> for RawSettingsOut {
             agent_summary: settings.agent_summary,
             enabled: settings.enabled,
             fallback: settings.fallback,
+            usage_limit: settings.usage_limit,
         }
     }
 }
@@ -107,6 +116,8 @@ struct RawSettings {
     enabled: bool,
     #[serde(default)]
     fallback: Vec<RawFallback>,
+    #[serde(default)]
+    usage_limit: UsageLimit,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +137,7 @@ impl From<RawSettings> for AiSettings {
             agent_summary: raw.agent_summary,
             enabled: raw.enabled,
             fallback: Vec::new(),
+            usage_limit: raw.usage_limit,
         };
         for entry in raw.fallback {
             if let Some(entry_provider) = ProviderId::from_id(&entry.provider) {
@@ -157,6 +169,7 @@ impl Default for AiSettings {
             agent_summary: on(),
             enabled: on(),
             fallback: Vec::new(),
+            usage_limit: UsageLimit::default(),
         }
     }
 }
@@ -521,6 +534,56 @@ mod tests {
             serde_json::from_slice(&std::fs::read(settings_path(&home)).unwrap()).unwrap();
         assert_eq!(rewritten["models"]["some-future-agent"], "x-1");
         std::fs::remove_dir_all(home).expect("the temporary home is removable");
+    }
+
+    /// B1, B7: a file with no limit reads 90, an explicit limit survives a
+    /// rewrite, "none" is a choice and not an absence, and the default is not
+    /// written so a machine that never chose one keeps the file it had.
+    #[test]
+    fn the_usage_limit_defaults_to_90_and_only_a_chosen_one_is_written() {
+        let home = home("usage-limit");
+        write_settings(&home, r#"{"provider":"claude"}"#);
+        let mut settings = load(&home).expect("a file with no limit is readable");
+        assert_eq!(settings.usage_limit, UsageLimit::Percent(90));
+        save(&home, &settings).expect("the file is writable");
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(settings_path(&home)).unwrap()).unwrap();
+        assert!(
+            written.get("usage_limit").is_none(),
+            "the default is not written: {written}"
+        );
+
+        for chosen in [
+            UsageLimit::Percent(80),
+            UsageLimit::Percent(95),
+            UsageLimit::None,
+        ] {
+            settings.usage_limit = chosen;
+            save(&home, &settings).expect("the file is writable");
+            assert_eq!(load(&home).unwrap().usage_limit, chosen);
+        }
+        std::fs::remove_dir_all(home).expect("the temporary home is removable");
+    }
+
+    /// A limit that is not a percent or "none" is stated, never read as 90.
+    #[test]
+    fn a_limit_nobody_can_mean_is_reported_rather_than_read_as_the_default() {
+        let home = home("usage-limit-bad");
+        write_settings(&home, r#"{"provider":"claude","usage_limit":150}"#);
+        let error = load(&home).expect_err("150 percent is not a limit");
+        assert_eq!(error.class(), "invalid_output");
+        std::fs::remove_dir_all(home).expect("the temporary home is removable");
+    }
+
+    /// The limit is read at each request through the shared cell, so changing
+    /// it must never rebuild a router or be mistaken for a change of agents.
+    #[test]
+    fn changing_only_the_usage_limit_leaves_the_routing_alone() {
+        let before = AiSettings::default();
+        let mut after = before.clone();
+        after.usage_limit = UsageLimit::None;
+        assert!(before.routes_like(&after));
+        assert_ne!(before, after);
     }
 
     #[test]

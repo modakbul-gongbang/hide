@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::log::{AiLogEvent, AiLogSink};
 use crate::schema;
+use crate::usage_limit::{PastLimit, UsageLimits};
 use crate::{
     AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ModelCatalog,
     ProcessMeasurement, ProviderId,
@@ -57,6 +58,13 @@ pub struct RouterConfig {
     /// before the request fails with `ProviderUnavailable(app_server_restart_cap)`.
     /// A request that completes under the cap resets the count.
     pub max_consecutive_restarts: u32,
+    /// The operator's usage limit and the readings it is judged by. A router
+    /// that has one skips an agent that is at or past the limit, as it skips
+    /// any agent that cannot answer, so the request moves to the next one of
+    /// the priority; only requests Hide starts on its own are given one, and
+    /// work an operator waits on is not (PRD hide-ai-usage-limit D-03). A
+    /// request that names its own agent is never judged by it.
+    pub usage_gate: Option<Arc<UsageLimits>>,
 }
 
 impl Default for RouterConfig {
@@ -76,6 +84,7 @@ impl Default for RouterConfig {
             max_app_server_descendants: 4,
             max_app_server_rss_bytes: 1024 * 1024 * 1024,
             max_consecutive_restarts: 3,
+            usage_gate: None,
         }
     }
 }
@@ -133,6 +142,9 @@ enum Selection {
     Ready,
     Parked(Duration),
     Blocked(Availability),
+    /// Signed in and able, but at or past the operator's usage limit: not
+    /// asked, and not a refusal of its own, since the agent would answer.
+    PastLimit(PastLimit),
 }
 
 impl Selection {
@@ -149,6 +161,9 @@ impl Selection {
                 reason: format!("usage_limited;retry_after_s={}", remaining.as_secs()),
             },
             Self::Blocked(state) => state.clone(),
+            Self::PastLimit(past) => Availability::Unavailable {
+                reason: past_limit_reason(past),
+            },
         }
     }
 
@@ -164,8 +179,16 @@ impl Selection {
                 | Availability::Unsupported { reason }),
             ) => format!("{}:{reason}", state.class()),
             Self::Blocked(state) => state.class().to_owned(),
+            Self::PastLimit(past) => past_limit_reason(past),
         }
     }
+}
+
+fn past_limit_reason(past: &PastLimit) -> String {
+    format!(
+        "usage_limit;used={};limit={}",
+        past.used_percent, past.limit_percent
+    )
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -347,10 +370,14 @@ impl AiRouter {
         let selection = self.select_among(self.candidates());
         let (first, chosen) = selection.first()?;
         let selected = first.id();
+        let degraded = degraded_of(selected, chosen);
+        // Who a request would run on is judged with the usage limit, who is
+        // degraded is not: an agent past the limit is signed in and able.
+        let active = active_provider(&self.apply_usage_limit(selection.clone()));
         Some(ProviderState {
             selected,
-            active: active_provider(&selection),
-            degraded: degraded_of(selected, chosen),
+            active,
+            degraded,
         })
     }
 
@@ -624,8 +651,12 @@ impl AiRouter {
                 .collect(),
             None => self.candidates(),
         };
-        let selection = self.select_among(candidates);
+        let mut selection = self.select_among(candidates);
+        if request.pick.is_none() {
+            selection = self.apply_usage_limit(selection);
+        }
         self.announce_degradation(request, &selection);
+        self.log_usage_limit(request, &selection);
         let connected: Vec<&Arc<dyn AiBackend>> = selection
             .iter()
             .filter(|(_, state)| state.is_ready())
@@ -639,14 +670,30 @@ impl AiRouter {
                 Selection::Parked(remaining) => Some((backend.id(), *remaining)),
                 _ => None,
             });
-            let (provider, error) = match parked {
-                Some((provider, remaining)) => (
+            // Nothing is wrong with an agent that is only past the limit, so a
+            // sign-in or an outage elsewhere in the order is the more useful
+            // thing to say; with none, the wait is the earliest reset.
+            let past = selection.iter().find_map(|(_, state)| match state {
+                Selection::PastLimit(past) => Some(*past),
+                _ => None,
+            });
+            let blocked = selection
+                .iter()
+                .any(|(_, state)| matches!(state, Selection::Blocked(_)));
+            let (provider, error) = match (parked, past) {
+                (Some((provider, remaining)), _) => (
                     Some(provider),
                     AiError::UsageLimited {
                         retry_after: Some(remaining),
                     },
                 ),
-                None => (
+                (None, Some(past)) if !blocked => (
+                    Some(past.provider),
+                    AiError::UsageLimited {
+                        retry_after: self.earliest_reset(&selection),
+                    },
+                ),
+                _ => (
                     None,
                     AiError::NoProvider(
                         selection
@@ -913,6 +960,65 @@ impl AiRouter {
         }
     }
 
+    /// Turns every agent that is able to answer but at or past the operator's
+    /// usage limit into one that is skipped. Without a gate, or for an agent
+    /// with no reading, nothing changes (PRD hide-ai-usage-limit D-02, D-07).
+    fn apply_usage_limit(
+        &self,
+        selection: Vec<(Arc<dyn AiBackend>, Selection)>,
+    ) -> Vec<(Arc<dyn AiBackend>, Selection)> {
+        let Some(gate) = &self.config.usage_gate else {
+            return selection;
+        };
+        let now = unix_ms();
+        selection
+            .into_iter()
+            .map(|(backend, state)| match state {
+                Selection::Ready => match gate.past_limit(backend.id(), now) {
+                    Some(past) => (backend, Selection::PastLimit(past)),
+                    None => (backend, Selection::Ready),
+                },
+                other => (backend, other),
+            })
+            .collect()
+    }
+
+    /// Logs each agent the usage limit kept this request from asking: the ones
+    /// ahead of the agent that answers, or every one when none can (D-09).
+    fn log_usage_limit(&self, request: &AiRequest, selection: &[(Arc<dyn AiBackend>, Selection)]) {
+        let answering = active_provider(selection);
+        for (_, state) in selection {
+            if let Selection::PastLimit(past) = state {
+                self.log(request, |event| {
+                    event.event = "ai.usage_limit".into();
+                    event.provider = Some(past.provider);
+                    event.detail = Some(format!(
+                        "reason=usage_limit;used={};limit={};action={}",
+                        past.used_percent,
+                        past.limit_percent,
+                        answering.map_or("paused".to_owned(), |to| format!("fallback;to={to}"))
+                    ));
+                });
+            } else if state.is_ready() {
+                break;
+            }
+        }
+    }
+
+    /// How long until the soonest window that holds an agent past the limit
+    /// resets, when any of them said.
+    fn earliest_reset(&self, selection: &[(Arc<dyn AiBackend>, Selection)]) -> Option<Duration> {
+        let now = unix_ms();
+        selection
+            .iter()
+            .filter_map(|(_, state)| match state {
+                Selection::PastLimit(past) => past.resets_at_unix_ms,
+                _ => None,
+            })
+            .min()
+            .map(|reset| Duration::from_millis(reset.saturating_sub(now)))
+    }
+
     /// The providers a request may be asked of, in the order they are tried:
     /// the configured priority, each once, and only those that are
     /// registered. A registered provider outside the priority is never in
@@ -1149,6 +1255,9 @@ fn degraded_of(selected: ProviderId, chosen: &Selection) -> Option<Degraded> {
             reason: reason.clone(),
             until: None,
         }),
+        // The limit is judged where a request is placed, never on this
+        // selection: an agent past it is signed in and able, not degraded.
+        Selection::PastLimit(_) => None,
     }
 }
 
@@ -1158,6 +1267,14 @@ fn input_hash(request: &AiRequest) -> u64 {
     request.input.hash(&mut hasher);
     request.output_schema.to_string().hash(&mut hasher);
     hasher.finish()
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 fn utc_day() -> u64 {
@@ -1673,6 +1790,270 @@ mod tests {
             .unwrap();
         assert_eq!(result.value["summary"], "late");
         assert_eq!(codex.calls(), 1);
+    }
+
+    fn gated_router(
+        backends: Vec<Arc<dyn AiBackend>>,
+        sink: Arc<Recorder>,
+        gate: &Arc<UsageLimits>,
+    ) -> AiRouter {
+        let config = RouterConfig {
+            priority: backends.iter().map(|backend| backend.id()).collect(),
+            backoff_base: Duration::from_millis(1),
+            usage_gate: Some(Arc::clone(gate)),
+            ..RouterConfig::default()
+        };
+        AiRouter::with_sleep(backends, config, sink, Box::new(|_| {}))
+    }
+
+    fn week(used: f64) -> crate::UsageReading {
+        crate::UsageReading {
+            used_percent: used,
+            resets_at_unix_ms: None,
+        }
+    }
+
+    fn gate(
+        limit: crate::UsageLimit,
+        rows: &[(ProviderId, crate::UsageReading)],
+    ) -> Arc<UsageLimits> {
+        let gate = Arc::new(UsageLimits::new());
+        gate.set(limit, &rows.iter().copied().collect());
+        gate
+    }
+
+    /// B4, D-02: Runs on at 86% of a week with an 80% limit cannot answer a
+    /// background request, so the next agent of the same order does, and the
+    /// log says which agent the limit moved the request off.
+    #[test]
+    fn an_agent_past_the_usage_limit_is_skipped_for_the_next_one_of_the_order() {
+        let sink = Arc::new(Recorder::default());
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+        let limits = gate(
+            crate::UsageLimit::Percent(80),
+            &[
+                (ProviderId::CLAUDE, week(86.0)),
+                (ProviderId::CODEX, week(31.0)),
+            ],
+        );
+        let router = gated_router(vec![claude.clone(), codex.clone()], sink.clone(), &limits);
+        let result = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(result.provider, ProviderId::CODEX);
+        assert_eq!(claude.calls(), 0, "the agent past the limit is not asked");
+        let moved = sink.events("ai.usage_limit");
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].provider, Some(ProviderId::CLAUDE));
+        assert_eq!(
+            moved[0].detail.as_deref(),
+            Some("reason=usage_limit;used=86;limit=80;action=fallback;to=codex")
+        );
+        // Settings still offers the agent as signed in: past the limit is not
+        // a sign-in or a selection problem.
+        let status = router
+            .statuses()
+            .into_iter()
+            .find(|status| status.provider == ProviderId::CLAUDE)
+            .unwrap();
+        assert!(status.selectable && status.availability.is_ready());
+    }
+
+    /// B9: the same 86% under a 90% limit is no reason to move.
+    #[test]
+    fn an_agent_under_the_usage_limit_answers_and_nothing_is_logged() {
+        let sink = Arc::new(Recorder::default());
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+        let limits = gate(
+            crate::UsageLimit::Percent(90),
+            &[(ProviderId::CLAUDE, week(86.0))],
+        );
+        let router = gated_router(vec![claude.clone(), codex], sink.clone(), &limits);
+        let result = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(result.provider, ProviderId::CLAUDE);
+        assert!(sink.events("ai.usage_limit").is_empty());
+    }
+
+    /// D-06: with every agent past the limit nothing is asked; the answer is
+    /// a wait that ends at the soonest reset, never a provider call.
+    #[test]
+    fn every_agent_past_the_usage_limit_asks_nobody_and_waits_for_the_soonest_reset() {
+        let sink = Arc::new(Recorder::default());
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+        let soon = unix_ms() + 3_600_000;
+        let limits = gate(
+            crate::UsageLimit::Percent(90),
+            &[
+                (
+                    ProviderId::CLAUDE,
+                    crate::UsageReading {
+                        used_percent: 93.0,
+                        resets_at_unix_ms: Some(soon + 86_400_000),
+                    },
+                ),
+                (
+                    ProviderId::CODEX,
+                    crate::UsageReading {
+                        used_percent: 96.0,
+                        resets_at_unix_ms: Some(soon),
+                    },
+                ),
+            ],
+        );
+        let router = gated_router(vec![claude.clone(), codex.clone()], sink.clone(), &limits);
+        match router.execute(&request("p1", "x"), &CancelToken::new()) {
+            Err(AiError::UsageLimited {
+                retry_after: Some(wait),
+            }) => assert!(
+                wait <= Duration::from_secs(3_600) && wait > Duration::from_secs(3_500),
+                "{wait:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!((claude.calls(), codex.calls()), (0, 0));
+        let paused: Vec<_> = sink
+            .events("ai.usage_limit")
+            .into_iter()
+            .map(|event| event.detail.unwrap())
+            .collect();
+        assert_eq!(paused.len(), 2);
+        assert!(
+            paused
+                .iter()
+                .all(|detail| detail.ends_with("action=paused"))
+        );
+    }
+
+    /// B7, D-07: No limit stops nothing, and an agent with no figure is never
+    /// held back, whatever the limit.
+    #[test]
+    fn no_limit_and_no_figure_never_move_a_request() {
+        let rows = [(ProviderId::CLAUDE, week(99.0))];
+        for (limit, ask_claude) in [
+            (crate::UsageLimit::None, true),
+            (crate::UsageLimit::Percent(80), false),
+        ] {
+            let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+            let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+            let router = gated_router(
+                vec![claude.clone(), codex.clone()],
+                Arc::new(Recorder::default()),
+                &gate(limit, &rows),
+            );
+            router
+                .execute(&request("p1", "x"), &CancelToken::new())
+                .unwrap();
+            assert_eq!(claude.calls() == 1, ask_claude, "{limit:?}");
+        }
+        // Codex has no reading under an 80% limit: it answers when Claude is
+        // the one past it and Codex is the only choice.
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+        let router = gated_router(
+            vec![codex.clone()],
+            Arc::new(Recorder::default()),
+            &gate(crate::UsageLimit::Percent(80), &rows),
+        );
+        router
+            .execute(&request("p2", "y"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(codex.calls(), 1);
+    }
+
+    /// B2: the limit is read at each request, so raising it on the shared cell
+    /// takes effect on the next request of the router already running.
+    #[test]
+    fn a_changed_limit_applies_to_the_next_request_of_a_running_router() {
+        let sink = Arc::new(Recorder::default());
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude"), ok("claude")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex"), ok("codex")]);
+        let rows: std::collections::BTreeMap<_, _> = [(ProviderId::CLAUDE, week(86.0))].into();
+        let limits = Arc::new(UsageLimits::new());
+        limits.set(crate::UsageLimit::Percent(80), &rows);
+        let router = gated_router(vec![claude.clone(), codex.clone()], sink, &limits);
+        let first = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(first.provider, ProviderId::CODEX);
+        limits.set(crate::UsageLimit::Percent(95), &rows);
+        let second = router
+            .execute(&request("p2", "y"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(second.provider, ProviderId::CLAUDE);
+    }
+
+    /// D-03: work an operator waits on is asked of a router with no gate, and
+    /// a request that names its own agent is not judged by the limit either.
+    #[test]
+    fn a_router_without_a_gate_and_a_picked_agent_ignore_the_usage_limit() {
+        let rows = [(ProviderId::CLAUDE, week(99.0))];
+        let waited_on = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        make_router(vec![waited_on.clone()], Arc::new(Recorder::default()))
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(waited_on.calls(), 1);
+
+        let picked = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let router = gated_router(
+            vec![picked.clone()],
+            Arc::new(Recorder::default()),
+            &gate(crate::UsageLimit::Percent(80), &rows),
+        );
+        let request = AiRequest {
+            pick: Some(crate::AiPick {
+                provider: ProviderId::CLAUDE,
+                model: None,
+                effort: None,
+            }),
+            ..request("p2", "y")
+        };
+        router.execute(&request, &CancelToken::new()).unwrap();
+        assert_eq!(picked.calls(), 1);
+    }
+
+    /// A sign-in problem elsewhere in the order is what the caller can act
+    /// on, so it is named instead of a wait for a reset.
+    #[test]
+    fn a_signed_out_agent_beside_one_past_the_limit_is_reported_as_no_provider() {
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let codex = Scripted::with_availability(ProviderId::CODEX, Availability::NeedsLogin);
+        let router = gated_router(
+            vec![claude.clone(), codex],
+            Arc::new(Recorder::default()),
+            &gate(
+                crate::UsageLimit::Percent(80),
+                &[(ProviderId::CLAUDE, week(90.0))],
+            ),
+        );
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::NoProvider(_))
+        ));
+        assert_eq!(claude.calls(), 0);
+    }
+
+    /// The standing question: an agent past the limit is not degraded (it is
+    /// signed in), but a request made now would not run on it.
+    #[test]
+    fn provider_state_names_the_agent_a_request_would_run_on_under_the_limit() {
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![]);
+        let router = gated_router(
+            vec![claude, codex],
+            Arc::new(Recorder::default()),
+            &gate(
+                crate::UsageLimit::Percent(80),
+                &[(ProviderId::CLAUDE, week(86.0))],
+            ),
+        );
+        let state = router.provider_state().unwrap();
+        assert_eq!(state.selected, ProviderId::CLAUDE);
+        assert_eq!(state.active, Some(ProviderId::CODEX));
+        assert!(state.degraded.is_none());
     }
 
     #[test]

@@ -71,6 +71,7 @@ impl LabelServices {
         runtime: Weak<Mutex<Runtime>>,
         node: &crate::node::NodeId,
         own_node: Arc<dyn NodeLink>,
+        gate: Arc<hide_ai::UsageLimits>,
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
@@ -80,6 +81,7 @@ impl LabelServices {
             Box::new(move || analysis_settings(&runtime, settings_home.as_deref())),
             Arc::clone(&standing),
             own_node,
+            gate,
         )?;
         Ok(Self {
             store,

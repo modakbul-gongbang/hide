@@ -168,3 +168,83 @@ it("does not call an agent with no sign-in check signed in: it says the check ha
   expect(checked.q("[data-ai-state='claude:ready']")?.textContent).toContain("Signed in");
   await checked.unmount();
 });
+
+const weekly = (used: number, resets: number | null = null) => ({ used_percent: used, resets_at_ms: resets });
+
+it("shows the usage limit the core reports, 90 for an older daemon, and No limit as null (B1)", async () => {
+  const older = await mount(snapshot({}));
+  expect(older.q("[data-ai-usage-limit]")?.getAttribute("data-ai-usage-limit")).toBe("90");
+  expect(older.q("[data-ai-usage-limit-summary]")?.textContent).toBe("Up to 90% of each agent's week");
+  await older.unmount();
+
+  const chosen = await mount(snapshot({ usage_limit: 80 }));
+  expect(chosen.q("[data-ai-usage-limit]")?.getAttribute("data-ai-usage-limit")).toBe("80");
+  await chosen.unmount();
+
+  const none = await mount(snapshot({ usage_limit: null }));
+  expect(none.q("[data-ai-usage-limit]")?.getAttribute("data-ai-usage-limit")).toBe("none");
+  expect(none.q("[data-ai-usage-limit-summary]")?.textContent).toContain("No limit");
+  await none.unmount();
+});
+
+it("writes a weekly percent after a state on the Runs on and fallback rows, and none for an agent with no figure (B3, B10)", async () => {
+  const { q, unmount } = await mount(
+    snapshot({
+      providers: [provider("claude", "Claude Code", { weekly: weekly(86) }), provider("codex", "Codex", { weekly: null }), provider("pi", "Pi")],
+      fallback: [{ provider: "codex", model: "" }, { provider: "pi", model: "" }],
+    }),
+  );
+  expect(q("[data-ai-state='claude:ready']")?.textContent).toContain("Signed in · 86% this week");
+  expect(q("[data-ai-fallback='codex'] [data-ai-state]")?.textContent).not.toContain("this week");
+  expect(q("[data-ai-fallback='pi'] [data-ai-state]")?.textContent).not.toContain("this week");
+  await unmount();
+});
+
+it("says Past your limit with the reset time on an agent the core marks past the limit, and names who stands in (B4)", async () => {
+  const reset = new Date(2026, 9, 12, 9, 0).getTime();
+  const { q, unmount } = await mount(
+    snapshot({
+      providers: [provider("claude", "Claude Code", { weekly: weekly(93.4, reset), past_limit: true }), provider("codex", "Codex", { weekly: weekly(40) })],
+      fallback: [{ provider: "codex", model: "" }],
+      refusal: { provider: "claude", reason: "past_limit", retry_at_ms: reset, using: "codex", used_percent: 93.4, limit: 90 },
+    }),
+  );
+  expect(q("[data-ai-state='claude:ready']")?.textContent).toMatch(/Past your limit · 93% this week · resets .*9:00/);
+  expect(q("[data-ai-fallback='codex'] [data-ai-state]")?.textContent).toContain("Signed in · 40% this week");
+  expect(q("[data-ai-using='codex']")?.textContent).toMatch(/Using Codex · Claude Code is past your 90% limit until .*9:00/);
+  expect(q("[data-ai-paused]")).toBeNull();
+  await unmount();
+});
+
+it("says Hide AI is paused when every agent in the list is past the limit (B5)", async () => {
+  const { q, unmount } = await mount(
+    snapshot({
+      providers: [provider("claude", "Claude Code", { weekly: weekly(93), past_limit: true }), provider("codex", "Codex", { weekly: weekly(96), past_limit: true })],
+      fallback: [{ provider: "codex", model: "" }],
+      refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: null, used_percent: 93, limit: 90 },
+    }),
+  );
+  expect(q("[data-ai-paused]")?.textContent).toBe("Hide AI is paused · every agent is past your 90% limit this week");
+  await unmount();
+
+  // Only Runs on is listed: the sentence names that agent and what it waits for.
+  const single = await mount(
+    snapshot({
+      providers: [provider("claude", "Claude Code", { weekly: weekly(93), past_limit: true })],
+      refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: null, used_percent: 93, limit: 90 },
+    }),
+  );
+  expect(single.q("[data-ai-paused]")?.textContent).toBe("Claude Code is past your 90% limit this week · Hide AI is paused until Claude Code can answer.");
+  await single.unmount();
+});
+
+it("sends the limit as a percent or none, one event for one choice", () => {
+  const events: Parameters<DispatchFn>[0][] = [];
+  const actions = createActions((event) => { events.push(event); return true; });
+  actions.setAiUsageLimit(95);
+  actions.setAiUsageLimit("none");
+  expect(events).toEqual([
+    { schema_version: 2, kind: "ai_settings", payload: { usage_limit: 95 } },
+    { schema_version: 2, kind: "ai_settings", payload: { usage_limit: "none" } },
+  ]);
+});

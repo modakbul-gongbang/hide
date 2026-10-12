@@ -94,6 +94,8 @@ mod terminal;
 #[path = "tests/tree_close.rs"]
 mod tree_close;
 mod ui_state_focus;
+#[path = "tests/usage_limit.rs"]
+mod usage_limit;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
 mod view_bookmarks;

@@ -1314,7 +1314,14 @@ export type AiProvider = {
   cli_default: boolean;
   /** Why the list is empty: a code (`not_asked`, `not_observed`, or the provider's own). */
   models_unavailable_reason: string | null;
+  /** The weekly usage the toolbar read for this agent; null when it gave no figure. Absent from an older daemon. */
+  weekly?: AiWeekly | null;
+  /** The figure is at or past the usage limit, so Hide AI does not ask this agent (the core decides). Absent from an older daemon. */
+  past_limit?: boolean;
 };
+
+/** One agent's weekly usage: a percent and when the week resets (unix ms), when the agent said. */
+export type AiWeekly = { used_percent: number; resets_at_ms: number | null };
 
 /** The agents tried, in this order, when Runs on cannot answer. */
 export type AiFallback = { provider: string; model: string };
@@ -1322,11 +1329,15 @@ export type AiFallback = { provider: string; model: string };
 /** Why Runs on is not answering, and who answers instead; absent while it answers. */
 export type AiRefusal = {
   provider: string;
-  /** `usage_limited`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
+  /** `usage_limited`, `past_limit`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
   reason: string;
+  /** When a usage limit or the week ends (unix ms), when the agent said. */
   retry_at_ms: number | null;
   /** The listed agent answering instead; null when none can. */
   using: string | null;
+  /** With `past_limit`: the agent's weekly percent and the limit it is past. */
+  used_percent?: number | null;
+  limit?: number | null;
 };
 
 /** One concrete Host of `~/.ssh/config`: where `ssh -G` says it leads and the device that already uses it. */
@@ -1355,6 +1366,8 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
+  /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
+  usage_limit?: number | null;
   providers: AiProvider[];
   fallback?: AiFallback[];
   refusal?: AiRefusal | null;
