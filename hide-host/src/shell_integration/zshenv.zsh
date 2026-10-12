@@ -59,7 +59,7 @@ __hide_first_prompt() {
 }
 
 __hide_give
-[[ -r ${ZDOTDIR:-$HOME}/.zshenv ]] && builtin source ${ZDOTDIR:-$HOME}/.zshenv
+[[ -r ${ZDOTDIR:-$HOME}/.zshenv ]] && builtin source "${ZDOTDIR:-$HOME}/.zshenv"
 __hide_take
 # zsh reads no other startup file for a shell that is neither interactive
 # nor a login shell, or once the user's file turned RCS off.

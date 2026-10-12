@@ -3,10 +3,10 @@
 __hide_give
 # A global zshrc (macOS's /etc/zshrc) names the history file after ZDOTDIR,
 # which was this folder when it ran.
-if [[ ${HISTFILE-} == $__hide_zdotdir/* ]]; then
+if [[ ${HISTFILE-} == "$__hide_zdotdir"/* ]]; then
   HISTFILE=${ZDOTDIR:-$HOME}/${HISTFILE#$__hide_zdotdir/}
 fi
-[[ -r ${ZDOTDIR:-$HOME}/.zshrc ]] && builtin source ${ZDOTDIR:-$HOME}/.zshrc
+[[ -r ${ZDOTDIR:-$HOME}/.zshrc ]] && builtin source "${ZDOTDIR:-$HOME}/.zshrc"
 __hide_take
 if [[ ! -o rcs || ! -o login ]]; then
   __hide_restore
