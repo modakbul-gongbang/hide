@@ -171,8 +171,13 @@ static SECRET: LazyLock<Regex> = LazyLock::new(|| {
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b").expect("valid email expression")
 });
-static FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:(?:/Users|/home|/tmp|/var|/etc)/)[^\s'"`]+"#).expect("valid path expression")
+static HOME_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    // Account names are private; the remaining folders and file name identify
+    // a delegated task. A path component cannot start another home prefix.
+    Regex::new(
+        r#"(?P<boundary>^|[^\w./\\~])(?:(?:/Users|/home)/[^/\\\s'"`]+/|(?i:[a-z]:[\\/]Users[\\/])[^\\/\r\n'"`]+[\\/])"#,
+    )
+    .expect("valid home prefix expression")
 });
 
 fn conversation(events: &[LabelEvent]) -> Vec<&LabelEvent> {
@@ -430,7 +435,7 @@ fn strip_code_fences(text: &str) -> String {
 fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
-    let masked = FILE_PATH.replace_all(&masked, "[redacted-path]");
+    let masked = HOME_PREFIX.replace_all(&masked, "${boundary}~/");
     let masked = masked.trim();
     let start = masked
         .char_indices()
@@ -617,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn masking_removes_secrets_emails_and_home_paths_and_keeps_prose() {
+    fn masking_removes_secrets_emails_and_home_accounts_and_keeps_prose() {
         let context = analysis_context(
             &[human(
                 "token=abc123 메일 me@example.com 파일 /Users/example/project 그대로 두기",
@@ -627,9 +632,77 @@ mod tests {
         );
         assert!(context.contains("[redacted-secret]"));
         assert!(context.contains("[redacted-personal]"));
-        assert!(context.contains("[redacted-path]"));
+        assert!(context.contains("~/project"));
         assert!(context.contains("그대로 두기"));
         assert!(!context.contains("abc123"));
+        assert!(!context.contains("me@example.com"));
+        assert!(!context.contains("/Users/example"));
+    }
+
+    #[test]
+    fn home_accounts_are_hidden_and_path_tails_are_kept_on_every_system() {
+        let spaced_windows_path = [
+            "d:",
+            "users",
+            "Example Account",
+            "worktrees/fix-search",
+            "brief.md",
+        ]
+        .join("\\");
+        for (path, expected) in [
+            (
+                "/Users/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                "/home/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                r"C:\Users\example\worktrees\fix-search\agents\runs\fix-search\brief.md",
+                r"~/worktrees\fix-search\agents\runs\fix-search\brief.md",
+            ),
+            (
+                "C:/Users/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                spaced_windows_path.as_str(),
+                r"~/worktrees/fix-search\brief.md",
+            ),
+            (
+                "/Users/example/한글 폴더/example/brief.md",
+                "~/한글 폴더/example/brief.md",
+            ),
+        ] {
+            let request = format!("Read \"{path}\" and execute it.");
+            let expected_request = format!("Read \"{expected}\" and execute it.");
+            let events = [human(&request, 1)];
+            for context in [
+                analysis_context(&events, &|_| true),
+                rolling_analysis_context("기존 작업 결과물", &events, &events),
+            ] {
+                assert!(context.contains(&expected_request), "{path}: {context}");
+                assert!(!context.contains(path), "{path}: {context}");
+            }
+        }
+    }
+
+    #[test]
+    fn paths_outside_account_homes_are_kept_as_written() {
+        let request = concat!(
+            "/tmp/example/project/brief.md /var/folders/example/brief.md ",
+            "/etc/example/config.conf agents/runs/fix-search/brief.md ",
+            "repo/Users/example/brief.md /tmp/Users/example/brief.md ",
+            r"C:\Temp\example\brief.md repo\Users\example\brief.md"
+        );
+        let events = [human(request, 1)];
+        for context in [
+            analysis_context(&events, &|_| true),
+            rolling_analysis_context("기존 작업 결과물", &events, &events),
+        ] {
+            assert!(context.contains(request), "{context}");
+        }
     }
 
     #[test]

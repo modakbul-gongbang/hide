@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v7";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v8";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -32,7 +32,7 @@ const INPUT: &str = concat!(
 
 const GOAL: &str = concat!(
     "goal은 이 세션이 끝나면 무엇이 되어 있어야 하는지를 말하는 8~30자 한국어 결과물 명사구입니다. ",
-    "PR 번호, 커밋, 브랜치 이름, 명령어를 넣지 말고, 수정·머지·검증·확인·배포 같은 단계 말로 끝내지 마세요. ",
+    "PR 번호, 커밋, 브랜치 이름, 명령어, 파일 경로를 넣지 말고, 수정·머지·검증·확인·배포 같은 단계 말로 끝내지 마세요. ",
     "제품·도구 이름은 살리고, 여러 일을 맡겼으면 묶음 이름 하나로 부르고, 다른 에이전트의 일을 지켜보는 세션이면 그 일의 결과물을 쓰세요. ",
     "goal_changed는 운영자가 이전 goal을 품는 더 큰 일이나 무관한 새 일을 시켰을 때만 true입니다. ",
     "하위 작업, CI·버그 수정, 머지·설치, 막힌 설정 풀기, 옆길 질문, 설명 요청, 진행 확인은 goal을 바꾸지 않으니 false로 두고 이전 goal을 그대로 쓰세요. ",
