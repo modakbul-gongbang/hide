@@ -173,9 +173,11 @@ static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
 });
 static HOME_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     // Account names are private; the remaining folders and file name identify
-    // a delegated task. A path component cannot start another home prefix.
+    // a delegated task. A home can end at its account or start a file URI;
+    // a path component cannot start another home prefix. Spaces in a Windows
+    // account are bounded by its following path separator.
     Regex::new(
-        r#"(?P<boundary>^|[^\w./\\~])(?:(?:/Users|/home)/[^/\\\s'"`]+/|(?i:[a-z]:[\\/]Users[\\/])[^\\/\r\n'"`]+[\\/])"#,
+        r#"(?P<boundary>(?:^|[^\w./\\~])(?i:file://)?)(?P<home>(?:/Users|/home)/[^/\\\s'"`]+/?|(?i:[a-z]:[\\/]Users[\\/])(?:[^\\/\r\n'"`]+[\\/]|[^\\/\s'"`]+))"#,
     )
     .expect("valid home prefix expression")
 });
@@ -435,7 +437,18 @@ fn strip_code_fences(text: &str) -> String {
 fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
-    let masked = HOME_PREFIX.replace_all(&masked, "${boundary}~/");
+    let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {
+        let boundary = &captures["boundary"];
+        let home = &captures["home"];
+        if home.ends_with(['/', '\\']) {
+            format!("{boundary}~/")
+        } else {
+            // A bare home may be followed by sentence punctuation rather
+            // than a path tail. Keep that punctuation outside the account.
+            let account_end = home.trim_end_matches(['.', ',', ';', ':', ')', '!', '?', ']', '}']);
+            format!("{boundary}~{}", &home[account_end.len()..])
+        }
+    });
     let masked = masked.trim();
     let start = masked
         .char_indices()
@@ -649,7 +662,8 @@ mod tests {
             "brief.md",
         ]
         .join("\\");
-        for (path, expected) in [
+        let mut failures = Vec::new();
+        for (request, expected_request) in [
             (
                 "/Users/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
                 "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
@@ -674,18 +688,43 @@ mod tests {
                 "/Users/example/한글 폴더/example/brief.md",
                 "~/한글 폴더/example/brief.md",
             ),
-        ] {
-            let request = format!("Read \"{path}\" and execute it.");
-            let expected_request = format!("Read \"{expected}\" and execute it.");
+        ]
+        .map(|(path, expected)| {
+            (
+                format!("Read \"{path}\" and execute it."),
+                format!("Read \"{expected}\" and execute it."),
+            )
+        })
+        .into_iter()
+        .chain(
+            [
+                ("cd /Users/example", "cd ~"),
+                (concat!("홈은 /Users/example", "."), "홈은 ~."),
+                (
+                    "open file:///Users/example/x/brief.md",
+                    "open file://~/x/brief.md",
+                ),
+                ("cwd=/home/alice", "cwd=~"),
+                (r"cd C:\Users\example", "cd ~"),
+                ("cwd=C:/Users/example", "cwd=~"),
+                (concat!("홈은 /home/alice", "."), "홈은 ~."),
+                (concat!(r"홈은 C:\Users\example", "."), "홈은 ~."),
+            ]
+            .map(|(request, expected)| (request.to_owned(), expected.to_owned())),
+        ) {
             let events = [human(&request, 1)];
             for context in [
                 analysis_context(&events, &|_| true),
                 rolling_analysis_context("기존 작업 결과물", &events, &events),
             ] {
-                assert!(context.contains(&expected_request), "{path}: {context}");
-                assert!(!context.contains(path), "{path}: {context}");
+                if !context.contains(&expected_request) || context.contains(&request) {
+                    failures.push(format!(
+                        "{request} -> {context}; expected {expected_request}"
+                    ));
+                }
             }
         }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
@@ -694,6 +733,7 @@ mod tests {
             "/tmp/example/project/brief.md /var/folders/example/brief.md ",
             "/etc/example/config.conf agents/runs/fix-search/brief.md ",
             "repo/Users/example/brief.md /tmp/Users/example/brief.md ",
+            "file:///tmp/Users/example/brief.md repo/file:///Users/example/brief.md ",
             r"C:\Temp\example\brief.md repo\Users\example\brief.md"
         );
         let events = [human(request, 1)];
