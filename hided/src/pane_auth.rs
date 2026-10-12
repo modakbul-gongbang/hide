@@ -386,6 +386,16 @@ impl Registry {
         }
     }
 
+    /// Whether a command claimed `token`, while the registry holds it.
+    #[cfg(test)]
+    pub(crate) fn claimed(&self, token: &str) -> Option<bool> {
+        self.entries
+            .lock()
+            .ok()?
+            .get(token)
+            .map(|entry| entry.claimed)
+    }
+
     pub fn claim(&self, token: &str) -> Result<(), &'static str> {
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
         let entry = entries.get_mut(token).ok_or("credential_expired")?;
@@ -610,6 +620,23 @@ pub struct Attestation {
     pane_id: String,
     context: Context,
     binding: Binding,
+}
+
+#[cfg(test)]
+impl Attestation {
+    /// What a bootstrap proves for a caller in `pane_id` whose shell is
+    /// `shell_pid`, for a test that issues the credential itself.
+    pub(crate) fn pane(pane_id: &str, context: Context, shell_pid: i32) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            context,
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid,
+                shell_started: process_start(shell_pid).expect("a running shell"),
+            },
+        }
+    }
 }
 
 /// The bootstrap's attestation. The pane path runs unchanged first; any

@@ -73,7 +73,8 @@ The kit no longer turns the daemon off on its own: it only reads whether the mac
 `src/codex_daemon.rs` is the one place that changes the setting or stops the daemon, through `codex features disable daemon_auto_start` and `codex app-server daemon stop`, and only for the operator's own confirmed request from a not connected Codex pane's popover (`docs/ARCHITECTURE.md`, The install kit; `docs/status-model.md`, Not connected, and what fixes it).
 The kit reads the setting with the capability (`KitReport.codex_daemon_on`) and whether a daemon answers (`KitReport.codex_daemon_running`), which is what tells a Codex session on the shared server from one that started before the hook.
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes (`workspace bootstrap`, then `workspace info`), which it asks beside Memory rather than after it; a failed probe leaves the existing purpose and Memory context intact.
-An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+A persistent credential (the reference SessionStart hands the session as `HIDE_CAP_REF`) remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+A one-shot credential is never claimed: the daemon revokes it when its command's connection ends, and the CLI removes its reference.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
 A repeated SessionStart in the same attested pane reuses its live persistent reference, including when an earlier hook stopped after claiming but before delivering context.
 The SSH bridge tracks every reference it issues and revokes the corresponding daemon token when its file disappears, its unclaimed period expires, its eight-hour lifetime ends, its pane shell exits, or its one-shot caller exits.
