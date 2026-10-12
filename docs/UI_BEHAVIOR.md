@@ -364,6 +364,7 @@ Web owners: `web/src/components/sleeping-session-row.tsx`, `web/src/sleeping-ses
 
 The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You and Done raised above it.
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
+What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
 A parent waiting on a working or asking descendant stays Working.
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.

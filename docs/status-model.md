@@ -717,20 +717,26 @@ Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
 The sentences come from the agent's label line (at most 40 characters): `expected_reply` when the turn ended on a question, the one action the operator is asked for; `progress` otherwise, what the agent is doing, has done or waits for. A row carries one or the other, never both.
+A native question waiting now (`user_turn` of kind `question` with content, from any of the five sources above) is the third source, the `question` below: the first non-empty line of its text, one line, cut on a character boundary to the 40 characters of an `expected_reply` and ending in `…` when cut (`native_question_line` in `herdr-core/src/agent_state/turn.rs`).
+It is the agent's own words, so it is shown untranslated, and it needs no Hide AI.
+It stands in for an `expected_reply` and comes before `progress`, because a question asked in the middle of a turn has no reply sentence yet: the label worker's verdict on a turn's end runs only once the agent has written something after the operator's message, so a Claude `AskUserQuestion` with no text before it leaves the turn start's `progress` on the label for the whole wait, and that line describes the work, not what is asked.
+An `expected_reply` still wins, being the shorter "what to do"; the worker clears it whenever the agent runs again, so one present beside a waiting question was made for this turn.
+A plan waiting for approval gives no sentence: its text is a document whose first line is whatever heading the agent chose, so its row keeps the label's line or the status word.
 
 | Group | Sentence |
 | --- | --- |
-| Needs You | `expected_reply`, else `progress` |
+| Needs You | `expected_reply`, else `question`, else `progress` |
 | Done (unread) | `expected_reply`, else `progress` |
-| Working | `progress`; a row with an unresolved demand, `expected_reply`, else `progress` |
-| Seen with an unresolved demand (a read demand, a delegated child's request) | `expected_reply`, else `progress` |
+| Working | `progress`; a row with an unresolved demand, `expected_reply`, else `question`, else `progress` |
+| Seen with an unresolved demand (a read demand, a delegated child's request) | `expected_reply`, else `question`, else `progress` |
 | Seen (read completions, idle, unknown) | none |
 
 A request outlives reading: a question, approval or error keeps its sentence until it is resolved, whatever group the row sits in, so a view can keep showing what is being asked after the operator has looked.
 
-`status_word_visible` is true only when the group wanted a sentence and the label carried none (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a pane that has no proven label yet reads as title and status word.
+`status_word_visible` is true only when the group wanted a sentence and neither the label nor a native question carried one (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a pane that has no proven label yet reads as title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for an ordinary child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
+Regression owners: `second_line_is_chosen_by_group_and_a_request_outlives_reading` in `herdr-core/src/sidebar.rs`, and `a_native_question_is_the_second_line_until_the_label_says_what_to_reply` and `native_question_snapshot_is_current_without_ai_and_clears_after_answer` in `herdr-core/src/labels/tests.rs`; each source's question text is its reader's, owned by `hide-session/tests/it` (`user_turns` and `adapters`).
 
 Beside `detail` the row carries `message`: the sentence whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`), absent when the label has none.
 It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.

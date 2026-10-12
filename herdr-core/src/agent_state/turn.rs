@@ -567,13 +567,23 @@ pub(crate) fn agent_requires_close_status_check(
 /// would have shown one keeps the status word alone, so a pane with no label
 /// plugin behind it still reads as it did before (PRD B6, B13).
 ///
+/// A native question waiting now (`question`, see [`native_question_line`])
+/// is what is being asked, in the agent's own words: it stands in for an
+/// `expected_reply` the label has not made for this turn, and before a
+/// `progress` that describes the work around the question rather than the
+/// question itself. An `expected_reply` still wins, as the shorter "what to
+/// do"; the worker clears it whenever the agent runs again, so one present
+/// beside a waiting question was made for this turn.
+///
 /// Returns whether the status word is drawn and the sentence beside it.
 pub(crate) fn agent_second_line(
     group: AgentGroup,
     demand: AgentDemand,
     expected_reply: Option<&str>,
+    question: Option<&str>,
     progress: Option<&str>,
 ) -> (bool, Option<String>) {
+    let expected_reply = expected_reply.or(question);
     // An unresolved demand keeps its request whatever group the row sits in:
     // a read question in Seen and a delegated child's approval still say what
     // they are asking, so a view can keep that line until the request is
@@ -594,6 +604,32 @@ pub(crate) fn agent_second_line(
         Some(sentence) => (false, Some(sentence.to_owned())),
         None => (true, None),
     }
+}
+
+/// The second line of a native question waiting now: the first line of
+/// its text, one line and cut on a character boundary to the width of an
+/// `expected_reply`, ending in `…` when cut. A plan waiting for approval has
+/// none: its text is a document whose first line is whatever heading the
+/// agent chose, not what is asked, so its row keeps the status word unless
+/// the label says more. Content the read did not carry stays absent.
+pub(crate) fn native_question_line(
+    turn: Option<&hide_session::turns::UserTurnFact>,
+) -> Option<String> {
+    use crate::sidebar::MAX_EXPECTED_REPLY_CHARS;
+    let turn = turn.filter(|turn| turn.kind == hide_session::turns::UserTurnKind::Question)?;
+    let line = turn
+        .content
+        .as_ref()?
+        .text()
+        .lines()
+        .find_map(|line| crate::display_text::one_line(line, MAX_EXPECTED_REPLY_CHARS + 1))?;
+    if line.chars().count() <= MAX_EXPECTED_REPLY_CHARS {
+        return Some(line);
+    }
+    let mut cut: String = line.chars().take(MAX_EXPECTED_REPLY_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('\u{2026}');
+    Some(cut)
 }
 
 /// The one ordering every agent surface reads: the two sidebar views, the pet
@@ -663,10 +699,12 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     } else {
         agent_status_code(demand, activity, agent.completed, unread)
     };
+    let question = native_question_line(agent.user_turn.as_ref());
     let (status_word_visible, detail) = agent_second_line(
         group,
         demand,
         agent.expected_reply.as_deref(),
+        question.as_deref(),
         agent.progress.as_deref(),
     );
     agent.status_word_visible = status_word_visible;

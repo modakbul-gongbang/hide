@@ -2186,6 +2186,19 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
         (shown["group"].as_str(), shown["demand"].as_str()),
         (Some("needs_you"), Some("question"))
     );
+    // With no Hide AI the row still says what is asked, not just its title.
+    assert_eq!(
+        (
+            shown["detail"].as_str(),
+            shown["status_word_visible"].as_bool(),
+            shown["state"]["ask"]["what"].as_str(),
+        ),
+        (
+            Some("어디에 배포할까요?"),
+            Some(false),
+            Some("어디에 배포할까요?")
+        )
+    );
     assert_eq!(harness.backend.calls(), 0);
     let next = ObservedAgent {
         state_change_seq: 6,
@@ -2219,6 +2232,116 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
     let answered = row(&worker, &next);
     assert!(answered.get("user_turn").is_none());
     assert_eq!(answered["demand"], "none");
+}
+
+/// A native question asked in the middle of a turn: Herdr reads the open
+/// form as blocked while the label still carries the turn start's progress,
+/// and the turn end's verdict takes seconds. The row says what is asked from
+/// the moment the read lands, and the label's reply replaces it once made.
+#[test]
+fn a_native_question_is_the_second_line_until_the_label_says_what_to_reply() {
+    use std::io::Write;
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "mid-turn-question",
+        "mid-turn-question",
+        &[("user", "Hide 첫 실행 온보딩 플로우를 도입해줘")],
+    );
+    harness.backend.begin("온보딩 플로우 도입");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    let row = |worker: &LabelWorker, current: &ObservedAgent| {
+        let (kind, value) = current.reference.as_ref().unwrap();
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":current.pane_id,"agent":current.agent,"agent_status":current.status,
+            "state_change_seq":current.state_change_seq,"agent_session":{"kind":kind,"value":value}
+        }]}))
+        .unwrap();
+        worker.overlay().apply(&mut payload);
+        serde_json::to_value(crate::sidebar::project_agents(payload).agents.remove(0)).unwrap()
+    };
+    assert_eq!(row(&worker, &working)["detail"], "온보딩 플로우 도입 진행");
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"assistant","sessionId":"mid-turn-question",
+        "timestamp":"2026-10-01T00:00:05Z","message":{"role":"assistant","content":[
+        {"type":"text","text":"마법사 구성을 정해야 합니다."},{
+        "type":"tool_use","id":"wizard-call","name":"AskUserQuestion",
+        "input":{"questions":[
+            {"question":"첫 실행 마법사를 몇 단계로 나눌까요? 지금은 세 단계 안과 다섯 단계 안이 있습니다",
+             "options":[{"label":"세 단계"},{"label":"다섯 단계"}]},
+            {"question":"건너뛰기를 둘까요?","options":[{"label":"둔다"},{"label":"두지 않는다"}]}]}}]}})
+    )
+    .unwrap();
+    // The turn end's verdict is still being made while the read lands.
+    harness.backend.hold();
+    let asked = agent(&path, "blocked", 5);
+    observe(&mut worker, &asked);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while row(&worker, &asked).get("user_turn").is_none() {
+        assert!(Instant::now() < deadline, "the question was never read");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now(), unix_now_ms());
+    }
+    let shown = row(&worker, &asked);
+    assert_eq!(
+        (shown["group"].as_str(), shown["demand"].as_str()),
+        (Some("needs_you"), Some("question"))
+    );
+    // The first question, cut to a reply's forty characters.
+    let question = "첫 실행 마법사를 몇 단계로 나눌까요? 지금은 세 단계 안과 다섯 단계…";
+    assert_eq!(question.chars().count(), 40);
+    assert_eq!(
+        (
+            shown["detail"].as_str(),
+            shown["state"]["ask"]["verb"].as_str(),
+            shown["state"]["ask"]["what"].as_str(),
+            shown["state"]["line"]["text"].as_str(),
+        ),
+        (
+            Some(question),
+            Some("answer"),
+            Some(question),
+            Some(question)
+        )
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.backend.calls() < 2 {
+        assert!(Instant::now() < deadline, "the turn end was never asked");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now(), unix_now_ms());
+    }
+    harness
+        .backend
+        .answer("온보딩 플로우 도입", "question", "마법사 단계 수 고르기");
+    harness.backend.release();
+    settle(&mut worker, &woken);
+    assert_eq!(row(&worker, &asked)["detail"], "마법사 단계 수 고르기");
+
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"user","sessionId":"mid-turn-question",
+        "timestamp":"2026-10-01T00:00:06Z","message":{"role":"user","content":[{
+        "type":"tool_result","tool_use_id":"wizard-call","content":"세 단계"}]}})
+    )
+    .unwrap();
+    let answered = agent(&path, "working", 6);
+    observe(&mut worker, &answered);
+    settle(&mut worker, &woken);
+    let shown = row(&worker, &answered);
+    assert!(shown.get("user_turn").is_none());
+    assert_eq!(shown["group"], "working");
+    assert_ne!(shown["detail"], question);
 }
 
 #[test]
