@@ -8,6 +8,7 @@
 // never the operator's installed copy.
 
 import { expect, type ElectronApplication } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
@@ -53,7 +54,19 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
       const afterShow = afterLaunch ?? (await page.evaluate(() => (window as unknown as { hideHost: { notify(id: string, title: string, body: string): void } }).hideHost.notify("test", "Notifications work", "")).then(waitShortcut));
       const listing = programs.map((folder) => `${folder}: ${fs.existsSync(folder) ? fs.readdirSync(folder).join(", ") : "missing"}`);
       const notify = hostLog(run.env).filter((line) => String(line.event).startsWith("notify."));
-      expect({ afterLaunch, afterShow, listing, notify }).toMatchObject({ afterLaunch: expect.any(String) });
+      // Electron registers the toast activator's COM class in the same task, right after the shortcut
+      // (`windows_toast_activator.cc`, `EnsureCLSIDRegistry`): whether that task ran at all.
+      const activator = spawnSync("reg", ["query", "HKCU\\Software\\Classes\\CLSID", "/s", "/f", "Electron Notification Activator"], { encoding: "utf8" }).stdout;
+      const entries = (folder: string): string[] => {
+        try {
+          return fs.readdirSync(folder, { recursive: true }) as string[];
+        } catch (error) {
+          return [`unreadable: ${String(error)}`];
+        }
+      };
+      const found = [roaming, process.env.APPDATA ?? ""].flatMap((folder) => entries(folder).filter((entry) => /hide\.lnk$|unreadable/i.test(entry)).map((entry) => path.join(folder, entry)));
+      console.log(JSON.stringify({ afterLaunch, afterShow, listing, found, activator, notify }, null, 1));
+      expect(afterLaunch).not.toBeNull();
     }
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
