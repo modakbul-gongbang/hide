@@ -36,8 +36,8 @@ export function usePermission(): NotificationPermission | null {
       const answer = await bridge.notificationPermission().catch((): NotificationPermission => "unknown");
       if (stopped) return;
       setPermission(answer);
-      // A system with nothing to read is not asked again.
-      if (answer !== "unsupported" && answer !== "no_service") timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
+      // No notification service holds for the run; a Linux desktop says so only once a notification failed to show, so the rest are read again.
+      if (answer !== "no_service") timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
     };
     void read();
     return () => {

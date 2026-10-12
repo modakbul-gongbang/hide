@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions, type Actions } from "./actions";
-import { receiveAgentNotice, useAgentNotifications } from "./agentNotices";
+import { needsYouCount, receiveAgentNotice, useAgentNotifications } from "./agentNotices";
+import type { AgentScope } from "./agentScope";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -32,6 +33,7 @@ it("asks for agent notices while the switch is on, words each one, withdraws a s
     platform: "darwin",
     notify: (...args: unknown[]) => shown.push(args),
     withdrawNotifications: (ids: string[]) => withdrawn.push(ids),
+    reportBadge: () => undefined,
     onNotificationOpen: (listener: (id: string) => void) => {
       open = listener;
       return () => (open = null);
@@ -67,6 +69,46 @@ it("asks for agent notices while the switch is on, words each one, withdraws a s
   expect(events.filter((event) => event.kind === "desktop_notices").at(-1)?.payload).toEqual({ wanted: false });
   await act(async () => receiveAgentNotice({ notices: [{ tag: "node|w1:p2", device_id: "node", pane_id: "w1:p2", title: "x", state: "done", place: "" }], clear: [] }));
   expect(shown).toHaveLength(1);
+  await act(async () => root.unmount());
+  useShellStore.setState(saved, true);
+});
+
+/** A device whose sidebar Needs You group holds `shown` and `more` agents, and Done holds one. */
+function device(id: string, shown: number, more: number) {
+  const refs = (n: number, at: number) => Array.from({ length: n }, (_, i) => ({ pane_id: `${id}:p${at + i}`, occurrence: 0 }));
+  const raised: AgentScope["raised"] = [{ group: "done", shown: refs(1, 90), more: [] }];
+  if (shown + more > 0) raised.unshift({ group: "needs_you", shown: refs(shown, 0), more: refs(more, shown) });
+  return { id, agent_scope: { raised } };
+}
+
+it("counts every device's Needs You group for the app icon, not Done", () => {
+  expect(needsYouCount(null)).toBe(0);
+  expect(needsYouCount({ navigator: { devices: [device("node", 5, 2), device("mini", 1, 0), device("box", 0, 0)] } } as never)).toBe(8);
+});
+
+it("reports the app icon's count once the page is live, on each change, and none while the switch is off", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const reported: number[] = [];
+  window.hideHost = {
+    kind: "electron",
+    platform: "win32",
+    reportBadge: (count: number) => reported.push(count),
+    onNotificationOpen: () => () => undefined,
+  } as never;
+  const actions = createActions(() => true);
+  const saved = useShellStore.getState();
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  const rest = (on: boolean, needsYou: number) => ({ ui_state: { desktop_notifications: on }, navigator: { devices: [device("node", needsYou, 0)] } });
+  await act(async () => {
+    useShellStore.setState({ connection: "connecting", rest: rest(true, 2) } as never);
+    root.render(<Probe actions={actions} />);
+  });
+  expect(reported).toEqual([]);
+  await act(async () => useShellStore.setState({ connection: "live" } as never));
+  await act(async () => useShellStore.setState({ rest: rest(true, 2) } as never));
+  await act(async () => useShellStore.setState({ rest: rest(true, 3) } as never));
+  await act(async () => useShellStore.setState({ rest: rest(false, 3) } as never));
+  expect(reported).toEqual([2, 3, 0]);
   await act(async () => root.unmount());
   useShellStore.setState(saved, true);
 });
