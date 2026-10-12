@@ -324,6 +324,7 @@ impl Runtime {
             .map(|settings| crate::ai::memory_router(&own_node, settings));
         let node = self.node.clone();
         let delegated = self.delegated_sessions();
+        let home = self.home_path.clone();
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());
@@ -339,6 +340,7 @@ impl Runtime {
             live: work.live_sessions.clone(),
             closed: work.closed_sessions.clone(),
             held,
+            home,
             delegated,
             cancel,
         };
@@ -708,6 +710,9 @@ struct PassInput {
     closed: BTreeSet<MemorySession>,
     /// Projects whose analysis waits for a retry time.
     held: HashSet<String>,
+    /// The account's home folder, where the operator's own instruction files
+    /// are; absent when the environment names none.
+    home: Option<PathBuf>,
     /// Sessions another agent started: their first human message is that
     /// agent's instruction, not the operator's (D-04).
     delegated: HashSet<String>,
@@ -1051,6 +1056,7 @@ fn maintain_cards(
             router,
             project_id,
             root,
+            input.home.as_deref(),
             &input.cancel,
             &mut admit,
         )
@@ -1965,6 +1971,7 @@ mod tests {
         root: PathBuf,
         locator: PathBuf,
         database: PathBuf,
+        home: PathBuf,
         project_id: String,
         backend: Arc<Scripted>,
         node: Arc<dyn NodeLink>,
@@ -2060,6 +2067,7 @@ mod tests {
                 root,
                 locator,
                 database,
+                home,
                 project_id: identity.id,
                 backend: Arc::new(Scripted {
                     answers: Mutex::new(Vec::new()),
@@ -2133,6 +2141,7 @@ mod tests {
                 live: live.then(|| key.clone()).into_iter().collect(),
                 closed: closed.then_some(key).into_iter().collect(),
                 held: HashSet::new(),
+                home: Some(self.home.clone()),
                 delegated: delegated.iter().map(|id| (*id).to_owned()).collect(),
                 cancel: CancelToken::new(),
             };
@@ -2808,6 +2817,72 @@ mod tests {
         assert_eq!(suggested.iter().map(|s| s.number).collect::<Vec<_>>(), [1]);
         let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
         assert_eq!(fixture.calls(), 1, "checked once for this text");
+    }
+
+    #[test]
+    fn a_rule_the_operators_own_instruction_file_says_is_forgotten_with_its_undo() {
+        // B15, D-11: a global file cannot be a pointer target in the repository.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "another-session".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Keep the hook under 100 ms".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::Same {
+                        target_id: seeded.id,
+                    },
+                }],
+            )
+            .unwrap();
+        drop(store);
+        std::fs::create_dir_all(fixture.home.join(".claude")).unwrap();
+        std::fs::write(
+            fixture.home.join(".claude/CLAUDE.md"),
+            "Keep the hook under 100 ms.\n",
+        )
+        .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "in_docs", "text": null, "title": null, "aliases": [],
+            "document": "~/.claude/CLAUDE.md",
+        }));
+
+        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(card.lifecycle, MemoryLifecycle::Tombstoned);
+        assert!(
+            fixture
+                .store()
+                .promotions(&fixture.project_id)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! instruction files from the account this process runs as.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::Path;
 
 use hide_ai::{AiError, AiRouter, CancelToken};
 use hide_memory::{
@@ -212,47 +212,32 @@ fn repository_documents(
 }
 
 /// The operator's own instruction files, which agents read in every
-/// repository. Read from the account this process runs as, the machine whose
-/// Memory this is; a file that is not there is skipped, and a link to a file
-/// already read is not read twice.
-fn global_documents() -> Vec<Excerpt> {
-    let Some(home) = std::env::var_os(crate::environment::HOME_KEY).map(PathBuf::from) else {
+/// repository, through the node of the account this core runs as. A file that
+/// is not there is skipped, and one with the text of a file already read (a
+/// link to it) is not read twice.
+fn global_documents(node: &dyn NodeLink, home: Option<&Path>) -> Vec<Excerpt> {
+    let Some(home) = home else {
         return Vec::new();
     };
-    let mut seen = BTreeSet::new();
-    let mut documents = Vec::new();
-    for relative in [
-        ".claude/CLAUDE.md",
-        ".codex/AGENTS.md",
-        ".config/agents/AGENTS.md",
+    let mut documents: Vec<Excerpt> = Vec::new();
+    for (folder, name) in [
+        (".claude", "CLAUDE.md"),
+        (".codex", "AGENTS.md"),
+        (".config/agents", "AGENTS.md"),
     ] {
-        let path = home.join(relative);
-        let Ok(real) = std::fs::canonicalize(&path) else {
+        if documents.len() >= GLOBAL_LIMIT {
+            break;
+        }
+        let root = home.join(folder).to_string_lossy().into_owned();
+        let Some(mut found) = excerpt(node, &root, name, GLOBAL_EXCERPT_BYTES) else {
             continue;
         };
-        if !seen.insert(real.clone()) || documents.len() >= GLOBAL_LIMIT {
+        if documents.iter().any(|known| known.text == found.text) {
             continue;
         }
-        let Ok(file) = std::fs::File::open(&real) else {
-            continue;
-        };
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        if file
-            .take(GLOBAL_EXCERPT_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .is_err()
-        {
-            continue;
-        }
-        let truncated = bytes.len() > GLOBAL_EXCERPT_BYTES;
-        bytes.truncate(GLOBAL_EXCERPT_BYTES);
-        documents.push(Excerpt {
-            // The name an agent knows it by, never the account's folder.
-            path: format!("~/{relative}"),
-            text: String::from_utf8_lossy(&bytes).into_owned(),
-            truncated,
-        });
+        // The name an agent knows it by, never the account's folder.
+        found.path = format!("~/{folder}/{name}");
+        documents.push(found);
     }
     documents
 }
@@ -272,6 +257,7 @@ pub(super) fn check_before_suggestion(
     router: &AiRouter,
     project_id: &str,
     root: &str,
+    home: Option<&Path>,
     cancel: &CancelToken,
     admit: Admit<'_>,
 ) -> Result<Checked, AnalysisFailure> {
@@ -284,7 +270,7 @@ pub(super) fn check_before_suggestion(
         return Ok(checked);
     }
     let repository = repository_documents(node, facts, root);
-    let global = global_documents();
+    let global = global_documents(node, home);
     let known = repository
         .iter()
         .chain(&global)

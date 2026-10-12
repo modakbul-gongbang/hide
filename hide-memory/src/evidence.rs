@@ -135,7 +135,7 @@ mod tests {
     fn a_card_writes_paths_and_script_names_among_ordinary_words() {
         let names = written_names(
             "`scripts/verify-swift.sh`를 쓰지 않는다. macos/ 폴더와 docs/delivery.md:300, \
-             https://example.com/a/b 그리고 build_dev_app.sh, 10/12, ~/.claude/CLAUDE.md, /Users/x/y.",
+             https://example.com/a/b 그리고 build_dev_app.sh, 10/12, ~/.claude/CLAUDE.md, /srv/x/y.",
         );
         assert_eq!(
             names.paths,
