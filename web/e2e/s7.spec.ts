@@ -17,7 +17,7 @@ import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { onDisk, quietFor } from "./wait";
 
@@ -683,7 +683,7 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
   try {
     const betaRoot = `${path.posix.dirname(stack.root)}/beta`;
     const choose = async (target: Page, project: string) => {
-      await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
+      await (await showProjectRow(target, target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first())).click();
     };
     // Each Workspace numbers its own views, so both hold a1 with d2 and d3.
     await keepOpenInTurn(page, ["a.txt", "c.txt"], (name) => explorerRow(page, stack, name));

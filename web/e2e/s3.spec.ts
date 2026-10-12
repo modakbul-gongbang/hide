@@ -13,7 +13,7 @@ import zlib from "node:zlib";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow } from "./wire";
 import { chord } from "./chords";
 import { dumpOnFailure } from "./failure-dump";
 import { onDisk, quietFor } from "./wait";
@@ -141,7 +141,7 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
 
     // Focus the repository checkout and show the Explorer in the Tools
     // column: that is where the tree lives (S6 D-05, B10).
-    const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
+    const row = await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first());
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
     await showExplorer(page);

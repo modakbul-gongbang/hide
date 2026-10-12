@@ -166,6 +166,14 @@ export async function showProjectRow(page: Page, row: Locator): Promise<Locator>
   return row;
 }
 
+/** Opens the one sidebar project whose agents all sleep, which folds behind its moon until opened (PRD sidebar-titlebar-refresh B4). */
+export async function openSleepingProject(page: Page): Promise<void> {
+  const project = page.locator("nav[data-sidebar] [data-project]").filter({ has: page.locator("[data-project-asleep]") });
+  await expect(project).toHaveCount(1, { timeout: 30_000 });
+  await project.locator("[data-project-toggle], [data-checkout-toggle]").first().click();
+  await expect(project.locator("[data-project-asleep]")).toHaveCount(0);
+}
+
 /** Puts the pointer on the canvas and drops keyboard focus, so no row is hovered or focused. */
 export async function rest(page: Page): Promise<void> {
   await page.mouse.move(900, 600);
