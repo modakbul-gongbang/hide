@@ -478,13 +478,15 @@ impl Panes {
             }
             let path = started.folder.join(format!("{}.json", request.nonce));
             let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
+            // Not flushed to disk: the reference lives no longer than the
+            // token it names, which no restart keeps, and only this
+            // machine reads it.
             if write!(
                 file,
                 "{}",
                 json!({"token": token, "socket": started.socket_wire})
             )
             .is_err()
-                || file.sync_all().is_err()
             {
                 let _ = fs::remove_file(&path);
                 return Err("reference_unavailable".to_owned());

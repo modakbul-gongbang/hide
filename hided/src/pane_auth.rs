@@ -313,11 +313,9 @@ impl Registry {
             },
         })
         .map_err(|_| "reference_unavailable")?;
-        if file
-            .write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .is_err()
-        {
+        // Not flushed to disk: the reference lives no longer than the token
+        // it names, which no restart keeps, and only this machine reads it.
+        if file.write_all(&bytes).is_err() {
             let _ = fs::remove_file(&path);
             return Err("reference_unavailable");
         }
