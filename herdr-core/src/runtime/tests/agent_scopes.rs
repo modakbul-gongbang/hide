@@ -15,10 +15,10 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 #[test]
 fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
     // Incoming main PR 749 screen: Build before Spec, then Docs; no local
-    // delegation chip, and distinct device IDs retain equal-label context.
+    // delegation chip, and a chip toward the core's own machine carries no
+    // label, which the shell names in its language.
     let mut runtime = runtime();
     let local_id = runtime.snapshot.navigator.devices[0].id.clone();
-    runtime.snapshot.navigator.devices[0].label = Some("mini".into());
     let mut agents = rows();
     agents[0].identity_label = "Lead".into();
     agents[1].pane_id = "spec".into();
