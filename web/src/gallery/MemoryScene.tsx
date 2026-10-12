@@ -23,7 +23,7 @@ export function memorySceneParams(params: URLSearchParams): MemorySceneParams {
 
 const MINUTE = 60_000;
 const row = (number: number, title: string, kind: MemoryRow["kind"], given: number, pulled: number, human: number, ago: number, promotion: MemoryRow["promotion"] = null): MemoryRow => ({
-  number, title, kind, provided_session_count: given, pull_count: pulled, human_source_count: human, updated_at_unix_ms: Date.now() - ago, promotion,
+  number, title, kind, provided_session_count: given, pull_count: pulled, human_source_count: human, updated_at_unix_ms: Date.now() - ago, verifying: false, promotion,
 });
 const ROWS: MemoryRow[] = [
   row(17, "스크린샷이 큰 세션을 읽다 막히면 종 알림이 멈추므로, 먼저 tool_result 크기를 확인한다", "lesson", 0, 0, 1, 60 * MINUTE),
@@ -55,8 +55,8 @@ function project(state: MemorySceneState): ProjectMemory {
   switch (state) {
     case "workspace":
       return { ...base, expanded: EXPANDED, questions: [
-        { kind: "promote", number: 3, title: ROWS[5]!.title, human_source_count: 3, pulled_session_count: 9 },
-        { kind: "promote", number: 5, title: ROWS[6]!.title, human_source_count: 2, pulled_session_count: 6 },
+        { kind: "promote", number: 3, title: ROWS[5]!.title, human_session_count: 3, pulled_session_count: 9 },
+        { kind: "promote", number: 5, title: ROWS[6]!.title, human_session_count: 2, pulled_session_count: 6 },
       ] };
     case "off": return { ...base, enabled: false };
     case "ai_not_ready": return { ...base, analysis: "ai_not_ready" };

@@ -1438,6 +1438,8 @@ export type MemoryRow = {
   /** Times an agent read it with `hide memory show`. */
   pull_count: number;
   updated_at_unix_ms: number;
+  /** Waiting to be checked against the repository again; agents are not given it meanwhile (`확인 중`). */
+  verifying: boolean;
   /** Null for an ordinary card, a dismissed one, or one whose pull request closed unmerged. */
   promotion: {
     state: MemoryPromotionState;
@@ -1452,7 +1454,7 @@ export type MemoryRow = {
 
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
-  | { kind: "promote"; number: number; title: string; human_source_count: number; pulled_session_count: number }
+  | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
   | { kind: "failed"; number: number; title: string };
 
 /** The card shown in full (`memory_expand`). */
