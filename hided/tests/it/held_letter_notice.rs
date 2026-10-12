@@ -254,9 +254,12 @@ async fn a_reachable_phone_still_gets_the_notice_and_only_the_one_that_failed_is
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
+    // The phone was paired where the core is exposed, the only phones it
+    // pushes to (PRD core-host-node-move B17).
     write_private(
         &state.join("mobile.json"),
-        &json!({"enabled": true, "push_mode": "always"}),
+        &json!({"enabled": true, "push_mode": "always",
+            "serve": {"dns_name": "core.example.ts.net", "port": 443, "added_at": 1}}),
     );
     write_private(
         &state.join("phones.json"),

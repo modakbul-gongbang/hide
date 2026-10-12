@@ -35,6 +35,27 @@ pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
 pub const HIDE_MACHINE_ID: &str = host::MACHINE_ID_VARIABLE;
+/// Test-only: how a core move starts the core on the machine taking it.
+pub const HIDE_CORE_STARTER: &str = "HIDE_CORE_STARTER";
+/// Test-only: `hang` makes the core role's stop never return, so a journey
+/// proves the stop's bound.
+pub const HIDE_FIXTURE_CORE_STOP: &str = "HIDE_FIXTURE_CORE_STOP";
+/// Test-only: a file in a fixture HOME naming a build whose daemon exits at
+/// its start, so a journey proves a core update's way back to the previous
+/// build; a file, since the fixture's SSH sessions keep the environment
+/// they started with.
+pub const FIXTURE_FAIL_BUILD_FILE: &str = ".hide-e2e-fail-build";
+/// Test-only: a folder of stand-in `launchctl` and `pmset` that a move's
+/// checks run instead of the system's.
+pub const HIDE_PREFLIGHT_PROGRAMS: &str = "HIDE_PREFLIGHT_PROGRAMS";
+/// Test-only: the version this build presents in a link's hello, so a
+/// journey shows one build as newer or older than another.
+pub const HIDE_BUILD_VERSION_OVERRIDE: &str = "HIDE_BUILD_VERSION_OVERRIDE";
+/// Test-only: the build order this build presents in a link's hello.
+pub const HIDE_BUILD_ORDER_OVERRIDE: &str = "HIDE_BUILD_ORDER_OVERRIDE";
+/// The file that declares a HOME a test fixture's, beside every test-only
+/// key's other conditions ([`fixture_home`]).
+pub const FIXTURE_HOME_MARKER: &str = hide_kit::layout::FIXTURE_HOME_MARKER;
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -152,6 +173,36 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "The machine id the system reports (IOPlatformUUID on macOS, /etc/machine-id on Linux, MachineGuid on Windows) names this node",
     },
     EnvKey {
+        key: HIDE_BUILD_VERSION_OVERRIDE,
+        required: false,
+        format: "a version such as 0.4.2; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A link's hello carries the version this build was packaged with (HIDE_VERSION at build time)",
+    },
+    EnvKey {
+        key: HIDE_BUILD_ORDER_OVERRIDE,
+        required: false,
+        format: "a commit count; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A link's hello carries the build order this build was packaged with (HIDE_BUILD_ORDER at build time, 0 when no package numbered it)",
+    },
+    EnvKey {
+        key: HIDE_CORE_STARTER,
+        required: false,
+        format: "`fixture`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A core move starts the core on the machine taking it through the account's login item (launchd); a fixture HOME with `fixture` starts it as a detached process instead, and a fixture HOME without it is refused, so no test reaches launchd",
+    },
+    EnvKey {
+        key: HIDE_FIXTURE_CORE_STOP,
+        required: false,
+        format: "`hang`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "The core role stops when asked; a fixture HOME with `hang` makes that stop never return, so the process ends itself past its bound",
+    },
+    EnvKey {
+        key: HIDE_PREFLIGHT_PROGRAMS,
+        required: false,
+        format: "absolute path of a folder holding stand-in `gh`, `launchctl` and `pmset`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A core move's checks on the machine taking the core run the account's `gh`, /bin/launchctl and /usr/bin/pmset; a fixture HOME names stand-ins, so a test passes or fails each check without the machine's own GitHub login, session and power settings, and a fixture HOME without it is refused rather than reaching the account's launchd",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -182,6 +233,10 @@ pub struct Env {
     /// executable; never read from the environment. A daemon started in
     /// process (tests) has none and reports none.
     pub build: Option<String>,
+    /// The program a core's starter runs, set by `hided core-login` from its
+    /// own executable (PRD core-host-node-move Q13); never read from the
+    /// environment. `None` for a daemon `hide connect` started.
+    pub starter_program: Option<PathBuf>,
     /// Optional test/operator-selected host opener, validated before serving.
     pub open_command: Option<PathBuf>,
     /// Where the device helper is installed on each SSH device; part of the
@@ -461,6 +516,7 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
         build: None,
+        starter_program: None,
         open_command,
         host_helper_root,
         host_cli_dir,
@@ -535,6 +591,61 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
             path.display()
         )
     })
+}
+
+/// Whether `home` is a test fixture's HOME, where a test-only key is read:
+/// under the system's temporary folder, carrying [`FIXTURE_HOME_MARKER`],
+/// and not this account's own home by the account database (`HOME` is the
+/// fixture's, so it cannot tell). Anything else reads every test-only key as
+/// unset.
+pub fn fixture_home(home: &std::path::Path) -> bool {
+    hide_kit::layout::fixture_home(home)
+}
+
+/// The version and order a fixture has this build present
+/// ([`HIDE_BUILD_VERSION_OVERRIDE`], [`HIDE_BUILD_ORDER_OVERRIDE`]); each
+/// is read only under a fixture HOME.
+pub struct BuildOverrides {
+    pub version: Option<String>,
+    pub order: Option<u64>,
+}
+
+pub fn fixture_build_overrides() -> BuildOverrides {
+    if !hide_platform::host::home_dir().is_ok_and(|home| fixture_home(&home)) {
+        return BuildOverrides {
+            version: None,
+            order: None,
+        };
+    }
+    BuildOverrides {
+        version: std::env::var(HIDE_BUILD_VERSION_OVERRIDE)
+            .ok()
+            .filter(|version| !version.is_empty()),
+        // Only a fixture sets it, and one that misspells it must not test
+        // the build it did not mean.
+        order: std::env::var(HIDE_BUILD_ORDER_OVERRIDE).ok().map(|order| {
+            order
+                .parse()
+                .unwrap_or_else(|_| panic!("{HIDE_BUILD_ORDER_OVERRIDE} is not a count: {order:?}"))
+        }),
+    }
+}
+
+/// Whether a fixture HOME names `build` as one whose daemon fails at its
+/// start ([`FIXTURE_FAIL_BUILD_FILE`]).
+pub fn fixture_fails_build(build: &str) -> bool {
+    hide_platform::host::home_dir().is_ok_and(|home| {
+        fixture_home(&home)
+            && std::fs::read_to_string(home.join(FIXTURE_FAIL_BUILD_FILE))
+                .is_ok_and(|named| named.trim() == build)
+    })
+}
+
+/// Whether a fixture asked the core role's stop never to return
+/// ([`HIDE_FIXTURE_CORE_STOP`]).
+pub fn fixture_core_stop_hangs() -> bool {
+    std::env::var_os(HIDE_FIXTURE_CORE_STOP).as_deref() == Some(std::ffi::OsStr::new("hang"))
+        && hide_platform::host::home_dir().is_ok_and(|home| fixture_home(&home))
 }
 
 #[cfg(test)]

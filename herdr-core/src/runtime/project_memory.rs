@@ -5,6 +5,8 @@
 //!
 //! Memory is its own snapshot section, keyed by the Project a shell opens;
 //! nothing here follows the focused checkout or the Overview's Sessions.
+//! The Project's folder is read by the node of the machine that holds it:
+//! this machine's or a node that dials in (PRD core-host-node-move B14).
 //! Every store read and write runs on a worker; the lock only starts it and
 //! applies its answer.
 
@@ -26,8 +28,9 @@ const SEARCH_LIMIT_BYTES: usize = crate::memory_command::SEARCH_LIMIT_BYTES;
 /// The reads and the action behind Project Memory on screen.
 #[derive(Default)]
 pub(super) struct ProjectMemoryWork {
-    /// The opened Project's folder while it can be read here.
-    path: Option<String>,
+    /// The opened Project's folder, with the machine that holds it, while
+    /// Memory keeps it.
+    path: Option<(crate::node::NodeId, String)>,
     /// Memory's id for the opened Project, once a read resolved it.
     pub(super) project_id: Option<String>,
     /// The card shown in full and the screen's search words.
@@ -90,9 +93,10 @@ pub(super) struct OpenedMemoryLoad {
 
 impl Runtime {
     /// Checks a `hide memory` caller like a Factory command does and takes
-    /// what the command needs (B16, D-22): only a caller on this machine is
-    /// answered, and an agent pane's own session is the one a `show` is
-    /// recorded for.
+    /// what the command needs (B16, D-22): a caller on this machine or on a
+    /// node that dials in is answered, its Project read by its own node (PRD
+    /// core-host-node-move B14), and an agent pane's own session is the one a
+    /// `show` is recorded for.
     pub(crate) fn prepare_memory(
         &self,
         device: &str,
@@ -100,9 +104,9 @@ impl Runtime {
         expected: &crate::workspace_control::Context,
         command: crate::memory_command::MemoryCommand,
     ) -> Result<crate::memory_command::PreparedMemory, String> {
-        if device != self.node.as_str() {
-            return Err("memory_device_unsupported".into());
-        }
+        let (node, sessions_node) = self
+            .linked_node(device)
+            .map_err(|_| "memory_device_unsupported".to_owned())?;
         // The caller's checkout as it is now; Memory needs no window, so
         // the Views a Workspace query also checks do not matter here.
         let context = self
@@ -111,11 +115,11 @@ impl Runtime {
         if context != *expected {
             return Err("caller_context_changed".into());
         }
+        // The pane's agent on the caller's own machine: a node's pane is
+        // found among that node's agents, never this machine's.
         let reader = match crate::workspace_control::Caller::parse(caller) {
             crate::workspace_control::Caller::Pane(pane) => self
-                .snapshot
-                .navigator
-                .agents
+                .machine_agents(device)
                 .iter()
                 .find(|agent| agent.pane_id == pane)
                 .and_then(|agent| {
@@ -132,9 +136,7 @@ impl Runtime {
                         .agents
                         .iter()
                         .filter(|record| {
-                            !record.ended
-                                && record.pane == pane
-                                && record.machine == self.node.as_str()
+                            !record.ended && record.pane == pane && record.machine == device
                         })
                         .map(|record| record.id.clone())
                         .collect()
@@ -144,8 +146,9 @@ impl Runtime {
         };
         Ok(crate::memory_command::PreparedMemory {
             command,
-            node: self.node.clone(),
-            sessions_node: self.own_node(),
+            node,
+            sessions_node,
+            ai_node: self.own_node(),
             database: self.memory_database_path(),
             checkout_path: context.checkout_path,
             reader,
@@ -230,14 +233,25 @@ impl Runtime {
         true
     }
 
-    /// Where a catalog Project's Memory is read from, or why it is not kept
-    /// here: Memory is kept for the Projects on this machine (B16).
-    fn memory_folder(&self, workspace_id: &str) -> Result<String, MemoryUnavailableSnapshot> {
+    /// Where a catalog Project's Memory is read from, with the machine that
+    /// holds it, or why it is not kept: Memory is kept for the Projects of
+    /// this machine and of a node that dials in, never of a device the core
+    /// dials (B16; PRD core-host-node-move B14, Q20). A node whose link is
+    /// down keeps its Projects' Memory; reading it waits for the link.
+    fn memory_folder(
+        &self,
+        workspace_id: &str,
+    ) -> Result<(crate::node::NodeId, String), MemoryUnavailableSnapshot> {
         let workspace = self
             .catalog_workspaces()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or(MemoryUnavailableSnapshot::Unregistered)?;
-        if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str() {
+        let node = match self.linked_node(&workspace.device_id) {
+            Ok((node, _)) => Some(node),
+            Err("link_down") => crate::node::NodeId::parse(&workspace.device_id).ok(),
+            Err(_) => None,
+        };
+        let Some(node) = node else {
             let device_name = self
                 .snapshot
                 .navigator
@@ -249,8 +263,8 @@ impl Runtime {
                     |device| device.label.clone(),
                 );
             return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
-        }
-        Ok(workspace.path.clone())
+        };
+        Ok((node, workspace.path.clone()))
     }
 
     /// Shows one card of the opened Project in full, or none.
@@ -329,18 +343,32 @@ impl Runtime {
     /// Reads the opened Project's Memory again, after a change to it or to
     /// what the screen asks of it.
     pub(super) fn refresh_project_memory(&mut self) {
-        let Some(path) = self.project_memory.path.clone() else {
+        let Some((node, path)) = self.project_memory.path.clone() else {
             return;
         };
         let Some(context) = self.worker_context.clone() else {
             return;
         };
+        let sessions_node = match self.linked_node(node.as_str()) {
+            Ok((_, link)) => link,
+            Err(reason) => {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "memory.read_unreachable",
+                    "device": node.as_str(),
+                    "reason": reason,
+                }));
+                if let Some(project) = self.memory_section().project.as_mut() {
+                    project.loading = false;
+                    project.unavailable = Some(MemoryUnavailableSnapshot::Unreadable);
+                }
+                return;
+            }
+        };
         let Some(generation) = self.project_memory.reads.begin() else {
             return;
         };
         let database = self.memory_database_path();
-        let node = self.node.clone();
-        let sessions_node = self.own_node();
         let expanded = self.project_memory.expanded;
         let search = self.project_memory.search.clone();
         let spawn = thread::Builder::new()
@@ -512,13 +540,24 @@ impl Runtime {
     /// from its Memory tab. One action runs at a time; another is refused
     /// with the reason.
     pub(super) fn apply_memory_action(&mut self, payload: events::MemoryActionPayload) -> bool {
-        let path = match self.memory_folder(&payload.workspace_id) {
-            Ok(path) => path,
+        let (node, path) = match self.memory_folder(&payload.workspace_id) {
+            Ok(folder) => folder,
             Err(_) => {
                 self.set_error(
                     "memory.project_unavailable",
-                    "Project Memory is kept only for registered Projects on this Mac",
+                    "Project Memory is kept only for the Projects of this computer and of computers that connect to it",
                     false,
+                );
+                return true;
+            }
+        };
+        let sessions_node = match self.linked_node(node.as_str()) {
+            Ok((_, link)) => link,
+            Err(_) => {
+                self.set_error(
+                    "memory.project_unreachable",
+                    "The computer that holds this Project is not connected",
+                    true,
                 );
                 return true;
             }
@@ -571,7 +610,7 @@ impl Runtime {
             self.cancel_memory_pass();
         }
         let start = match payload.action {
-            MemoryAction::Promote => match self.promotion_start(&path) {
+            MemoryAction::Promote => match self.promotion_start(&node, &path) {
                 Ok(start) => Some(start),
                 Err(reason) => {
                     crate::diagnostic!(json!({
@@ -595,8 +634,6 @@ impl Runtime {
         self.project_memory.action = Some((payload.workspace_id.clone(), action));
         self.sync_project_memory();
         let database = self.memory_database_path();
-        let node = self.node.clone();
-        let sessions_node = self.own_node();
         let spawn = thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {

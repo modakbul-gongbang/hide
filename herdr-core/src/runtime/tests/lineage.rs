@@ -47,6 +47,8 @@ fn remote_lineage_session(agents: Vec<SidebarAgentSnapshot>) -> RemoteSessionSna
         focused_pane_id: None,
         pane_layouts: Vec::new(),
         pane_hook_tokens: Default::default(),
+        issue_tokens: Default::default(),
+        issue_links: Default::default(),
     }
 }
 
@@ -402,6 +404,8 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        effects_held: false,
+        machine_name: None,
     };
     let restarted = Runtime::new(
         options,

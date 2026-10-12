@@ -158,7 +158,7 @@ export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"
  * offers none.
  */
 function issueSourceItem(workspace: Workspace, stored: string | undefined, t: TFunction<"translation">): MenuItem[] {
-  if (workspace.remote_target_id || workspace.is_home || workspace.tasks?.source == null) return [];
+  if (workspace.is_home || workspace.tasks?.source == null) return [];
   const { value, options } = issueSourceChoices(workspace, stored, t);
   return [
     {

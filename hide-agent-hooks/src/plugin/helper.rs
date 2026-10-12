@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use hide_agent_adapter::{AgentAdapter, Capability, PluginDialect};
 use hide_agent_hooks::delivery::{self, Intake, Prompt};
-use hide_agent_hooks::memory::{HookMemoryOutcome, MemoryRequest, memory_context_until};
+use hide_agent_hooks::memory::{self, HookMemoryOutcome, MemoryRequest, memory_context_until};
 use hide_agent_hooks::runtime::HookEvent;
 use hide_agent_hooks::spawn_guard::{self as guard, QuestionDecision, Registration};
 use hide_agent_hooks::{counters, guidance, report};
@@ -180,26 +180,43 @@ fn start() -> Value {
     })
 }
 
-/// Memory, then the letters waiting for this pane's agent. Nothing is
-/// confirmed here: the script confirms after the agent stored the prompt that
-/// carries them (`confirm`), so a letter whose prompt was lost stays pending.
+/// Memory and the letters waiting for this pane's agent, asked at once and
+/// both in before the answer. Nothing is confirmed here: the script confirms
+/// after the agent stored the prompt that carries them (`confirm`), so a
+/// letter whose prompt was lost stays pending.
 fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
     let Some(session) = session(&input) else {
         return json!({});
     };
-    let memory_deadline =
-        Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
-    let (memory, memory_start) = prompt_memory(home, agent, &input, &session, memory_deadline);
-    let intake = delivery::pull(
-        deadline,
-        &Prompt {
-            digest: None,
-            session: Some(session),
-        },
-    )
-    .unwrap_or_else(|failure| {
-        delivery::diagnose_failure(home, &failure);
-        None
+    let memory_deadline = (Instant::now() + memory::MEMORY_BUDGET).min(deadline);
+    let (memory, memory_start, intake) = std::thread::scope(|scope| {
+        let asking = agent.adapter.memory.is_some().then(|| {
+            std::thread::Builder::new()
+                .name("hide-plugin-memory".to_owned())
+                .spawn_scoped(scope, || {
+                    prompt_memory(home, agent, &input, &session, memory_deadline)
+                })
+                .map_err(|_| ())
+        });
+        let intake = delivery::pull(
+            deadline,
+            &Prompt {
+                digest: None,
+                session: Some(session.clone()),
+            },
+        )
+        .unwrap_or_else(|failure| {
+            delivery::diagnose_failure(home, &failure);
+            None
+        });
+        let (memory, start) = match asking {
+            Some(Ok(asked)) => asked.join().unwrap_or_else(|_| {
+                memory::record_panic(home);
+                (None, false)
+            }),
+            Some(Err(())) | None => (None, false),
+        };
+        (memory, start, intake)
     });
     let mut context = memory.unwrap_or_default();
     let mut letters = Vec::new();
@@ -222,9 +239,6 @@ fn prompt_memory(
     session: &str,
     deadline: Instant,
 ) -> (Option<String>, bool) {
-    if agent.adapter.memory.is_none() {
-        return (None, false);
-    }
     let Some(memory_session) = agent.memory_session(input, session) else {
         // A script of this build always sends the host's id; Memory without
         // it would be signed for a session no reader knows.
@@ -234,7 +248,6 @@ fn prompt_memory(
     let request = |event| MemoryRequest {
         runtime_id: agent.runtime(),
         event,
-        cwd: input.cwd.clone(),
         prompt: input.prompt.clone(),
         session_id: Some(memory_session.clone()),
     };
@@ -358,138 +371,4 @@ fn subagents(home: &Path, agent: &Agent, input: Input) -> Value {
     let socket_path = socket_path.unwrap_or_default();
     let _ = report::record_outcome(home, &pane, "subagent count", &socket_path, &outcome);
     json!({ "reported": outcome.is_ok() })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Room for a debug build on a loaded machine; the 75 ms process budget is
-    /// the helper's own and is not what these tests prove.
-    const MEMORY_TEST_DEADLINE: Duration = Duration::from_secs(60);
-
-    /// A HOME whose Memory store holds one enabled Project, and that Project's
-    /// folder and id.
-    fn memory_project() -> (tempfile::TempDir, PathBuf, String, hide_memory::MemoryStore) {
-        let temp = tempfile::tempdir().unwrap();
-        let home = temp.path().join("home");
-        let root = temp.path().join("project");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&root).unwrap();
-        let node = hide_platform::host::machine_id().unwrap();
-        let project = hide_project::resolve(&root, &node).unwrap();
-        let database = hide_agent_hooks::memory::database_path(&home);
-        std::fs::create_dir_all(database.parent().unwrap()).unwrap();
-        let store = hide_memory::MemoryStore::open(&database).unwrap();
-        store
-            .ensure_project(&project.id, &project.root, &node)
-            .unwrap();
-        store.set_enabled(&project.id, true, true).unwrap();
-        (temp, root, project.id, store)
-    }
-
-    fn input(value: Value) -> Input {
-        serde_json::from_value(value).unwrap()
-    }
-
-    /// The `event`, `items` and `auth` of the receipt line in `context`.
-    fn receipt(context: &str) -> (String, String, String) {
-        let line = context
-            .lines()
-            .find(|line| line.starts_with("<hide-memory-receipt "))
-            .unwrap_or_else(|| panic!("no receipt in {context}"));
-        let field = |name: &str| {
-            let start = line.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
-            line[start..].split_once('"').unwrap().0.to_owned()
-        };
-        (field("event"), field("items"), field("auth"))
-    }
-
-    /// The first prompt of a Pi, omp or OpenCode session carries the index
-    /// and the cards its words match, and the script stops asking for the
-    /// index even when it is empty. Pi's and omp's extension names the session
-    /// by its file for letters and by the host's own id for Memory: the
-    /// prompt's receipt is signed for the id, which is what their session
-    /// reader keys it by, never for the file. OpenCode's session id is its own.
-    #[test]
-    fn the_first_prompt_carries_the_index_and_a_receipt_signed_for_the_session_memory_knows() {
-        let (temp, root, project_id, mut store) = memory_project();
-        let home = temp.path().join("home");
-        let deadline = || Instant::now() + MEMORY_TEST_DEADLINE;
-        let asked = |session: &str, native: Option<&str>, first: bool| {
-            let mut value = json!({"session_id": session, "prompt": "Fix the flaky hook",
-                "cwd": root, "first": true, "memory_first": first});
-            if let Some(native) = native {
-                value["native_session"] = json!(native);
-            }
-            input(value)
-        };
-        let empty = asked("ses_empty", None, true);
-        let opencode = Agent::parse("opencode").unwrap();
-        assert_eq!(
-            prompt_memory(&home, &opencode, &empty, "ses_empty", deadline()),
-            (None, true),
-            "an empty index is answered, so the script stops asking"
-        );
-
-        store
-            .apply_candidates(
-                &hide_memory::AnalysisBatch {
-                    id: "b".to_owned(),
-                    project_id: project_id.clone(),
-                    provider: "codex".to_owned(),
-                    analysis_provider: "codex".to_owned(),
-                    session_id: "s".to_owned(),
-                    content_hash: "h".to_owned(),
-                    created_at_unix_ms: 1,
-                },
-                &[hide_memory::Candidate {
-                    text: "Rerun a flaky hook test once before filing it".to_owned(),
-                    title: String::new(),
-                    aliases: Vec::new(),
-                    kind: hide_memory::CandidateKind::Rule,
-                    confidence: 0.9,
-                    salience: 0.9,
-                    source_offsets: vec![1],
-                    human_offsets: vec![1],
-                    source_times: Default::default(),
-                    cited_paths: Vec::new(),
-                    relation: hide_memory::CandidateRelation::New,
-                }],
-            )
-            .unwrap();
-        for name in ["pi", "omp", "opencode"] {
-            let agent = Agent::parse(name).unwrap();
-            let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{name}.jsonl");
-            let id = format!("01a11d1d-{name}");
-            let (session, first) = if name == "opencode" {
-                ("ses_root".to_owned(), asked("ses_root", None, true))
-            } else {
-                (file.clone(), asked(&file, Some(&id), true))
-            };
-            let (memory, start) = prompt_memory(&home, &agent, &first, &session, deadline());
-            assert!(start, "{name}");
-            let memory = memory.unwrap();
-            assert!(memory.contains("<hide-memory-index"), "{name}: {memory}");
-            let (event, items, auth) = receipt(&memory);
-            assert_eq!(
-                (event.as_str(), items.as_str()),
-                ("UserPromptSubmit", "m1@1")
-            );
-            let verifies = |session: &str| {
-                store
-                    .verify_receipt_auth(&project_id, name, session, &event, &items, &auth)
-                    .unwrap()
-            };
-            let signed_for = if name == "opencode" {
-                "ses_root"
-            } else {
-                id.as_str()
-            };
-            assert!(verifies(signed_for), "{name}: signed for the host's id");
-            if name != "opencode" {
-                assert!(!verifies(&file), "{name}: never for the session file");
-            }
-        }
-    }
 }

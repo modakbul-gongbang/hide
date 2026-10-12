@@ -1,8 +1,10 @@
 //! Project Memory's background work (PRD project-memory-v2 B1-B6, D-07,
 //! D-08, D-10, D-16).
 //!
-//! One pass at a time walks every Memory-enabled Project of this machine,
-//! whatever the screen shows. For each of its sessions it records the
+//! One pass at a time walks every Memory-enabled Project of this machine
+//! and of each node that dials in, whatever the screen shows, each read
+//! through its own node's link (PRD core-host-node-move B14); a device the
+//! core dials keeps no Memory. For each of its sessions it records the
 //! receipts a live pane's label read cannot see (a session started outside
 //! Herdr, or whose pane is gone), from a JSONL file or OpenCode's database,
 //! and analyzes a session once its file has
@@ -32,7 +34,7 @@ use hide_memory::{
 use hide_node_link::protocol::Call;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How long a session file stays unchanged before its new conversation is
 /// analyzed (D-07): an agent quiet through a build or a test run is not done.
@@ -80,9 +82,9 @@ pub(super) struct MemoryWork {
     /// The settings the last change check saw; the same settings read again
     /// change nothing.
     seen_settings: Option<hide_ai::AiSettings>,
-    /// Sessions this Mac's live panes hold, whose receipts the label read
-    /// records; the walk leaves them to it.
-    live_sessions: BTreeSet<MemorySession>,
+    /// Sessions each machine's live panes hold, by device, whose receipts
+    /// the label read records; the walk leaves them to it.
+    live_sessions: BTreeMap<String, BTreeSet<MemorySession>>,
     /// Sessions whose pane let them go; each is analyzed without waiting for
     /// the quiet rule (B2), and stays here until a pass finds nothing left
     /// to analyze in it, so a pass that was cancelled, held back or failed
@@ -94,7 +96,9 @@ pub(super) struct MemoryWork {
     /// When a pass first found the weekly figure unread; past
     /// [`USAGE_READ_WAIT_MS`] analysis goes on without it.
     usage_unread_since_unix_ms: Option<u64>,
-    receipts_pending: Vec<SightedMemoryReceipt>,
+    /// Receipts waiting for the receipt thread, each with the device whose
+    /// sessions carried it.
+    receipts_pending: Vec<(String, SightedMemoryReceipt)>,
     receipts_in_flight: bool,
     /// Each Project's analysis state and last change, by Memory's Project id.
     pub(super) projects: HashMap<String, ProjectMemoryWork>,
@@ -163,15 +167,32 @@ pub(crate) enum AnalysisFailure {
 }
 
 impl Runtime {
-    /// Takes what the label reads found for Memory: receipts to record off
-    /// the lock, and the sessions live panes hold now. A session that left
-    /// the set had its pane closed or replaced, and the next pass, started
-    /// at once, analyzes it (B2).
-    pub(crate) fn take_memory_handoff(&mut self, handoff: MemoryHandoff) {
+    /// Takes what the label reads of `device`'s panes found for Memory:
+    /// receipts to record off the lock, and the sessions its live panes hold
+    /// now. A session that left the set had its pane closed or replaced, and
+    /// the next pass, started at once, analyzes it (B2). A machine with no
+    /// Memory, a device the core dials, hands nothing over; a node that dials
+    /// in keeps its sessions while its link is down, for the pass after it
+    /// is back.
+    pub(crate) fn take_memory_handoff(&mut self, device: &str, handoff: MemoryHandoff) {
+        if let Err(reason @ ("dialed_device" | "unregistered")) = self.linked_node(device) {
+            // Its sessions are the designed absence; receipts there are not.
+            if !handoff.receipts.is_empty() {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "receipts.no_memory",
+                    "device": device,
+                    "reason": reason,
+                    "dropped": handoff.receipts.len(),
+                }));
+            }
+            return;
+        }
         if let Some(live) = handoff.live_sessions {
             let work = &mut self.memory_work;
+            let held = work.live_sessions.remove(device).unwrap_or_default();
             let mut closed = false;
-            for gone in work.live_sessions.difference(&live) {
+            for gone in held.difference(&live) {
                 if work.closed_sessions.len() < CLOSED_SESSIONS_LIMIT {
                     closed |= work.closed_sessions.insert(gone.clone());
                 } else {
@@ -183,22 +204,55 @@ impl Runtime {
                     }));
                 }
             }
-            let opened = live
-                .iter()
-                .any(|session| !work.live_sessions.contains(session));
+            let opened = live.iter().any(|session| !held.contains(session));
             if closed || opened {
                 work.next_pass_unix_ms = 0;
             }
-            work.live_sessions = live;
+            if !live.is_empty() {
+                work.live_sessions.insert(device.to_owned(), live);
+            }
         }
         if !handoff.receipts.is_empty() {
-            self.record_memory_receipts(handoff.receipts);
+            self.record_memory_receipts(device, handoff.receipts);
         }
     }
 
-    fn record_memory_receipts(&mut self, receipts: Vec<SightedMemoryReceipt>) {
+    /// `pending` by the node whose sessions carried them, each with the link
+    /// its Project is read through; receipts from a machine without Memory
+    /// are dropped here.
+    pub(super) fn receipt_batches(
+        &self,
+        pending: Vec<(String, SightedMemoryReceipt)>,
+    ) -> Vec<(NodeId, Arc<dyn NodeLink>, Vec<SightedMemoryReceipt>)> {
+        let mut by_device: BTreeMap<String, Vec<_>> = BTreeMap::new();
+        for (device, receipt) in pending {
+            by_device.entry(device).or_default().push(receipt);
+        }
+        by_device
+            .into_iter()
+            .filter_map(|(device, receipts)| match self.linked_node(&device) {
+                Ok((node, link)) => Some((node, link, receipts)),
+                Err(reason) => {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "receipts.no_memory",
+                        "device": device,
+                        "reason": reason,
+                        "dropped": receipts.len(),
+                    }));
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn record_memory_receipts(&mut self, device: &str, receipts: Vec<SightedMemoryReceipt>) {
         let work = &mut self.memory_work;
-        work.receipts_pending.extend(receipts);
+        work.receipts_pending.extend(
+            receipts
+                .into_iter()
+                .map(|receipt| (device.to_owned(), receipt)),
+        );
         if work.receipts_pending.len() > RECEIPTS_PENDING_LIMIT {
             let dropped = work.receipts_pending.len() - RECEIPTS_PENDING_LIMIT;
             work.receipts_pending.drain(..dropped);
@@ -217,8 +271,6 @@ impl Runtime {
         };
         self.memory_work.receipts_in_flight = true;
         let database = self.memory_database_path();
-        let node = self.node.clone();
-        let sessions_node = self.own_node();
         let spawn = thread::Builder::new()
             .name("hide-memory-receipts".to_owned())
             .spawn(move || {
@@ -227,30 +279,29 @@ impl Runtime {
                     let Some(runtime) = context.runtime.upgrade() else {
                         return;
                     };
-                    let batch = match runtime.lock() {
+                    let batches = match runtime.lock() {
                         Ok(mut guard) => {
-                            let work = &mut guard.memory_work;
-                            let batch = std::mem::take(&mut work.receipts_pending);
-                            if batch.is_empty() {
-                                work.receipts_in_flight = false;
+                            let pending = std::mem::take(&mut guard.memory_work.receipts_pending);
+                            if pending.is_empty() {
+                                guard.memory_work.receipts_in_flight = false;
                                 // The open Memory tab counts deliveries.
                                 if recorded_any {
                                     guard.refresh_project_memory();
                                 }
+                                return;
                             }
-                            batch
+                            guard.receipt_batches(pending)
                         }
                         Err(_) => return,
                     };
                     drop(runtime);
-                    if batch.is_empty() {
-                        return;
-                    }
                     // A defect in one batch must not leave the flag set, which
                     // would stop every later batch from starting a worker.
                     recorded_any = true;
                     let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        record_sighted_receipts(&node, sessions_node.as_ref(), &database, batch)
+                        for (node, link, batch) in batches {
+                            record_sighted_receipts(&node, link.as_ref(), &database, batch);
+                        }
                     }));
                     if recorded.is_err() {
                         crate::diagnostic!(json!({
@@ -274,7 +325,12 @@ impl Runtime {
     /// coordinator's tick; everything the pass reads or writes happens on its
     /// worker.
     pub(super) fn tick_project_memory(&mut self, now_unix_ms: u64) -> bool {
-        if self.memory_work.pass_in_flight || now_unix_ms < self.memory_work.next_pass_unix_ms {
+        // A core whose move has not committed asks no provider (PRD
+        // core-host-node-move amendment 3); the pass waits for the release.
+        if self.memory_work.pass_in_flight
+            || now_unix_ms < self.memory_work.next_pass_unix_ms
+            || self.effects_held()
+        {
             return false;
         }
         let Some(context) = self.worker_context.clone() else {
@@ -299,7 +355,7 @@ impl Runtime {
         let router = settings
             .as_ref()
             .map(|settings| crate::ai::memory_router(&own_node, settings));
-        let node = self.node.clone();
+        let (nodes, unreached) = self.memory_nodes();
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());
@@ -307,12 +363,12 @@ impl Runtime {
         // A pane closed or a wake while the pass runs sets this back to now.
         work.next_pass_unix_ms = now_unix_ms.saturating_add(MEMORY_PASS_INTERVAL_MS);
         let input = PassInput {
-            node,
-            sessions_node: own_node,
+            nodes,
+            unreached,
             database,
             router,
             weekly,
-            live: work.live_sessions.clone(),
+            live: work.live_sessions.values().flatten().cloned().collect(),
             closed: work.closed_sessions.clone(),
             held,
             cancel,
@@ -666,8 +722,11 @@ pub(crate) fn report_memory_change(
 
 /// What one pass needs, taken under the lock when it starts.
 struct PassInput {
-    node: NodeId,
-    sessions_node: Arc<dyn NodeLink>,
+    /// The machines whose Projects have Memory, each with the link that
+    /// reads its files: this machine's and each node that dials in now.
+    nodes: Vec<super::hosts::LinkedNode>,
+    /// Nodes that dial in but whose link is down: their Projects wait.
+    unreached: Vec<NodeId>,
     database: PathBuf,
     /// `None` while Hide AI is off: the pass only records receipts.
     router: Option<AiRouter>,
@@ -697,24 +756,38 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
             return outcome;
         }
     };
-    let projects = match store.enabled_projects(input.node.as_str()) {
-        Ok(projects) => projects,
-        Err(error) => {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "pass.projects_unreadable",
-                "message": error.to_string(),
-            }));
-            return outcome;
+    let mut projects = Vec::new();
+    for (node, link) in &input.nodes {
+        match store.enabled_projects(node.as_str()) {
+            Ok(enabled) => projects.extend(
+                enabled
+                    .into_iter()
+                    .map(|(project_id, root)| (node, link, project_id, root)),
+            ),
+            Err(error) => {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "pass.projects_unreadable",
+                    "device": node.as_str(),
+                    "message": error.to_string(),
+                }));
+                return outcome;
+            }
         }
-    };
+    }
     // A deferral holds for the rest of the pass and is logged once.
     let mut deferred = None;
     // Closed sessions some enabled Project lists; the rest belong to no
     // Project Memory analyzes, once every Project was walked.
     let mut reached = BTreeSet::new();
-    let mut walked_all = true;
-    for (project_id, root) in projects {
+    // A closed session of a node that is not linked now may be one of its
+    // Projects': it stays closed until that node is walked.
+    let mut walked_all = !input.unreached.iter().any(|node| {
+        store
+            .enabled_projects(node.as_str())
+            .map_or(true, |enabled| !enabled.is_empty())
+    });
+    for (node, link, project_id, root) in projects {
         if input.cancel.is_cancelled() {
             walked_all = false;
             break;
@@ -722,6 +795,7 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         let mut tally = ProjectTally::default();
         let walked = walk_project(
             input,
+            (node, link.as_ref()),
             &mut store,
             &project_id,
             &root,
@@ -737,6 +811,7 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
                 "component": "memory",
                 "kind": "pass.project_failed",
                 "project_id": project_id,
+                "device": node.as_str(),
                 "message": message,
             }));
         }
@@ -776,6 +851,7 @@ struct ProjectTally {
 #[allow(clippy::too_many_arguments)]
 fn walk_project(
     input: &PassInput,
+    (node, sessions_node): (&NodeId, &dyn NodeLink),
     store: &mut MemoryStore,
     project_id: &str,
     root: &str,
@@ -785,8 +861,7 @@ fn walk_project(
     reached: &mut BTreeSet<MemorySession>,
     report: &mut dyn FnMut(PassReport),
 ) -> Result<(), String> {
-    let sessions_node = input.sessions_node.as_ref();
-    let identity = project_identity(sessions_node, &input.node, root)?;
+    let identity = project_identity(sessions_node, node, root)?;
     if identity.id != project_id {
         return Err(format!("project_moved:{}", identity.id));
     }
@@ -1907,10 +1982,25 @@ mod tests {
             closed: bool,
             weekly: WeeklyUsage,
         ) -> (Vec<&'static str>, PassOutcome) {
+            let nodes = vec![(crate::node::test_node(), Arc::clone(&self.node))];
+            self.pass_over(key, live, closed, weekly, nodes, Vec::new())
+        }
+
+        /// A pass over `nodes`, with `unreached` the nodes that dial in
+        /// whose link is down.
+        fn pass_over(
+            &self,
+            key: MemorySession,
+            live: bool,
+            closed: bool,
+            weekly: WeeklyUsage,
+            nodes: Vec<super::super::hosts::LinkedNode>,
+            unreached: Vec<NodeId>,
+        ) -> (Vec<&'static str>, PassOutcome) {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             let input = PassInput {
-                node: crate::node::test_node(),
-                sessions_node: Arc::clone(&self.node),
+                nodes,
+                unreached,
                 database: self.database.clone(),
                 router: Some(AiRouter::new(
                     vec![backend],
@@ -2003,6 +2093,51 @@ mod tests {
         drop(file);
         assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 1);
+    }
+
+    /// PRD core-host-node-move B14: the Projects of a node that dials in
+    /// are walked through its link like this machine's, and while its link
+    /// is down a closed session of its stays queued for the next pass.
+    #[test]
+    fn a_linked_node_s_closed_session_is_analyzed_through_its_link_and_waits_while_it_is_down() {
+        let fixture = Fixture::new();
+        let core = NodeId::parse("core-node").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let core_link: Arc<dyn NodeLink> =
+            Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
+        let key = ("claude", SESSION.to_owned());
+
+        let (reports, outcome) = fixture.pass_over(
+            key.clone(),
+            false,
+            true,
+            WeeklyUsage::Unknown,
+            vec![(core.clone(), Arc::clone(&core_link))],
+            vec![crate::node::test_node()],
+        );
+        assert!(reports.is_empty());
+        assert_eq!(fixture.calls(), 0);
+        assert!(outcome.settled.is_empty(), "the session waits for its node");
+
+        fixture.answer(&[]);
+        let (reports, _) = fixture.pass_over(
+            key,
+            false,
+            true,
+            WeeklyUsage::Unknown,
+            vec![
+                (core, core_link),
+                (crate::node::test_node(), Arc::clone(&fixture.node)),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(reports, ["analyzing", "learned one"]);
+        let learned = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .expect("the node's session taught a card");
+        assert_eq!(learned.title, "Tests run with nextest");
     }
 
     #[test]

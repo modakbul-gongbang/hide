@@ -27,10 +27,18 @@ describe("the one project read ⌘K asks for (PRD cmdk-navigation B8, B10, D-12)
     expect(projectToRead(RICH, front(RICH), new Set())).toBeNull();
   });
 
-  it("never reads a device's project or an Overview-less front", () => {
-    const onMini = structuredClone(NEVER_READ) as SnapshotRest;
-    onMini.navigator!.focused_device_id = "mini";
-    expect(projectToRead(onMini, front(onMini), new Set())).toBeNull();
+  it("reads a node's project in front as its own, never a dialed device's or an Overview-less front (D-29)", () => {
+    const onMini = (dialsIn: boolean) => {
+      const rest = structuredClone(NEVER_READ) as SnapshotRest;
+      const workspace = { ...rest.navigator!.workspaces![0]!, remote_target_id: "mini", device_id: "mini" };
+      rest.navigator!.workspaces = [];
+      rest.navigator!.focused_device_id = "mini";
+      rest.navigator!.devices = [...(rest.navigator!.devices ?? []), { id: "mini", kind: "remote", dials_in: dialsIn } as never];
+      rest.status = { ...rest.status, remote: [{ target_id: "mini", state: "connected", session: { workspaces: [workspace] } }] } as never;
+      return rest;
+    };
+    expect(projectToRead(onMini(true), front(NEVER_READ), new Set())?.id).toBe("w1");
+    expect(projectToRead(onMini(false), front(NEVER_READ), new Set())).toBeNull();
     expect(projectToRead(NEVER_READ, null, new Set())).toBeNull();
   });
 });

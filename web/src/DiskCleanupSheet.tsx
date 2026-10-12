@@ -46,7 +46,7 @@ import {
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
 import { prChip } from "./projectBoard";
-import type { CacheLayer, Workspace } from "./snapshot";
+import { catalogOf, type CacheLayer, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { PrChipMark } from "./components/pr-mark";
 
@@ -78,8 +78,9 @@ const CONFIRM_ANSWER_MS = 5000;
 export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, onClose }: { actions: Actions; workspace: Workspace; filter: Filter; onClose: () => void }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const elsewhere = cleanupElsewhere(workspaces ?? [], workspace.id);
+  // A node's project carries its cleanup on the node's rows, and the core runs one cleanup at a time for all of them.
+  // The answer is a word, so the open sheet redraws when it changes, not on every snapshot of a row.
+  const elsewhere = useShellStore((s) => cleanupElsewhere(catalogOf(s.rest?.navigator?.workspaces, s.rest?.status?.remote), workspace.id));
   const model = useMemo(() => sheetModel(workspace, elsewhere, t), [workspace, elsewhere, t]);
   const cleanup = workspace.cleanup ?? null;
   const [filter, setFilter] = useState<Filter>(initialFilter);

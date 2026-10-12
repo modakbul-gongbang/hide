@@ -152,16 +152,16 @@ impl Clock for Shared {
 }
 
 impl TaskSource for Shared {
-    fn repo_context(&mut self, _project: &str) -> RepoContext {
+    fn repo_context(&mut self, _node: Option<&str>, _project: &str) -> RepoContext {
         RepoContext::default()
     }
-    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String> {
+    fn read_prd(&mut self, _node: Option<&str>, path: &str) -> Result<Vec<u8>, String> {
         std::fs::read(path).map_err(|error| error.to_string())
     }
-    fn installed(&mut self, agent: Runtime) -> bool {
+    fn installed(&mut self, _node: Option<&str>, agent: Runtime) -> bool {
         !self.world().missing_agents.contains(&agent)
     }
-    fn probe(&mut self, _project: &str) -> Result<ProjectProbe, Failure> {
+    fn probe(&mut self, _node: Option<&str>, _project: &str) -> Result<ProjectProbe, Failure> {
         let github = self.world().github;
         Ok(ProjectProbe {
             github,
@@ -266,7 +266,7 @@ impl TaskSource for Shared {
 }
 
 impl Verifier for Shared {
-    fn log_tail(&self, _log: &str) -> Option<String> {
+    fn log_tail(&self, _factory: &Factory, _log: &str) -> Option<String> {
         None
     }
     fn start(&mut self, _factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {
@@ -293,7 +293,7 @@ impl Verifier for Shared {
             .and_then(VecDeque::pop_front)
             .unwrap_or(VerifyPoll::Passed)
     }
-    fn cancel(&mut self, run: &VerifyRun) {
+    fn cancel(&mut self, _factory: &Factory, run: &VerifyRun) {
         self.world().cancelled_runs.push(run.id.clone());
     }
 }
@@ -480,6 +480,7 @@ impl WorkerRuntime for Shared {
         world.worker_status.remove(&request.task);
         Ok(WorkerRef {
             factory: request.factory.clone(),
+            node: None,
             agent: Some(format!("agent-{}-{generation}", request.task)),
             name: request.name.clone(),
             pane: Some(format!("pane-{}-{generation}", request.task)),
@@ -672,11 +673,11 @@ pub fn question_none() -> Value {
 }
 
 impl Environment for Shared {
-    fn disk_free(&mut self, _project: &str) -> Option<u64> {
+    fn disk_free(&mut self, _node: Option<&str>, _project: &str) -> Option<u64> {
         self.world().disk_reads += 1;
         self.world().disk_free
     }
-    fn memory_pressure(&mut self) -> MemoryPressure {
+    fn memory_pressure(&mut self, _node: Option<&str>) -> MemoryPressure {
         self.world().memory.unwrap_or(MemoryPressure::Normal)
     }
     fn language(&mut self) -> Language {
@@ -797,6 +798,7 @@ impl Bench {
     pub fn factory_at(&mut self, project: &str, verify: bool) -> String {
         let answer = self.op(Command::Init {
             project: project.into(),
+            device: None,
             verification: Some(if verify {
                 VerificationChoice::Commands {
                     commands: vec!["cargo test".into()],

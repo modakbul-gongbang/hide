@@ -21,7 +21,9 @@
 
 import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
+import { translate } from "./i18n/client";
 import { remoteContext, remoteView } from "./remote";
+import { machineName, windowDeviceId } from "./screenMachine";
 import { type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
@@ -371,8 +373,8 @@ export type DeviceChipView = { label: string; local: boolean };
 /** The chip for a row on `deviceId`, or null while that is the device in front. */
 export function deviceChip(rest: SnapshotRest | null, deviceId: string): DeviceChipView | null {
   if (deviceId === frontDeviceId(rest)) return null;
-  const device = rest?.navigator?.devices?.find((row) => row.id === deviceId);
-  return { label: device?.label ?? deviceId, local: device ? device.kind !== "remote" : deviceId === localDeviceId(rest) };
+  const devices = rest?.navigator?.devices;
+  return { label: machineName(devices, deviceId, translate), local: deviceId === windowDeviceId(devices) };
 }
 
 function findCheckout(rest: SnapshotRest | null, checkoutId: string) {

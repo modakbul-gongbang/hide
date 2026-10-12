@@ -25,6 +25,26 @@ pub fn hide_home(home: &Path) -> PathBuf {
     home.join(HIDE_HOME)
 }
 
+/// The file that declares a HOME a test fixture's ([`fixture_home`]).
+pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
+
+/// Whether `home` is a test fixture's: under `/tmp`, carrying
+/// [`FIXTURE_HOME_MARKER`], and not the account's own. Nothing run for a
+/// fixture HOME may reach the account's real launchd domain, which
+/// `gui/<uid>` is whatever HOME says.
+pub fn fixture_home(home: &Path) -> bool {
+    let Ok(home) = hide_platform::fs::identity::canonical(home) else {
+        return false;
+    };
+    let temporary = ["/tmp", "/private/tmp"]
+        .iter()
+        .any(|root| home.starts_with(root));
+    let own = hide_platform::user_agents::account_home()
+        .and_then(|own| hide_platform::fs::identity::canonical(&own))
+        .is_ok_and(|own| own == home);
+    temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
+}
+
 /// The daemon's state folder when nothing relocates it (D-04).
 pub fn default_state_dir(home: &Path) -> PathBuf {
     hide_home(home).join("state")
@@ -106,6 +126,72 @@ pub fn shell_integration(home: &Path) -> PathBuf {
     hide_home(home).join("shell-integration")
 }
 
+/// Where this machine's core runs when it is not here: present only on a
+/// node whose core a move placed on another machine; its owner is the
+/// daemon's start (`hided::placement`).
+pub fn core_placement(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-placement.json")
+}
+
+/// The record of a core move this machine drives, written before each step
+/// that cannot be undone; its owner is the move driver
+/// (`hided::core_move::journal`).
+pub fn core_move_journal(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-move.json")
+}
+
+/// The forward moves this machine gave up while their other machine had
+/// not said whether they committed, each kept until that machine has no
+/// core of it; its owner is the daemon's supervisor
+/// (`hided::core_move::abandoned`).
+pub fn core_move_abandoned(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-move-abandoned.json")
+}
+
+/// The record on a machine taking or giving the core in a move: a core
+/// waiting for its first link, active, stopped for the move, or retired;
+/// its owner is `hided core-move` (`hided::core_move::handover`).
+pub fn core_handover(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-handover.json")
+}
+
+/// The login item that runs the core on `state_dir` after a move placed it
+/// on this machine (`hided::login_item`): one per state folder, so a folder
+/// other than the account's default never takes the default's item.
+pub fn core_login_item(home: &Path, state_dir: &Path) -> String {
+    const LABEL: &str = "dev.withhide.core";
+    if state_dir == default_state_dir(home) {
+        return LABEL.to_owned();
+    }
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(state_dir.to_string_lossy().as_bytes());
+    format!("{LABEL}.{}", hex_prefix(&digest))
+}
+
+fn hex_prefix(digest: &[u8]) -> String {
+    digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Copies a move makes of this machine's brain state, one folder per move.
+pub fn move_staging(state_dir: &Path) -> PathBuf {
+    state_dir.join("move-staging")
+}
+
+/// Where the machine taking the core receives a move's copy.
+pub fn move_incoming(state_dir: &Path) -> PathBuf {
+    state_dir.join("move-incoming")
+}
+
+/// The brain state a machine held before its core moved away, the latest
+/// move's only.
+pub fn moved_out(state_dir: &Path) -> PathBuf {
+    state_dir.join("moved-out")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {
@@ -149,6 +235,22 @@ mod tests {
     }
 
     #[test]
+    fn a_state_folder_other_than_the_default_has_a_login_item_of_its_own() {
+        let home = Path::new("/Users/alice");
+        let default = core_login_item(home, &default_state_dir(home));
+        let other = core_login_item(home, Path::new("/private/tmp/seat/state"));
+        assert_eq!(default, "dev.withhide.core");
+        assert!(
+            other.starts_with("dev.withhide.core.") && other != default,
+            "{other}"
+        );
+        assert_eq!(
+            other,
+            core_login_item(home, Path::new("/private/tmp/seat/state"))
+        );
+    }
+
+    #[test]
     fn every_hide_default_sits_under_one_folder() {
         let home = Path::new("/home/me");
         for path in [
@@ -158,5 +260,39 @@ mod tests {
         ] {
             assert!(path.starts_with("/home/me/.hide"), "{}", path.display());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_marked_home_under_tmp_is_a_fixture_home() {
+        let marked = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        let unmarked = tempfile::tempdir_in("/tmp").unwrap();
+        assert!(fixture_home(marked.path()));
+        assert!(!fixture_home(unmarked.path()));
+    }
+
+    /// A fixture HOME's kit has no login agents, so nothing it unloads or
+    /// asks reaches the account's real launchd domain.
+    #[cfg(unix)]
+    #[test]
+    fn a_fixture_home_s_kit_never_reaches_launchd() {
+        use std::sync::atomic::AtomicBool;
+        let marked = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        let agents = crate::login_agents(marked.path());
+        let stop = AtomicBool::new(false);
+        assert!(
+            !agents
+                .is_loaded("dev.withhide.core", marked.path(), &stop)
+                .unwrap()
+        );
+        assert_eq!(
+            agents.login(marked.path(), &stop).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        agents
+            .unload("dev.withhide.core", marked.path(), &stop)
+            .unwrap();
     }
 }

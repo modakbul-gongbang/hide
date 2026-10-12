@@ -15,7 +15,8 @@ import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
 import { scopeAgents } from "./overviewLens";
 import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
-import { frontDeviceId } from "./devices";
+import { frontDeviceId, readsHere } from "./devices";
+import { machineName } from "./screenMachine";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
@@ -75,8 +76,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const agentScope = deviceScope(rest, deviceId);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
-  // Every local Git project's tasks are read once the boards are on screen.
-  const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
+  // Every Git project whose tasks the core reads (its own, or a node's that dials it) is read once the boards are on screen.
+  const devices = rest?.navigator?.devices;
+  const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && readsHere(workspace, devices)).map(({ workspace }) => workspace.id).join("\n"), [projects, devices]);
   const boards = view !== "projects";
   useEffect(() => {
     if (!boards || !localGit) return;
@@ -93,8 +95,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // source; the dialog can move it to another.
   const issueProject = useMemo(() => {
     const front = frontCheckout(rest);
-    const local = projects.filter(({ workspace }) => !workspace.remote_target_id && workspace.tasks?.source);
-    return (front ? local.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? local[0]?.workspace.id ?? null;
+    const sourced = projects.filter(({ workspace }) => workspace.tasks?.source);
+    return (front ? sourced.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? sourced[0]?.workspace.id ?? null;
   }, [rest, projects]);
   const newIssue = () => {
     if (issueProject) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: issueProject });
@@ -297,10 +299,11 @@ function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState
 function DeviceProjects({ section, actions }: { section: DeviceSection; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { device, availability } = section;
+  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, device.id, t));
   return (
-    <section aria-label={t("overview.projectsOnDevice", { device: device.label })} data-main-device={device.id} data-device-availability={availability.state}>
+    <section aria-label={t("overview.projectsOnDevice", { device: name })} data-main-device={device.id} data-device-availability={availability.state}>
       <h2 className="flex items-center gap-sm pb-xs text-micro uppercase text-muted-foreground">
-        <span>{device.label}</span>
+        <span>{name}</span>
         {availability.state === "loading" ? (
           <span role="status" className="normal-case" data-device-loading="true">
             {availability.text}

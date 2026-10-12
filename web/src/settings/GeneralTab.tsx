@@ -5,9 +5,14 @@ import { Disclosure, Group, Note, Row, Status, Value } from "../components/setti
 import { useInterfaceTranslation } from "../i18n/client";
 import { formatDateTime } from "../i18n/format";
 import { requireInterfaceLanguage } from "../i18n/locale";
+import { checkCommand } from "../coreMove";
+import { coreMachineAway } from "../screenMachine";
 import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdrLine, herdrProtocolText, shownIn } from "../settings";
+import { readsHere } from "../devices";
+import { catalogOf } from "../snapshot";
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
+import { FixCommand } from "./FixCommand";
 import { hostBridge } from "../host";
 import { NotificationRows, useNotificationControl, usePermission } from "../NotificationControls";
 
@@ -37,14 +42,21 @@ function NotificationsGroup({ actions }: { actions: Actions }) {
   );
 }
 
-/** GitHub through `gh`: the state the core resolved across this Mac's Git projects, and a way to read it again. */
+/** GitHub through `gh`: the state the core resolved across the Git projects it reads with its own login, and a way to read them again. */
 function ConnectionsGroup({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  // The projects whose issues and pull requests are read here: this Mac's Git projects, never a device's.
-  const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.is_git);
-  const access = githubAccess(projects);
-  const line = access ? githubAccessLine(access, t) : null;
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  // The projects whose issues and pull requests are read with the core's `gh`:
+  // its own Git projects and a node's that dials it, never a dialed device's.
+  const projects = catalogOf(workspaces, remote).filter((workspace) => !workspace.is_home && workspace.is_git && readsHere(workspace, devices));
+  const access = githubAccess(projects, devices);
+  const coreMachine = coreMachineAway(devices, t);
+  const line = access ? githubAccessLine(access, t, coreMachine) : null;
+  // Signed out on the core's machine, seen from another: where to sign in, and with what.
+  const fixOn = access?.state === "failed" && access.category === "not_logged_in" ? coreMachine : null;
+  const ghCommand = checkCommand("gh");
   return (
     <Group title={t("settings.connections")} data-settings-group="connections">
       <Row
@@ -54,7 +66,18 @@ function ConnectionsGroup({ actions }: { actions: Actions }) {
             <span className="text-body text-muted-foreground">{t("settings.githubDescription")}</span>
           </span>
         }
-        detail={access?.state === "failed" && access.reason ? <Note tone="warn" data-issue-github-reason="true">{access.reason}</Note> : null}
+        detail={
+          fixOn && ghCommand ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-sm" data-github-fix-on={fixOn}>
+              <span className="text-body text-muted-foreground">{t("settings.fixOn", { machine: fixOn })}</span>
+              <FixCommand command={ghCommand} what="gh sign-in command" actions={actions} data-github-fix-command="true" />
+            </span>
+          ) : access?.state === "failed" && access.reason ? (
+            <Note tone="warn" data-issue-github-reason="true">
+              {access.reason}
+            </Note>
+          ) : null
+        }
       >
         {line ? (
           <Status tone={line.tone} data-issue-source-github={access?.state === "failed" ? access.category : "connected"}>

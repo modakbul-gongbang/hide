@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 pub use ssh::Ssh;
 
-const READY_BOUND: Duration = Duration::from_secs(30);
+pub const READY_BOUND: Duration = Duration::from_secs(30);
 const READ_CAP: usize = 1024 * 1024;
 
 /// The prompt every fixture shell draws, so a test types into a pane only
@@ -139,6 +139,10 @@ impl Environment {
     pub fn set(&mut self, name: &str, value: impl Into<OsString>) {
         self.values.insert(name.into(), value.into());
     }
+
+    pub fn unset(&mut self, name: &str) {
+        self.values.remove(OsStr::new(name));
+    }
 }
 
 pub fn quote(value: impl AsRef<OsStr>) -> String {
@@ -172,7 +176,7 @@ pub fn wait_for<T>(what: &str, observe: impl FnMut() -> Result<Option<T>>) -> Re
     wait_within(what, READY_BOUND, observe)
 }
 
-fn wait_within<T>(
+pub fn wait_within<T>(
     what: &str,
     bound: Duration,
     mut observe: impl FnMut() -> Result<Option<T>>,

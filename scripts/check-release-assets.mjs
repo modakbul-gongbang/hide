@@ -5,10 +5,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+/**
+ * The tag is the one source of a release's kind: `vX.Y.Z` is a stable
+ * release, published as the latest; `vX.Y.Z-rc.N` is a pre-release, never the
+ * latest. Any other tag is refused.
+ */
+export function releaseKind(tag) {
+  const match = typeof tag === "string" && /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-rc\.[1-9]\d*)?$/.exec(tag);
+  if (!match) throw new Error("a release requires a vX.Y.Z or vX.Y.Z-rc.N tag without other suffixes");
+  return { prerelease: match[4] !== undefined };
+}
+
 export function expectedAssetNames(tag) {
-  if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
-    throw new Error("a stable release requires a vX.Y.Z tag without prerelease or build suffixes");
-  }
+  releaseKind(tag);
   const archives = ["macos-arm64.zip", "windows-x64.zip", "linux-x64.tar.gz"].map((suffix) => `hide-${tag}-${suffix}`);
   return archives.flatMap((name) => [name, `${name}.sha256`]).sort();
 }
@@ -53,7 +62,9 @@ export function selectDraft(tag, pages) {
   if (matching.length > 1) throw new Error("multiple releases use this tag; review them before retrying");
   if (!matching.length) return null;
   const release = matching[0];
-  if (release.draft !== true || release.prerelease !== false) throw new Error("only an existing stable draft for this exact tag may be used");
+  if (release.draft !== true || release.prerelease !== releaseKind(tag).prerelease) {
+    throw new Error("only an existing draft of this exact tag and its release kind may be used");
+  }
   if (!Array.isArray(release.assets)) throw new Error("the existing draft has no asset inventory");
   const names = release.assets.map((asset) => asset?.name);
   if (new Set(names).size !== names.length || names.some((name) => !expected.includes(name))) {
@@ -64,7 +75,7 @@ export function selectDraft(tag, pages) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const [tag, directory, releasePagesFile] = process.argv.slice(2);
-  if (!tag || !directory || process.argv.length > 5) throw new Error("usage: node scripts/check-release-assets.mjs <vX.Y.Z> <directory> [release-pages.json]");
+  if (!tag || !directory || process.argv.length > 5) throw new Error("usage: node scripts/check-release-assets.mjs <vX.Y.Z[-rc.N]> <directory> [release-pages.json]");
   await verifyAssets(tag, directory);
   if (releasePagesFile) {
     if ((await fs.stat(releasePagesFile)).size > 16 * 1024 * 1024) throw new Error("release inventory exceeds 16 MiB");

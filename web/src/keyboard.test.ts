@@ -1,5 +1,5 @@
 import { emptyScope } from "../test/legacyAgentScope";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { commitCycle, panelCycle, projectCycle } from "./keyboard";
 import { currentSurface, observeEntries, resetRecent } from "./recent";
@@ -58,6 +58,9 @@ function world(front: "local" | "mini"): SnapshotRest {
 }
 
 describe("Recent Panels across devices (PRD home-device-rail B39)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" }));
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => resetRecent());
 
   it("lists this Mac's and a connected device's tabs in one order, chipped where the device is not in front", () => {

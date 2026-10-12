@@ -727,8 +727,11 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices =
-            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.node,
+            self.machine_name.as_deref(),
+            &self.snapshot.ui_state.device_registrations,
+        );
         self.refresh_device_snapshots();
         // An agent belongs to the device whose project holds its pane. The
         // project label is no longer Herdr's workspace label once a
@@ -1849,10 +1852,12 @@ impl Runtime {
                 }
             }
         }
+        let shown_tabs = self.node_shown_agent_tabs(target_id);
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
                 session,
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
+                &shown_tabs,
             )
         });
         // The session is kept as Herdr sent it except for the cwds of tabs Hide
@@ -1867,6 +1872,7 @@ impl Runtime {
         }
         let fetched = fetched.map(|mut raw| {
             self.clamp_device_created_tabs(target_id, &mut raw, None);
+            self.settle_node_issue_tokens(target_id, &raw);
             // Keep the complete core projection when Herdr's facts did not
             // move. Rebuilding raw rows would temporarily discard resolved
             // state and cross-device lineage, making every idle fetch publish.
@@ -1988,6 +1994,9 @@ impl Runtime {
             changed = true;
         }
         changed |= self.refresh_device_snapshots();
+        if observed_session.is_some() {
+            self.reconcile_node_agent_topology(target_id);
+        }
         if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
             changed |=
                 self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);
@@ -2022,7 +2031,29 @@ impl Runtime {
             return;
         }
         self.restore_hint_pending = false;
-
+        // A saved selection this session does not hold is gone, or was this
+        // machine's under another core, which saved it as its device's and
+        // so never at all (a core move's rekey says so, `focus_from_herdr`).
+        // Either way Herdr's own focus is where Hide left the keyboard last,
+        // since Hide tells Herdr every focus it takes, so the window opens on
+        // Herdr's pane and its checkout; with nothing saved, or Herdr's focus
+        // outside every checkout, the catalog's first checkout is the start.
+        // Only a pane a catalog checkout holds: one outside every checkout
+        // would leave a selected pane with no checkout to show it.
+        let herdr_focus = payload.focused_pane_id.as_deref().filter(|pane_id| {
+            payload
+                .layouts
+                .iter()
+                .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == *pane_id))
+                && self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .any(|tab| tab.panes.iter().any(|pane| pane.id == *pane_id))
+        });
         let restored_pane_exists = self
             .snapshot
             .ui_state
@@ -2034,12 +2065,6 @@ impl Runtime {
                     .iter()
                     .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
             });
-        if !restored_pane_exists {
-            self.snapshot.ui_state.selected_pane_id = None;
-            self.snapshot.terminal.pane_id = None;
-            self.snapshot.focused.pane_id = None;
-        }
-
         let restored_checkout_exists = self
             .snapshot
             .ui_state
@@ -2053,9 +2078,42 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
+        let moved = std::mem::take(&mut self.snapshot.ui_state.focus_from_herdr);
+        let restore_missed = moved
+            || (self.snapshot.ui_state.selected_pane_id.is_some() && !restored_pane_exists)
+            || (self.snapshot.ui_state.focused_checkout_id.is_some() && !restored_checkout_exists);
+        if !restored_pane_exists {
+            self.snapshot.ui_state.selected_pane_id =
+                herdr_focus.filter(|_| restore_missed).map(str::to_owned);
+            self.snapshot.terminal.pane_id = None;
+            self.snapshot.focused.pane_id = None;
+        }
+
         if !restored_checkout_exists {
-            self.snapshot.ui_state.focused_checkout_id = None;
-            self.snapshot.navigator.focused_checkout_id = None;
+            // The checkout holding the pane the window opens on, so the two
+            // never disagree.
+            let checkout = self
+                .snapshot
+                .ui_state
+                .selected_pane_id
+                .as_deref()
+                .filter(|_| restore_missed)
+                .and_then(|pane_id| {
+                    self.snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .find(|checkout| {
+                            checkout
+                                .tabs
+                                .iter()
+                                .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                        })
+                        .map(|checkout| checkout.id.clone())
+                });
+            self.snapshot.ui_state.focused_checkout_id = checkout.clone();
+            self.snapshot.navigator.focused_checkout_id = checkout;
             self.resync_navigator_focus();
         }
     }
@@ -5117,8 +5175,11 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices =
-            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.node,
+            self.machine_name.as_deref(),
+            &self.snapshot.ui_state.device_registrations,
+        );
         self.refresh_device_snapshots();
         self.resync_navigator_focus();
     }

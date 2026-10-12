@@ -17,6 +17,7 @@ pub mod diagnostics;
 mod disk;
 mod display_text;
 pub mod domain;
+mod effects;
 mod environment;
 pub mod factory;
 #[cfg(test)]
@@ -38,6 +39,7 @@ pub mod links;
 pub mod live;
 pub mod local_issues;
 pub mod memory_command;
+pub mod memory_hook;
 mod model;
 pub mod node;
 pub mod node_access;
@@ -69,7 +71,11 @@ pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;
 
+pub use ai::{hide_ai_asks, hide_ai_ready_here, hide_ai_settings_path, stored_hide_ai_settings};
 pub use handle::Core;
-pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload};
+pub use model::{
+    CoreOptions, DeviceRegistration, LinkOrigin, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload,
+};
 pub use runtime::WorkspaceRemoteRoute;
+pub use runtime::core_move::{MoveProject, MoveSource, MoveSourceRefusal, ReleaseSource};
 pub use runtime::serialize_snapshot_delta;

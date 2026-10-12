@@ -21,6 +21,7 @@ import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type 
 import {
   HAS_LOGIN_SHELL,
   loginPathCommand,
+  healthFailure,
   parseConnect,
   parseLoginPath,
   parseRememberedCli,
@@ -33,6 +34,7 @@ import {
   wellKnownDirs,
   type Attached,
   type CliSource,
+  type CoreBuilds,
   type FailureReason,
 } from "./cli";
 import type { DesktopEnv } from "./env";
@@ -70,7 +72,7 @@ export type HostState =
   | { kind: "connecting" }
   | ({ kind: "attached" } & Attached)
   | ({ kind: "lost" } & Attached)
-  | { kind: "failed"; reason: FailureReason; file?: string };
+  | { kind: "failed"; reason: FailureReason; file?: string; builds?: CoreBuilds };
 
 function isExecutable(file: string): boolean {
   try {
@@ -466,7 +468,7 @@ export class DesktopHost {
     if (this.quitting) return;
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
-    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer.file);
+    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });
     this.remember(cli);
     this.attach(answer);
@@ -596,10 +598,11 @@ export class DesktopHost {
     return this.runChild(file, args, timeoutMs, this.childEnvironment());
   }
 
-  private fail(attempt: number, reason: FailureReason, detail: string, file?: string): void {
+  private fail(attempt: number, reason: FailureReason, detail: string, shown: { file?: string; builds?: CoreBuilds } = {}): void {
     if (this.quitting) return;
-    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }) });
-    this.setState(file === undefined ? { kind: "failed", reason } : { kind: "failed", reason, file });
+    const { file, builds } = shown;
+    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }), ...(builds === undefined ? {} : builds) });
+    this.setState({ kind: "failed", reason, ...(file === undefined ? {} : { file }), ...(builds === undefined ? {} : { builds }) });
   }
 
   private attach(daemon: Attached): void {
@@ -616,16 +619,37 @@ export class DesktopHost {
 
   private startHealthWatch(): void {
     let misses = 0;
+    // The role the daemon's seat mounts (`/health` instance): a move or an update swaps it on the same port and
+    // token, and the browser gateway this window registered went with the role before (PRD core-host-node-move).
+    let instance: unknown;
     const tick = async () => {
       const current = this.state;
       if (current.kind !== "attached" || this.quitting) return;
       let healthy = false;
+      let failure: ReturnType<typeof healthFailure> = null;
+      let mounted: unknown;
       try {
-        healthy = (await fetch(`${current.origin}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) })).ok;
+        const answer = await fetch(`${current.origin}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+        healthy = answer.ok;
+        if (healthy) {
+          const health: unknown = await answer.json().catch(() => null);
+          failure = healthFailure(health);
+          mounted = (health as { instance?: unknown } | null)?.instance;
+        }
       } catch {
         healthy = false;
       }
       if (this.state !== current) return;
+      if (mounted !== undefined) {
+        if (instance !== undefined && mounted !== instance) {
+          this.log.event("daemon.role_changed", { port: current.port });
+          this.browserControlChanged();
+        }
+        instance = mounted;
+      }
+      // A node whose core is newer than this app, or whose update of its core failed, leaves its shell for the
+      // status page; Retry is the next connection, with its one attempt (PRD core-host-node-move B10, B20).
+      if (failure) return this.fail(this.attempts, failure.reason, "the node's core link", { builds: failure.builds });
       misses = healthy ? 0 : misses + 1;
       if (misses >= LOST_AFTER_MISSES) {
         this.log.event("daemon.lost", { port: current.port, pid: current.pid });
@@ -799,7 +823,7 @@ export class DesktopHost {
       this.load(window.loadURL(state.url), state.kind);
       return;
     }
-    const hash = state.kind === "failed" ? `failed=${state.reason}${state.file === undefined ? "" : `&file=${encodeURIComponent(state.file)}`}` : "connecting";
+    const hash = state.kind === "failed" ? this.failedHash(state) : "connecting";
     const words = this.statusWords();
     const shown = window.webContents.getURL();
     if (shown.startsWith(STATUS_PAGE_URL) && new URL(shown).searchParams.get("lang") === words.lang) {
@@ -814,6 +838,24 @@ export class DesktopHost {
     };
     loading.then(settled, settled);
     this.load(loading, state.kind);
+  }
+
+  /**
+   * The failure the status page shows, in its hash: the reason, the file a
+   * refused start names, and for a core newer than this app or an update of
+   * the core that failed its sentences with the core's machine and both
+   * builds in them, written here because the catalogs fill them.
+   */
+  private failedHash(state: Extract<HostState, { kind: "failed" }>): string {
+    const shown = new URLSearchParams({ failed: state.reason });
+    if (state.file !== undefined) shown.set("file", state.file);
+    if (state.builds !== undefined) {
+      const t = this.language.t;
+      const said = state.reason === "update_failed" ? "native.status.updateFailed" : "native.status.coreNewer";
+      shown.set("said", t(said, { machine: state.builds.machine }));
+      shown.set("builds", t("native.status.builds", { core: state.builds.core, app: state.builds.app }));
+    }
+    return shown.toString();
   }
 
   /**
@@ -835,6 +877,8 @@ export class DesktopHost {
       no_response: t("native.status.noResponse"),
       other_build: t("native.status.otherBuild"),
       state_refused: t("native.status.stateRefused"),
+      core_newer_title: t("native.status.coreNewerTitle"),
+      update_failed_title: t("native.status.updateFailedTitle"),
     };
     return { query, lang: query.lang };
   }

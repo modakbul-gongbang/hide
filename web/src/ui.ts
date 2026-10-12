@@ -301,6 +301,8 @@ type UiStore = {
   settingsTab: SettingsTab;
   /** Settings was opened to add a device: the Devices tab opens its Add dialog once and clears this. */
   addDeviceRequested: boolean;
+  /** Settings was opened from the window's strip to give up a move's wait: the Devices tab opens the move dialog at its confirm once and clears this. */
+  moveGiveUpRequested: boolean;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
   /** A notice the operator can act on. */
@@ -378,6 +380,9 @@ type UiStore = {
   /** Opens Settings on Devices with the Add device dialog in front. */
   openAddDevice: () => void;
   clearAddDeviceRequest: () => void;
+  /** Opens Settings › Devices with the move dialog at its give-up confirm, from the window's strip. */
+  openMoveGiveUp: () => void;
+  clearMoveGiveUpRequest: () => void;
   setPendingClose: (pending: PendingClose | null) => void;
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
@@ -425,6 +430,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   overlay: "none",
   settingsTab: "general",
   addDeviceRequested: false,
+  moveGiveUpRequested: false,
   pendingClose: null,
   cycle: null,
   notice: null,
@@ -504,6 +510,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   openSettings: (settingsTab) => set({ overlay: "settings", settingsTab }),
   openAddDevice: () => set({ overlay: "settings", settingsTab: "devices", addDeviceRequested: true }),
   clearAddDeviceRequest: () => set({ addDeviceRequested: false }),
+  openMoveGiveUp: () => set({ overlay: "settings", settingsTab: "devices", moveGiveUpRequested: true }),
+  clearMoveGiveUpRequest: () => set({ moveGiveUpRequested: false }),
   setPendingClose: (pendingClose) => set({ pendingClose }),
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),

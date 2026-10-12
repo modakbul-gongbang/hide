@@ -12,6 +12,7 @@ import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Hint } from "./components/ui/tooltip";
 import { frontDeviceId } from "./devices";
+import { machineName, screenDeviceId } from "./screenMachine";
 import { catalogWorkspaces, frontCheckout, localDeviceId, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import type { TFunction } from "i18next";
@@ -63,8 +64,8 @@ export function draftPlace(draft: StoredBuffer, host: string | null, rest: Snaps
 }
 
 function deviceLabel(rest: SnapshotRest | null, device: string, t: TFunction<"translation">): string {
-  if (device === localDeviceId(rest)) return t("documents.thisMachine");
-  return rest?.navigator?.devices?.find((row) => row.id === device)?.label ?? device;
+  if (device === screenDeviceId(rest)) return t("documents.thisMachine");
+  return machineName(rest?.navigator?.devices, device, t);
 }
 
 function origin(draft: StoredBuffer, host: string | null, rest: SnapshotRest | null, t: TFunction<"translation">): string {

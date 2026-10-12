@@ -7,7 +7,9 @@ import { LAYER_DOT } from "./DiskCleanupSheet";
 import { Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { formatBytes } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
+import { readsHere } from "./devices";
 import type { Workspace } from "./snapshot";
+import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
 // The Overview facts line's way into the disk cleanup sheet (PRD disk-layers
@@ -20,7 +22,8 @@ export function openDiskCleanup(workspaceId: string, filter: Filter) {
 }
 
 /**
- * A local Git project's size, drawn as a button once its layers are known; a
+ * A Git project's size, drawn as a button once its layers are known when the
+ * core cleans it up (its own, or a node's on that node, `readsHere`); a
  * plain number before. While a checkout could not be measured the number is
  * the subtotal of the others, marked `≥`, and the tooltip says so: the entrance
  * never states a total the system cannot produce (B6).
@@ -30,7 +33,7 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
   const language = requireInterfaceLanguage(i18n.language);
   const { open, onOpenChange, triggerProps } = useHintOpen();
   const lines = layerLines(workspace, t);
-  const local = !workspace.remote_target_id;
+  const cleans = readsHere(workspace, useShellStore((state) => state.rest?.navigator?.devices));
   const partial = entranceBytes(workspace)?.partial ?? false;
   const size = `${partial ? "≥ " : ""}${formatBytes(language, bytes)}`;
   const content = (
@@ -39,7 +42,7 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
       {size}
     </span>
   );
-  if (!local || !lines) {
+  if (!cleans || !lines) {
     return content;
   }
   return (
@@ -86,7 +89,8 @@ export function LowFreeFact({ workspace }: { workspace: Workspace }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   const free = lowFree(workspace);
-  if (free === null || workspace.remote_target_id) return null;
+  const cleans = readsHere(workspace, useShellStore((state) => state.rest?.navigator?.devices));
+  if (free === null || !cleans) return null;
   const freeable = reclaimable(workspace);
   const text = freeable > 0 ? t("cleanup.freeAndReclaimable", { free: formatBytes(language, free), reclaimable: formatBytes(language, freeable) }) : t("cleanup.free", { size: formatBytes(language, free) });
   return (

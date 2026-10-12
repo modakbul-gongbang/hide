@@ -206,6 +206,8 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
             focused_pane_id: None,
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1745,8 +1747,22 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
 
 #[test]
 fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() {
-    // PRD project-memory-v2 B16, D-22: a device's Memory is its own.
-    let (runtime, _dir) = caller_fixture();
+    // PRD project-memory-v2 B16, D-22: a device's Memory is its own; a device
+    // the core dials has none (PRD core-host-node-move Q20).
+    let (mut runtime, _dir) = caller_fixture();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: "studio".into(),
+            label: "studio".into(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "studio-host".into(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
     let command = || crate::memory_command::MemoryCommand::Show { number: 1 };
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
@@ -1763,10 +1779,13 @@ fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() 
             .prepare_memory(device, pane, &expected, command())
             .err()
     };
-    assert_eq!(
-        refused("remote:fixture", "pane-b").as_deref(),
-        Some("memory_device_unsupported")
-    );
+    for device in ["studio", "remote:fixture"] {
+        assert_eq!(
+            refused(device, "pane-b").as_deref(),
+            Some("memory_device_unsupported"),
+            "{device}"
+        );
+    }
     assert_eq!(
         refused(crate::node::TEST_NODE, "pane-a").as_deref(),
         Some("caller_context_changed")

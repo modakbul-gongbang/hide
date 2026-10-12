@@ -13,6 +13,7 @@ use crate::model::{
     GithubFailureCategory, GithubProjectSnapshot, MemoryPromotionAgentSnapshot,
     MemoryPromotionSnapshot, MemoryPromotionState, PullRequestBadge,
 };
+use crate::node::NodeId;
 use hide_memory::{MemoryLifecycle, MemoryStore, Promotion, PromotionState};
 use serde_json::json;
 
@@ -74,9 +75,11 @@ pub(super) struct PromotionStart {
     client: crate::delivery::worker::Client,
     authority: crate::delivery::worker::Authority,
     actor: crate::delivery::Actor,
-    /// The Project's folder on this Mac, the repository the worktree is made
-    /// from.
+    /// The Project's folder, the repository the worktree is made from, and
+    /// the machine that holds it: `None` for the core's own, else a node
+    /// that dials in, where the agent starts (PRD core-host-node-move B14).
     repo: String,
+    machine: Option<String>,
     /// The agent the new-agent button starts.
     kind: String,
     /// Its remembered model's arguments.
@@ -143,8 +146,16 @@ struct PullRequestFact {
 
 impl Runtime {
     /// What a promotion's start needs: Hide's own coordination identity, the
-    /// Project's folder and the agent the operator last started (D-25).
-    pub(super) fn promotion_start(&self, repo: &str) -> Result<PromotionStart, String> {
+    /// Project's folder on `node` and the agent the operator last started
+    /// (D-25). A core whose move has not committed starts no agent.
+    pub(super) fn promotion_start(
+        &self,
+        node: &crate::node::NodeId,
+        repo: &str,
+    ) -> Result<PromotionStart, String> {
+        if self.effects_held() {
+            return Err("effects_held".into());
+        }
         let (client, authority, actor) = self.hide_delivery(HIDE_MEMORY_ROLE)?;
         let choice = &self.snapshot.ui_state.agent_start;
         let kind = choice
@@ -164,6 +175,7 @@ impl Runtime {
             authority,
             actor,
             repo: repo.to_owned(),
+            machine: (*node != self.node).then(|| node.as_str().to_owned()),
             kind,
             args,
             connector: self.delivery_connector(self.node.as_str()),
@@ -229,12 +241,18 @@ impl Runtime {
         self.track_memory_promotions();
     }
 
-    /// Follows every open promotion on this Mac to its pull request (B31,
-    /// B32): the store's open rows are read on a worker, the PR catalog and
-    /// the coordination ledger are consulted under the lock, and the moves
-    /// are written on the worker again. One check runs at a time; a request
-    /// during it runs one more after.
+    /// Follows every open promotion to its pull request (B31, B32), the
+    /// Projects of this machine and of each node that dials in, each by its
+    /// own machine's PR catalog: the store's open rows are read on a worker,
+    /// the PR catalog and the coordination ledger are consulted under the
+    /// lock, and the moves are written on the worker again. One check runs at
+    /// a time; a request during it runs one more after. A core whose move has
+    /// not committed checks nothing, since a check may start an agent again.
     pub(super) fn track_memory_promotions(&mut self) {
+        if self.effects_held() {
+            return;
+        }
+        let nodes = self.promotion_nodes();
         let tracking = &mut self.project_memory.promotions;
         if tracking.followed == Some(false) {
             return;
@@ -249,13 +267,12 @@ impl Runtime {
         tracking.in_flight = true;
         tracking.next_unix_ms = super::memory::now_ms().saturating_add(TRACK_INTERVAL_MS);
         let database = self.memory_database_path();
-        let node = self.node.clone();
         let spawn = thread::Builder::new()
             .name("hide-memory-promotions".to_owned())
             .spawn(move || {
                 // A panic in the check must not leave the single flight held.
                 let moved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    track_promotions(&context, &node, &database)
+                    track_promotions(&context, &nodes, &database)
                 }))
                 .unwrap_or_else(|_| Err("tracker_panicked".to_owned()));
                 let Some(runtime) = context.runtime.upgrade() else {
@@ -316,21 +333,72 @@ impl Runtime {
         }
     }
 
-    fn promotion_pull_request(&self, root: &str, promotion: &Promotion) -> Option<PullRequestFact> {
-        attempt_pull_request(self.github.project(root)?, promotion)
+    /// The machines whose Projects' promotions are followed: this one and
+    /// each node that dials in, linked or not, since a row stays open while
+    /// its node is away.
+    fn promotion_nodes(&self) -> Vec<NodeId> {
+        let mut nodes = vec![self.node.clone()];
+        nodes.extend(
+            self.snapshot
+                .ui_state
+                .device_registrations
+                .iter()
+                .filter(|registration| registration.origin == crate::model::LinkOrigin::Inbound)
+                .filter_map(|registration| NodeId::parse(&registration.id).ok()),
+        );
+        nodes
     }
 
-    /// What the PR catalog has answered for `root` since the attempt `key`
-    /// was seen gone; the first time it is seen, asks for that answer.
-    /// Answers whether the tab's drawing of the attempt changed.
+    /// The PR catalog of the repository at `root` on `node`: this machine's,
+    /// or the one read for a node that dials in.
+    fn promotion_catalog(&self, node: &NodeId, root: &str) -> Option<&GithubProjectSnapshot> {
+        if *node == self.node {
+            self.github.project(root)
+        } else {
+            self.device_github.get(node.as_str())?.project(root)
+        }
+    }
+
+    fn promotion_pull_request(
+        &self,
+        node: &NodeId,
+        root: &str,
+        promotion: &Promotion,
+    ) -> Option<PullRequestFact> {
+        attempt_pull_request(self.promotion_catalog(node, root)?, promotion)
+    }
+
+    /// Asks the PR catalog of `root` on `node` for a fresh read; answers the
+    /// generation that read carries.
+    fn ask_promotion_catalog(&mut self, node: &NodeId, root: &str) -> u64 {
+        if *node == self.node {
+            self.refresh_pull_requests(root);
+            self.github_generations.get(root).copied().unwrap_or(0)
+        } else {
+            self.refresh_device_pull_requests(node.as_str(), root)
+        }
+    }
+
+    /// The generation of the last answered read of `root` on `node`.
+    fn promotion_catalog_read(&self, node: &NodeId, root: &str) -> Option<u64> {
+        if *node == self.node {
+            self.github_read_generation.get(root).copied()
+        } else {
+            self.device_github_read(node.as_str(), root)
+        }
+    }
+
+    /// What the PR catalog has answered for `root` on `node` since the
+    /// attempt `key` was seen gone; the first time it is seen, asks for that
+    /// answer. Answers whether the tab's drawing of the attempt changed.
     fn promotion_catalog_verdict(
         &mut self,
         key: &AttemptKey,
+        node: &NodeId,
         root: &str,
     ) -> (CatalogVerdict, bool) {
         let Some(gone) = self.project_memory.promotions.gone.get(key) else {
-            self.refresh_pull_requests(root);
-            let asked = self.github_generations.get(root).copied().unwrap_or(0);
+            let asked = self.ask_promotion_catalog(node, root);
             self.project_memory.promotions.gone.insert(
                 key.clone(),
                 GoneAttempt {
@@ -341,8 +409,8 @@ impl Runtime {
             return (CatalogVerdict::Waiting, false);
         };
         let verdict = catalog_verdict(
-            self.github.project(root),
-            self.github_read_generation.get(root).copied(),
+            self.promotion_catalog(node, root),
+            self.promotion_catalog_read(node, root),
             gone.asked,
         );
         let unconfirmed = match verdict {
@@ -450,7 +518,7 @@ struct TrackOutcome {
 /// One check of every followed promotion (see `track_memory_promotions`).
 fn track_promotions(
     context: &RuntimeWorkerContext,
-    node: &crate::node::NodeId,
+    nodes: &[NodeId],
     database: &Path,
 ) -> Result<TrackOutcome, String> {
     let mut outcome = TrackOutcome {
@@ -463,20 +531,28 @@ fn track_promotions(
         return Ok(outcome);
     }
     let now = super::memory::now_ms();
-    let followed = MemoryStore::open_read_only(database)
-        .and_then(|store| store.open_promotions(node.as_str()))
-        .map_err(|error| error.to_string())?;
-    let (moves, mut asks, releaser) = {
+    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
+    let mut followed = Vec::new();
+    for node in nodes {
+        followed.extend(
+            store
+                .open_promotions(node.as_str())
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|(project_id, root, number, promotion)| {
+                    (project_id, root, number, promotion, node)
+                }),
+        );
+    }
+    drop(store);
+    let (moves, mut asks, releasers) = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
-        let releaser = guard
-            .delivery_connector(node.as_str())
-            .map(|connector| (connector, guard.own_node()));
         let mut gone_now = HashSet::new();
         let mut asks = Vec::new();
         let moves = followed
             .iter()
-            .map(|(project_id, root, number, promotion)| {
+            .map(|(project_id, root, number, promotion, node)| {
                 let key = (project_id.clone(), *number, promotion.attempt);
                 let within_grace =
                     now.saturating_sub(promotion.started_at_unix_ms) < START_GRACE_MS;
@@ -489,13 +565,13 @@ fn track_promotions(
                 {
                     asks.push((key.clone(), promotion.clone(), start));
                 }
-                let pull = guard.promotion_pull_request(root, promotion);
+                let pull = guard.promotion_pull_request(node, root, promotion);
                 let ended = promotion
                     .agent_id
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
                 let no_pull_request = pull.is_none() && attempt_gone(promotion, ended, now) && {
-                    let (verdict, changed) = guard.promotion_catalog_verdict(&key, root);
+                    let (verdict, changed) = guard.promotion_catalog_verdict(&key, node, root);
                     gone_now.insert(key);
                     if changed {
                         outcome.moved_projects.insert(project_id.clone());
@@ -505,6 +581,21 @@ fn track_promotions(
                 next_promotion(promotion, pull, no_pull_request)
             })
             .collect::<Vec<_>>();
+        // What closes a failed attempt's panes and removes its worktree, on
+        // the machine of each attempt this check fails, used off the lock.
+        let mut releasers = HashMap::new();
+        for ((.., node), _) in followed
+            .iter()
+            .zip(&moves)
+            .filter(|(_, next)| matches!(next, Some((PromotionState::Failed, _))))
+        {
+            if let (Some(connector), Ok(link)) = (
+                guard.delivery_connector(node.as_str()),
+                guard.node_link(node.as_str()),
+            ) {
+                releasers.insert((*node).clone(), (connector, link));
+            }
+        }
         let tracking = &mut guard.project_memory.promotions;
         let dropped = tracking
             .gone
@@ -516,11 +607,13 @@ fn track_promotions(
         tracking.gone.retain(|key, _| gone_now.contains(key));
         // An attempt no longer running takes its start with it.
         tracking.unseen.retain(|key, _| {
-            followed.iter().any(|(project_id, _, number, promotion)| {
-                (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
-            })
+            followed
+                .iter()
+                .any(|(project_id, _, number, promotion, _)| {
+                    (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
+                })
         });
-        (moves, asks, releaser)
+        (moves, asks, releasers)
     };
     let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| MemoryStore::open(database))
@@ -544,7 +637,7 @@ fn track_promotions(
             return Ok(outcome);
         }
     };
-    for ((project_id, root, number, promotion), next) in followed.iter().zip(moves) {
+    for ((project_id, root, number, promotion, node), next) in followed.iter().zip(moves) {
         let state = match (next, store.as_mut()) {
             // Only the state and the pull request move: a file `placed`
             // named meanwhile stays, and a row that moved on is left.
@@ -561,12 +654,12 @@ fn track_promotions(
                         }));
                         outcome.moved_projects.insert(project_id.clone());
                         if state == PromotionState::Failed
-                            && let (Some((connector, node)), Some(branch)) =
-                                (&releaser, &promotion.branch)
+                            && let (Some((connector, link)), Some(branch)) =
+                                (releasers.get(*node), &promotion.branch)
                         {
                             release_attempt(
                                 connector.as_ref(),
-                                node.as_ref(),
+                                link.as_ref(),
                                 root,
                                 branch,
                                 project_id,
@@ -1093,7 +1186,7 @@ fn spawn_agent(
         start.actor.clone(),
         crate::coordination::Command::Spawn {
             parent: None,
-            machine: None,
+            machine: start.machine.clone(),
             name: agent_name(number, started),
             intent: format!(
                 "memory-promote-{digest}-m{number}-a{}-{}",
@@ -1377,11 +1470,11 @@ mod tests {
         let state =
             |store: &MemoryStore, project: &str| store.promotions(project).unwrap()[0].1.state;
 
-        track_promotions(&context, &node, &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Running);
         let asked = runtime.lock().unwrap().github_generations[repo];
         assert!(asked > 0, "the tracker asked the catalog for a new read");
-        track_promotions(&context, &node, &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         assert_eq!(
             state(&store, "p"),
             PromotionState::Running,
@@ -1397,7 +1490,7 @@ mod tests {
             project.pull_requests_read = false;
             project.status.failure_category = Some(GithubFailureCategory::NotLoggedIn);
         }
-        let outcome = track_promotions(&context, &node, &database).unwrap();
+        let outcome = track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Running);
         assert!(outcome.followed && outcome.running);
         assert!(outcome.moved_projects.contains("p"), "the tab redraws it");
@@ -1423,7 +1516,7 @@ mod tests {
             project.status.failure_category = None;
             project.pull_requests = vec![pull_request(924, &branch(1, started), started + 1)];
         }
-        let outcome = track_promotions(&context, &node, &database).unwrap();
+        let outcome = track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         let (_, open) = store.promotions("p").unwrap().remove(0);
         assert_eq!(
             (open.state, open.pr_number),
@@ -1457,14 +1550,14 @@ mod tests {
             ..retry
         };
         store.set_promotion("p", 1, &retry).unwrap();
-        track_promotions(&context, &node, &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         let asked = runtime.lock().unwrap().github_generations[repo];
         runtime
             .lock()
             .unwrap()
             .github_read_generation
             .insert(repo.into(), asked);
-        track_promotions(&context, &node, &database).unwrap();
+        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Failed);
     }
 
@@ -1547,9 +1640,23 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .promotion_start("/checkouts/fixture")
+                .promotion_start(&crate::node::test_node(), "/checkouts/fixture")
                 .unwrap()
         };
+        // A node's Project's agent starts on that node, never here (PRD
+        // core-host-node-move B14).
+        assert_eq!(start().machine, None);
+        let elsewhere = crate::node::NodeId::parse("node-elsewhere").unwrap();
+        assert_eq!(
+            runtime
+                .lock()
+                .unwrap()
+                .promotion_start(&elsewhere, "/checkouts/fixture")
+                .unwrap()
+                .machine
+                .as_deref(),
+            Some("node-elsewhere")
+        );
 
         let mut store = MemoryStore::open(&root.path().join("memory.sqlite3")).unwrap();
         store

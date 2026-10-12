@@ -5,6 +5,8 @@
 import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
@@ -265,6 +267,64 @@ test("failure: a state folder another node owns names the file and starts nothin
   await screenshot(page, "desktop-state-refused");
   expect(run.daemonPid()).toBeNull();
   expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ version: 1, node: "another-node" });
+});
+
+test("failure: a core newer than this app names its machine and both builds and asks for the app to be updated", async () => {
+  // PRD core-host-node-move B11: a stand-in hide answers as a node whose core runs a newer build; the core is left as it is.
+  const cli = path.join(run.root, "bin", "hide");
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  const answer = { ok: false, reason: "core_newer", detail: "newer", machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" };
+  fs.writeFileSync(cli, `#!/bin/sh\necho '${JSON.stringify(answer)}'\nexit 2\n`, { mode: 0o755 });
+  ({ app } = await launch({ ...run.env, HIDE_CLI_PATH: cli }));
+  const page = await app.firstWindow();
+  await expect(page.locator("h1")).toHaveText("Update this app", { timeout: 20_000 });
+  await expect(page.locator("#reason")).toHaveText(
+    "The core on Mac mini runs a newer build than this app, so they did not connect. The core keeps running. Replace hide.app with the newer build, then open it again.",
+  );
+  await expect(page.locator("#builds")).toHaveText("core 0.4.2 (3f1c2a9) · this app 0.4.1 (b520d6e)");
+  await expect(page.locator("#file")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await screenshot(page, "desktop-core-newer");
+  expect(hostLog(run.env).find((line) => line.event === "discovery.failed")).toMatchObject({ reason: "core_newer", machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" });
+});
+
+test("failure: an attached node whose core update failed shows both builds, and Retry is one more connection", async () => {
+  // PRD core-host-node-move B10, B20: the node's health names the failed update and the host leaves the shell for its page.
+  const builds = { machine: "Mac mini", core: "0.4.1 (b520d6e)", app: "0.4.2 (3f1c2a9)" };
+  const node = http.createServer((request, response) => {
+    if (request.url === "/health") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ role: "node", core_link: "waiting", core_link_reason: "update_failed", builds }));
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end("<!doctype html><title>shell</title>");
+  });
+  await new Promise<void>((resolve) => node.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (node.address() as AddressInfo).port;
+    const cli = path.join(run.root, "bin", "hide");
+    const runs = path.join(run.root, "connect-runs");
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    const answer = { ok: true, url: `http://127.0.0.1:${port}/#token=t`, port, pid: process.pid };
+    fs.writeFileSync(cli, `#!/bin/sh\necho run >> '${runs}'\necho '${JSON.stringify(answer)}'\n`, { mode: 0o755 });
+    ({ app } = await launch({ ...run.env, HIDE_CLI_PATH: cli }));
+    const page = await app.firstWindow();
+    await expect(page.locator("h1")).toHaveText("The core was not updated", { timeout: 20_000 });
+    await expect(page.locator("#reason")).toHaveText("The core on Mac mini runs its previous build. Retry to try once more, or update hide on Mac mini.");
+    await expect(page.locator("#builds")).toHaveText("core 0.4.1 (b520d6e) · this app 0.4.2 (3f1c2a9)");
+    await screenshot(page, "desktop-update-failed");
+    const connects = () => fs.readFileSync(runs, "utf8").trim().split("\n").length;
+    expect(connects()).toBe(1);
+    await page.getByRole("button", { name: "Retry" }).click();
+    // Retry is one connection, which this node answers with the same failure; nothing connects again on its own.
+    await expect.poll(connects).toBe(2);
+    await expect(page.locator("h1")).toHaveText("The core was not updated", { timeout: 20_000 });
+    expect(hostLog(run.env).filter((line) => line.event === "discovery.failed" && line.reason === "update_failed")).toHaveLength(2);
+    expect(connects()).toBe(2);
+  } finally {
+    node.close();
+  }
 });
 
 test("discovery: a Finder-style PATH still lets a new daemon run installed tools", async () => {

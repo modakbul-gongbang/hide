@@ -49,7 +49,9 @@ const REST: Duration = Duration::from_millis(30);
 const LIST_OVERLAP_MS: u64 = 60_000;
 
 const BACKFILL_DONE: &str = "backfill_done";
-const LISTED_AT: &str = "listed_at";
+/// When the own node's sessions were last listed; a device's is
+/// `listed_at:<device>`.
+pub(crate) const LISTED_AT: &str = "listed_at";
 
 /// What the worker hands back to the runtime.
 pub trait Sink: Send + 'static {

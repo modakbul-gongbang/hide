@@ -94,7 +94,7 @@ A design change is judged against the design that was chosen, not against whatev
 The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
-Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus`, `factory` and `first-run-onboarding`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
+Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus`, `factory`, `core-move-devices`, `core-move-window` and `first-run-onboarding`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
 `factory` pairs the Light and Dark `Screen / Factory` windows with the Factory scene's 라인, graph and Task page states, takes the delegated proposal's Light picture e3 as the graph's reference of both themes (the 라인 and Task page frames are their own reference), and measures the screen with `web/e2e/factory-geometry.mjs` (no overlapping parts, no sideways overflow).
 Its selector is the scene root, not `[data-factory-screen]`, because the Pen frame is the whole window and a comparison image has to be as wide as its frame; `[data-factory-screen]` is its `readySelector`, what a capture waits for after the scene loads.
 A target's `urlStates` lists the states its scene sets up from its address (`state=<name>`), or maps each state to the query it sets, as `first-run-onboarding` does to put a state on Windows or Linux.
@@ -261,6 +261,14 @@ The 라인 with no Task, its first read and a Task page that could not be read a
 The create sheet is drawn detecting, with the required checks, with verify command candidates and with nothing detected (auto unavailable, manual), each listing what it writes on GitHub; with no Factory the screen offers only `+ Factory 만들기`.
 The cards, rows, 결정 필요 items, track and sheet are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/factory/`) rather than a composite under `web/src/components`.
 Its builder is `scripts/pen-screens-factory.mjs`, and its web files are `web/src/factory/FactoryScreen.tsx`, `MyTurn.tsx`, `FactoryBoard.tsx`, `FactoryGraph.tsx`, `FactoryCard.tsx`, `TaskPage.tsx`, `CreateSheet.tsx` and `web/src/components/sidebar-header.tsx`.
+
+Core move is `Screen / Core move`, the design the operator approved for moving the core between machines (PRD core-host-node-move).
+Its first board draws the Devices rows with the crown `core` badge, the move entry in a connected device's ⋯ (dimmed with `연결 안 됨` on a device that is not connected), and this Mac's ⋯ after the move with the return and the disconnect.
+The second draws the move dialog over Settings in its five states: checks failed, confirm, moving, failed and done.
+The third draws the rail with the crown notched into the core machine's tile, in the MacBook's window and in the mini's.
+The fourth draws the window states outside Settings: moving, updating the core, cannot connect, and the host status page for an app older than the core.
+Beside them, the disconnected strip with its `다시 연결` link (B16) is drawn by analogy with the cannot-connect strip and is not part of the approved bundle.
+Its builder is `scripts/pen-screens-core-move.mjs`, the gallery scenes `core-move` and `core-move-window` (`web/src/gallery/CoreMoveScene.tsx`) draw each frame's state for the review, and its web files are `web/src/settings/DevicesTab.tsx`, `DeviceRow.tsx`, `CoreMoveDialog.tsx`, `web/src/components/device-rail.tsx`, `web/src/badge.tsx`, `web/src/connection.ts` and `web/src/coreMove.ts`.
 
 ## How to add a token
 

@@ -17,7 +17,6 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::Notify;
 
 use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
@@ -92,13 +91,28 @@ pub struct AppState {
     pub idle_secs: u64,
     /// This daemon's build, reported on `/health` for `hide connect`.
     pub build: Option<Arc<str>>,
+    /// The program this core's starter runs, reported on `/health` so a
+    /// `hide connect` on this machine updates the core rather than stopping
+    /// it (PRD core-host-node-move Q13); `None` when no starter runs it.
+    pub starter_program: Option<Arc<str>>,
     /// Serializes a renderer count change with the `ui_attached` event it
     /// sends, so two windows coming and going at once cannot leave the core
     /// told the opposite of the final count.
     pub renderer_transitions: Arc<Mutex<()>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
+    /// Turns true once, when this role ends (`RunningDaemon` dropped): every
+    /// socket of the role is closed with 1012 `role_ended`, so a window
+    /// reconnects to the role mounted next on the same seat rather than wait
+    /// on a core that has stopped (PRD core-host-node-move B4).
+    pub role_ended: tokio::sync::watch::Receiver<bool>,
+    /// Closed while this core runs on a move's copy that has not committed:
+    /// it takes no move of its own then, and dials nothing to check one.
+    pub move_gate: Arc<crate::core_move::gate::MoveGate>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
+    /// The seat this role is mounted on; `/health` names its instance, so a
+    /// client that registered with an earlier role registers again.
+    pub seat: crate::seat::SeatParts,
     /// Which connections are looking at the Settings agents tab; the daemon
     /// owns the core's one observation flag on their behalf.
     pub demand: Arc<crate::demand::ObservationDemand>,
@@ -132,6 +146,10 @@ pub(crate) struct Handshake {
     pub(crate) schema_version: u32,
     pub(crate) client_kind: Option<String>,
     pub(crate) have_revision: Option<u64>,
+    /// The `core_instance` of the daemon frame before the snapshot the
+    /// client's revision came from. A revision counts only on the core that
+    /// numbered it: a core moved, rolled back or updated numbers its own.
+    pub(crate) have_core: Option<String>,
     /// The last `terminal` frame's cursor the client applied, which resumes
     /// every pane's output from the terminal hub that gave it.
     pub(crate) have_terminal_sequence: Option<u64>,
@@ -164,6 +182,14 @@ impl CloseReason {
             Self::SchemaMismatch => "schema_mismatch",
             Self::ClientLimit => "client_limit",
         }
+    }
+}
+
+/// The close a socket gets when its role ends; the page reconnects on it.
+fn role_ended_frame() -> CloseFrame {
+    CloseFrame {
+        code: 1012,
+        reason: "role_ended".into(),
     }
 }
 
@@ -432,12 +458,16 @@ fn idle_remaining_secs(state: &AppState) -> Option<u64> {
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     axum::Json(json!({
         "pid": std::process::id(),
+        "role": "core",
         "version": state.version,
+        "release": crate::build_order::Release::of_this_build(),
         "build": state.build.as_deref(),
+        "starter": state.starter_program.as_deref().map(|program| json!({"program": program})),
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),
         "open_handlers_in_flight": state.opener.in_flight(),
         "idle_remaining_secs": idle_remaining_secs(&state),
+        "instance": state.seat.instance(),
     }))
 }
 
@@ -696,6 +726,13 @@ async fn client_loop(
         refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
         return;
     }
+    // A window that reconnects after the role ended, before the next role is
+    // mounted, is sent on at once.
+    let ended = *state.role_ended.borrow();
+    if ended {
+        let _ = socket.send(Message::Close(Some(role_ended_frame()))).await;
+        return;
+    }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
     let first = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => text,
@@ -791,7 +828,14 @@ async fn screen_loop(
     // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
-    let mut have_revision = handshake.have_revision.unwrap_or(0);
+    let own_core = state
+        .daemon_info
+        .get("core_instance")
+        .and_then(Value::as_str);
+    let mut have_revision = match handshake.have_core.as_deref() {
+        Some(core) if Some(core) != own_core => 0,
+        _ => handshake.have_revision.unwrap_or(0),
+    };
     let mut notify = state.core.notify.subscribe();
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
@@ -814,6 +858,15 @@ async fn screen_loop(
     {
         client_gone(&state, connection, renderer, desktop);
         return;
+    }
+    // A move of the core is the process's, beside the core's state.
+    let mut move_frames = state.seat.moves.subscribe();
+    if renderer && relay.is_none() {
+        let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+        if socket.send(Message::Text(frame.into())).await.is_err() {
+            client_gone(&state, connection, renderer, desktop);
+            return;
+        }
     }
     // A desktop window shows the agent notifications (`agent_notice`); a
     // browser tab never does (PRD first-run-onboarding D-14), so it keeps no
@@ -857,8 +910,14 @@ async fn screen_loop(
         )
     });
     let link = relay.as_ref().map(|relay| relay.link.clone());
+    let mut role_ended = state.role_ended.clone();
+    let mut ended_with_role = false;
     loop {
         tokio::select! {
+            () = async { let _ = role_ended.wait_for(|ended| *ended).await; } => {
+                ended_with_role = true;
+                break;
+            }
             changed = notify.recv() => {
                 match changed {
                     Ok(()) => {}
@@ -932,6 +991,15 @@ async fn screen_loop(
                     // snapshot stream; the tree re-reads on the next change.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                }
+            }
+            changed = move_frames.changed(), if renderer && relay.is_none() => {
+                if changed.is_err() {
+                    break;
+                }
+                let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    break;
                 }
             }
             notice = async {
@@ -1021,6 +1089,23 @@ async fn screen_loop(
                                     break;
                                 }
                             }
+                            Ok(ClientAction::CoreMove(event)) => {
+                                // A node's window moves the core from its own
+                                // machine's hided, never through this one.
+                                let answer = if relay.is_some() {
+                                    Err("move_not_here")
+                                } else if !state.move_gate.is_open() {
+                                    Err("core_pending")
+                                } else {
+                                    state.seat.moves.request_event(&event)
+                                };
+                                if let Err(reason) = answer {
+                                    let frame = crate::core_move::control::refusal_frame(reason);
+                                    if socket.send(Message::Text(frame.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
                             Ok(ClientAction::DeviceListing(event)) => {
                                 let slot = relay.as_ref().map(RelayScreen::slot);
                                 if matches!(slot, Some(None)) {
@@ -1068,6 +1153,9 @@ async fn screen_loop(
     }
     for read in device_reads {
         read.task.abort();
+    }
+    if ended_with_role {
+        let _ = socket.send(Message::Close(Some(role_ended_frame()))).await;
     }
     client_gone(&state, connection, renderer, desktop);
 }
@@ -1180,6 +1268,9 @@ enum ScopedRequest {
     Links(herdr_core::links::query::LinksQuery),
     /// `hide memory`: Project Memory's own store, which needs no shell.
     Memory(herdr_core::memory_command::MemoryCommand),
+    /// `hide workspace memory`: a hook's Project Memory, which needs no
+    /// shell.
+    MemoryHook(herdr_core::memory_hook::Ask),
 }
 
 impl ScopedRequest {
@@ -1193,6 +1284,7 @@ impl ScopedRequest {
                 | Self::FactoryQuestionGuard { .. }
                 | Self::Links(..)
                 | Self::Memory(..)
+                | Self::MemoryHook(..)
         )
     }
 }
@@ -1295,6 +1387,8 @@ async fn scoped_client_loop(
                         .filter(herdr_core::memory_command::MemoryCommand::valid)
                         .map(ScopedRequest::Memory),
                         Some("factory_question_guard") => factory_question_guard(&value),
+                        Some("memory_hook") => herdr_core::memory_hook::Ask::from_wire(&value)
+                            .map(ScopedRequest::MemoryHook),
                         _ => None,
                     };
                     if command.is_none()
@@ -1426,6 +1520,16 @@ async fn scoped_client_loop(
                                             };
                                             (code, next)
                                         })?
+                                }
+                                ScopedRequest::MemoryHook(ask) => {
+                                    let deadline = std::time::Instant::now() + herdr_core::memory_hook::WITHIN;
+                                    let scope = core.memory_scope(&cap.context).map_err(|reason| {
+                                        herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
+                                        ("memory_unavailable".to_owned(), "Continue without Project Memory")
+                                    })?;
+                                    serde_json::to_value(herdr_core::memory_hook::answer(&scope, &ask, deadline)).map_err(|_| {
+                                        ("result_encoding_failed".to_owned(), "Continue without Project Memory")
+                                    })?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((
@@ -1711,6 +1815,8 @@ pub(crate) fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
+    /// A move of the core, which this process's supervisor takes.
+    CoreMove(Value),
     /// A `file_list` for a checkout on an SSH device, answered by its helper.
     DeviceListing(Value),
     Replies(Vec<Message>),
@@ -1758,6 +1864,9 @@ fn handle_client_text(
     };
     if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
         return Ok(ClientAction::FileBytes(event));
+    }
+    if event.get("kind").and_then(Value::as_str) == Some("core_move") {
+        return Ok(ClientAction::CoreMove(event));
     }
     if event.get("kind").and_then(Value::as_str) == Some("file_index") {
         return Ok(ClientAction::Replies(handle_file_index(state, &event)));
@@ -3641,8 +3750,10 @@ fn log_refusal(reason: CloseReason, extra: Option<usize>) {
     );
 }
 
-pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
-    let shutdown = Arc::clone(&state.shutdown);
+/// Mounts the core's routes on `seat` and starts the clock that ends the
+/// daemon once no screen is left; the role aborts the clock when it ends.
+pub fn mount(seat: &crate::seat::SeatParts, state: AppState) -> tokio::task::JoinHandle<()> {
+    let shutdown = state.shutdown.clone();
     let mobile = Arc::clone(&state.mobile);
     let idle_task = watch_idle(
         Idle {
@@ -3650,7 +3761,7 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
             keep_alive: state.keep_alive,
             clients: Arc::clone(&state.clients),
             last_client_gone: Arc::clone(&state.last_client_gone),
-            shutdown: Arc::clone(&shutdown),
+            shutdown,
             herdr_socket: state.herdr_socket.clone(),
         },
         // Mobile on with a phone paired: the phone may come back at any
@@ -3658,15 +3769,8 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
         // over when that ends.
         move || mobile.keep_alive(),
     );
-    let app = router(state);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown.notified().await;
-        })
-        .await
-        .map_err(|error| format!("server: {error}"))?;
-    idle_task.abort();
-    Ok(())
+    seat.mount(router(state));
+    idle_task
 }
 
 /// What decides when a daemon with no screen ends.
@@ -3675,7 +3779,7 @@ pub(crate) struct Idle {
     pub keep_alive: bool,
     pub clients: Arc<AtomicUsize>,
     pub last_client_gone: Arc<Mutex<Instant>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     pub herdr_socket: Option<PathBuf>,
 }
 
@@ -3722,7 +3826,7 @@ pub(crate) fn watch_idle(
             }
             let gone = *idle.last_client_gone.lock().expect("client timestamp");
             if gone.elapsed() >= Duration::from_secs(idle.idle_secs) {
-                idle.shutdown.notify_waiters();
+                idle.shutdown.end();
                 return;
             }
         }
@@ -4069,9 +4173,8 @@ mod tests {
         );
     }
 
-    /// B43: `hide links`, `hide memory` and delivery answer with no shell
-    /// open; every
-    /// Workspace command still needs one.
+    /// B43: `hide links`, `hide memory`, a hook's Memory and delivery answer
+    /// with no shell open; every Workspace command still needs one.
     #[test]
     fn only_the_daemons_own_reads_answer_without_a_shell() {
         use herdr_core::links::query::{LinksQuery, QueryTarget};
@@ -4084,6 +4187,11 @@ mod tests {
             !ScopedRequest::Memory(herdr_core::memory_command::MemoryCommand::Show { number: 1 })
                 .needs_renderer()
         );
+        let hook = herdr_core::memory_hook::Ask::from_wire(&json!({
+            "event": "SessionStart", "runtime": "codex", "session": "s-1",
+        }))
+        .unwrap();
+        assert!(!ScopedRequest::MemoryHook(hook).needs_renderer());
         assert!(ScopedRequest::Query(herdr_core::workspace_control::Query::Info).needs_renderer());
         assert!(ScopedRequest::BrowserConnect(None).needs_renderer());
     }

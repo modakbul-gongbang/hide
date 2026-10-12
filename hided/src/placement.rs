@@ -4,15 +4,17 @@
 //! the core's machine and this daemon runs in the node role: it starts no
 //! core and dials that machine instead.
 //!
-//! Only the move (layer 5) and test fixtures write the record. It is the
+//! Only the move (layer 5), the node's disconnect and reconnect (B16) and
+//! test fixtures write the record. It is the
 //! account's own private file; one that is anything else is refused rather
 //! than read, and so is one that names this machine as its own core.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use hide_platform::fs::private;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The record's largest size.
 const RECORD_CAP: u64 = 4096;
@@ -20,7 +22,7 @@ const RECORD_CAP: u64 = 4096;
 const MAX_VALUE: usize = 1024;
 
 /// The core's machine, as this machine reaches it.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Placement {
     /// The SSH alias in this account's `~/.ssh/config`.
@@ -33,10 +35,66 @@ pub struct Placement {
     /// account's default.
     #[serde(default)]
     pub state_dir: Option<String>,
+    /// The move that placed the core there, until it committed: the node's
+    /// links name it, and the core's first link with it commits the move
+    /// (PRD core-host-node-move amendment 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_intent: Option<String>,
+    /// The operator ended the link from this machine's window (PRD
+    /// core-host-node-move B16): the node dials nothing until they
+    /// reconnect, across restarts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disconnected: bool,
+}
+
+/// Every change this process makes to a record already there: the node's
+/// update of its core rewrites the program, the move's commit clears its
+/// intent, and the operator's disconnect sets its flag, each reading the
+/// record as the others left it.
+static CHANGES: Mutex<()> = Mutex::new(());
+
+/// Changes the record `state_dir` holds with `change`, after any change
+/// this process made before it; `false` when there is no record.
+pub fn update(
+    state_dir: &Path,
+    own_node: &str,
+    change: impl FnOnce(&mut Placement),
+) -> Result<bool, String> {
+    let _changing = CHANGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(mut placement) = read(state_dir, own_node)? else {
+        return Ok(false);
+    };
+    let before = placement.clone();
+    change(&mut placement);
+    if placement != before {
+        write(state_dir, &placement)?;
+    }
+    Ok(true)
+}
+
+/// Records `placement` for `state_dir`, replacing any record there.
+pub fn write(state_dir: &Path, placement: &Placement) -> Result<(), String> {
+    let path = record_path(state_dir);
+    let bytes = serde_json::to_vec_pretty(placement).map_err(|error| error.to_string())?;
+    hide_platform::fs::atomic::write_file_durable(&path, &bytes, hide_platform::fs::Access::Private)
+        .map(|_| ())
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Removes the record: this machine is its own core again.
+pub fn remove(state_dir: &Path) -> Result<(), String> {
+    let path = record_path(state_dir);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
 }
 
 pub fn record_path(state_dir: &Path) -> PathBuf {
-    state_dir.join("core-placement.json")
+    hide_kit::layout::core_placement(state_dir)
 }
 
 /// The placement `state_dir` records; `None` when this machine is its own
@@ -133,6 +191,8 @@ mod tests {
                 node: "core-node".to_owned(),
                 program: "/opt/hided".to_owned(),
                 state_dir: Some("/tmp/c".to_owned()),
+                move_intent: None,
+                disconnected: false,
             }))
         );
     }

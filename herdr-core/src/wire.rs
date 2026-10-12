@@ -755,8 +755,8 @@ pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
     })
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct IssueTokens {
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IssueTokens {
     pub panes: std::collections::BTreeMap<String, String>,
     pub workspaces: std::collections::BTreeMap<String, String>,
 }
