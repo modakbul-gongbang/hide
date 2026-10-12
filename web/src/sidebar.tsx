@@ -60,7 +60,7 @@ import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
-import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { HelpMenu } from "./components/help-menu";
 import { useShellStore } from "./store";
