@@ -1,7 +1,6 @@
 //! The shapes of a node's agent sessions, which Project Memory and the
 //! Sessions screen read through the core (PRD core-host-node D-03).
 
-use hide_session::CursorCheckpoint;
 use serde::{Deserialize, Serialize};
 
 /// Independently implemented reader operations, not provider installation
@@ -49,7 +48,9 @@ impl ReaderFeatures {
             if agent != hide_session::Agent::Cursor {
                 features.insert(Links);
             }
-            if agent.is_jsonl() {
+            // Memory reads a session through its conversation reader
+            // (`Call::SessionConversation`).
+            if agent.is_jsonl() && row.conversation.is_some() {
                 features.insert(Memory);
             }
             if agent.reports_activity() {
@@ -74,7 +75,10 @@ impl ReaderFeatures {
 
     /// The audited protocol24 contract, including its partial OpenCode
     /// label/link reader. This transition contract deliberately never grows
-    /// when another reader is added to the current build.
+    /// when another reader is added to the current build. It has no Memory
+    /// reader: Memory reads through `Call::SessionConversation`, which came
+    /// with protocol 26, and the line read a protocol24 node answered for it
+    /// is gone, so such a node's sessions are ones Memory does not read.
     pub fn protocol24() -> Self {
         use ReaderFeature::*;
         Self {
@@ -87,7 +91,6 @@ impl ReaderFeatures {
                         Titles,
                         Conversation,
                         Search,
-                        Memory,
                         Links,
                         Activity,
                     ],
@@ -100,7 +103,6 @@ impl ReaderFeatures {
                         Titles,
                         Conversation,
                         Search,
-                        Memory,
                         Links,
                         Activity,
                         Turns,
@@ -305,7 +307,13 @@ mod reader_tests {
     #[test]
     fn protocol24_keeps_only_its_audited_partial_readers() {
         let facts = ReaderFeatures::protocol24();
-        assert!(facts.supports("claude", ReaderFeature::Memory));
+        assert!(facts.supports("claude", ReaderFeature::Conversation));
+        for provider in ["claude", "codex"] {
+            assert!(
+                !facts.supports(provider, ReaderFeature::Memory),
+                "{provider}"
+            );
+        }
         assert!(facts.supports("codex", ReaderFeature::Turns));
         assert!(facts.supports("opencode", ReaderFeature::Links));
         assert!(!facts.supports("opencode", ReaderFeature::Conversation));
@@ -457,15 +465,4 @@ pub struct SessionStat {
     pub size: u64,
     /// `None` where the system keeps no modification time.
     pub modified_unix_ms: Option<u64>,
-}
-
-/// The complete lines past a cursor (`hide_session::SessionCursor::read`):
-/// `contents` begins at `start_offset`, `offset` is where the read stopped,
-/// and `checkpoint` is what the next read starts from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionChunk {
-    pub contents: String,
-    pub start_offset: u64,
-    pub offset: u64,
-    pub checkpoint: CursorCheckpoint,
 }

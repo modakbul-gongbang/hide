@@ -88,6 +88,18 @@ impl ConversationCheckpoint {
     }
 }
 
+/// A line cursor's position, for a reader that saved one before it read
+/// through this cursor (Project Memory's): it resumes at the same offset of
+/// the same file.
+impl From<crate::CursorCheckpoint> for ConversationCheckpoint {
+    fn from(cursor: crate::CursorCheckpoint) -> Self {
+        Self {
+            cursor,
+            ..Self::default()
+        }
+    }
+}
+
 /// One provider-neutral page on an authenticated reader boundary.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConversationRead {
@@ -97,6 +109,10 @@ pub struct ConversationRead {
     pub has_more: bool,
     pub rescanned: bool,
     pub read_bytes: u64,
+    /// The records this read passed over, by [`crate::SkipReason`]: a
+    /// record past the line cap is read past without being held.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub skipped_reasons: std::collections::BTreeMap<String, usize>,
 }
 
 pub fn read_conversation(
@@ -115,6 +131,11 @@ pub fn read_conversation(
         has_more: cursor.has_more(),
         rescanned: parsed.rescan_reason.is_some(),
         read_bytes: cursor.read_bytes(),
+        skipped_reasons: parsed
+            .skipped_reasons
+            .iter()
+            .map(|(reason, count)| (reason.as_str().to_owned(), *count))
+            .collect(),
     })
 }
 
@@ -553,8 +574,8 @@ mod tests {
     }
 }
 
-// Keep Memory's cursor implementation untouched; search alone accepts an
-// already-open descriptor so path replacement cannot race a blocking open.
+// Reads through an already-open descriptor so path replacement cannot race a
+// blocking open.
 fn read_appended_file(
     cursor: &mut SessionCursor,
     path: &Path,
