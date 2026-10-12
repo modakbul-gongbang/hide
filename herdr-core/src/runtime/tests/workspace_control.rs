@@ -1744,3 +1744,50 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
         "checkout_not_registered"
     );
 }
+
+#[test]
+fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() {
+    // PRD project-memory-v2 B16, D-22: a device's Memory is its own; a device
+    // the core dials has none (PRD core-host-node-move Q20).
+    let (mut runtime, _dir) = caller_fixture();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: "studio".into(),
+            label: "studio".into(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "studio-host".into(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    let command = || crate::memory_command::MemoryCommand::Show { number: 1 };
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
+        .unwrap()
+        .context;
+
+    let prepared = runtime
+        .prepare_memory(crate::node::TEST_NODE, "pane-b", &expected, command())
+        .unwrap();
+    assert_eq!(prepared.checkout_path, "/checkouts/b");
+
+    let refused = |device: &str, pane: &str| {
+        runtime
+            .prepare_memory(device, pane, &expected, command())
+            .err()
+    };
+    for device in ["studio", "remote:fixture"] {
+        assert_eq!(
+            refused(device, "pane-b").as_deref(),
+            Some("memory_device_unsupported"),
+            "{device}"
+        );
+    }
+    assert_eq!(
+        refused(crate::node::TEST_NODE, "pane-a").as_deref(),
+        Some("caller_context_changed")
+    );
+}

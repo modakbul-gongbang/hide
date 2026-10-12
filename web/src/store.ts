@@ -90,6 +90,7 @@ export type Frame = {
     changes?: ChangesSnapshot | null;
     documents?: DocumentsSection | null;
     project_sessions?: ProjectSessions;
+    memory?: import("./snapshot").MemorySection;
     session_search?: import("./snapshot").SessionSearch;
     link_panel?: import("./snapshot").LinkPanel;
     link_summaries?: import("./snapshot").LinkSummaries;
@@ -163,6 +164,11 @@ type Store = {
    * without it has none; a delta without it keeps what the store holds.
    */
   projectSessions: ProjectSessions | null;
+  /**
+   * The opened Project's Memory (`memory`), its own section: absent until a
+   * shell opens one; a delta without it keeps what the store holds.
+   */
+  memory: import("./snapshot").MemorySection | null;
   sessionSearch: import("./snapshot").SessionSearch | null;
   /** The link record of the open PR or issue panel (`link_panel`); null until one opens. */
   linkPanel: import("./snapshot").LinkPanel | null;
@@ -310,6 +316,7 @@ export const useShellStore = create<Store>((set, get) => ({
   changes: null,
   documents: NO_DOCUMENTS,
   projectSessions: null,
+  memory: null,
   sessionSearch: null,
   linkPanel: null,
   linkSummaries: null,
@@ -405,6 +412,7 @@ export const useShellStore = create<Store>((set, get) => ({
         changes: payload.changes ?? null,
         documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
         projectSessions: payload.project_sessions ?? null,
+        memory: payload.memory ?? null,
         sessionSearch: payload.session_search ?? null,
         linkPanel: payload.link_panel ?? null,
         linkSummaries: payload.link_summaries ?? null,
@@ -415,7 +423,7 @@ export const useShellStore = create<Store>((set, get) => ({
       payload.editor !== undefined ||
       payload.changes !== undefined ||
       payload.documents !== undefined ||
-      payload.project_sessions !== undefined || payload.session_search !== undefined ||
+      payload.project_sessions !== undefined || payload.session_search !== undefined || payload.memory !== undefined ||
       payload.link_panel !== undefined || payload.link_summaries !== undefined ||
       payload.factory !== undefined || payload.factory_task !== undefined
     ) {
@@ -424,6 +432,7 @@ export const useShellStore = create<Store>((set, get) => ({
         changes: payload.changes ?? get().changes,
         documents: payload.documents ? mergeDocuments(get().documents, payload.documents) : get().documents,
         projectSessions: payload.project_sessions ?? get().projectSessions,
+        memory: payload.memory ? share(get().memory, payload.memory) : get().memory,
         sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
         linkPanel: payload.link_panel ? share(get().linkPanel, payload.link_panel) : get().linkPanel,
         linkSummaries: payload.link_summaries ? share(get().linkSummaries, payload.link_summaries) : get().linkSummaries,

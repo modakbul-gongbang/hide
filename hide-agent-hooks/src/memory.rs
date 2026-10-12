@@ -11,11 +11,13 @@ use hide_memory::HOOK_INPUT_LIMIT_BYTES;
 use hide_memory::hook::{HookContext, HookOutcome};
 use serde::Deserialize;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// How long a hook waits for Memory, from when it starts asking: inside the
-/// 2 s every hook has, and never past the letter pull it runs beside.
+/// How long a hook waits for Memory, counted from the hook process's start,
+/// so reading its input comes out of it (a plugin helper counts from its ask,
+/// within its own deadline): inside the 2 s every hook has, and never past
+/// the letter pull it runs beside.
 pub const MEMORY_BUDGET: Duration = Duration::from_millis(1_250);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -37,7 +39,6 @@ pub struct HookMemoryResult {
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
-    cwd: Option<PathBuf>,
     prompt: Option<String>,
     session_id: Option<String>,
 }
@@ -83,7 +84,6 @@ pub fn project_memory_output_until(
                 MemoryRequest {
                     runtime_id: runtime.memory_id(),
                     event,
-                    cwd: input.cwd,
                     prompt: input.prompt,
                     session_id: input.session_id,
                 },
@@ -110,7 +110,6 @@ pub struct MemoryRequest<'a> {
     /// `SessionStart` for a session's first context, `UserPromptSubmit` for a
     /// later prompt; any other event asks for nothing.
     pub event: HookEvent,
-    pub cwd: Option<PathBuf>,
     pub prompt: Option<String>,
     pub session_id: Option<String>,
 }
@@ -157,7 +156,6 @@ pub fn memory_context_until(
     let MemoryRequest {
         runtime_id,
         event,
-        cwd,
         prompt,
         session_id,
     } = request;
@@ -167,15 +165,7 @@ pub fn memory_context_until(
     let Some(session) = session_id.filter(|session| delivery::valid_session(session)) else {
         return MemoryContext::without(HookMemoryOutcome::Unavailable);
     };
-    // The core relates the folder to the checkout's root as this machine's
-    // Project read spells it, which is its canonical path.
-    let cwd = cwd.map(|cwd| {
-        std::fs::canonicalize(&cwd)
-            .unwrap_or(cwd)
-            .to_string_lossy()
-            .into_owned()
-    });
-    let mut arguments = vec![
+    let arguments = [
         "workspace",
         "memory",
         "--event",
@@ -185,9 +175,6 @@ pub fn memory_context_until(
         "--session",
         &session,
     ];
-    if let Some(cwd) = cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
-        arguments.extend(["--cwd", cwd]);
-    }
     let prompt = match event {
         HookEvent::UserPromptSubmit => prompt.as_deref().map(hide_memory::hook::prompt_prefix),
         _ => None,
@@ -301,10 +288,6 @@ mod tests {
         ] {
             let input: HookInput = serde_json::from_slice(bytes).unwrap();
             assert_eq!(
-                input.cwd.as_deref(),
-                Some(Path::new("/tmp/fixture-project"))
-            );
-            assert_eq!(
                 input.prompt.as_deref(),
                 Some("Inspect the project memory boundary")
             );
@@ -323,21 +306,6 @@ mod tests {
                 value["hookSpecificOutput"]["additionalContext"],
                 "Project Memory:\n- Keep the boundary local.\n"
             );
-        }
-    }
-
-    #[test]
-    fn an_empty_session_start_receipt_follows_the_base_context_without_a_zero_item_message() {
-        let receipt = "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" />\n";
-        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
-            let output =
-                hook_stdout_with_context(runtime, HookEvent::SessionStart, Some(receipt)).unwrap();
-            let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-            let delivered = value["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap();
-            assert!(delivered.ends_with(receipt), "{delivered}");
-            assert!(!delivered.contains("Project Memory ready 0"));
         }
     }
 

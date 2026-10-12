@@ -53,6 +53,8 @@ import {
   type EditorTabSnapshot,
   type IssueSettings,
   type KitComponentId,
+  type MemoryAction,
+  type ScreenIntro,
   type Tab,
   type Workspace,
   type LinkTarget,
@@ -1048,9 +1050,39 @@ export function createActions(send: DispatchFn) {
       });
     },
 
-    /** The first-run choice's Apply: the agents left on are switched on here and on every device that waits for the choice. */
-    applyAgentOnboarding(agents: string[]) {
-      dispatch({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents } });
+    /**
+     * The wizard's first step, Continue: the agents left on are switched on
+     * here and on every device that waits for the choice; once the choice is
+     * answered, only the agents whose switch changed move (B45). The core
+     * moves the wizard on when this Mac's kit pass lands, and `finish` ends
+     * it there, a browser tab's whole wizard (B26).
+     */
+    applyAgentOnboarding(agents: string[], finish = false) {
+      dispatch({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents, finish } });
+    },
+
+    /**
+     * The operator left the wizard's step `from` (Continue, Not now, Skip for now, a project added); the core moves only the step on screen.
+     * `notifications` is the desktop switch the notification step leaves with: on for Continue on a Mac that already allows Hide (B16),
+     * off for Not now (B21), absent to leave it as it is.
+     */
+    advanceFirstRun(from: "notifications" | "project", notifications?: boolean) {
+      dispatch({ schema_version: 2, kind: "first_run_advance", payload: notifications === undefined ? { from } : { from, notifications } });
+    },
+
+    /** Notify me when an agent needs me (D-21). */
+    setDesktopNotifications(enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notifications_set", payload: { enabled } });
+    },
+
+    /** A screen's one-line introduction was shown, so it is not shown again (B43). */
+    markScreenIntroSeen(screen: ScreenIntro) {
+      dispatch({ schema_version: 2, kind: "screen_intro_seen", payload: { screen } });
+    },
+
+    /** This desktop window shows agent notifications, or stops; hided judges agent changes only while one does. */
+    wantAgentNotices(wanted: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notices", payload: { wanted } });
     },
 
     /** An agent's switch on its machine's row (agent adapters): its skill and hook go in or come out. */
@@ -1426,6 +1458,41 @@ export function createActions(send: DispatchFn) {
     /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
     searchProjectSessions(workspaceId: string, deviceId: string, query: string, control?: { clear?: boolean; days?: number; provider?: string }) {
       dispatch({ schema_version: 2, kind: "session_search", payload: { workspace_id: workspaceId, device_id: deviceId, query, ...control } });
+    },
+
+    /**
+     * Opens a catalog Project's Memory for the Memory tab (PRD
+     * project-memory-v2 D-17); the core keeps one opened Project per daemon
+     * and reads it again when asked for the same one.
+     */
+    memoryOpen(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "memory_open", payload: { workspace_id: workspaceId } });
+    },
+
+    /** Shows one card of the opened Project in full; null folds it. */
+    memoryExpand(workspaceId: string, number: number | null) {
+      dispatch({ schema_version: 2, kind: "memory_expand", payload: { workspace_id: workspaceId, number } });
+    },
+
+    /** Searches the opened Project's cards; empty words clear the search. */
+    memorySearch(workspaceId: string, query: string) {
+      dispatch({ schema_version: 2, kind: "memory_search", payload: { workspace_id: workspaceId, query } });
+    },
+
+    /** One operator action on the opened Project's Memory or one of its cards. */
+    memoryAction(workspaceId: string, action: MemoryAction, number: number | null = null) {
+      dispatch({ schema_version: 2, kind: "memory_action", payload: { workspace_id: workspaceId, action, number } });
+    },
+
+    /**
+     * A card number under a past conversation (B33): that Project's Memory
+     * opens with the card in full, in the Memory tab of one of its checkouts.
+     */
+    openMemoryCard(deviceId: string, workspaceId: string, number: number) {
+      this.memoryOpen(workspaceId);
+      this.memoryExpand(workspaceId, number);
+      this.openProjectById(deviceId, workspaceId);
+      setWorkspaceView({ tools: true, tool: "memory" });
     },
 
     openProjectSession(workspaceId: string, sessionId: string) {

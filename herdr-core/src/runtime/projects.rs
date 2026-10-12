@@ -1348,6 +1348,7 @@ impl Runtime {
             self.github = restored;
             self.apply_pull_requests();
             self.refresh_worktree_projection();
+            self.track_memory_promotions();
         }
         self.github_store = Some(store);
     }
@@ -1411,6 +1412,8 @@ impl Runtime {
         }
         self.apply_pull_requests();
         self.refresh_worktree_projection();
+        // A promoted card's pull request may have opened, merged or closed.
+        self.track_memory_promotions();
         true
     }
 
@@ -2906,9 +2909,12 @@ impl Runtime {
                 "device_git_projects": total,
             }));
         }
-        self.device_github_reads.retain(|(device, root), _| {
+        let listed = |(device, root): &(String, String)| {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
-        });
+        };
+        self.device_github_reads.retain(|key, _| listed(key));
+        self.device_github_read_generation
+            .retain(|key, _| listed(key));
         let answered = self.device_github.get(device_id);
         // The links the node's rows were derived with; a wake reads them and
         // derives nothing.
@@ -2959,11 +2965,37 @@ impl Runtime {
         crate::github::GithubRequest { projects }
     }
 
-    /// The pull requests and issues of a node's repositories: its rows carry
-    /// them, as this machine's do, and a failed read keeps the previous ones.
+    /// Asks a node's repository at `root` on the next read, whatever its
+    /// wait; answers the generation that read carries.
+    pub(super) fn refresh_device_pull_requests(&mut self, device_id: &str, root: &str) -> u64 {
+        let now = std::time::Instant::now();
+        let read = self
+            .device_github_reads
+            .entry((device_id.to_owned(), root.to_owned()))
+            .or_insert_with(|| DeviceGithubRead {
+                generation: 0,
+                asked_at: now,
+                links: Vec::new(),
+            });
+        read.generation = read.generation.wrapping_add(1);
+        read.asked_at = now;
+        read.generation
+    }
+
+    /// The generation of the last answered read of a node's repository.
+    pub(super) fn device_github_read(&self, device_id: &str, root: &str) -> Option<u64> {
+        self.device_github_read_generation
+            .get(&(device_id.to_owned(), root.to_owned()))
+            .copied()
+    }
+
+    /// The pull requests and issues of a node's repositories, read for
+    /// `request`: its rows carry them, as this machine's do, and a failed
+    /// read keeps the previous ones.
     pub(crate) fn ingest_device_github(
         &mut self,
         device_id: &str,
+        request: &crate::github::GithubRequest,
         github: crate::model::GithubSnapshot,
     ) -> bool {
         if !self
@@ -2971,6 +3003,15 @@ impl Runtime {
             .is_some_and(LinkOrigin::reports_own_facts)
         {
             return false;
+        }
+        for project in &request.projects {
+            self.device_github_read_generation.insert(
+                (
+                    device_id.to_owned(),
+                    project.root.to_string_lossy().into_owned(),
+                ),
+                project.generation,
+            );
         }
         let mut merged = github;
         if let Some(previous) = self.device_github.get(device_id) {

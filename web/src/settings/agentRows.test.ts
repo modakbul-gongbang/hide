@@ -1,7 +1,7 @@
 import { emptyScope } from "../../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import type { Device, KitAgent, KitPiece } from "../snapshot";
-import { agentHookWait, agentInstalled, agentLeftover, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
+import { agentHookWait, agentInstalled, agentLeftover, agentUnsupportedHere, systemName, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
@@ -43,7 +43,9 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     expect(agentInstalled(agent("codex"))).toBe(true);
     // The program is not there and nothing is on: not installed.
     expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: false }))).toBe(false);
-    expect(agentInstalled(agent("codex", { availability: "unsupported_system", enabled: false }))).toBe(false);
+    // Installed on a system Hide cannot attach to yet: listed with the installed ones, without a switch (B49).
+    expect(agentInstalled(agent("codex", { availability: "unsupported_system", enabled: false }))).toBe(true);
+    expect(agentUnsupportedHere(agent("codex", { availability: "unsupported_system" }))).toBe(true);
     // On only because Claude Code and Codex are on by default (no recorded choice): not installed, and never Ready.
     const byDefault = agent("codex", { availability: "not_installed", enabled: true, chosen: false, sessions: 0 });
     expect(agentInstalled(byDefault)).toBe(false);
@@ -53,6 +55,15 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     const gone = agent("codex", { availability: "not_installed", enabled: true, chosen: true, sessions: 0 });
     expect(agentInstalled(gone)).toBe(true);
     expect(agentStatus(gone)).toEqual({ kind: "none" });
+  });
+
+  it("names a machine's system the way people say it, from Node's platform or a device helper's report (D-25)", () => {
+    expect(systemName("win32")).toBe("Windows");
+    expect(systemName("darwin")).toBe("macOS");
+    expect(systemName("macos aarch64")).toBe("macOS");
+    expect(systemName("linux x86_64")).toBe("Linux");
+    expect(systemName(null)).toBeNull();
+    expect(systemName("freebsd")).toBeNull();
   });
 
   it("splits each machine into the installed and the not installed, This Mac first, and says why a machine has no list", () => {

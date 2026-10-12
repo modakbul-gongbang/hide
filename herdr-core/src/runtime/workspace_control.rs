@@ -678,7 +678,11 @@ impl Runtime {
     /// Resolves the caller to its checkout among the connected workspaces of
     /// `device_id`. A pane is found by membership; a checkout caller by the
     /// longest registered checkout path that equals or contains its cwd.
-    fn resolve_caller(&self, device_id: &str, caller: Caller<'_>) -> Result<Context, Refusal> {
+    pub(super) fn resolve_caller(
+        &self,
+        device_id: &str,
+        caller: Caller<'_>,
+    ) -> Result<Context, Refusal> {
         let mut found: Option<Context> = None;
         for workspace in self.catalog_workspaces() {
             if workspace.device_id != device_id {

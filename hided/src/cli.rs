@@ -61,7 +61,6 @@ pub enum CommandKind {
         event: String,
         runtime: String,
         session: String,
-        cwd: Option<String>,
     },
     WorkspaceInfo,
     ViewList,
@@ -74,9 +73,14 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
+    /// `hide memory show|search|add|forget|undo|placed` (PRD project-memory-v2 D-03,
+    /// D-11).
+    Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
+
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -169,6 +173,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         Some("diff") => parse_open(iter, false),
         Some("view") => parse_view(iter),
         Some("links") => parse_links(iter),
+        Some("memory") => parse_memory(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
 }
@@ -211,6 +216,37 @@ fn parse_links<'a>(iter: impl Iterator<Item = &'a String>) -> Result<CommandKind
         target,
         all_projects,
     }))
+}
+
+fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
+    use herdr_core::memory_command::MemoryCommand;
+    let verb = iter.next().map(String::as_str);
+    let words = iter.map(String::as_str).collect::<Vec<_>>();
+    let rest = words.join(" ");
+    let command = match (verb, words.as_slice()) {
+        (Some("show"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Show { number }),
+        (Some("forget"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Forget { number }),
+        (Some("undo"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Undo { number }),
+        (Some("placed"), [card, path]) => {
+            herdr_core::memory_command::parse_card(card).map(|number| MemoryCommand::Placed {
+                number,
+                path: (*path).to_owned(),
+            })
+        }
+        (Some("search"), [_, ..]) if !rest.trim().is_empty() => {
+            Some(MemoryCommand::Search { words: rest })
+        }
+        (Some("add"), [_, ..]) if !rest.trim().is_empty() => {
+            Some(MemoryCommand::Add { text: rest })
+        }
+        _ => None,
+    };
+    command
+        .map(CommandKind::Memory)
+        .ok_or_else(|| MEMORY_USAGE.to_owned())
 }
 
 fn parse_open<'a>(
@@ -430,7 +466,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps for the Projects of its own machine and of a node that dials in."
         );
         return Ok(());
     }
@@ -457,6 +493,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::BrowserPage(_)
                     | CommandKind::WorkspaceAction { .. }
                     | CommandKind::Links(_)
+                    | CommandKind::Memory(_)
             ) =>
         {
             return workspace_refusal(
@@ -526,16 +563,15 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             event,
             runtime,
             session,
-            cwd,
         } => {
             const NEXT: &str = "Continue without Project Memory";
             let prompt = crate::workspace_cli::read_memory_prompt(std::io::stdin().lock())
                 .or_else(|reason| workspace_refusal(&reason, NEXT))?;
             let credential = crate::workspace_cli::Credential::acquire(&env)
                 .or_else(|reason| workspace_refusal(&reason, NEXT))?;
-            let answer = crate::workspace_cli::request_memory(
+            let answer = crate::workspace_cli::request_memory_hook(
                 &credential,
-                json_memory_ask(&event, &runtime, &session, &prompt, cwd.as_deref()),
+                json_memory_hook_ask(&event, &runtime, &session, &prompt),
             )
             .or_else(|reason| workspace_refusal(&reason, NEXT))?;
             println!("{answer}");
@@ -554,58 +590,155 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             workspace_action(&env, action, request_id.as_deref())
         }
         CommandKind::Links(query) => links(&env, &query),
+        CommandKind::Memory(command) => memory(&env, &command),
     }
 }
 
-const MEMORY_USAGE: &str = "usage: hide workspace memory --event <SessionStart|UserPromptSubmit> --runtime <runtime> --session <id> [--cwd <path>] < prompt";
+/// Prints a `hide memory` answer as text an agent reads; a refusal prints
+/// its reason and next action as one JSON line and exits non-zero (B8, B16).
+fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Result<(), String> {
+    use herdr_core::memory_command::{MemoryCommand, next_action};
+    if !command.valid() {
+        let reason = match command {
+            MemoryCommand::Add { .. } => "memory_text_too_long",
+            MemoryCommand::Placed { .. } => "memory_path_not_found",
+            _ => "invalid_request",
+        };
+        return workspace_refusal(reason, next_action(reason));
+    }
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
+        Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
+    };
+    let answer = match crate::workspace_cli::request_memory(&mut credential, command) {
+        Ok(answer) => answer,
+        Err(reason) => return query_refusal(&reason, request_next_action(&reason), true),
+    };
+    if answer["ok"] != true {
+        println!("{answer}");
+        return Err(answer["reason"]
+            .as_str()
+            .unwrap_or("memory_request_failed")
+            .to_owned());
+    }
+    print!("{}", memory_text(command, &answer["result"]));
+    Ok(())
+}
+
+fn memory_text(
+    command: &herdr_core::memory_command::MemoryCommand,
+    result: &serde_json::Value,
+) -> String {
+    use herdr_core::memory_command::MemoryCommand;
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_owned();
+    match command {
+        MemoryCommand::Show { .. } => {
+            let mut lines = vec![
+                format!(
+                    "{} · {} · {} · {} sources, {} from the operator",
+                    text(&result["card"]),
+                    text(&result["kind"]),
+                    text(&result["state"]).replace('_', " "),
+                    result["sources"],
+                    result["operator_sources"],
+                ),
+                text(&result["title"]),
+                String::new(),
+                text(&result["body"]),
+            ];
+            let cited = result["cited_paths"]
+                .as_array()
+                .map(|paths| paths.iter().map(text).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if !cited.is_empty() {
+                lines.push(format!("Files: {}", cited.join(", ")));
+            }
+            lines.join("\n") + "\n"
+        }
+        MemoryCommand::Forget { .. } => {
+            let card = text(&result["card"]);
+            format!("Forgot {card}. Undo: hide memory undo {card}\n")
+        }
+        MemoryCommand::Undo { .. } => {
+            let card = text(&result["card"]);
+            match result["outcome"].as_str() {
+                Some("removed") => format!("Removed {card}.\n"),
+                _ => format!("Restored {card}.\n"),
+            }
+        }
+        MemoryCommand::Placed { .. } => format!(
+            "{} points at {} once its pull request merges.\n",
+            text(&result["card"]),
+            text(&result["path"])
+        ),
+        MemoryCommand::Search { .. } => {
+            let cards = result["cards"].as_array().cloned().unwrap_or_default();
+            if cards.is_empty() {
+                return "No card matches.\n".to_owned();
+            }
+            cards
+                .iter()
+                .map(|card| format!("{}  {}\n", text(&card["card"]), text(&card["title"])))
+                .collect()
+        }
+        MemoryCommand::Add { .. } => {
+            let outcomes = result["outcomes"].as_array().cloned().unwrap_or_default();
+            if outcomes.is_empty() {
+                return "Nothing kept: the text holds nothing a card would.\n".to_owned();
+            }
+            outcomes
+                .iter()
+                .map(|outcome| {
+                    let card = text(&outcome["card"]);
+                    match outcome["outcome"].as_str() {
+                        Some("added") => format!("Added {card}.\n"),
+                        Some("already_added") => format!("Already added as {card}.\n"),
+                        Some("same_as") => format!("{card} already says this; added it as a source.\n"),
+                        Some("replaced") => format!("Replaced {card}.\n"),
+                        Some("outranked") => format!(
+                            "Not given: {card} rests on the operator's own words and stays in use; this text is kept in its history.\n"
+                        ),
+                        Some("secret") => "Not kept: it looked like a secret.\n".to_owned(),
+                        Some("full") => "Not kept: this Project's Memory is full.\n".to_owned(),
+                        _ => "Nothing kept: the text holds nothing a card would.\n".to_owned(),
+                    }
+                })
+                .collect()
+        }
+    }
+}
+
+const WORKSPACE_MEMORY_USAGE: &str = "usage: hide workspace memory --event <SessionStart|UserPromptSubmit> --runtime <runtime> --session <id> < prompt";
 
 fn parse_workspace_memory(words: &[&str]) -> Result<CommandKind, String> {
-    let (event, runtime, session, cwd) = match words {
-        ["--event", event, "--runtime", runtime, "--session", session] => {
-            (event, runtime, session, None)
-        }
-        [
-            "--event",
-            event,
-            "--runtime",
-            runtime,
-            "--session",
-            session,
-            "--cwd",
-            cwd,
-        ] => (event, runtime, session, Some(*cwd)),
-        _ => return Err(MEMORY_USAGE.to_owned()),
+    let ["--event", event, "--runtime", runtime, "--session", session] = words else {
+        return Err(WORKSPACE_MEMORY_USAGE.to_owned());
     };
-    let plain = |text: &str| !text.is_empty() && !text.chars().any(char::is_control);
     if !matches!(*event, "SessionStart" | "UserPromptSubmit")
-        || !plain(runtime)
+        || runtime.is_empty()
+        || runtime.chars().any(char::is_control)
         || !herdr_core::delivery::valid_session(session)
-        || cwd.is_some_and(|cwd| !plain(cwd))
     {
-        return Err(MEMORY_USAGE.to_owned());
+        return Err(WORKSPACE_MEMORY_USAGE.to_owned());
     }
     Ok(CommandKind::WorkspaceMemory {
         event: (*event).to_owned(),
         runtime: (*runtime).to_owned(),
         session: (*session).to_owned(),
-        cwd: cwd.map(str::to_owned),
     })
 }
 
-/// The `memory` request's own fields; the prompt goes only when there is one.
-fn json_memory_ask(
+/// The `memory_hook` request's own fields; the prompt goes only when there
+/// is one.
+fn json_memory_hook_ask(
     event: &str,
     runtime: &str,
     session: &str,
     prompt: &str,
-    cwd: Option<&str>,
 ) -> serde_json::Value {
     let mut ask = serde_json::json!({"event": event, "runtime": runtime, "session": session});
     if !prompt.is_empty() {
         ask["prompt"] = serde_json::json!(prompt);
-    }
-    if let Some(cwd) = cwd {
-        ask["cwd"] = serde_json::json!(cwd);
     }
     ask
 }
@@ -2164,7 +2297,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_memory_takes_an_event_runtime_and_session_and_an_optional_cwd() {
+    fn workspace_memory_takes_an_event_runtime_and_session() {
         let parse = |args: &[&str]| {
             let mut words = vec!["hide", "workspace", "memory"];
             words.extend(args);
@@ -2189,7 +2322,6 @@ mod tests {
                 event: "SessionStart".into(),
                 runtime: "codex".into(),
                 session: "s-1".into(),
-                cwd: None,
             }
         );
         assert_eq!(
@@ -2200,15 +2332,12 @@ mod tests {
                 "pi",
                 "--session",
                 "/sessions/a.jsonl",
-                "--cwd",
-                "/work/project",
             ])
             .unwrap(),
             CommandKind::WorkspaceMemory {
                 event: "UserPromptSubmit".into(),
                 runtime: "pi".into(),
                 session: "/sessions/a.jsonl".into(),
-                cwd: Some("/work/project".into()),
             }
         );
         for args in [
@@ -2246,7 +2375,7 @@ mod tests {
                 "--session",
                 "s-1",
                 "--cwd",
-                "",
+                "/work/project",
             ],
         ] {
             assert!(parse(&args).is_err(), "{args:?}");
@@ -2448,6 +2577,106 @@ mod tests {
         ] {
             assert_eq!(parse(bad), Err(BROWSER_USAGE.to_owned()), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn memory_reads_a_card_name_and_joins_words_and_text() {
+        use herdr_core::memory_command::MemoryCommand;
+        let parse = |line: &[&str]| {
+            parse_args(&line.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "memory", "show", "m3"]),
+            Ok(CommandKind::Memory(MemoryCommand::Show { number: 3 }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "search", "테스트", "nextest"]),
+            Ok(CommandKind::Memory(MemoryCommand::Search {
+                words: "테스트 nextest".into()
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "add", "Lint runs before tests"]),
+            Ok(CommandKind::Memory(MemoryCommand::Add {
+                text: "Lint runs before tests".into()
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "forget", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Forget { number: 5 }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "undo", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Undo { number: 5 }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "placed", "m5", "docs/TESTING.md"]),
+            Ok(CommandKind::Memory(MemoryCommand::Placed {
+                number: 5,
+                path: "docs/TESTING.md".into()
+            }))
+        );
+        for bad in [
+            &["hide", "memory", "forget"][..],
+            &["hide", "memory", "undo", "5x"],
+            &["hide", "memory"],
+            &["hide", "memory", "show", "m0"],
+            &["hide", "memory", "show", "m1", "m2"],
+            &["hide", "memory", "search"],
+            &["hide", "memory", "add", " "],
+            &["hide", "memory", "edit", "m1"],
+            &["hide", "memory", "placed", "m1"],
+        ] {
+            assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn memory_answers_read_as_text_with_the_files_a_card_cites() {
+        use herdr_core::memory_command::MemoryCommand;
+        let shown = memory_text(
+            &MemoryCommand::Show { number: 3 },
+            &serde_json::json!({
+                "card": "m3", "title": "Tests run with nextest", "kind": "rule",
+                "state": "active", "body": "Run tests with nextest.",
+                "sources": 2, "operator_sources": 1,
+                "cited_paths": ["docs/TESTING.md"],
+            }),
+        );
+        assert_eq!(
+            shown,
+            "m3 · rule · active · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nFiles: docs/TESTING.md\n"
+        );
+        let search = MemoryCommand::Search { words: "x".into() };
+        assert_eq!(
+            memory_text(&search, &serde_json::json!({"cards": []})),
+            "No card matches.\n"
+        );
+        let add = MemoryCommand::Add { text: "x".into() };
+        assert_eq!(
+            memory_text(
+                &add,
+                &serde_json::json!({"outcomes": [
+                    {"outcome": "outranked", "card": "m1"},
+                    {"outcome": "already_added", "card": "m2"},
+                ]})
+            ),
+            "Not given: m1 rests on the operator's own words and stays in use; this text is kept in its history.\nAlready added as m2.\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Forget { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "forgotten"})
+            ),
+            "Forgot m5. Undo: hide memory undo m5\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Undo { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "removed"})
+            ),
+            "Removed m5.\n"
+        );
     }
 
     #[test]

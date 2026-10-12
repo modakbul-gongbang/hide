@@ -25,8 +25,9 @@ export type DeviceMenu = {
 /**
  * The top of the sidebar (quick device-rail-badges, replacing PRD
  * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
- * the name of the device in front (`This Mac`, `mini Remote`) with Add project
- * and Search at its right end, the shared Overview row, with the project tree directly below. While
+ * the name of the device in front (`This Mac`, `mini Remote`) with Search at
+ * its right end, the shared Overview row, with the project tree directly below
+ * (whose Projects title carries Add project, PRD first-run-onboarding D-27). While
  * the rail is hidden the name is a menu that lists the devices, Add device
  * and Show rail, since the rail is no longer the way to another device. A
  * device that cannot be read shows its name alone: it has no list to switch.
@@ -36,22 +37,17 @@ export type DeviceMenu = {
 export function SidebarHeader({
   rail,
   title,
-  addProject,
   overview,
   factory,
   compact = false,
   searchChord,
-  newWorkspaceChord,
   deviceMenu,
   onSearch,
-  onNewWorkspace,
 }: {
   /** The device rail is showing; hidden, the name opens the device menu. */
   rail: boolean;
   /** The device in front, and the smaller word after it. */
   title: { name: string; note: string | null };
-  /** Add project is offered on this line (not on the Agents tab). */
-  addProject: boolean;
   compact?: boolean;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   /**
@@ -61,21 +57,10 @@ export function SidebarHeader({
    */
   factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
-  newWorkspaceChord: string | null;
   deviceMenu: DeviceMenu;
   onSearch: () => void;
-  /** Add project; null where the host cannot pick a folder (a browser tab). */
-  onNewWorkspace: (() => void) | null;
 }) {
   const { t } = useInterfaceTranslation();
-  const add =
-    addProject && onNewWorkspace ? (
-      <Hint label={t("commands.new_workspace")} shortcut={newWorkspaceChord}>
-        <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
-          <PlusIcon />
-        </Button>
-      </Hint>
-    ) : null;
   const search = (
     <Hint label={t("common.search")} shortcut={searchChord}>
       <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
@@ -100,7 +85,6 @@ export function SidebarHeader({
         ) : (
           <HiddenRailMenu title={title} menu={deviceMenu} />
         )}
-        {add}
         {search}
       </div>
       {overview ? (

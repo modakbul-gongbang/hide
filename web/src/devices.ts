@@ -10,6 +10,8 @@ import { deviceScope } from "./agentScope";
 import { machineName, windowDeviceId } from "./screenMachine";
 import { localDeviceId, type AgentRow, type Device, type SnapshotRest, type Workspace } from "./snapshot";
 
+export { thisMachineKey } from "./screenMachine";
+
 /** The rail is shown unless the operator hid it; the choice is the core's `ui_state.device_rail_visible`. */
 export function railShown(rest: SnapshotRest | null): boolean {
   return rest?.ui_state?.device_rail_visible ?? true;

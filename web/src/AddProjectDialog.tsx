@@ -6,7 +6,8 @@
 // `useRegistration`. A browser tab has no picker and never opens this dialog.
 
 import { CornerDownLeftIcon, FolderOpenIcon, FolderPlusIcon, LinkIcon, type LucideIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import type { TFunction } from "i18next";
+import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { addProjectHosts, alreadyRegistered, folderLabel, initialHost, trimFolder } from "./addProject";
 import { CloneFromUrl, cloneRunning } from "./CloneFromUrl";
@@ -31,6 +32,24 @@ export function AddProjectDialog({ actions }: { actions: Actions }) {
   return open ? <AddProject actions={actions} /> : null;
 }
 
+function AddProject({ actions }: { actions: Actions }) {
+  const close = () => useUiStore.getState().closeOverlay("add_project");
+  const [host, setHost] = useState<string | null>(null);
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+      <DialogContent
+        showCloseButton
+        aria-describedby={undefined}
+        data-add-project={host ?? ""}
+        // The views hand the keyboard to their own primary control once mounted.
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <AddProjectViews actions={actions} title={(t) => t("addProject.title")} onLeave={close} onHost={setHost} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** The other ways to add on this Mac, each a view of this dialog. */
 type OtherWay = { id: "clone" | "create"; label: MessageKey; detail: MessageKey; icon: LucideIcon };
 
@@ -42,9 +61,26 @@ const OTHER_WAYS: readonly OtherWay[] = [
 /** The Host list's last entry; it opens Add device instead of choosing a host. */
 const ADD_DEVICE = "__add_device__";
 
-function AddProject({ actions }: { actions: Actions }) {
+/**
+ * The ways to add a project, inside a dialog that holds them: Add a project's
+ * own, or the first-run wizard's third step (PRD first-run-onboarding B22),
+ * which titles it and watches the project appear itself. `onLeave` closes
+ * the holder when Add device takes its place; a holder without one (the
+ * wizard, which keeps its steps) has no Add device entry.
+ */
+export function AddProjectViews({
+  actions,
+  title,
+  onLeave,
+  onHost,
+}: {
+  actions: Actions;
+  title: (t: TFunction<"translation">) => string;
+  onLeave?: () => void;
+  /** The host the views add to, for the holder to name. */
+  onHost?: (host: string) => void;
+}) {
   const { t } = useInterfaceTranslation();
-  const close = () => useUiStore.getState().closeOverlay("add_project");
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id);
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
@@ -90,17 +126,15 @@ function AddProject({ actions }: { actions: Actions }) {
     add(path);
   };
 
+  useEffect(() => onHost?.(host.id), [onHost, host.id]);
+  // The keyboard starts on the primary control of the host in front.
+  useEffect(() => {
+    (host.id === node ? browseRef.current : fieldRef.current)?.focus();
+    // Only on mount: a host chosen later moves the keyboard through the select's own close.
+  }, []);
+
   return (
-    <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
-      <DialogContent
-        showCloseButton
-        aria-describedby={undefined}
-        data-add-project={host.id}
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          (host.id === node ? browseRef.current : fieldRef.current)?.focus();
-        }}
-      >
+      <>
         {view === "create" ? (
           <CreateProjectView actions={actions} registrations={registrations} onBack={() => open("add")} />
         ) : view === "clone" ? (
@@ -108,7 +142,7 @@ function AddProject({ actions }: { actions: Actions }) {
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>{t("addProject.title")}</DialogTitle>
+              <DialogTitle>{title(t)}</DialogTitle>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-md">
               <div className="flex items-center gap-sm">
@@ -118,7 +152,7 @@ function AddProject({ actions }: { actions: Actions }) {
                   onValueChange={(next) => {
                     // The list's last entry is Add device, the one form every entry point opens (PRD home-device-rail B13).
                     if (next === ADD_DEVICE) {
-                      close();
+                      onLeave?.();
                       actions.openAddDevice();
                       return;
                     }
@@ -144,10 +178,14 @@ function AddProject({ actions }: { actions: Actions }) {
                         {row.label}
                       </SelectItem>
                     ))}
-                    <SelectSeparator />
-                    <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
-                      {t("sidebar.addDevice")}
-                    </SelectItem>
+                    {onLeave ? (
+                      <>
+                        <SelectSeparator />
+                        <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
+                          {t("sidebar.addDevice")}
+                        </SelectItem>
+                      </>
+                    ) : null}
                   </SelectContent>
                 </Select>
               </div>
@@ -228,7 +266,6 @@ function AddProject({ actions }: { actions: Actions }) {
             </DialogBody>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+      </>
   );
 }

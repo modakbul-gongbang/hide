@@ -1027,7 +1027,6 @@ mod tests {
                 "project_base_branches": {M_ROOT: "main", C_ROOT: "trunk", X_ROOT: "dev"},
                 "project_issue_sources": {M_ROOT: "github", C_ROOT: "local", X_ROOT: "github"},
                 "expanded_inactive_checkout_project_paths": [M_ROOT, C_ROOT, X_ROOT],
-                "sessions_mode_by_project": {hide_project::project_id(M, Path::new(M_ROOT)): "memory"},
                 "selected_pane_id": panes[1],
                 "expanded_agent_pane_ids": panes,
                 "sessions_expanded_agent_pane_ids": panes,

@@ -261,9 +261,18 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
     report_count(&home, event, change, who);
 }
 
-fn print_line(text: &str) {
+/// Prints one JSON answer. On Windows every agent runs its hook under
+/// PowerShell, which re-encodes what a program prints in the console code
+/// page, so the answer goes out as ASCII with `\u` escapes, as the runtime
+/// hooks' does.
+fn print_line(json: &str) {
+    let json = if cfg!(windows) {
+        hide_agent_hooks::runtime::ascii_json(json)
+    } else {
+        json.to_owned()
+    };
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{text}").and_then(|_| stdout.flush());
+    let _ = writeln!(stdout, "{json}").and_then(|_| stdout.flush());
 }
 
 /// The spawn guard (`hide_agent_hooks::spawn_guard`) of Claude Code's and
@@ -583,9 +592,26 @@ fn memory_output_before_deadline(
     .or_else(|| hook_stdout(runtime, event))
 }
 
+/// The hook's event from stdin, read until EOF, the size cap or `deadline`.
+/// Leading UTF-8 byte order marks are dropped: the Cursor CLI on Windows
+/// pipes the event through PowerShell, which writes one before the JSON
+/// (Cursor's forum, threads 166794 and 168407), and Windows PowerShell 5.1
+/// writes one more at each pipe the event crosses, so Hide's own `$input |`
+/// inside Cursor's wrapper makes two; JSON allows none.
+fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+    const MARK: &[u8] = b"\xEF\xBB\xBF";
+    let (mut payload, truncated) = read_raw_stdin_before_deadline(deadline)?;
+    let marks = payload
+        .chunks(MARK.len())
+        .take_while(|chunk| *chunk == MARK)
+        .count();
+    payload.drain(..marks * MARK.len());
+    Some((payload, truncated))
+}
+
 #[cfg(unix)]
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+fn read_raw_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     use std::os::fd::AsRawFd;
 
     let stdin = std::io::stdin();
@@ -643,7 +669,7 @@ fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
 /// and this waits for it until the deadline; a producer that never closes
 /// stdin leaves that thread blocked, and the process exits without it.
 #[cfg(not(unix))]
-fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+fn read_raw_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(hide_agent_hooks::memory::read_bounded(std::io::stdin()));

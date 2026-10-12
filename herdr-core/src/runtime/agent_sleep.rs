@@ -725,6 +725,16 @@ impl Runtime {
             .collect()
     }
 
+    /// The agents of `device`'s panes as the core holds them: this
+    /// machine's own, or the session a node or a device reports.
+    pub(super) fn machine_agents(&self, device: &str) -> &[SidebarAgentSnapshot] {
+        if device == self.node.as_str() {
+            return &self.snapshot.navigator.agents;
+        }
+        self.node_session(device)
+            .map_or(&[], |session| session.agents.as_slice())
+    }
+
     fn node_session(&self, device: &str) -> Option<&RemoteSessionSnapshot> {
         self.snapshot
             .status

@@ -714,13 +714,7 @@ impl Runtime {
     /// Asks a node's repository again at its next read, as this machine's
     /// `refresh_pull_requests` does.
     pub(super) fn reread_node_github(&mut self, node: &str, root: &str) {
-        if let Some(read) = self
-            .device_github_reads
-            .get_mut(&(node.to_owned(), root.to_owned()))
-        {
-            read.generation = read.generation.wrapping_add(1);
-            read.asked_at = std::time::Instant::now();
-        }
+        self.refresh_device_pull_requests(node, root);
     }
 
     fn next_issue_work_id(&mut self) -> u64 {

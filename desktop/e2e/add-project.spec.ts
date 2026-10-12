@@ -10,7 +10,7 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { toPage } from "../src/main/wirePath";
-import { sendEvent } from "../../web/e2e/wire";
+import { sendEvent, THIS_MACHINE } from "../../web/e2e/wire";
 import { isolate, launch, nodeOf, test } from "./fixture";
 import { compositorPresents } from "../../web/e2e/wait";
 
@@ -53,15 +53,18 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     const browse = page.locator("[data-add-project-browse]");
     const alert = dialog.locator("[data-registration-reason]");
 
-    // The strip's + opens the dialog on this Mac, Browse folder holding the keyboard.
-    const add = page.locator("[data-sidebar-new-workspace]");
+    // The + on the sidebar's Projects title opens the dialog on this Mac, Browse folder holding the keyboard
+    // (PRD first-run-onboarding B51); it is the window's one Add project, none beside Search or on Home's title (B52).
+    const add = page.locator('[data-section="recent"] [data-sidebar-new-workspace]');
     await expect(add).toHaveAccessibleName("Add project");
-    const [addBox, searchBox] = [(await add.boundingBox())!, (await page.locator("[data-sidebar-search]").boundingBox())!];
-    expect(addBox.x).toBeLessThan(searchBox.x);
+    await expect(page.locator("[data-sidebar-new-workspace]")).toHaveCount(1);
+    await expect(page.locator("[data-sidebar-title] [data-sidebar-new-workspace], [data-main-add-project]")).toHaveCount(0);
+    await add.hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Add project");
     await add.click();
     await expect(dialog).toHaveAttribute("data-add-project", nodeOf(run.env));
     await expect(dialog.getByRole("heading", { name: "Add a project" })).toBeVisible();
-    await expect(dialog.locator("[data-add-project-host]")).toHaveText(/This Mac/);
+    await expect(dialog.locator("[data-add-project-host]")).toHaveText(new RegExp(THIS_MACHINE));
     await expect(browse).toBeFocused();
 
     // A cancelled pick changes nothing: the dialog stays, with no alert and nothing pending.
@@ -97,9 +100,10 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
 
-    // The Overview's Add project opens the same dialog, and its × closes it.
+    // Over Home, with a project listed, the Projects title's + still opens the same dialog, and its × closes it.
     await page.locator("[data-home-destination]").click();
-    await page.locator("[data-main-add-project]").click();
+    await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
+    await add.click();
     await expect(dialog).toBeVisible();
     await captureWindow(app, page, "add-project-dialog");
     await dialog.getByRole("button", { name: "Close" }).click();
@@ -238,7 +242,8 @@ test("Clone from URL clones a repository into a folder under home and adds it as
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
     const dialog = page.locator("[data-add-project]");
-    await page.locator("[data-sidebar-new-workspace]").click();
+    // With no project registered the Projects title keeps its + (B51).
+    await page.locator('[data-section="recent"] [data-sidebar-new-workspace]').click();
     await expect(dialog.locator("[data-add-project-other-ways]")).toContainText("Other ways to add");
     await dialog.locator('[data-add-project-way="clone"]').click();
 

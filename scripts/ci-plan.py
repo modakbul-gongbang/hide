@@ -123,7 +123,7 @@ READERS = (
 # install kit and hooks a packaged daemon runs, and the workflows that build
 # them. This is the only list: `package.yml` has no trigger of its own.
 PACKAGE_PATHS = (
-    "desktop/scripts/*", "desktop/package.json", "desktop/resources/*",
+    "desktop/scripts/*", "desktop/package.json", "desktop/resources/*", "desktop/native/*",
     "contracts/herdr-bundle.json", "scripts/fetch-herdr-runtime.*",
     "scripts/verify-cargo.sh", "scripts/verify-web.sh", "scripts/toolchain-env.sh",
     "hided/build.rs", "hided/src/cli.rs", "hide-kit/*", "hide-agent-hooks/*",

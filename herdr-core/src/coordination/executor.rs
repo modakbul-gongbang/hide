@@ -313,8 +313,9 @@ fn publish_tokens(client: &Client, connector: &dyn ApiConnector, id: &str) -> Re
     }
     Ok(())
 }
-/// Registers a Factory's code-owned identity as the parent its workers are
-/// spawned under (D-14); converges on the existing record.
+/// Registers a code-owned identity, a Factory's or Hide's own, as the
+/// parent or origin of the agents it starts (D-14); converges on the
+/// existing record.
 pub(crate) fn register_code_owned(
     client: &Client,
     authority: &Authority,
@@ -327,8 +328,8 @@ pub(crate) fn register_code_owned(
         id: String::new(),
         name: actor.name.clone(),
         machine: actor.device_id.clone(),
-        host_scope: crate::delivery::FACTORY_KIND.into(),
-        native_machine: crate::delivery::FACTORY_KIND.into(),
+        host_scope: actor.kind.clone(),
+        native_machine: actor.kind.clone(),
         session: actor.name.clone(),
         instance: actor.pane_id.clone(),
         pane: actor.pane_id.clone(),

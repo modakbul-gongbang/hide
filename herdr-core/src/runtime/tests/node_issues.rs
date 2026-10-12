@@ -469,6 +469,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
     );
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 pull_requests_read: true,
@@ -521,6 +522,7 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
     // source says the read failed and when the last one answered.
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 root_path: repo.root.clone(),
@@ -598,6 +600,7 @@ fn a_node_project_says_when_this_machine_s_gh_is_signed_out() {
     let mut runtime = shared.lock().unwrap();
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 root_path: repo.root.clone(),
@@ -712,6 +715,7 @@ fn a_node_project_is_named_and_searched_by_the_repository_the_node_read() {
 
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 root_path: repo.root.clone(),
@@ -743,6 +747,7 @@ fn a_new_github_issue_for_a_node_project_is_made_by_repository_name_here() {
         runtime.device_github_request(NODE, std::time::Instant::now());
         runtime.ingest_device_github(
             NODE,
+            &Default::default(),
             crate::model::GithubSnapshot {
                 projects: vec![crate::model::GithubProjectSnapshot {
                     pull_requests_read: true,
@@ -1575,6 +1580,7 @@ fn starting_a_node_project_s_issue_links_the_new_worktree_on_the_node() {
 fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 pull_requests_read: true,
@@ -1859,7 +1865,7 @@ fn a_node_pull_request_with_no_checkout_gets_its_worktree_on_the_node() {
         ingest_node_pull_request(&mut runtime, &repo);
         let mut github = runtime.device_github[NODE].clone();
         github.projects[0].pull_requests[0].head_branch = "pr-branch".to_owned();
-        runtime.ingest_device_github(NODE, github);
+        runtime.ingest_device_github(NODE, &Default::default(), github);
         node_project(&runtime).unwrap().id.clone()
     };
     dispatch(
@@ -1903,6 +1909,7 @@ fn graphql_issue(number: u32) -> String {
 fn ingest_node_issues(runtime: &mut Runtime, repo: &Repo, numbers: &[u32]) {
     runtime.ingest_device_github(
         NODE,
+        &Default::default(),
         crate::model::GithubSnapshot {
             projects: vec![crate::model::GithubProjectSnapshot {
                 pull_requests_read: true,

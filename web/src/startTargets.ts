@@ -5,6 +5,7 @@
 // read from the page when the panel opens, so nothing here is state.
 
 import type { TFunction } from "i18next";
+import { thisMachineKey } from "./devices";
 import { remoteContext } from "./remote";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { frontCheckout, localDeviceId } from "./snapshot";
@@ -36,7 +37,7 @@ export const homeKey = (deviceId: string) => `home:${deviceId}`;
 export const checkoutKey = (deviceId: string, path: string) => `checkout:${deviceId}:${path}`;
 
 /** The core's own node before the snapshot names it: the empty id, which an event carries as no `device_id`. */
-const localDevice = (t: TFunction<"translation">): Pick<Device, "id" | "label" | "kind"> => ({ id: "", label: t("common.thisMac"), kind: "local" });
+const localDevice = (t: TFunction<"translation">): Pick<Device, "id" | "label" | "kind"> => ({ id: "", label: t(thisMachineKey(null)), kind: "local" });
 
 /** A device's workspaces as the catalog lists them, and whether the device answers commands now. */
 function deviceWorkspaces(rest: SnapshotRest, device: Pick<Device, "id" | "kind">): { workspaces: Workspace[]; connected: boolean } {

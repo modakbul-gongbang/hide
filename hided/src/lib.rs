@@ -18,6 +18,7 @@ pub mod core_move;
 pub mod core_update;
 pub mod delivery_cli;
 pub mod demand;
+pub mod desktop_notices;
 pub mod ending;
 pub mod env;
 pub mod factory_cli;
@@ -454,6 +455,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
     let _reaper = browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), shutdown.clone());
     let renderers = Arc::new(AtomicUsize::new(0));
     let start_demand = Arc::new(demand::ObservationDemand::default());
+    let desktop_notices = Arc::new(desktop_notices::DesktopNotices::default());
     let mobile = mobile::Mobile::start(mobile::Config {
         state_dir: env.state_dir.clone(),
         home: env.home.clone(),
@@ -468,6 +470,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         renderers: Arc::clone(&renderers),
         start_demand: Arc::clone(&start_demand),
         open: move_gate.subscribe(),
+        desktop: Arc::clone(&desktop_notices),
     });
     let app = AppState {
         core: Arc::clone(&core),
@@ -528,6 +531,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "core_instance": core_instance(),
         })),
         mobile: Arc::clone(&mobile),
+        desktop_notices,
         relay_grants: Arc::clone(&relay_grants),
         own_screens: Arc::new(Mutex::new(0)),
         pane_sizes: core.outputs.pane_sizes(),

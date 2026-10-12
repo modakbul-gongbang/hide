@@ -1067,3 +1067,47 @@ async fn a_start_the_sheet_never_offered_is_refused_by_the_daemon() {
 fn home_target() -> String {
     format!("home:{}", hide_platform::host::machine_id().unwrap())
 }
+
+/// The desktop app's agent notifications share the phone's follower but not
+/// its setting: only a desktop window can turn them on (PRD
+/// first-run-onboarding D-14), and a browser tab asking is refused.
+#[tokio::test]
+async fn only_a_desktop_window_turns_agent_notifications_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut tab = connect(running.port, &loopback(running.port)).await;
+    tab.send(Message::Text(
+        json!({"token": running.token, "schema_version": 2, "client_kind": "web"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    event(&mut tab, "desktop_notices", json!({"wanted": true})).await;
+    loop {
+        let frame = next_frame(&mut tab).await.expect("socket open");
+        if frame["type"] == "error" {
+            assert_eq!(frame["message"], "desktop_notices is a desktop window's");
+            break;
+        }
+    }
+
+    let mut window = renderer(&running).await;
+    event(&mut window, "desktop_notices", json!({"wanted": true})).await;
+    event(&mut window, "desktop_notices", json!({"wanted": "yes"})).await;
+    loop {
+        let frame = next_frame(&mut window).await.expect("socket open");
+        if frame["type"] == "error" {
+            assert_eq!(
+                frame["message"], "desktop_notices.wanted must be a boolean",
+                "the well-formed request before it was taken without an error"
+            );
+            break;
+        }
+    }
+    running.stop();
+}

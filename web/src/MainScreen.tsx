@@ -24,6 +24,7 @@ import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import { toggledFold, useUiStore, type MainView } from "./ui";
 import { hostBridge } from "./host";
 import { commandLabel } from "./shortcutLabels";
+import { emptyHome, type EmptyHome } from "./firstRun";
 
 // The Overview of one device's projects (PRD S6 D-02, B1-B4, B21; `screen.kind
 // === "main"`, opened by the sidebar's Home row, PRD home-device-rail D-13): the
@@ -84,6 +85,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
     for (const id of localGit.split("\n")) actions.readProjectTasks(id);
   }, [actions, boards, localGit]);
   const total = stats.projects;
+  // A device still answering is not empty yet.
+  const homeEmpty = sections.every((section) => section.availability.state === "ready") ? emptyHome(total, lensAgents.length) : null;
   const openCheckout = (card: TaskCard) => {
     const project = projects.find(({ workspace }) => workspace.id === card.place.projectId);
     if (project && card.checkout) actions.openWorkspace(project.workspace.device_id, card.checkout.workspace_id, card.checkout.id);
@@ -138,12 +141,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
               {deviceName}
             </span>
           </h1>
-          {hostBridge() ? (
-            <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
-              <PlusIcon aria-hidden="true" />
-              {t("commands.new_workspace")} <span className="text-muted-foreground">{commandLabel("new_workspace")}</span>
-            </Button>
-          ) : null}
           {issueProject ? (
             <Button onClick={newIssue} data-main-new-issue="true">
               <PlusIcon aria-hidden="true" />
@@ -211,16 +208,13 @@ export function MainScreen({ actions }: { actions: Actions }) {
           actions={actions}
           page={page}
         />
+      ) : view === "agents" && homeEmpty ? (
+        <EmptyHomeView state={homeEmpty} actions={actions} />
       ) : view === "agents" ? (
         <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={graphBox} filter={graphFilter} onFilter={setGraphFilter} folds={folds} everyone={everyone} onSelectBox={selectGraphBox} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>{t("overview.empty")}</p>
-          {hostBridge() ? (
-            <Button variant="secondary" onClick={() => actions.openAddProject()} data-main-empty-add="true">
-              {t("commands.new_workspace")}
-            </Button>
-          ) : null}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-lg overflow-auto p-md" data-main-projects="true">
@@ -230,6 +224,32 @@ export function MainScreen({ actions }: { actions: Actions }) {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The Home with nothing to draw (PRD first-run-onboarding D-16, B27-B29):
+ * the next step in one sentence with its button and chord. A browser tab
+ * cannot pick a folder, so with no project it shows the sentence alone.
+ */
+function EmptyHomeView({ state, actions }: { state: Exclude<EmptyHome, null>; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const add = state === "no_project";
+  const command = add ? "new_workspace" : "start_agent";
+  const chord = commandLabel(command);
+  const button = add ? (hostBridge() ? t("firstRun.home.addProject") : null) : t("firstRun.home.startAgent");
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-md p-xl text-center" data-main-empty-home={state}>
+      <p className="text-subhead text-subtle-foreground">{add ? t("firstRun.home.noProject") : t("firstRun.home.noAgent")}</p>
+      {button ? (
+        <span className="flex items-center gap-sm">
+          <Button onClick={() => (add ? actions.openAddProject() : actions.openStartPanel())} data-main-empty-home-action={command}>
+            {button}
+          </Button>
+          {chord ? <Kbd aria-hidden="true">{chord}</Kbd> : null}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

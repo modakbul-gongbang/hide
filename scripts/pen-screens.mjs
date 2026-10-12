@@ -32,13 +32,12 @@
 // The generator and checker share this effective color walk, addressed by each
 // full instance path, so separate instances never share an override by accident.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
 import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
+import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
@@ -4858,75 +4857,25 @@ function buildOverview(tokens) {
 
 // -- Screen / Onboarding ---------------------------------------------------------
 
-// The first-run agent choice (web/src/AgentOnboarding.tsx): a Dialog over a
-// grid of square tiles, one per adapter. A set-up agent's tile is on or off, an
-// agent that is not set up is dimmed with no switch. Logos are the bundled
-// marks web/src/assets/agents/manifest.json lists, read from it as
-// web/src/agentLogos.ts reads the files; an agent with no mark that may be
-// bundled draws a monogram, never a drawn logo.
+const ONBOARDING_SPEC = 'web/src/FirstRunWizard.tsx, NotificationControls.tsx, firstRun.ts, StartPanel.tsx, MainScreen.tsx (EmptyHomeView), sidebar.tsx, settings/GeneralTab.tsx, ScreenIntro.tsx and desktop/static/status.css (PRD first-run-onboarding D-20, D-27, B1-B52): the first run in three steps as a dialog over the dimmed shell, with the three-segment bar and "1 of 3" on top. Step 1 is the seven agents in the kit order as tiles that say whether each is ready, signed out, checking or not installed, the What changes disclosure that lists each file Hide writes once with the agents that share it, the Hide AI line beside Continue, and its failed, no-agent and reopened states. Step 2 is the notification line on each system and in each answer macOS can give, with the one press that answers it and Also on your phone. Step 3 is Add a project inside the wizard. Then the start panel it closes into (with Not signed in beside an agent that is), the empty Home in its two states, the sidebar whose only Add project is the + on the Projects label, Settings > General Notifications on macOS, on Windows and Linux and with no notification service, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light). Paths, projects and the build line are invented.';
+
+// Each board is a captioned section in one column. Its themed frame keeps the
+// id and geometry the approved bundle's node has (agents/runs/first-run-onboarding
+// design baseline, `<board>-light` / `<board>-dark`), so a design review exports
+// the same node from this file; the ids inside are prefixed to stay unique.
 function buildOnboarding(tokens, root) {
-  const W = num(tokens, '--size-onboarding-dialog-w');
-  const LOGO = num(tokens, '--size-agent-logo');
-  const GAP = num(tokens, '--spacing-sm');
-  const COLUMNS = 4;
-  const INNER = W - 2 * num(tokens, '--spacing-lg');
-  const TILE = Math.floor((INNER - (COLUMNS - 1) * GAP) / COLUMNS);
-  const dimmed = num(tokens, '--opacity-dimmed');
-  // Each mark's path from design/, where this file lives.
-  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'web/src/assets/agents/manifest.json'), 'utf8'));
-  const MARKS = Object.fromEntries([...manifest.existing, ...manifest.logos].map(({id, file}) => [id, path.posix.join('../web/src/assets/agents', file)]));
-  // [id, label, state]: on, off, or none (not set up on this machine).
-  const AGENTS = [
-    ['claude-code', 'Claude Code', 'on'], ['codex', 'Codex', 'on'], ['opencode', 'OpenCode', 'on'], ['omp', 'omp', 'off'],
-    ['cursor', 'Cursor', 'none'], ['copilot-cli', 'Copilot CLI', 'none'], ['amp', 'Amp', 'none'], ['factory-droid', 'Factory Droid', 'none'],
-    ['kiro', 'Kiro', 'none'], ['qwen-code', 'Qwen Code', 'none'], ['goose', 'Goose', 'none'], ['cline', 'Cline', 'none'],
-    ['kilo-code', 'Kilo Code', 'none'], ['crush', 'Crush', 'none'], ['junie', 'Junie', 'none'], ['augment', 'Augment', 'none'],
-    ['pi', 'Pi', 'none'], ['grok', 'Grok', 'none'], ['kimi-code', 'Kimi Code', 'none'], ['mistral-vibe', 'Mistral Vibe', 'none'],
-  ];
-  const monogramOf = label => {
-    const words = label.split(/[\s-]+/).filter(Boolean);
-    return (words.length > 1 ? words.slice(0, 2).map(word => word[0]) : [...words[0]].slice(0, 2)).join('').toUpperCase();
+  const boards = onboardingBoards(tokens, root, {themedXref, screenButton, screenIconButton, screenSelect, screenTabs, tabRefs});
+  const prefix = node => ({...node, id: `onb-${node.id}`, ...(node.children ? {children: node.children.map(prefix)} : {})});
+  const build = suffix => {
+    const mode = suffix === 'l' ? 'Light' : 'Dark';
+    return [frame(`onb-column-${suffix}`, 'Boards', {layout: 'vertical', gap: '$--spacing-xxl'},
+      boards.filter(board => board.frames[suffix]).map(board => frame(`onb-${board.id}-${suffix}`, board.name, {layout: 'vertical', gap: '$--spacing-md'}, [
+        text(`onb-${board.id}-${suffix}-title`, board.name, {size: '$--text-title', weight: '600'}),
+        text(`onb-${board.id}-${suffix}-spec`, board.spec, {size: '$--text-caption', fill: '$--muted-foreground', width: 1100}),
+        frame(`${board.id}-${mode.toLowerCase()}`, mode, {theme: {Mode: mode}, layout: 'vertical', gap: '$--spacing-lg', padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-md', width: 'fit_content'}, board.frames[suffix].map(prefix)),
+      ])))];
   };
-  function build(suffix) {
-    const id = name => `onb-${name}-${suffix}`;
-    const tile = ([agent, label, state]) => {
-      const on = state === 'on';
-      const plate = frame(id(`${agent}-plate`), 'Logo plate', {width: LOGO, height: LOGO, cornerRadius: '$--radius-md', fill: '$--logo-plate', layout: 'horizontal', alignItems: 'center', justifyContent: 'center', clip: true},
-        MARKS[agent]
-          ? [frame(id(`${agent}-logo`), 'Logo', {width: LOGO - 8, height: LOGO - 8, fill: {type: 'image', enabled: true, url: MARKS[agent], mode: 'fit'}}, [])]
-          : [text(id(`${agent}-mono`), monogramOf(label), {mono: true, weight: '600', fill: '$--muted-foreground'})]);
-      const children = [
-        plate,
-        text(id(`${agent}-name`), label, {weight: '600', fill: '$--foreground'}),
-        text(id(`${agent}-state`), state === 'none' ? 'Not installed' : on ? 'On' : 'Off', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      ];
-      if (state !== 'none') {
-        children.push(frame(id(`${agent}-check`), 'Check', {
-          width: 16, height: 16, cornerRadius: 8, layout: 'horizontal', alignItems: 'center', justifyContent: 'center',
-          ...(on ? {fill: '$--primary'} : {}), stroke: on ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layoutPosition: 'absolute', x: TILE - 16 - 8, y: 8,
-        }, on ? [icon(id(`${agent}-checki`), 'check', {size: 12, fill: '$--primary-foreground'})] : []));
-      }
-      return frame(id(`${agent}-tile`), `Tile · ${label} · ${state}`, {
-        width: TILE, height: TILE, layout: 'vertical', alignItems: 'center', justifyContent: 'center', gap: '$--spacing-xs', padding: '$--spacing-sm',
-        cornerRadius: '$--radius-md', stroke: on ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-        ...(on ? {fill: '$--card'} : {}), ...(state === 'none' ? {opacity: dimmed} : {}),
-      }, children);
-    };
-    const rows = [];
-    for (let at = 0; at < AGENTS.length; at += COLUMNS) {
-      rows.push(frame(id(`row-${at / COLUMNS}`), 'Row', {layout: 'horizontal', gap: GAP}, AGENTS.slice(at, at + COLUMNS).map(tile)));
-    }
-    return [screenDialogSurface(id('surface'), {
-      width: W, title: 'Choose the agents Hide works with', prose: true,
-      description: 'Each agent you leave on gets a skill for driving Hide’s browser and, where the agent supports one, a session hook. Hide edits only its own entries, and you can change this any time in Settings, Agents.',
-      body: [
-        frame(id('grid'), 'Grid', {layout: 'vertical', gap: GAP}, rows),
-        text(id('devices'), 'Connected devices get the same choice, each by what is installed there.', {size: '$--text-caption', fill: '$--muted-foreground', width: INNER}),
-      ],
-      actions: [screenButton(id('apply'), 'Apply')],
-    })];
-  }
-  return screenSheet('screen-onboarding', 'Screen / Onboarding', 'web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown while the core says the choice is pending, and only Apply ends it. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Apply is the only button: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off; Apply installs the agents left on here and on every device that waits for the choice.', build, build);
+  return screenSheet('screen-onboarding', 'Screen / Onboarding', ONBOARDING_SPEC, build, build);
 }
 
 export function screenSheets(tokens, root) {

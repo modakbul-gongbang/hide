@@ -130,6 +130,8 @@ pub struct AppState {
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).
     pub mobile: Arc<crate::mobile::Mobile>,
+    /// The desktop windows' agent notifications (`desktop_notices.rs`).
+    pub desktop_notices: Arc<crate::desktop_notices::DesktopNotices>,
     /// The grants this core handed linked nodes' screen relays (`relay`).
     pub relay_grants: Arc<crate::attach::RelayGrants>,
     /// Windows of this machine open now (`OwnScreen`).
@@ -866,6 +868,10 @@ async fn screen_loop(
             return;
         }
     }
+    // A desktop window shows the agent notifications (`agent_notice`); a
+    // browser tab never does (PRD first-run-onboarding D-14), so it keeps no
+    // receiver that would hold frames it never reads.
+    let mut agent_notices = desktop.then(|| state.desktop_notices.subscribe());
     // Settings > Mobile reads one `mobile` frame, sent now and on each change.
     let mut mobile_frames = state.mobile.subscribe_frame();
     if renderer {
@@ -996,6 +1002,29 @@ async fn screen_loop(
                     break;
                 }
             }
+            notice = async {
+                match agent_notices.as_mut() {
+                    Some(notices) => notices.recv().await,
+                    None => std::future::pending().await,
+                }
+            }, if desktop => {
+                match notice {
+                    Ok(frame) => {
+                        if socket.send(Message::Text(frame.as_ref().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // A window that fell behind misses those notifications;
+                    // the next change is announced as usual.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                        herdr_core::diagnostic!(json!({
+                            "component": "desktop_notices", "kind": "agent_notice.lagged",
+                            "connection": connection, "missed": missed,
+                        }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                }
+            }
             changed = mobile_frames.changed(), if renderer => {
                 if changed.is_err() {
                     break;
@@ -1037,7 +1066,7 @@ async fn screen_loop(
                             }
                             continue;
                         }
-                        match handle_client_text(&state, &text, connection) {
+                        match handle_client_text(&state, &text, connection, desktop) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
                                     let slot = relay.as_ref().map(RelayScreen::slot);
@@ -1229,8 +1258,11 @@ enum ScopedRequest {
     },
     /// `hide links`: a read of the link record, which needs no shell.
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory --hook`: a hook's Project Memory, which needs no shell.
-    Memory(herdr_core::memory_hook::Ask),
+    /// `hide memory`: Project Memory's own store, which needs no shell.
+    Memory(herdr_core::memory_command::MemoryCommand),
+    /// `hide workspace memory`: a hook's Project Memory, which needs no
+    /// shell.
+    MemoryHook(herdr_core::memory_hook::Ask),
 }
 
 impl ScopedRequest {
@@ -1244,6 +1276,7 @@ impl ScopedRequest {
                 | Self::FactoryQuestionGuard { .. }
                 | Self::Links(..)
                 | Self::Memory(..)
+                | Self::MemoryHook(..)
         )
     }
 }
@@ -1339,9 +1372,15 @@ async fn scoped_client_loop(
                                 value["caller_pane"].as_str().map(str::to_owned),
                             )
                         }),
+                        Some("memory") => serde_json::from_value::<
+                            herdr_core::memory_command::MemoryCommand,
+                        >(value["command"].clone())
+                        .ok()
+                        .filter(herdr_core::memory_command::MemoryCommand::valid)
+                        .map(ScopedRequest::Memory),
                         Some("factory_question_guard") => factory_question_guard(&value),
-                        Some("memory") => herdr_core::memory_hook::Ask::from_wire(&value)
-                            .map(ScopedRequest::Memory),
+                        Some("memory_hook") => herdr_core::memory_hook::Ask::from_wire(&value)
+                            .map(ScopedRequest::MemoryHook),
                         _ => None,
                     };
                     if command.is_none()
@@ -1474,7 +1513,7 @@ async fn scoped_client_loop(
                                             (code, next)
                                         })?
                                 }
-                                ScopedRequest::Memory(ask) => {
+                                ScopedRequest::MemoryHook(ask) => {
                                     let deadline = std::time::Instant::now() + herdr_core::memory_hook::WITHIN;
                                     let scope = core.memory_scope(&cap.context).map_err(|reason| {
                                         herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
@@ -1495,6 +1534,14 @@ async fn scoped_client_loop(
                                     ))?;
                                     herdr_core::links::query::run(&scope, &query, own.as_ref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                }
+                                ScopedRequest::Memory(command) => {
+                                    core.prepare_memory(&cap.context.device_id, &cap.pane_id, &cap.context, command)
+                                        .and_then(herdr_core::memory_command::PreparedMemory::run)
+                                        .map_err(|code| {
+                                            let next = herdr_core::memory_command::next_action(&code);
+                                            (code, next)
+                                        })?
                                 }
                                 ScopedRequest::Query(query) => {
                                     let mut result = core
@@ -1798,6 +1845,7 @@ fn handle_client_text(
     state: &AppState,
     text: &str,
     connection: u64,
+    desktop: bool,
 ) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
@@ -1872,6 +1920,24 @@ fn handle_client_text(
             let (pane, size, new_view) = terminal_view(&event)?;
             let shown = state.pane_sizes.view(connection, &pane, size);
             state.core.terminals.view(&pane, shown, new_view);
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
+        // A desktop window says whether its notifications are on; the daemon
+        // judges agent changes for it only then (`desktop_notices.rs`).
+        Some("desktop_notices") => {
+            if !desktop {
+                return Err("desktop_notices is a desktop window's".to_owned());
+            }
+            let Some(wanted) = event
+                .get("payload")
+                .and_then(|payload| payload.get("wanted"))
+                .and_then(Value::as_bool)
+            else {
+                return Err("desktop_notices.wanted must be a boolean".to_owned());
+            };
+            if state.desktop_notices.set(connection, wanted) {
+                state.mobile.wake_follower();
+            }
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
@@ -3616,6 +3682,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
+    state.desktop_notices.release(connection);
     for (pane, size) in state.pane_sizes.left(connection) {
         send_grid(state, &pane, size);
     }
@@ -4088,8 +4155,8 @@ mod tests {
         );
     }
 
-    /// B43: `hide links` and delivery answer with no shell open; every
-    /// Workspace command still needs one.
+    /// B43: `hide links`, `hide memory`, a hook's Memory and delivery answer
+    /// with no shell open; every Workspace command still needs one.
     #[test]
     fn only_the_daemons_own_reads_answer_without_a_shell() {
         use herdr_core::links::query::{LinksQuery, QueryTarget};
@@ -4098,6 +4165,15 @@ mod tests {
             all_projects: false,
         });
         assert!(!links.needs_renderer());
+        assert!(
+            !ScopedRequest::Memory(herdr_core::memory_command::MemoryCommand::Show { number: 1 })
+                .needs_renderer()
+        );
+        let hook = herdr_core::memory_hook::Ask::from_wire(&json!({
+            "event": "SessionStart", "runtime": "codex", "session": "s-1",
+        }))
+        .unwrap();
+        assert!(!ScopedRequest::MemoryHook(hook).needs_renderer());
         assert!(ScopedRequest::Query(herdr_core::workspace_control::Query::Info).needs_renderer());
         assert!(ScopedRequest::BrowserConnect(None).needs_renderer());
     }

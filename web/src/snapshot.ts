@@ -524,7 +524,7 @@ export type Tab = {
 
 export type StripTab = {
   id: string;
-  kind: "herdr" | "file" | "diff" | "session" | "memory";
+  kind: "herdr" | "file" | "diff" | "session";
   source_id: string;
   label: string;
   preview: boolean;
@@ -874,7 +874,7 @@ export type PaneFindRoute = "agent" | "bar";
 /** What kind of document the core decided an open file is (`files::open`). */
 export type DocumentKind = "text" | "markdown" | "image" | "pdf" | "binary";
 
-export type EditorTabKind = "file" | "diff" | "session" | "memory";
+export type EditorTabKind = "file" | "diff" | "session";
 
 /** One editor tab the core holds. Its id is the strip entry's `source_id`. */
 export type EditorTabSnapshot = {
@@ -1076,6 +1076,17 @@ export type KitComponentState = "installed" | "outdated" | "not_installed" | "re
 
 /** Whether an agent can be switched on where a machine runs (`contracts/snapshot-wire-enums.json`: `kit_agent_availability`). */
 export type KitAgentAvailability = "available" | "not_installed" | "unsupported_system";
+
+/** The first-run wizard's steps (`contracts/snapshot-wire-enums.json`: `first_run_step`). */
+export type FirstRunStep = "agents" | "notifications" | "project" | "done";
+
+export type FirstRun = { version: number; step: FirstRunStep };
+
+/** The flow version this build draws; the core keeps the same number (`FIRST_RUN_VERSION`). */
+export const FIRST_RUN_VERSION = 1;
+
+/** The screens introduced once (`contracts/snapshot-wire-enums.json`: `screen_intro`). */
+export type ScreenIntro = "factory";
 
 /** One piece of an agent (its skill or its hook) on its machine. */
 export type KitPiece = {
@@ -1396,6 +1407,10 @@ export type ArchiveEvent = {
   kind: string;
   at_unix_ms: number;
   text: string;
+  /** The Memory cards a prompt hook gave the agent in full at this prompt, by number (PRD project-memory-v2 B33). */
+  memory_received?: number[];
+  /** The cards Memory learned from this turn and still keeps, by number. */
+  memory_learned?: number[];
 };
 
 export type ArchiveDetail = {
@@ -1406,6 +1421,75 @@ export type ArchiveDetail = {
   unavailable_reason: string | null;
   events: ArchiveEvent[];
 };
+
+/** A card's kind (`contracts/snapshot-wire-enums.json`: `memory_card_kind`). */
+export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact";
+
+/** Where a card's promotion into the repository stands (`memory_promotion_state`). */
+export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
+
+/** What the Memory tab's operator asks for (`memory_action`). */
+export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss";
+
+/** One card of the opened Project, as its two-line row shows it. */
+export type MemoryRow = {
+  number: number;
+  title: string;
+  kind: MemoryCardKind;
+  human_source_count: number;
+  /** Sessions the card was given to in full. */
+  provided_session_count: number;
+  /** Times an agent read it with `hide memory show`. */
+  pull_count: number;
+  updated_at_unix_ms: number;
+  /** Null for an ordinary card, a dismissed one, or one whose pull request closed unmerged. */
+  promotion: {
+    state: MemoryPromotionState;
+    /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
+    agent: { name: string; pane_id: string | null } | null;
+    pr_number: number | null;
+    target_path: string | null;
+    /** Why GitHub could not say whether an `unconfirmed` attempt's pull request came, when it said. */
+    github_failure: GithubFailureCategory | null;
+  } | null;
+};
+
+/** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
+export type MemoryQuestion =
+  | { kind: "promote"; number: number; title: string; human_source_count: number; pulled_session_count: number }
+  | { kind: "failed"; number: number; title: string };
+
+/** The card shown in full (`memory_expand`). */
+export type MemoryCard = {
+  number: number;
+  body: string;
+  cited_paths: string[];
+  sources: { provider_label: string; at_unix_ms: number | null; human: boolean }[];
+  /** The text the current one replaced, which Undo brings back. */
+  previous: { body: string; changed_at_unix_ms: number } | null;
+};
+
+/** One opened Project's Memory (`memory.project`), keyed by the catalog Project a shell opened. */
+export type ProjectMemory = {
+  workspace_id: string;
+  /** Why this Project has no Memory here; null when it has. */
+  unavailable: { reason: "remote_device"; device_name: string } | { reason: "unregistered" } | { reason: "unreadable" } | null;
+  loading: boolean;
+  enabled: boolean;
+  capacity_reached: boolean;
+  rows: MemoryRow[];
+  questions: MemoryQuestion[];
+  /** `memory_analysis_state`. */
+  analysis: "idle" | "analyzing" | "ai_not_ready";
+  /** The card just forgotten, offered back with Undo. */
+  forgotten: number | null;
+  pending_action: MemoryAction | null;
+  expanded: MemoryCard | null;
+  search: { query: string; numbers: number[] } | null;
+};
+
+/** The `memory` section: absent until a shell opens a Project's Memory. */
+export type MemorySection = { project: ProjectMemory | null };
 
 /** The session opened beside a Project's Sessions (`archive_open` with a `workspace_id`). */
 export type ProjectSessionDetail = {
@@ -1583,6 +1667,12 @@ export type SnapshotRest = {
     agent_onboarding?: "pending" | "done" | null;
     /** The agents left on in that choice. */
     agent_onboarding_agents?: string[];
+    /** The first-run wizard's progress (PRD first-run-onboarding D-07): absent on a Mac that never had one; another flow `version` is not this build's to show. */
+    first_run?: FirstRun | null;
+    /** Settings > General's Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
+    desktop_notifications?: boolean;
+    /** The screens whose one-line introduction was shown (B43). */
+    screen_intros_seen?: ScreenIntro[];
     font_size?: number;
     /** The sidebar's width in CSS pixels, 220 to 440; the core refuses anything else (PRD sidebar-typography D-09). */
     sidebar_width?: number;

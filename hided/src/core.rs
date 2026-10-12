@@ -60,6 +60,13 @@ enum Command {
         command: hide_factory::Command,
         reply: Sender<Result<herdr_core::factory::PreparedFactory, String>>,
     },
+    MemoryPrepare {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        command: herdr_core::memory_command::MemoryCommand,
+        reply: Sender<Result<herdr_core::memory_command::PreparedMemory, String>>,
+    },
     SetFileRoots {
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
         reply: Sender<Result<(), String>>,
@@ -246,6 +253,28 @@ impl CoreHandle {
         result
             .recv()
             .map_err(|_| "factory_unavailable".to_owned())?
+    }
+
+    /// Checks a `hide memory` caller on the owner thread; the command runs
+    /// on the caller's blocking task.
+    pub fn prepare_memory(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        command: herdr_core::memory_command::MemoryCommand,
+    ) -> Result<herdr_core::memory_command::PreparedMemory, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::MemoryPrepare {
+                device_id: device.to_owned(),
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                command,
+                reply,
+            })
+            .map_err(|_| "memory_unavailable".to_owned())?;
+        result.recv().map_err(|_| "memory_unavailable".to_owned())?
     }
 
     #[allow(clippy::too_many_arguments)] // carry the authenticated pane facts and caller-owned deadline unchanged
@@ -494,8 +523,9 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped browser route source".to_owned())
     }
 
-    /// The Projects a `hide links` read may answer from, as the core knows
-    /// them now; the read itself runs on the caller's blocking task.
+    /// What a hook's Memory read for the pane in `context` is answered from,
+    /// as the core knows it now; the node call and the store read run on the
+    /// caller's blocking task.
     pub fn memory_scope(
         &self,
         context: &Context,
@@ -510,6 +540,8 @@ impl CoreHandle {
         rx.recv().map_err(|_| "core_unavailable")?
     }
 
+    /// The Projects a `hide links` read may answer from, as the core knows
+    /// them now; the read itself runs on the caller's blocking task.
     pub fn links_scope(&self, context: &Context) -> Option<herdr_core::links::query::Scope> {
         let (reply, rx) = mpsc::channel();
         self.commands
@@ -783,6 +815,15 @@ fn owner_loop(
             }
             Command::ReleaseEffects { reply } => {
                 let _ = reply.send(core.release_effects());
+            }
+            Command::MemoryPrepare {
+                device_id,
+                pane_id,
+                expected,
+                command,
+                reply,
+            } => {
+                let _ = reply.send(core.prepare_memory(&device_id, &pane_id, &expected, command));
             }
             Command::FactoryPrepare {
                 device_id,

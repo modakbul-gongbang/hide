@@ -6,11 +6,12 @@ import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
-import { AgentOnboardingScene } from "./AgentOnboardingScene";
+import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
 import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
 import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
+import { MemoryScene, memorySceneParams } from "./MemoryScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
@@ -29,14 +30,19 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
       return;
     }
-    if (scene === "agent-onboarding") {
-      document.title = "hide · Agent onboarding scene";
-      root.render(<StrictMode><AgentOnboardingScene theme={params.get("theme") === "light" ? "light" : "dark"} /></StrictMode>);
+    if (scene === "onboarding") {
+      document.title = "hide · First run scene";
+      root.render(<StrictMode><OnboardingScene {...onboardingSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "search-palette") {
       document.title = "hide · ⌘K scene";
       root.render(<StrictMode><CmdkScene {...cmdkSceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "memory") {
+      document.title = "hide · Memory scene";
+      root.render(<StrictMode><MemoryScene {...memorySceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "factory") {

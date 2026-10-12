@@ -1,4 +1,4 @@
-//! `hide memory --hook`: an agent hook's Project Memory, answered by the core
+//! `hide workspace memory`: an agent hook's Project Memory, answered by the core
 //! from the one store it owns, whichever machine's agent asks (PRD
 //! core-host-node-move D-12, B14).
 //!
@@ -41,14 +41,12 @@ pub struct Ask {
     event: HookEvent,
     session: String,
     prompt: Option<String>,
-    /// The agent's working folder, canonical on the agent's machine.
-    cwd: Option<String>,
 }
 
 impl Ask {
-    /// The ask a `memory` request carries: an event Memory answers, the
+    /// The ask a `memory_hook` request carries: an event Memory answers, the
     /// runtime as Memory names its sessions, the agent's own session id, and
-    /// the prompt and working folder when the hook has them.
+    /// the prompt when the hook has one.
     pub fn from_wire(value: &Value) -> Option<Self> {
         let event = match value["event"].as_str()? {
             "SessionStart" => HookEvent::SessionStart,
@@ -61,24 +59,16 @@ impl Ask {
         let session = value["session"]
             .as_str()
             .filter(|session| crate::delivery::valid_session(session))?;
-        let text = |key: &str| match value.get(key) {
-            None | Some(Value::Null) => Some(None),
-            Some(Value::String(text)) => Some(Some(text.clone())),
-            Some(_) => None,
+        let prompt = match value.get("prompt") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(text.clone()),
+            Some(_) => return None,
         };
-        let cwd = text("cwd")?;
-        if cwd
-            .as_deref()
-            .is_some_and(|cwd| cwd.is_empty() || cwd.chars().any(char::is_control))
-        {
-            return None;
-        }
         Some(Self {
             runtime: runtime.to_owned(),
             event,
             session: session.to_owned(),
-            prompt: text("prompt")?,
-            cwd,
+            prompt,
         })
     }
 }
@@ -131,10 +121,6 @@ pub fn answer(scope: &Scope, ask: &Ask, deadline: Instant) -> HookContext {
             });
         }
     };
-    let path_context = ask
-        .cwd
-        .as_deref()
-        .map(|cwd| hide_memory::hook::path_context(&project, cwd));
     hide_memory::hook::context_for(
         &scope.store,
         &project,
@@ -143,7 +129,6 @@ pub fn answer(scope: &Scope, ask: &Ask, deadline: Instant) -> HookContext {
             event: ask.event,
             session_id: &ask.session,
             prompt: ask.prompt.as_deref(),
-            path_context: path_context.as_deref(),
         },
         move || Instant::now() >= deadline,
     )
@@ -183,12 +168,13 @@ mod tests {
     fn the_memory_wire_admits_exactly_the_runtimes_whose_adapter_declares_memory() {
         let schema: Value =
             serde_json::from_str(include_str!("../../contracts/hided-ws.schema.json")).unwrap();
-        let wire: BTreeSet<String> = schema["$defs"]["memoryAsk"]["properties"]["runtime"]["enum"]
-            .as_array()
-            .expect("memory runtime enum")
-            .iter()
-            .map(|value| value.as_str().unwrap().to_owned())
-            .collect();
+        let wire: BTreeSet<String> =
+            schema["$defs"]["memoryHookAsk"]["properties"]["runtime"]["enum"]
+                .as_array()
+                .expect("memory runtime enum")
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect();
         assert_eq!(wire, memory_runtimes().collect::<BTreeSet<_>>());
         for runtime in &wire {
             let ask = Ask::from_wire(&json!({
@@ -200,7 +186,6 @@ mod tests {
             json!({"event": "UserPromptSubmit", "runtime": "grok", "session": "s-1"}),
             json!({"event": "Stop", "runtime": "codex", "session": "s-1"}),
             json!({"event": "SessionStart", "runtime": "codex", "session": ""}),
-            json!({"event": "SessionStart", "runtime": "codex", "session": "s-1", "cwd": "a\nb"}),
             json!({"event": "SessionStart", "runtime": "codex", "session": "s-1", "prompt": 7}),
         ] {
             assert!(Ask::from_wire(&refused).is_none(), "{refused}");

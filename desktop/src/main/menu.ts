@@ -12,6 +12,7 @@
 import type { MenuItemConstructorOptions } from "electron";
 import type { TFunction } from "i18next";
 import { commandTitle } from "../../../web/src/commandTitle";
+import { SETUP_COMMAND } from "../../../web/src/host";
 import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
@@ -127,9 +128,12 @@ function items(layout: readonly (CommandId | null)[], send: (id: CommandId) => v
   });
 }
 
+/** What a menu item sends the shell: a registry command, or the host's own Set up Hide. */
+export type MenuCommand = CommandId | typeof SETUP_COMMAND;
+
 export function menuTemplate(options: {
   appName: string;
-  send: (id: CommandId) => void;
+  send: (id: MenuCommand) => void;
   developer: boolean;
   system: KeySystem;
   /** The language the menu is drawn in; a role item carries its label too, since the system's own follows the OS, not the operator's choice. */
@@ -214,6 +218,10 @@ export function menuTemplate(options: {
           },
         ] as MenuItemConstructorOptions[])
       : []),
-    { role: "help", label: t("native.menu.help"), submenu: items(MENU_LAYOUT.Help, send, registry, t) },
+    {
+      role: "help",
+      label: t("native.menu.help"),
+      submenu: [{ id: SETUP_COMMAND, label: t("native.menu.setupHide"), click: () => send(SETUP_COMMAND) }, { type: "separator" }, ...items(MENU_LAYOUT.Help, send, registry, t)],
+    },
   ];
 }

@@ -1,4 +1,6 @@
+import { receiveAgentNotice } from "./agentNotices";
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
+import type { AgentNotice } from "./generated/hided-ws";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
 import { moveUnderWay, type MoveView } from "./coreMove";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
@@ -179,6 +181,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         const nodeHolds = !drawn && useShellStore.getState().coreLink !== null;
         if (moveUnderWay(view.state) || nodeHolds) useShellStore.getState().setConnection("moving");
         else if (drawn && useShellStore.getState().connection === "moving") useShellStore.getState().setConnection("live");
+        return;
+      }
+      if (frame.type === "agent_notice") {
+        receiveAgentNotice(frame.payload as unknown as AgentNotice);
         return;
       }
       if (frame.type === "file_bytes_error") {
