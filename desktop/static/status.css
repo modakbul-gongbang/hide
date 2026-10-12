@@ -16,6 +16,26 @@ body {
   user-select: none;
 }
 
+/* With the title bar hidden (macOS), the top row is the window's drag strip
+   and the traffic lights' place, as the web shell's top row is; nothing is
+   drawn under it, and the content below stays centered in the rest. */
+#titlebar {
+  display: none;
+}
+
+body[data-titlebar="hidden"] #titlebar {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--size-tab-strip);
+  -webkit-app-region: drag;
+}
+
+body[data-titlebar="hidden"] main {
+  box-sizing: border-box;
+  padding-top: var(--size-tab-strip);
+}
+
 main {
   display: flex;
   height: 100%;

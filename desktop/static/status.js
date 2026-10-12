@@ -19,6 +19,8 @@ function words(key) {
 }
 
 document.documentElement.lang = words("lang");
+// `hidden`: macOS draws its window buttons over the page's top, which stays a drag strip.
+document.body.dataset.titlebar = words("titlebar");
 document.getElementById("connecting").textContent = words("connecting");
 document.getElementById("retry").textContent = words("retry");
 const copy = document.getElementById("copy");
