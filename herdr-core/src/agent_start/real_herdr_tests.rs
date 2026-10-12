@@ -1,30 +1,82 @@
-//! The start against the pinned Herdr itself, in zsh panes whose startup file
-//! asks a one-key question, as oh-my-zsh's update prompt does with
-//! `read -k 1`. In the incident this replays, the start typed into that
+//! The start against the pinned Herdr itself, in zsh and fish panes whose
+//! startup file asks a one-key question, as oh-my-zsh's update prompt does
+//! with `read -k 1`. In the incident this replays, the start typed into that
 //! question: its first letter answered it and the shell ran the rest.
 //!
-//! It needs the pinned binary, so it is ignored by default; run it with
-//! `--ignored` and the binary named in `HIDE_E2E_HERDR_BIN`. The server it
-//! starts is private: its own socket, session, config and home, none of the
-//! operator's.
+//! It needs the pinned binary and the shells, so it is ignored by default;
+//! run it with `--ignored` and the binaries named in `HIDE_E2E_HERDR_BIN`,
+//! `HIDE_TEST_ZSH_BIN` and `HIDE_TEST_FISH_BIN`. The server it starts is
+//! private: its own socket, session, config and home, none of the operator's.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use hide_herdr_client::LocalSocketConnector;
+use hide_host::shell_integration::UserShell;
 
 use super::*;
 
-/// The user's own `.zshrc`: `claude` records the arguments it was started
+/// A shell Herdr runs in its panes, and the user's own startup file for it:
+/// it asks the question, and `claude` records the arguments it was started
 /// with and becomes a long-running process of that name, which Herdr reads
-/// as the agent: `~/bin/claude` runs as `claude`.
-const ZSHRC: &str = r#"PS1='fixture %# '
+/// as the agent (`~/bin/claude` runs as `claude`).
+struct Fixture {
+    variable: &'static str,
+    rc: &'static str,
+    text: &'static str,
+}
+
+const ZSH: Fixture = Fixture {
+    variable: "HIDE_TEST_ZSH_BIN",
+    rc: ".zshrc",
+    text: r#"PS1='fixture %# '
 claude() { print -r -- "${PWD:t} $*" >> ~/claude-args; exec -a claude ~/bin/claude 600 }
 read -k 1 'answer?Update the framework now? [Y/n] '
 print -r -- "${PWD:t} answered [$answer]" >> ~/answers
-"#;
+"#,
+};
+
+const FISH: Fixture = Fixture {
+    variable: "HIDE_TEST_FISH_BIN",
+    // Herdr gives its panes its own XDG_CONFIG_HOME.
+    rc: "xdg-config/fish/config.fish",
+    text: r#"function fish_prompt; echo -n 'fixture> '; end
+function claude
+    echo (basename $PWD)" $argv" >> ~/claude-args
+    exec /bin/bash -c 'exec -a claude "$HOME/bin/claude" 600'
+end
+read -n 1 -P 'Update the framework now? [Y/n] ' answer
+echo (basename $PWD)" answered [$answer]" >> ~/answers
+"#,
+};
 
 const QUESTION: &str = "Update the framework now? [Y/n]";
+
+/// The pane's node: it writes the integration for the fixture's shell.
+struct Node {
+    home: PathBuf,
+    shell: PathBuf,
+}
+
+impl NodeLink for Node {
+    fn call(
+        &self,
+        call: Call,
+        _timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        let Call::ShellIntegration = call else {
+            panic!("unexpected {call:?}");
+        };
+        let user = UserShell {
+            shell: Some(self.shell.display().to_string()),
+            ..Default::default()
+        };
+        let env = hide_host::shell_integration::install(&self.home, &user).unwrap();
+        Ok(crate::node_access::LinkAnswer::Parsed(
+            serde_json::to_value(env).unwrap(),
+        ))
+    }
+}
 
 fn pinned_version() -> String {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/herdr-bundle.json");
@@ -34,6 +86,7 @@ fn pinned_version() -> String {
 
 struct PrivateHerdr {
     bin: PathBuf,
+    shell: PathBuf,
     home: PathBuf,
     socket: PathBuf,
     config: PathBuf,
@@ -43,7 +96,11 @@ struct PrivateHerdr {
 }
 
 impl PrivateHerdr {
-    fn start(bin: PathBuf) -> Self {
+    fn start(bin: PathBuf, fixture: &Fixture) -> Self {
+        let shell = PathBuf::from(
+            std::env::var_os(fixture.variable)
+                .unwrap_or_else(|| panic!("{} names the shell", fixture.variable)),
+        );
         let version = Command::new(&bin).arg("--version").output().unwrap().stdout;
         let version = String::from_utf8(version).unwrap();
         assert_eq!(
@@ -59,7 +116,9 @@ impl PrivateHerdr {
             .unwrap();
         let home = root.path().join("home");
         std::fs::create_dir_all(home.join("bin")).unwrap();
-        std::fs::write(home.join(".zshrc"), ZSHRC).unwrap();
+        let rc = home.join(fixture.rc);
+        std::fs::create_dir_all(rc.parent().unwrap()).unwrap();
+        std::fs::write(rc, fixture.text).unwrap();
         // Linux names a process after the file it runs, so `sleep` is copied
         // under the agent's name there. macOS kills a copy of a system binary
         // run from elsewhere, and names the process by its first argument.
@@ -80,6 +139,7 @@ impl PrivateHerdr {
         let mut herdr = Self {
             server: None,
             bin,
+            shell,
             home,
             socket,
             config,
@@ -113,7 +173,7 @@ impl PrivateHerdr {
         command
             .env("HOME", &self.home)
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-            .env("SHELL", which("zsh"))
+            .env("SHELL", &self.shell)
             .env("TERM", "xterm-256color")
             .env("XDG_CONFIG_HOME", self.home.join("xdg-config"))
             .env("XDG_STATE_HOME", self.home.join("xdg-state"))
@@ -133,7 +193,7 @@ impl PrivateHerdr {
             .unwrap_or_else(|error| panic!("{method}: {error}"))
     }
 
-    /// A workspace in `folder` whose pane runs zsh with `env`.
+    /// A workspace in `folder` whose pane runs the shell with `env`.
     fn pane(&self, folder: &str, env: &std::collections::BTreeMap<String, String>) -> String {
         let cwd = self.home.join(folder);
         std::fs::create_dir_all(&cwd).unwrap();
@@ -243,13 +303,26 @@ fn agent_pane(herdr: &PrivateHerdr, name: &str) -> Option<String> {
 }
 
 #[test]
-#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
-fn a_startup_question_is_never_answered_by_a_start_and_each_pane_runs_its_own_prompt() {
+#[ignore = "needs the pinned Herdr and zsh: set HIDE_E2E_HERDR_BIN and HIDE_TEST_ZSH_BIN and run with --ignored"]
+fn a_zsh_startup_question_is_never_answered_by_a_start_and_each_pane_runs_its_own_prompt() {
+    startup_question(&ZSH);
+}
+
+#[test]
+#[ignore = "needs the pinned Herdr and fish: set HIDE_E2E_HERDR_BIN and HIDE_TEST_FISH_BIN and run with --ignored"]
+fn a_fish_startup_question_is_never_answered_by_a_start_and_each_pane_runs_its_own_prompt() {
+    startup_question(&FISH);
+}
+
+fn startup_question(fixture: &Fixture) {
     let bin = PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
-    let herdr = PrivateHerdr::start(bin);
-    let node = hide_node::Local::new(Some(herdr.home.clone()));
+    let herdr = PrivateHerdr::start(bin, fixture);
+    let node = Node {
+        home: herdr.home.clone(),
+        shell: herdr.shell.clone(),
+    };
     let (env, shell) = shell_environment(Some(&node), "real-herdr");
     assert_eq!(shell, ShellStart::Integrated);
 

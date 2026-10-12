@@ -1,31 +1,79 @@
 # Hide's shell integration for zsh. Hide starts a pane's shell with ZDOTDIR
 # naming this folder, so zsh reads its startup files from here. Each file here
-# first reads the user's own file of the same name, from where zsh would have
-# read it, and the last one of the run gives ZDOTDIR back. At the first prompt
-# the shell tells Herdr it has finished starting, which is when Hide may type.
+# reads the user's own file of the same name from where zsh would have, with
+# ZDOTDIR as the user has it, and the last one of the run gives ZDOTDIR back
+# for good. At the first prompt the shell tells Herdr it has finished
+# starting, which is when Hide may type.
+#
+# What the user had before Hide's values replaced them comes in
+# HIDE_SHELL_ZDOTDIR and HIDE_SHELL_XDG_DATA_DIRS, each absent when the user
+# had none. A user's file is read at the top level, never inside a function,
+# so what it declares stays global.
 typeset -g __hide_zdotdir=$ZDOTDIR
-# The user's own ZDOTDIR is set, if anywhere, by their .zshenv in HOME.
-ZDOTDIR=$HOME
-[[ -r $ZDOTDIR/.zshenv ]] && builtin source $ZDOTDIR/.zshenv
-typeset -g __hide_user_zdotdir=$ZDOTDIR
 
-# Puts back what Hide changed for the startup files, once none is left.
-__hide_restore() {
-  if [[ $__hide_user_zdotdir == $HOME ]]; then
-    builtin unset ZDOTDIR
+# Hide put its fish folder first in XDG_DATA_DIRS for a fish shell; a zsh
+# gives it back before anything of the user's runs.
+if [[ ${XDG_DATA_DIRS-} == ${__hide_zdotdir:h}/fish-data:* ]]; then
+  if (( ${+HIDE_SHELL_XDG_DATA_DIRS} )); then
+    export XDG_DATA_DIRS=$HIDE_SHELL_XDG_DATA_DIRS
   else
-    export ZDOTDIR=$__hide_user_zdotdir
+    builtin unset XDG_DATA_DIRS
   fi
-  # Hide put its fish folder first in XDG_DATA_DIRS for a fish shell.
-  if [[ ${XDG_DATA_DIRS-} == ${__hide_zdotdir:h}/fish-data:* ]]; then
-    export XDG_DATA_DIRS=${XDG_DATA_DIRS#${__hide_zdotdir:h}/fish-data:}
+fi
+typeset -g __hide_user_set=${+HIDE_SHELL_ZDOTDIR} __hide_user_zdotdir=${HIDE_SHELL_ZDOTDIR-}
+typeset -g __hide_user_type=scalar-export
+builtin unset HIDE_SHELL_ZDOTDIR HIDE_SHELL_XDG_DATA_DIRS
+
+# ZDOTDIR as the user has it, unset included, for their next file.
+__hide_give() {
+  if (( __hide_user_set )); then
+    ZDOTDIR=$__hide_user_zdotdir
+    if [[ $__hide_user_type == *export* ]]; then
+      export ZDOTDIR
+    else
+      typeset -g +x ZDOTDIR
+    fi
+  else
+    builtin unset ZDOTDIR
   fi
-  builtin unset __hide_zdotdir __hide_user_zdotdir
-  builtin unfunction __hide_restore
 }
 
-if [[ -o interactive || -o login ]]; then
-  ZDOTDIR=$__hide_zdotdir
-else
+# Keeps ZDOTDIR as the user's file left it, and points zsh here again for
+# the next startup file.
+__hide_take() {
+  typeset -g __hide_user_set=${+ZDOTDIR} __hide_user_zdotdir=${ZDOTDIR-}
+  typeset -g __hide_user_type=${(t)ZDOTDIR}
+  export ZDOTDIR=$__hide_zdotdir
+}
+
+# Gives ZDOTDIR back for good once no startup file is left to read, and
+# marks the first prompt of an interactive shell.
+__hide_restore() {
+  __hide_give
+  builtin unset __hide_zdotdir __hide_user_set __hide_user_zdotdir __hide_user_type
+  builtin unfunction __hide_give __hide_take __hide_restore
+  if [[ -o interactive ]]; then
+    builtin autoload -Uz add-zsh-hook && add-zsh-hook precmd __hide_first_prompt
+  else
+    builtin unfunction __hide_first_prompt
+  fi
+}
+
+# Runs before the first prompt, after every startup file and anything they
+# asked: Herdr keeps the mark on the pane, where Hide reads it.
+__hide_first_prompt() {
+  add-zsh-hook -d precmd __hide_first_prompt
+  builtin unfunction __hide_first_prompt
+  if [[ -n ${HERDR_BIN_PATH-} && -n ${HERDR_PANE_ID-} ]]; then
+    "$HERDR_BIN_PATH" pane report-metadata "$HERDR_PANE_ID" --source hide:shell --token hide_prompt=1 >/dev/null 2>&1
+  fi
+}
+
+__hide_give
+[[ -r ${ZDOTDIR:-$HOME}/.zshenv ]] && builtin source ${ZDOTDIR:-$HOME}/.zshenv
+__hide_take
+# zsh reads no other startup file for a shell that is neither interactive
+# nor a login shell, or once the user's file turned RCS off.
+if [[ ! -o rcs ]] || [[ ! -o interactive && ! -o login ]]; then
   __hide_restore
 fi

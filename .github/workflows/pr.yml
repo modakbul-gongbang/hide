@@ -196,15 +196,19 @@ jobs:
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
             bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
-      - name: Agent start against the pinned Herdr
-        # herdr-core/src/agent_start/real_herdr_tests.rs: zsh panes whose
-        # startup file asks a one-key question, which no start may answer.
-        if: ${{ !cancelled() && (env.FULL == 'true' || contains(fromJSON(env.PACKAGES), 'herdr-core')) }}
+      - name: Shell integration and agent start in real shells
+        # hide-host/src/shell_integration/real_shell_tests.rs: zsh and fish
+        # read the user's files in their order and give ZDOTDIR and
+        # XDG_DATA_DIRS back. herdr-core/src/agent_start/real_herdr_tests.rs:
+        # zsh and fish panes on the pinned Herdr whose startup file asks a
+        # one-key question, which no start may answer.
+        if: ${{ !cancelled() && (env.FULL == 'true' || contains(fromJSON(env.PACKAGES), 'herdr-core') || contains(fromJSON(env.PACKAGES), 'hide-host')) }}
         timeout-minutes: 10
         run: |
-          sudo apt-get install -y --no-install-recommends zsh
-          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
-          HIDE_E2E_HERDR_BIN=$bin bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(/^agent_start::real_herdr_tests::/)' --run-ignored only --no-capture
+          sudo apt-get install -y --no-install-recommends zsh fish
+          export HIDE_TEST_ZSH_BIN=$(command -v zsh) HIDE_TEST_FISH_BIN=$(command -v fish)
+          export HIDE_E2E_HERDR_BIN=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-host -p herdr-core --lib -E 'test(/^shell_integration::real_shell_tests::/) | test(/^agent_start::real_herdr_tests::/)' --run-ignored only --no-capture
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
