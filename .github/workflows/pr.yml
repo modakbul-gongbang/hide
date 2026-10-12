@@ -196,6 +196,15 @@ jobs:
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
             bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
+      - name: Agent start against the pinned Herdr
+        # herdr-core/src/agent_start/real_herdr_tests.rs: zsh panes whose
+        # startup file asks a one-key question, which no start may answer.
+        if: ${{ !cancelled() && (env.FULL == 'true' || contains(fromJSON(env.PACKAGES), 'herdr-core')) }}
+        timeout-minutes: 10
+        run: |
+          sudo apt-get install -y --no-install-recommends zsh
+          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
+          HIDE_E2E_HERDR_BIN=$bin bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(/^agent_start::real_herdr_tests::/)' --run-ignored only --no-capture
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true

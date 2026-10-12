@@ -425,8 +425,17 @@ impl Shell<'_> {
             .and_then(wire::pane_text)
             .ok()?
             .text;
-        let line = text.lines().rev().map(str::trim).find(|line| !line.is_empty())?;
-        Some(line.chars().filter(|c| !c.is_control()).take(SCREEN_LINE_CHARS).collect())
+        let line = text
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|line| !line.is_empty())?;
+        Some(
+            line.chars()
+                .filter(|c| !c.is_control())
+                .take(SCREEN_LINE_CHARS)
+                .collect(),
+        )
     }
 
     /// Whether Herdr lets go of the start's name once asked about it.
@@ -491,6 +500,9 @@ impl Shell<'_> {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod real_herdr_tests;
 
 #[cfg(test)]
 mod tests {
@@ -959,5 +971,84 @@ mod tests {
         };
         assert!(message.contains("the helper is gone"), "{message}");
         assert_eq!(typed(&herdr), 0);
+    }
+
+    fn pane_with(tokens: Value) -> Value {
+        json!({"type": "pane_info", "pane": {"workspace_id": "w1", "tab_id": "w1:t1",
+            "pane_id": "w1:p1", "terminal_id": "term_1", "focused": false,
+            "agent_status": "idle", "revision": 0, "tokens": tokens}})
+    }
+
+    fn start_integrated(herdr: &FakeHerdr, wait: Duration) -> Result<Value, StartError> {
+        start_within(
+            &herdr.connector(),
+            None,
+            "test:start",
+            "w1:p1",
+            ShellStart::Integrated,
+            json!({"pane_id": "w1:p1"}),
+            Duration::from_secs(5),
+            wait,
+            Duration::ZERO,
+            &|| Ok(()),
+        )
+    }
+
+    /// A startup question holds the terminal with the shell alone in the
+    /// foreground, which Herdr reads as a shell ready for the command; the
+    /// first prompt's mark is what says the startup files are done.
+    #[test]
+    fn an_integrated_shell_is_typed_into_only_after_its_first_prompt_is_marked() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&reads);
+        let herdr = FakeHerdr::start("agent-start-mark", move |method, _| match method {
+            "pane.process_info" => process_info(SHELL, &[SHELL]),
+            "pane.get" if seen.fetch_add(1, Ordering::SeqCst) < 2 => pane_with(json!({})),
+            "pane.get" => pane_with(json!({PROMPT_TOKEN: "1"})),
+            "agent.start" => started(),
+            other => panic!("unexpected {other}"),
+        });
+        assert!(start_integrated(&herdr, Duration::from_secs(5)).is_ok());
+        let methods = herdr.methods();
+        assert_eq!(methods.iter().filter(|m| *m == "pane.get").count(), 3);
+        assert_eq!(methods.last().map(String::as_str), Some("agent.start"));
+    }
+
+    #[test]
+    fn a_shell_held_by_a_startup_question_gets_nothing_typed_and_names_the_question() {
+        let herdr = FakeHerdr::start("agent-start-question", |method, _| match method {
+            "pane.process_info" => process_info(SHELL, &[SHELL]),
+            "pane.get" => pane_with(json!({})),
+            "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
+                "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
+                "format": "text", "revision": 1, "truncated": false,
+                "text": "Last login: today\n[oh-my-zsh] Would you like to update? [Y/n] \n\n"}}),
+            other => panic!("unexpected {other}"),
+        });
+        let Err(StartError::ShellStarting(line)) =
+            start_integrated(&herdr, Duration::from_millis(300))
+        else {
+            panic!("an unmarked shell is not a start");
+        };
+        assert_eq!(
+            line.as_deref(),
+            Some("[oh-my-zsh] Would you like to update? [Y/n]")
+        );
+        assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
+    }
+
+    /// bash takes no startup file through the environment, so it never marks
+    /// a prompt and nothing waits for one.
+    #[test]
+    fn a_shell_the_integration_does_not_reach_is_started_without_waiting_for_a_mark() {
+        let herdr = FakeHerdr::start("agent-start-bash", |method, _| match method {
+            "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                "pane_id": "w1:p1", "shell_pid": SHELL, "foreground_process_group_id": SHELL,
+                "foreground_processes": [{"pid": SHELL, "name": "-bash"}]}}),
+            "agent.start" => started(),
+            other => panic!("unexpected {other}"),
+        });
+        assert!(start_integrated(&herdr, Duration::from_secs(5)).is_ok());
+        assert_eq!(herdr.methods(), ["pane.process_info", "agent.start"]);
     }
 }
