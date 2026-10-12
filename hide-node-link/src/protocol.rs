@@ -103,8 +103,9 @@ use crate::error::HostError;
 /// core links only on the core's exact build (PRD core-host-node-move B10,
 /// option C), and Factory runs never go to a device the core dials.
 /// 29: `shell_integration` writes the startup files that mark a pane shell's
-/// first prompt and answers the environment a pane is started with, so a
-/// start types only once the shell has finished starting. A node on 28 would
+/// first prompt and answers the command and environment an agent's pane
+/// starts its shell with, so a start types only once the shell has finished
+/// starting. A node on 28 would
 /// refuse it as unknown, and a start on that device could be typed into a
 /// startup question, so it is refused at Hello and reinstalled.
 pub const PROTOCOL_VERSION: u32 = 29;

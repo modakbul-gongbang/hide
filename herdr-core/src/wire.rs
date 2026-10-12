@@ -1756,9 +1756,6 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
         _ => Err(missing.into()),
     }
 }
-/// The terminal a `pane.get` answer runs in its pane. Herdr gives every
-/// terminal it starts a new id, a restored one included, while a pane id can
-/// be handed out again, so this is what tells a pane from a later one.
 /// The value of the pane token `token` in a `pane.get` answer, `None` when
 /// the pane carries none.
 pub(crate) fn pane_token(value: Value, token: &str) -> Result<Option<String>, String> {
@@ -1772,6 +1769,10 @@ pub(crate) fn pane_token(value: Value, token: &str) -> Result<Option<String>, St
         _ => Err(missing.into()),
     }
 }
+
+/// The terminal a `pane.get` answer runs in its pane. Herdr gives every
+/// terminal it starts a new id, a restored one included, while a pane id can
+/// be handed out again, so this is what tells a pane from a later one.
 pub(crate) fn pane_terminal(value: Value) -> Result<String, String> {
     let missing = "pane.get response is missing pane.terminal_id";
     match response(value, missing)? {

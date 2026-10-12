@@ -2455,7 +2455,6 @@ COMMIT;"#,
 
 /// Version 9: a failed promotion keeps why its agent never started, which
 /// the card shows where it says the attempt ended.
-/// Version 9: why a promotion's start failed, shown on its failed card.
 fn migrate_version_eight(connection: &Connection) -> Result<(), MemoryError> {
     connection.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| -> Result<(), MemoryError> {
