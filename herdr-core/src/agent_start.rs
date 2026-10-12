@@ -503,12 +503,19 @@ impl Shell<'_> {
         // with the attempt and told to the agent that asked: a credential a
         // startup file printed is removed, and so is what reorders or hides
         // text.
+        // Redacted whole before it is cut, so a cut never splits a
+        // credential into a piece too short to be recognised.
         let line: String = line
             .chars()
             .filter(|c| !c.is_control() && !is_format_char(*c))
-            .take(SCREEN_LINE_CHARS)
             .collect();
-        Some(hide_memory::redact(&line).text)
+        Some(
+            hide_memory::redact(&line)
+                .text
+                .chars()
+                .take(SCREEN_LINE_CHARS)
+                .collect(),
+        )
     }
 
     /// Whether Herdr lets go of the start's name once asked about it.
@@ -1138,6 +1145,65 @@ mod tests {
             panic!("an unmarked shell is not a start");
         };
         assert_eq!(line, "export [REDACTED] Continue? [y/N]");
+    }
+
+    /// A credential that runs past the most of a line a refusal carries is
+    /// still recognised, so no piece of it is left.
+    #[test]
+    fn a_credential_at_the_end_of_a_long_question_line_leaves_no_piece() {
+        let text = format!("{} sk-{} [y/N]\n", "x".repeat(105), "A".repeat(30));
+        let herdr = FakeHerdr::start("agent-start-cut", move |method, _| match method {
+            "pane.process_info" => process_info(SHELL, &[SHELL]),
+            "pane.get" => pane_with(json!({})),
+            "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
+                "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
+                "format": "text", "revision": 1, "truncated": false, "text": text}}),
+            other => panic!("unexpected {other}"),
+        });
+        let Err(StartError::ShellStarting(Some(line))) =
+            start_integrated(&herdr, Duration::from_millis(300))
+        else {
+            panic!("an unmarked shell is not a start");
+        };
+        assert!(!line.contains("sk-"), "{line}");
+        assert_eq!(line.chars().count(), SCREEN_LINE_CHARS);
+    }
+
+    /// Herdr names a Windows shell by its full path: the launched Windows
+    /// PowerShell is still the shell whose mark is waited for.
+    #[test]
+    fn a_windows_shell_named_by_its_full_path_is_the_launched_one() {
+        let herdr = FakeHerdr::start("agent-start-windows", |method, _| match method {
+            "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                "pane_id": "w1:p1", "shell_pid": SHELL, "foreground_process_group_id": SHELL,
+                "foreground_processes": [{"pid": SHELL, "name": "powershell.exe",
+                    "argv0": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"}]}}),
+            "pane.get" => pane_with(json!({})),
+            "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
+                "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
+                "format": "text", "revision": 1, "truncated": false,
+                "text": "Update the framework now? [Y/n]\n"}}),
+            other => panic!("unexpected {other}"),
+        });
+        let answer = start_within(
+            &herdr.connector(),
+            None,
+            "test:start",
+            "w1:p1",
+            ShellStart::Integrated {
+                program: "powershell".into(),
+            },
+            json!({"pane_id": "w1:p1"}),
+            Duration::from_secs(5),
+            Duration::from_millis(300),
+            Duration::ZERO,
+            &|| Ok(()),
+        );
+        assert!(
+            matches!(answer, Err(StartError::ShellStarting(_))),
+            "{answer:?}"
+        );
+        assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
     }
 
     /// A startup file that replaces the launched shell with another one

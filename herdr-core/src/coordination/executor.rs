@@ -878,8 +878,6 @@ fn spawn(
     })
 }
 
-/// How the shell of a tab Hide made for a spawn says it has finished
-/// starting: by its mark when the tab runs the integration's launch.
 /// Whether Herdr has let go of `name`. Herdr holds the name of a start whose
 /// agent never showed until that start's own deadline, and settles a passed
 /// deadline only when the name is read, which this `agent.get` is.
