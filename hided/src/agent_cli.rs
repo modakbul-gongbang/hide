@@ -123,6 +123,8 @@ pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery,
                 branch,
                 path: flags.remove("--path"),
                 args: native,
+                // Only Hide's own identity gives a task; no flag names one.
+                task: None,
             }
         }
         "list" => Command::List,

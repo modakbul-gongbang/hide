@@ -453,6 +453,7 @@ fn spawn(
         branch,
         path,
         args,
+        task,
     } = &command
     else {
         return Err("invalid_spawn".into());
@@ -465,6 +466,9 @@ fn spawn(
         || args.len() > 128
         || args.iter().map(String::len).sum::<usize>() > 8192
         || args.iter().any(|arg| arg.contains('\0'))
+        || task.as_ref().is_some_and(|task| {
+            !super::key(&task.kind) || task.target.as_deref().is_some_and(|t| !super::key(t))
+        })
     {
         return Err("invalid_spawn".into());
     }
@@ -1185,6 +1189,7 @@ mod tests {
                         branch: "factory/801".into(),
                         path: None,
                         args: Vec::new(),
+                        task: None,
                     },
                 },
                 1,
@@ -1426,6 +1431,7 @@ mod tests {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                task: None,
             };
             let spawn = super::super::apply(
                 &mut state,

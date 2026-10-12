@@ -2575,3 +2575,83 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);
 }
+
+/// PRD hide-ai-origin-mark B1, B3, B11, B13: the mark and the checkout list
+/// come from the ledger's record of who started the spawn, on this machine
+/// and on a connected device, and only for the session the record holds.
+#[test]
+fn rows_and_checkouts_hide_started_are_marked_from_the_ledger_alone() {
+    use crate::coordination::started::tests::{Child, hide_started_ledger, memory_task};
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    let node = runtime.node.to_string();
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger), false);
+
+    let child = local_lineage_agent(&runtime, "local-child");
+    assert_eq!(
+        child.hide_ai.as_ref().and_then(|mark| mark.task.clone()),
+        memory_task("m72")
+    );
+    assert!(
+        local_lineage_agent(&runtime, "local-parent")
+            .hide_ai
+            .is_none()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts,
+        [crate::model::HideAiCheckoutSnapshot {
+            device_id: node.clone(),
+            path: "/repo.worktrees/hide-memory-m72".into(),
+            task: memory_task("m72"),
+        }]
+    );
+
+    // An agent that took the pane later holds another session: no mark.
+    for agent in &mut runtime.snapshot.navigator.agents {
+        if agent.pane_id == "local-child" {
+            agent.lineage_session = crate::wire::session_digest("s-another-agent");
+        }
+    }
+    runtime.refresh_agent_lineage();
+    assert!(
+        local_lineage_agent(&runtime, "local-child")
+            .hide_ai
+            .is_none()
+    );
+
+    // A device's agent is marked through the machine-to-device mapping, and
+    // a device that is gone leaves no group to draw.
+    let ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m43",
+        memory_task("m43"),
+        Child {
+            machine: "machine-mini",
+            pane: "remote-child",
+            session: "s-remote-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert!(
+        remote_lineage_agent(&runtime, "remote:mini:pane:remote-child")
+            .hide_ai
+            .is_some()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts[0].device_id,
+        "mini"
+    );
+    runtime.device_machine_ids.remove("mini");
+    runtime.refresh_agent_lineage();
+    assert!(runtime.snapshot.navigator.hide_ai_checkouts.is_empty());
+}

@@ -4,6 +4,7 @@
 mod executor;
 pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
+pub(crate) mod started;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
 use crate::delivery::{Actor, ledger::Ledger, watch};
@@ -70,7 +71,25 @@ pub enum Command {
         branch: String,
         path: Option<String>,
         args: Vec<String>,
+        /// What Hide asked the child to do, for the screen to name it. Only
+        /// Hide's own identity may give one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<SpawnTask>,
     },
+}
+
+/// The task kind of a Memory card's promotion into the repository.
+pub const MEMORY_PROMOTE_TASK: &str = "memory_promote";
+
+/// The work Hide started an agent for, as codes the screen words in the
+/// operator's language (`memory_promote` and the card `m72`), never as a
+/// sentence. `target` is the thing the work is about, when it has one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnTask {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +166,9 @@ pub struct SpawnRecord {
     pub completed: bool,
     #[serde(default)]
     pub auto_watch_id: Option<String>,
+    /// What Hide started the child for; absent for every other spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<SpawnTask>,
 }
 
 pub(crate) enum Mutation {
@@ -354,6 +376,11 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             })
             || record.args.len() > 128
             || record.args.iter().map(String::len).sum::<usize>() > 8192
+            || record.task.as_ref().is_some_and(|task| {
+                record.mode != SpawnMode::Handoff
+                    || !key(&task.kind)
+                    || task.target.as_deref().is_some_and(|target| !key(target))
+            })
         {
             return Err("ledger_unavailable".into());
         }
@@ -433,6 +460,7 @@ pub(crate) fn apply(
                 branch,
                 path,
                 args,
+                task,
                 ..
             } = command
             else {
@@ -452,6 +480,16 @@ pub(crate) fn apply(
             if !resolve_actor(ledger, parent).is_some_and(|parent| parent.same_identity(caller)) {
                 return Err("parent_authority_required".into());
             }
+            // The screen names a task as Hide's own work, so only Hide's own
+            // identity may give one, and only on a handoff.
+            if task.as_ref().is_some_and(|task| {
+                mode != SpawnMode::Handoff
+                    || !caller.hide_owned()
+                    || !key(&task.kind)
+                    || task.target.as_deref().is_some_and(|target| !key(target))
+            }) {
+                return Err("task_reserved".into());
+            }
             if let Some(record) = ledger
                 .spawns
                 .iter()
@@ -466,6 +504,7 @@ pub(crate) fn apply(
                     || record.requested_path != *path
                     || record.mode != mode
                     || record.args != *args
+                    || record.task != *task
                 {
                     return Err("intent_conflict".into());
                 }
@@ -492,6 +531,7 @@ pub(crate) fn apply(
                 child: None,
                 completed: false,
                 auto_watch_id: None,
+                task: task.clone(),
             };
             ledger.spawns.push(record.clone());
             Ok(json!(record))
@@ -978,6 +1018,7 @@ mod tests {
             branch: "topic".into(),
             path: None,
             args: vec!["--model".into(), "fixture model".into()],
+            task: None,
         }
     }
     fn register_as(

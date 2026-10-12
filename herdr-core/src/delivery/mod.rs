@@ -88,6 +88,12 @@ impl Actor {
             || (self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX))
     }
 
+    /// Whether this is Hide's own code-owned identity, the origin of the work
+    /// Hide starts itself, as opposed to a Factory's or a pane's.
+    pub fn hide_owned(&self) -> bool {
+        self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX)
+    }
+
     /// Mailbox authority requires a positively observed native session. Watch
     /// targets may lack it and use status-only activity, without mailbox access.
     pub(crate) fn require_native_identity(&self) -> Result<(), String> {
