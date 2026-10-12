@@ -101,6 +101,32 @@ pub const EXCERPT_SOURCE_BYTES: usize = 96 * 1024;
 /// What an excerpt shows where it leaves a stretch of the file out.
 const EXCERPT_GAP: &str = "\n[...]\n";
 
+/// A file whose name says it holds credentials: its content is never put in
+/// a request, whatever a card cites, because the redactor knows a few secret
+/// shapes and a configuration file holds many others.
+pub fn sensitive_path(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    name == ".env"
+        || name.starts_with(".env.")
+        || name.ends_with(".env")
+        || [
+            ".npmrc",
+            ".netrc",
+            ".pgpass",
+            ".htpasswd",
+            ".git-credentials",
+        ]
+        .contains(&name.as_str())
+        || [".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        || name.starts_with("id_rsa")
+        || name.starts_with("id_ed25519")
+        || name.starts_with("id_ecdsa")
+        || name.contains("secret")
+        || name.contains("credential")
+}
+
 /// The words of a card a file's sections are matched against: lowercase
 /// runs of letters and digits of three characters or more, each once.
 pub fn query_words(texts: &[&str]) -> Vec<String> {
@@ -596,6 +622,28 @@ mod tests {
         assert!(request.input.len() <= ANALYSIS_INPUT_LIMIT_BYTES);
         assert!(request.input.contains("\"a\""));
         assert!(!request.input.contains("\"c\""));
+    }
+
+    #[test]
+    fn a_file_named_for_credentials_is_never_read_into_a_request() {
+        for path in [
+            ".env",
+            "apps/web/.env.local",
+            "deploy/server.pem",
+            "config/secrets.yml",
+            "~/.ssh/id_ed25519",
+            ".npmrc",
+        ] {
+            assert!(sensitive_path(path), "{path}");
+        }
+        for path in [
+            "docs/ARCHITECTURE.md",
+            "src/environment.rs",
+            "AGENTS.md",
+            "web/src/tokens.css",
+        ] {
+            assert!(!sensitive_path(path), "{path}");
+        }
     }
 
     #[test]

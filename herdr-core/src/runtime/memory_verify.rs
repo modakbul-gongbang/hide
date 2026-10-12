@@ -18,7 +18,7 @@ use hide_memory::{
     GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, MemoryStore, PROMOTION_CHECKS_PER_PASS, PendingCard,
     PromoteCheck, PromoteCheckCard, Promotion, PromotionState, REVERIFY_PER_PASS, Verification,
     cited_files, parse_promote_check, parse_verification, pointer_target, promote_check_request,
-    query_words, relevant_excerpt, verify_request, written_names,
+    query_words, relevant_excerpt, sensitive_path, verify_request, written_names,
 };
 use serde_json::json;
 
@@ -76,6 +76,9 @@ fn spend_unusable(
 
 /// Reads a checkout's file through the node.
 fn source(node: &dyn NodeLink, root: &str, relative: &str) -> Option<Source> {
+    if sensitive_path(relative) {
+        return None;
+    }
     let range = read_bytes(node, root, relative, 0, EXCERPT_SOURCE_BYTES as u64).ok()?;
     let bytes = range.bytes().ok()?;
     Some(Source {

@@ -35,7 +35,7 @@ pub use verify::{
     FILE_EXCERPT_BYTES, FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT,
     PROMOTE_CHECK_FEATURE, PromoteCheck, PromoteCheckCard, VERIFY_FEATURE, Verification,
     VerifyError, cited_files, parse_promote_check, parse_verification, pointer_target,
-    promote_check_request, query_words, relevant_excerpt, verify_request,
+    promote_check_request, query_words, relevant_excerpt, sensitive_path, verify_request,
 };
 
 /// The Memory store's file name inside a state folder.
