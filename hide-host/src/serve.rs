@@ -716,6 +716,9 @@ pub fn session_activity(
 pub struct Env {
     pub home: Option<PathBuf>,
     pub kit: KitPlace,
+    /// The shell this account starts a pane with, and the variables Hide's
+    /// shell integration replaces and gives back.
+    pub shell: crate::shell_integration::UserShell,
     /// Raised when the node's owner goes away: a kit step still running
     /// ends the child it waits on, and no further part starts.
     pub stop: Arc<AtomicBool>,
@@ -757,6 +760,7 @@ impl Env {
         Self {
             home: std::env::var_os("HOME").map(PathBuf::from),
             kit: KitPlace::Installed,
+            shell: crate::shell_integration::UserShell::of_process(),
             stop: crate::kit::process_stop(),
             ai: process_ai(),
             factory: Arc::default(),
@@ -771,6 +775,7 @@ impl Env {
         Self {
             home,
             kit: KitPlace::Standalone,
+            shell: crate::shell_integration::UserShell::of_process(),
             stop: Arc::default(),
             ai: Arc::default(),
             factory: Arc::default(),
@@ -1053,11 +1058,7 @@ pub fn handle_with_progress(
             let home =
                 env.home("HOME is not set, so the shell integration has no place to live")?;
             to_value(
-                crate::shell_integration::install(
-                    &home,
-                    &crate::shell_integration::UserShell::of_process(),
-                )
-                .map_err(|error| {
+                crate::shell_integration::install(&home, &env.shell).map_err(|error| {
                     HostError::new(
                         ErrorCode::Io,
                         format!("the shell integration could not be written: {error}"),

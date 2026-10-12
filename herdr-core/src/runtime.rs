@@ -1518,6 +1518,9 @@ pub struct Runtime {
     /// id. Kept off the snapshot: an issue body or a request has no business
     /// on the wire after the surface that sent it.
     task_agent_launch: Option<TaskAgentLaunch>,
+    /// How the pane a task created says its shell has finished starting,
+    /// by task id, for that task's agent start.
+    task_pane_shell: Option<(u64, crate::agent_start::ShellStart)>,
     /// Each device's Home link sync: the set last sent and whether it runs.
     home_links: HashMap<String, home::HomeLinkState>,
     /// The catalog and root index most recently accepted from the sync
@@ -2064,6 +2067,7 @@ impl Runtime {
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
+            task_pane_shell: None,
             home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_paths,

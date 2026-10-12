@@ -3646,7 +3646,14 @@ mod tests {
             }
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let expected_cwd = cwd.display().to_string();
             let tab_source = source.clone();
             let tab_other = other_before.clone();
@@ -3816,7 +3823,14 @@ mod tests {
             let database = home.path().join(".local/share/opencode/opencode.db");
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let expected_cwd = checkout.clone();
             let herdr = FakeHerdr::start_with_errors("opencode-fork-tab", move |method, params| {
                 Ok(match method {
@@ -3950,7 +3964,14 @@ mod tests {
             let before = std::fs::read(&summary).unwrap();
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
-            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            // An account whose panes start zsh: the fork's tab gets the
+            // shell integration and its start waits for the prompt's mark.
+            let node = hide_node::Local::new(Some(home.path().to_path_buf())).with_shell(
+                hide_host::shell_integration::UserShell {
+                    shell: Some("/bin/zsh".into()),
+                    ..Default::default()
+                },
+            );
             let herdr = FakeHerdr::start_with_errors("grok-fork-tab", move |method, params| {
                 Ok(match method {
                     "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {

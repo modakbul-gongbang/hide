@@ -2736,6 +2736,7 @@ fn a_device_created_worktrees_first_tab_stays_in_its_worktree_while_the_pane_rep
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
 
