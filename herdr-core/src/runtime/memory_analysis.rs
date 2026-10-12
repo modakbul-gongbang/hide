@@ -30,6 +30,7 @@ use hide_memory::{
     ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
+use hide_node_link::sessions::ReaderFeature;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -853,19 +854,23 @@ fn walk_project(
     store
         .prune_receipts(project_id, now_ms())
         .map_err(|error| error.to_string())?;
-    // Memory analyzes the sessions of agents this build has a Memory reader
-    // for (the JSONL ones: Claude Code, Codex, Grok, Pi, omp); an OpenCode
-    // session, kept in OpenCode's database, is walked for its receipts alone
-    // through the conversation reader (D-16).
-    let readers = hide_node_link::sessions::ReaderFeatures::implemented();
+    // Memory analyzes the sessions of agents the node holding them reads for
+    // Memory (the JSONL ones: Claude Code, Codex, Grok, Pi, omp), which it
+    // does through their conversation reader; an OpenCode session, kept in
+    // OpenCode's database, is walked for its receipts alone through that
+    // reader (D-16). A session the node has no such reader for, an older
+    // node's, is one Memory does not read, never a failed read.
+    let reads = |session: &ProjectSession, feature| {
+        sessions_node
+            .reader_features()
+            .is_some_and(|readers| readers.supports(session.agent.as_str(), feature))
+    };
     let mut sessions = Vec::new();
     for session in project_sessions(sessions_node, &identity)? {
-        if readers.supports(
-            session.agent.as_str(),
-            hide_node_link::sessions::ReaderFeature::Memory,
-        ) {
+        if reads(&session, ReaderFeature::Memory) && reads(&session, ReaderFeature::Conversation) {
             sessions.push(session);
         } else if session.agent == hide_session::Agent::OpenCode
+            && reads(&session, ReaderFeature::Conversation)
             && matches!(session.availability, SessionAvailability::Available)
             && !input
                 .live
@@ -1179,7 +1184,7 @@ fn read_database_receipts(
         hide_node_link::link::call_as_reader(
             sessions_node,
             session.agent,
-            hide_node_link::sessions::ReaderFeature::Conversation,
+            ReaderFeature::Conversation,
             Call::LabelTranscript {
                 request: hide_session::label_transcript::LabelTranscriptRequest {
                     agent: session.agent,
@@ -2477,6 +2482,65 @@ mod tests {
         fixture.write(&lines);
         assert_eq!(logged(), failed, "a changed file is read and logged again");
         assert_eq!(fixture.calls(), 0);
+    }
+
+    /// A node on protocol 24, which predates `Call::SessionConversation`
+    /// (protocol 26): it refuses that call as an unknown one and answers the
+    /// rest as the node it wraps.
+    struct Protocol24 {
+        node: Arc<dyn NodeLink>,
+        readers: hide_node_link::sessions::ReaderFeatures,
+    }
+
+    impl NodeLink for Protocol24 {
+        fn call(
+            &self,
+            call: Call,
+            timeout: std::time::Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(call, Call::SessionConversation { .. }) {
+                return Err(crate::node_access::LinkError::Refused(
+                    hide_node_link::error::HostError::new(
+                        hide_node_link::error::ErrorCode::InvalidRequest,
+                        "unknown variant `session_conversation`",
+                    ),
+                ));
+            }
+            self.node.call(call, timeout)
+        }
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            Some(&self.readers)
+        }
+        fn predates_current_protocol(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn an_older_nodes_sessions_are_not_read_for_memory_and_log_no_failed_read() {
+        let mut fixture = Fixture::new();
+        let hello: hide_node_link::protocol::Hello = serde_json::from_value(json!({
+            "protocol": 24, "version": "fixture", "os": "macos", "arch": "aarch64",
+            "home": null, "machine_identity": {"state": "unavailable", "reason": "fixture"},
+        }))
+        .unwrap();
+        fixture.node = Arc::new(Protocol24 {
+            node: Arc::clone(&fixture.node),
+            readers: hello.readers(),
+        });
+        fixture.answer(&[]);
+
+        let (reports, records) =
+            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        assert!(reports.is_empty());
+        assert!(memory_kinds(&records).is_empty(), "{records:?}");
+        assert_eq!(fixture.calls(), 0);
+        let seeded = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(seeded.provided_session_count, 0);
     }
 
     #[test]
