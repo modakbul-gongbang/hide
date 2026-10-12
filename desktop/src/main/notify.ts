@@ -83,8 +83,10 @@ export function launchedId(argumentsText: string): string | null {
   return id.length > 0 && id.length <= NOTIFY_LIMITS.id ? id : null;
 }
 
+/** Text as XML 1.0 takes it: the markup escaped, and the control characters it refuses (all below U+0020 but tab, newline and return) left out. */
 function escapeXml(text: string): string {
-  return text.replace(/[<>&"']/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[char]!);
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").replace(/[<>&"']/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[char]!);
 }
 
 /** The Windows taskbar overlay's size in pixels; Electron resizes any other to it (`shell/browser/ui/win/taskbar_host.cc`). */
@@ -92,9 +94,9 @@ export const OVERLAY_SIZE = 16;
 
 /**
  * The taskbar overlay's mark while agents need the operator: a filled dot in
- * `color` (`#rrggbb`), the mark the Overview button wears for the same count,
- * as the premultiplied BGRA pixels `nativeImage.createFromBitmap` takes. Its
- * edge is antialiased by the share of each pixel inside the circle.
+ * `color` (`#rrggbb`), the amber Hide draws its Needs You marks in, as the
+ * premultiplied BGRA pixels `nativeImage.createFromBitmap` takes, its edge
+ * softened over one pixel.
  */
 export function overlayDot(color: string): Buffer {
   const rgb = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
@@ -102,27 +104,43 @@ export function overlayDot(color: string): Buffer {
   const [red, green, blue] = rgb.slice(1).map((hex) => Number.parseInt(hex, 16));
   const pixels = Buffer.alloc(OVERLAY_SIZE * OVERLAY_SIZE * 4);
   const center = OVERLAY_SIZE / 2;
-  const radius = OVERLAY_SIZE / 2 - 1;
-  const samples = 4;
   for (let y = 0; y < OVERLAY_SIZE; y += 1) {
     for (let x = 0; x < OVERLAY_SIZE; x += 1) {
-      let inside = 0;
-      for (let sy = 0; sy < samples; sy += 1) {
-        for (let sx = 0; sx < samples; sx += 1) {
-          const dx = x + (sx + 0.5) / samples - center;
-          const dy = y + (sy + 0.5) / samples - center;
-          if (dx * dx + dy * dy <= radius * radius) inside += 1;
-        }
-      }
-      const alpha = inside / (samples * samples);
-      const at = (y * OVERLAY_SIZE + x) * 4;
-      pixels[at] = Math.round(blue! * alpha);
-      pixels[at + 1] = Math.round(green! * alpha);
-      pixels[at + 2] = Math.round(red! * alpha);
-      pixels[at + 3] = Math.round(255 * alpha);
+      const alpha = Math.min(1, Math.max(0, center - 0.5 - Math.hypot(x + 0.5 - center, y + 0.5 - center)));
+      pixels.set([blue!, green!, red!, 255].map((channel) => Math.round(channel * alpha)), (y * OVERLAY_SIZE + x) * 4);
     }
   }
   return pixels;
+}
+
+/**
+ * Where a notification click goes (`openNotification` in host.ts): to the
+ * shell at once while it holds a live snapshot, else held, the latest click
+ * winning, until the shell reports its count, which it does once live.
+ */
+export class ClickGate {
+  private live = false;
+  private held: string | null = null;
+
+  /** A click: the id to hand the shell now, or null while it waits. */
+  click(id: string): string | null {
+    if (this.live) return id;
+    this.held = id;
+    return null;
+  }
+
+  /** The shell reported its count: the held id to hand it now, if any. */
+  shellLive(): string | null {
+    this.live = true;
+    const held = this.held;
+    this.held = null;
+    return held;
+  }
+
+  /** The window left the shell's page, or the shell lost its daemon. */
+  shellGone(): void {
+    this.live = false;
+  }
 }
 
 /** The shown notifications a click can still reach, newest last, at most `NOTIFY_KEPT`. */

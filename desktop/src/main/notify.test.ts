@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BADGE_LIMIT, badgeRequest, KeptNotifications, launchedId, NOTIFY_KEPT, NOTIFY_LIMITS, notifyRequest, OVERLAY_SIZE, overlayDot, toastXml, WITHDRAW_LIMIT, withdrawRequest } from "./notify";
+import { BADGE_LIMIT, badgeRequest, ClickGate, KeptNotifications, launchedId, NOTIFY_KEPT, NOTIFY_LIMITS, notifyRequest, OVERLAY_SIZE, overlayDot, toastXml, WITHDRAW_LIMIT, withdrawRequest } from "./notify";
 
 describe("notifyRequest", () => {
   it("takes an id, a title and a body within their limits", () => {
@@ -58,6 +58,8 @@ describe("toastXml", () => {
       '<toast launch="hide-open=agent%3Anode%7Cw1%3Ap1"><visual><binding template="ToastGeneric"><text>Fix &lt;b&gt; &amp; &quot;quotes&quot;</text><text>Needs you · my-app</text></binding></visual></toast>',
     );
     expect(toastXml({ id: "test", title: "Notifications work", body: "", unlessFocused: false })).toContain('<binding template="ToastGeneric"><text>Notifications work</text></binding>');
+    // XML 1.0 refuses most control characters, so a title carrying one would fail the whole toast.
+    expect(toastXml({ id: "a", title: "bell\u0007 tab\t", body: "", unlessFocused: false })).toContain("<text>bell tab\t</text>");
     const launch = /launch="([^"]*)"/.exec(xml)![1]!;
     expect(launchedId(launch)).toBe("agent:node|w1:p1");
   });
@@ -82,5 +84,21 @@ describe("overlayDot", () => {
     expect(edge.length).toBeGreaterThan(0);
     for (const [blue, green, red, alpha] of edge) expect(Math.max(blue!, green!, red!)).toBeLessThanOrEqual(alpha!);
     expect(() => overlayDot("orange")).toThrow("#rrggbb");
+  });
+});
+
+describe("ClickGate", () => {
+  it("hands a click over at once while the shell is live, and otherwise holds the latest until its next report", () => {
+    const gate = new ClickGate();
+    // A click that started Hide comes before the shell reported.
+    expect(gate.click("agent:a")).toBeNull();
+    expect(gate.click("agent:b")).toBeNull();
+    expect(gate.shellLive()).toBe("agent:b");
+    expect(gate.shellLive()).toBeNull();
+    expect(gate.click("agent:c")).toBe("agent:c");
+    // The daemon lost or the page reloading: the shell must report again.
+    gate.shellGone();
+    expect(gate.click("agent:d")).toBeNull();
+    expect(gate.shellLive()).toBe("agent:d");
   });
 });

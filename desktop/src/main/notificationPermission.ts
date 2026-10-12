@@ -52,7 +52,7 @@ export function parsePermission(stdout: string): NotificationPermission | { unre
 export class NotificationPermissionReader {
   private readonly runner = new ChildRunner();
   private inFlight: Promise<NotificationPermission> | null = null;
-  /** A notification failed to show on Linux, so no notification service answers this run (`showFailed`). */
+  /** The last notification shown on Linux failed, so no notification service answers (`showFailed`). */
   private serviceMissing = false;
 
   constructor(
@@ -64,17 +64,13 @@ export class NotificationPermissionReader {
     private readonly notificationsSupported: () => boolean,
   ) {}
 
-  /** Whether a notification can be shown at all: false on a desktop with no notification service (D-24). */
-  get canShow(): boolean {
-    return !this.serviceMissing && this.notificationsSupported();
-  }
-
   /**
    * A notification failed to show (Electron's `failed`). On Linux,
    * `Notification.isSupported()` says only that libnotify loaded, so a
    * desktop with no notification service answers true and every show fails
-   * (`shell/browser/notifications/linux/libnotify_notification.cc`); the
-   * first failure makes it `no_service` for the rest of the run. Elsewhere a
+   * (`shell/browser/notifications/linux/libnotify_notification.cc`); a
+   * failure there reads as `no_service` until a notification shows again
+   * (`showSucceeded`), since every later one is still tried. Elsewhere a
    * failure is the system declining one notification (Windows' own settings
    * or Focus, a macOS refusal the helper reads), not a missing service, and
    * only the caller's log records it.
@@ -83,9 +79,14 @@ export class NotificationPermissionReader {
     if (this.platform === "linux") this.serviceMissing = true;
   }
 
+  /** A notification showed: a notification service answers after all (a daemon that started late). */
+  showSucceeded(): void {
+    this.serviceMissing = false;
+  }
+
   read(): Promise<NotificationPermission> {
     // Outside macOS there is no permission to read, only whether a notification service answers (D-24).
-    if (this.platform !== "darwin") return Promise.resolve(this.canShow ? "unsupported" : "no_service");
+    if (this.platform !== "darwin") return Promise.resolve(this.notificationsSupported() && !this.serviceMissing ? "unsupported" : "no_service");
     this.inFlight ??= this.run().finally(() => {
       this.inFlight = null;
     });

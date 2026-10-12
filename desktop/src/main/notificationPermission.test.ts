@@ -58,16 +58,15 @@ describe("NotificationPermissionReader", () => {
     expect(await reader("/nowhere", "linux", false).reader.read()).toBe("no_service");
   });
 
-  it("says no notification service for the rest of the run once a notification failed to show on Linux, and only there", async () => {
+  it("says no notification service on Linux from a failed notification until one shows again, and only there", async () => {
     const linux = reader("/nowhere", "linux").reader;
     expect(await linux.read()).toBe("unsupported");
-    expect(linux.canShow).toBe(true);
     linux.showFailed();
     expect(await linux.read()).toBe("no_service");
-    expect(linux.canShow).toBe(false);
+    linux.showSucceeded();
+    expect(await linux.read()).toBe("unsupported");
     const windows = reader("/nowhere", "win32").reader;
     windows.showFailed();
     expect(await windows.read()).toBe("unsupported");
-    expect(windows.canShow).toBe(true);
   });
 });
