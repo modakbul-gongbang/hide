@@ -116,6 +116,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         {project.enabled ? null : (
           <div className="-mt-sm flex flex-col items-start gap-sm">
             <p className="break-keep [overflow-wrap:anywhere] text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
+            {project.consent_required ? <p className="break-keep text-caption text-subtle-foreground" data-memory-consent="required">{t("memory.reconsent")}</p> : null}
             {count > 0 ? (
               <button type="button" className="text-caption text-muted-foreground underline-offset-4 hover:underline" onClick={() => setDeleting(true)} data-memory-delete="link">
                 {t("memory.deleteData")}
@@ -323,15 +324,8 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
           </DropdownMenuContent>
         </DropdownMenu>
       </h3>
-      {project.rows.length === 0 ? (
-        <div className="flex flex-col gap-xs" data-memory-empty="true">
-          <span className="flex items-center gap-xs text-body text-foreground">
-            <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
-            {t("memory.empty.title")}
-          </span>
-          <span className="break-keep text-caption text-muted-foreground">{t("memory.empty.body")}</span>
-        </div>
-      ) : (
+      {project.usable_cards === 0 && project.analysis !== "ai_not_ready" ? <MemoryEmpty project={project} /> : null}
+      {project.rows.length === 0 ? null : (
         <>
           <Input value={query} onChange={(event) => { editing.current = true; setQuery(event.target.value); }} placeholder={t("memory.search")} aria-label={t("memory.search")} data-memory-search="true" />
           {project.search && cards.length === 0 ? <p className="text-caption text-muted-foreground">{t("memory.noMatch")}</p> : null}
@@ -349,6 +343,21 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
         </>
       )}
     </section>
+  );
+}
+
+function MemoryEmpty({ project }: { project: ProjectMemory }) {
+  const { t } = useInterfaceTranslation();
+  const state = project.analysis;
+  const message = state === "checking" ? "memory.checking.body" : state === "check_budget_exhausted" ? "memory.budget.body" : project.rows.length > 0 ? "memory.pending.body" : "memory.empty.body";
+  return (
+    <div className="flex flex-col gap-xs" data-memory-empty="true">
+      <span className="flex items-center gap-xs text-body text-foreground">
+        <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
+        {t(project.rows.length > 0 ? "memory.unusable.title" : "memory.empty.title")}
+      </span>
+      <span className="break-keep text-caption text-muted-foreground">{t(message)}</span>
+    </div>
   );
 }
 
@@ -443,7 +452,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         {row.verifying && !STATUS_STATES.has(row.promotion?.state) ? (
           // Quiet and alone: the operator has nothing to do (design 13).
           <span className="text-caption text-muted-foreground" data-memory-verifying={row.number}>
-            <span className="whitespace-nowrap">{t("memory.verifying")}</span>
+            <span className="whitespace-nowrap">{t(project.analysis === "check_budget_exhausted" ? "memory.budget.waiting" : project.checking_card === row.number && project.analysis === "checking" ? "memory.verifying" : "memory.pending")}</span>
           </span>
         ) : null}
         {row.promotion?.state === "pr_open" && row.promotion.pr_number !== null ? (

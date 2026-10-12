@@ -34,7 +34,7 @@ const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => (
 });
 const memory = (overrides: Partial<ProjectMemory> = {}): ProjectMemory => ({
   workspace_id: "p", unavailable: null, loading: false, enabled: true, capacity_reached: false,
-  rows: [row(3), row(7)], questions: [], analysis: "idle", forgotten: null, pending_action: null,
+  rows: [row(3), row(7)], questions: [], analysis: "idle", consent_required: false, usable_cards: 2, checking_card: null, forgotten: null, pending_action: null,
   expanded: null, search: null, ...overrides,
 });
 
@@ -164,11 +164,27 @@ describe("the Memory tab", () => {
       ],
     }));
     const mark = container.querySelector("[data-memory-card='3'] [data-memory-verifying]");
-    expect(mark?.textContent).toBe("Checking");
+    expect(mark?.textContent).toBe("Waiting for check");
     expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
     // One status line at a time: a promotion that runs draws its own.
     expect(container.querySelector("[data-memory-card='9'] [data-memory-verifying]")).toBeNull();
     expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("Retry");
+  });
+
+  it("marks only the running card as checking and explains zero usable cards", async () => {
+    await render(memory({ usable_cards: 0, analysis: "checking", checking_card: 3, rows: [row(3, { verifying: true }), row(7, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-card='3'] [data-memory-verifying]")?.textContent).toBe("Checking");
+    expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")?.textContent).toBe("Waiting for check");
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("Each card becomes available as it passes");
+  });
+
+  it("names the day's budget and leaves re-consent to the switch", async () => {
+    await render(memory({ usable_cards: 0, analysis: "check_budget_exhausted", rows: [row(3, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("next UTC day");
+    expect(container.querySelector("[data-memory-verifying]")?.textContent).toBe("Daily budget used");
+    await render(memory({ enabled: false, consent_required: true }));
+    expect(container.querySelector("[data-memory-consent]")?.textContent).toContain("agree again");
+    expect(sent("memory_action")).toEqual([]);
   });
 
   it("deletes the Project's data only after the confirmation names the count", async () => {

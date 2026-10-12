@@ -428,6 +428,10 @@ impl Runtime {
         project.loading = false;
         project.unavailable = None;
         project.enabled = load.state.as_ref().is_some_and(|state| state.enabled);
+        project.consent_required = load
+            .state
+            .as_ref()
+            .is_some_and(|state| state.consent_required);
         project.capacity_reached = load
             .state
             .as_ref()
@@ -472,6 +476,15 @@ impl Runtime {
         let Some(project) = self.memory_section().project.as_mut() else {
             return false;
         };
+        project.usable_cards = rows
+            .iter()
+            .filter(|row| {
+                !row.verifying
+                    && !row.promotion.as_ref().is_some_and(|promotion| {
+                        promotion.state == crate::model::MemoryPromotionState::Merged
+                    })
+            })
+            .count();
         if *project.rows != rows {
             project.rows = Arc::new(rows);
         }
@@ -513,6 +526,11 @@ impl Runtime {
             (false, _) => MemoryAnalysisState::Idle,
             (true, false) => MemoryAnalysisState::AiNotReady,
             (true, true) => work.analysis,
+        };
+        project.checking_card = if project.analysis == MemoryAnalysisState::Checking {
+            work.checking_card
+        } else {
+            None
         };
         project.forgotten = work.forgotten;
         project.pending_action = action;

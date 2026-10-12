@@ -1539,7 +1539,10 @@ export type ProjectMemory = {
   rows: MemoryRow[];
   questions: MemoryQuestion[];
   /** `memory_analysis_state`. */
-  analysis: "idle" | "analyzing" | "ai_not_ready";
+  analysis: "idle" | "analyzing" | "ai_not_ready" | "checking" | "check_budget_exhausted";
+  consent_required: boolean;
+  usable_cards: number;
+  checking_card: number | null;
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;

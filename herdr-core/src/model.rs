@@ -2614,6 +2614,9 @@ pub struct ProjectMemorySnapshot {
     /// The first read of the Project's Memory has not answered yet.
     pub loading: bool,
     pub enabled: bool,
+    pub consent_required: bool,
+    /// Cards currently eligible for injection, excluding merged promotions.
+    pub usable_cards: usize,
     /// Live cards against the store's cap.
     pub capacity_reached: bool,
     /// Live cards, the most recently changed first.
@@ -2623,6 +2626,8 @@ pub struct ProjectMemorySnapshot {
     /// repository file, then promotions that ended without a pull request.
     pub questions: Vec<MemoryQuestionSnapshot>,
     pub analysis: MemoryAnalysisState,
+    /// Only the card admitted by the running check, never the whole backlog.
+    pub checking_card: Option<u64>,
     /// The card the last forget took away, which Undo brings back (B24).
     pub forgotten: Option<u64>,
     /// The operator's Memory action still running for this Project; another
@@ -2836,6 +2841,8 @@ pub enum MemoryAnalysisState {
     /// Memory is on but Hide AI is off or cannot answer, so no new card is
     /// made; existing cards are still given.
     AiNotReady,
+    Checking,
+    CheckBudgetExhausted,
 }
 
 /// One operator action on a Project's Memory (`memory_action`).
@@ -5972,12 +5979,16 @@ mod wire_enum_tests {
             MemoryAnalysisState::Idle,
             MemoryAnalysisState::Analyzing,
             MemoryAnalysisState::AiNotReady,
+            MemoryAnalysisState::Checking,
+            MemoryAnalysisState::CheckBudgetExhausted,
         ];
         for variant in analysis_states {
             match variant {
                 MemoryAnalysisState::Idle
                 | MemoryAnalysisState::Analyzing
-                | MemoryAnalysisState::AiNotReady => {}
+                | MemoryAnalysisState::AiNotReady
+                | MemoryAnalysisState::Checking
+                | MemoryAnalysisState::CheckBudgetExhausted => {}
             }
         }
         assert_wire(&contract, "memory_analysis_state", &analysis_states);
