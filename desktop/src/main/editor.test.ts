@@ -41,9 +41,8 @@ describe("findEditor", () => {
   it("takes the `code` launcher on Linux and `Code.exe` beside `code.cmd` on Windows, detached", async () => {
     expect(await findEditor(deps("linux", ["/usr/bin/code"]))).toEqual({ file: "/usr/bin/code", args: [], detached: false, via: "path" });
     expect(await findEditor(deps("linux", []))).toEqual({ missing: "not_installed" });
-    const exe = path.resolve("C:\\VSCode\\bin", "..", "Code.exe");
-    expect(await findEditor(deps("win32", [path.join("C:\\VSCode\\bin", "code.cmd"), exe]))).toEqual({ file: exe, args: [], detached: true, via: "path" });
-    expect(await findEditor(deps("win32", [path.join("C:\\VSCode\\bin", "code.cmd")]))).toEqual({ missing: "not_installed" });
+    expect(await findEditor(deps("win32", ["C:\\VSCode\\bin\\code.cmd", "C:\\VSCode\\Code.exe"]))).toEqual({ file: "C:\\VSCode\\Code.exe", args: [], detached: true, via: "path" });
+    expect(await findEditor(deps("win32", ["C:\\VSCode\\bin\\code.cmd"]))).toEqual({ missing: "not_installed" });
   });
 });
 

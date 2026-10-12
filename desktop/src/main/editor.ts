@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { HostLog } from "./log";
-import { ChildRunner, executableFile, startDetached, type ChildResult } from "./spawn";
+import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { fromPage } from "./wirePath";
 
 /** VS Code's bundle identifier; `open -b` finds the app wherever macOS registered it. */
@@ -43,9 +43,11 @@ const MAC_APP = "Visual Studio Code.app";
  * the search path with `Code.exe` one folder up, as its installer lays out.
  */
 export async function findEditor(deps: EditorProbeDeps): Promise<EditorLaunch | { missing: string }> {
+  // The probe is spelled for the system it describes, not the one running it.
+  const { join, resolve } = deps.platform === "win32" ? path.win32 : path.posix;
   if (deps.platform === "darwin") {
     const open = { file: "/usr/bin/open", args: ["-b", VSCODE_BUNDLE_ID], detached: false };
-    if ([path.join("/Applications", MAC_APP), path.join(deps.home, "Applications", MAC_APP)].some((app) => deps.exists(app))) return { ...open, via: "bundle" };
+    if ([join("/Applications", MAC_APP), join(deps.home, "Applications", MAC_APP)].some((app) => deps.exists(app))) return { ...open, via: "bundle" };
     const found = await deps.run("/usr/bin/mdfind", [`kMDItemCFBundleIdentifier == "${VSCODE_BUNDLE_ID}"`], EDITOR_PROBE_TIMEOUT_MS);
     if (found.spawnError !== null) return { missing: "spotlight_spawn" };
     if (found.timedOut) return { missing: "spotlight_timed_out" };
@@ -54,14 +56,14 @@ export async function findEditor(deps: EditorProbeDeps): Promise<EditorLaunch | 
   }
   if (deps.platform === "win32") {
     for (const dir of deps.searchPath) {
-      if (!deps.exists(path.join(dir, "code.cmd"))) continue;
-      const exe = path.resolve(dir, "..", "Code.exe");
+      if (!deps.exists(join(dir, "code.cmd"))) continue;
+      const exe = resolve(dir, "..", "Code.exe");
       if (deps.exists(exe)) return { file: exe, args: [], detached: true, via: "path" };
     }
     return { missing: "not_installed" };
   }
   for (const dir of deps.searchPath) {
-    const launcher = path.join(dir, executableFile("code"));
+    const launcher = join(dir, "code");
     if (deps.isExecutable(launcher)) return { file: launcher, args: [], detached: false, via: "path" };
   }
   return { missing: "not_installed" };
