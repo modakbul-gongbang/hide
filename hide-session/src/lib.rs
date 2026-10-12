@@ -43,6 +43,7 @@ pub mod search_read;
 pub mod session_activity;
 mod sightings;
 pub mod turns;
+pub mod usage;
 
 pub use envelope::envelope_sender;
 pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
