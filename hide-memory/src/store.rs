@@ -1171,7 +1171,7 @@ impl MemoryStore {
     /// day's count after it (D-10 a). Days older than a week are dropped.
     pub fn count_analysis_call(&self, now_unix_ms: u64) -> Result<u64, MemoryError> {
         if let Some(reason) =
-            self.admit_memory_call(now_unix_ms, crate::MemoryCallKind::ForegroundAnalysis)?
+            self.admit_memory_call(now_unix_ms, crate::MemoryCallKind::Analysis)?
         {
             return Err(MemoryError::InvalidState(format!(
                 "memory_call_budget:{reason:?}"
@@ -1200,7 +1200,7 @@ impl MemoryStore {
             )
             .optional()?
             .unwrap_or((0, 0));
-        let pending = if kind == crate::MemoryCallKind::BackgroundAnalysis {
+        let pending = if kind == crate::MemoryCallKind::Analysis {
             transaction.query_row(
                 "SELECT COUNT(*) FROM (SELECT 1 FROM memory_items i \
                  JOIN projects p ON p.id=i.project_id \
@@ -6671,9 +6671,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .execute("UPDATE analysis_calls SET calls=999", [])
             .unwrap();
         assert_eq!(
-            store
-                .admit_memory_call(100, Kind::BackgroundAnalysis)
-                .unwrap(),
+            store.admit_memory_call(100, Kind::Analysis).unwrap(),
             Some(Wait::ReservedForChecks)
         );
         assert_eq!(
@@ -6683,9 +6681,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         );
         store.set_enabled(&project, false, false).unwrap();
         assert_eq!(
-            store
-                .admit_memory_call(100, Kind::BackgroundAnalysis)
-                .unwrap(),
+            store.admit_memory_call(100, Kind::Analysis).unwrap(),
             None,
             "disabled cards reserve nothing"
         );
@@ -6715,13 +6711,51 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             store.admit_memory_call(100, Kind::Check).unwrap(),
             Some(Wait::CheckShareSpent)
         );
-        assert_eq!(
-            store
-                .admit_memory_call(100, Kind::BackgroundAnalysis)
-                .unwrap(),
-            None
-        );
+        assert_eq!(store.admit_memory_call(100, Kind::Analysis).unwrap(), None);
         assert_eq!(store.analysis_calls(100).unwrap(), 601);
+    }
+
+    #[test]
+    fn concurrent_callers_cannot_spend_the_last_call_twice() {
+        use crate::{MemoryCallDeferral, MemoryCallKind};
+        let (temp, store, _project) = store();
+        store
+            .connection
+            .execute("INSERT INTO analysis_calls VALUES(0,999,0)", [])
+            .unwrap();
+        drop(store);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let callers: Vec<_> = (0..2)
+            .map(|_| {
+                let path = temp.path().join("memory.sqlite3");
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let store = MemoryStore::open(&path).unwrap();
+                    barrier.wait();
+                    store.admit_memory_call(100, MemoryCallKind::Check).unwrap()
+                })
+            })
+            .collect();
+        barrier.wait();
+        let answers: Vec<_> = callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect();
+        assert_eq!(answers.iter().filter(|answer| answer.is_none()).count(), 1);
+        assert_eq!(
+            answers
+                .iter()
+                .filter(|answer| **answer == Some(MemoryCallDeferral::DailyCap))
+                .count(),
+            1
+        );
+        assert_eq!(
+            MemoryStore::open(&temp.path().join("memory.sqlite3"))
+                .unwrap()
+                .analysis_calls(100)
+                .unwrap(),
+            1000
+        );
     }
 
     #[test]

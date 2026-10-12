@@ -2,9 +2,7 @@
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryCallKind {
-    BackgroundAnalysis,
-    /// An explicit add is not delayed by background work's reservation.
-    ForegroundAnalysis,
+    Analysis,
     Check,
 }
 
@@ -27,7 +25,7 @@ pub(crate) fn deferral(
     let remaining = crate::MAINTENANCE_CALL_LIMIT.saturating_sub(checks);
     match kind {
         MemoryCallKind::Check if remaining == 0 => Some(MemoryCallDeferral::CheckShareSpent),
-        MemoryCallKind::BackgroundAnalysis
+        MemoryCallKind::Analysis
             if crate::DAILY_ANALYSIS_CALL_LIMIT - total <= pending.min(remaining) =>
         {
             Some(MemoryCallDeferral::ReservedForChecks)
