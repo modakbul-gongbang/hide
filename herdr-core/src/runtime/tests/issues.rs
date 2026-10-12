@@ -572,6 +572,7 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         }),
     ));
     let pending = runtime.pending_task_agent_start(id).unwrap();

@@ -118,6 +118,14 @@ pub fn factory_files(state_dir: &Path) -> PathBuf {
     state_dir.join("factory-files")
 }
 
+/// The startup files Hide gives a pane's shell so it can tell when the shell
+/// has finished starting (`hide_host::shell_integration`): one folder per
+/// version of those files, so a newer build never rewrites a file a starting
+/// shell may be reading.
+pub fn shell_integration(home: &Path) -> PathBuf {
+    hide_home(home).join("shell-integration")
+}
+
 /// Where this machine's core runs when it is not here: present only on a
 /// node whose core a move placed on another machine; its owner is the
 /// daemon's start (`hided::placement`).

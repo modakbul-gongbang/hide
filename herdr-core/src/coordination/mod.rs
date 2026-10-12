@@ -16,7 +16,8 @@ use serde_json::{Value, json};
 const DETAIL: char = '\u{1f}';
 
 /// A refusal code with the detail its next action names (the device ids a
-/// caller could have used); the daemon splits them again with
+/// caller could have used, or the last line of a shell that had not finished
+/// starting); the daemon splits them again with
 /// [`split_refusal`] and answers the code alone.
 pub(crate) fn refusal(code: &str, detail: &str) -> String {
     format!("{code}{DETAIL}{detail}")
@@ -27,7 +28,9 @@ pub fn split_refusal(refusal: &str) -> (&str, Option<&str>) {
     // Only the refusals that build a detail carry one, so text from a device
     // that happens to hold the separator is never read as a next action.
     match refusal.split_once(DETAIL) {
-        Some((code @ "machine_unknown", detail)) => (code, Some(detail)),
+        Some((code @ ("machine_unknown" | crate::agent_start::SHELL_STARTING), detail)) => {
+            (code, Some(detail))
+        }
         _ => (refusal, None),
     }
 }
@@ -159,6 +162,16 @@ pub struct SpawnRecord {
     /// spawn's own; a record written before it existed has none.
     #[serde(default)]
     pub terminal: Option<String>,
+    /// How many starts Herdr took for this spawn's agent in `pane`: the first
+    /// one, and at most one more when the first ended at the shell with no
+    /// agent (`executor::spawn`).
+    #[serde(default)]
+    pub typed: u32,
+    /// The shell `pane` was launched with Hide's integration in, by program
+    /// name, so every start in it waits for that shell's first prompt; none
+    /// when the pane runs Herdr's own shell.
+    #[serde(default)]
+    pub shell: Option<String>,
     pub child: Option<String>,
     // Completion and the initial watch are one durable store transaction.
     // Later report/end/watch-stop events never invalidate this receipt.
@@ -190,7 +203,13 @@ pub(crate) enum Mutation {
         pane: Option<String>,
         /// The terminal `pane` runs, recorded with it.
         terminal: Option<String>,
+        /// The integrated shell `pane` runs, recorded with it.
+        shell: Option<String>,
         child: Option<String>,
+    },
+    /// Herdr took a start of the spawn's agent in its pane.
+    Typed {
+        id: String,
     },
     BindChild {
         id: String,
@@ -536,6 +555,8 @@ pub(crate) fn apply(
                 path: None,
                 pane: None,
                 terminal: None,
+                typed: 0,
+                shell: None,
                 child: None,
                 completed: false,
                 auto_watch_id: None,
@@ -549,6 +570,7 @@ pub(crate) fn apply(
             path,
             pane,
             terminal,
+            shell,
             child,
         } => {
             let parent = ledger
@@ -589,9 +611,34 @@ pub(crate) fn apply(
             if terminal.is_some() {
                 record.terminal = terminal.clone()
             };
+            if shell.is_some() {
+                record.shell = shell.clone()
+            };
             if child.is_some() {
                 record.child = child.clone()
             };
+            Ok(json!(record))
+        }
+        Mutation::Typed { id } => {
+            let parent = ledger
+                .spawns
+                .iter()
+                .find(|record| &record.id == id)
+                .ok_or("spawn_unavailable")?
+                .parent
+                .clone();
+            if !resolve_actor(ledger, &parent).is_some_and(|parent| parent.same_identity(caller)) {
+                return Err("parent_authority_required".into());
+            }
+            let record = ledger
+                .spawns
+                .iter_mut()
+                .find(|record| &record.id == id)
+                .ok_or("spawn_unavailable")?;
+            if record.pane.is_none() || record.child.is_some() {
+                return Err("spawn_incomplete".into());
+            }
+            record.typed = record.typed.saturating_add(1);
             Ok(json!(record))
         }
         Mutation::BindChild { id, record } => {
@@ -1326,6 +1373,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: Some("child-pane".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             4,
@@ -1344,6 +1392,7 @@ mod tests {
                     path: None,
                     pane: Some("wrong".into()),
                     terminal: None,
+                    shell: None,
                     child: None
                 },
                 5
@@ -1471,6 +1520,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: Some("worker".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             2,
@@ -1897,6 +1947,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: None,
                 terminal: None,
+                shell: None,
                 child: None,
             },
             Mutation::BindChild {
