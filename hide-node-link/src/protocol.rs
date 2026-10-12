@@ -98,7 +98,12 @@ use crate::error::HostError;
 /// node that owns the Herdr server, and terminal lines name the screen a
 /// view or a key came from. A node on 27 would refuse the first as unknown,
 /// so it is refused at Hello and reinstalled.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// 29: `shell_integration` writes the startup files that mark a pane shell's
+/// first prompt and answers the environment a pane is started with, so a
+/// start types only once the shell has finished starting. A node on 28 would
+/// refuse it as unknown, and a start on that device could be typed into a
+/// startup question, so it is refused at Hello and reinstalled.
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// What a link stream the core opens on a node that dialed it reaches on
 /// the node's machine ([`Call::LinkOpen`]).
@@ -430,6 +435,11 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
+    /// Writes Hide's shell integration under the node's home once and
+    /// answers the environment a pane Hide makes for an agent is started
+    /// with (`hide_host::shell_integration`), as a map of names to values;
+    /// empty where no shell can take it.
+    ShellIntegration,
     /// The start time and program of each pid, in order
     /// (`process::ProcessStart`).
     ProcessStarts {
@@ -734,6 +744,7 @@ impl Call {
             | Self::Git { .. }
             | Self::TerminateGroup { .. }
             | Self::AgentInstalled { .. }
+            | Self::ShellIntegration
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
             | Self::LineInput { .. }

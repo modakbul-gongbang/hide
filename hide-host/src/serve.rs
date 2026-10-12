@@ -1049,6 +1049,20 @@ pub fn handle_with_progress(
         Call::AgentInstalled { name } => {
             to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
         }
+        Call::ShellIntegration => {
+            let home = env.home("HOME is not set, so the shell integration has no place to live")?;
+            let data_dirs = std::env::var("XDG_DATA_DIRS").ok();
+            to_value(
+                crate::shell_integration::install(&home, data_dirs.as_deref()).map_err(
+                    |error| {
+                        HostError::new(
+                            ErrorCode::Io,
+                            format!("the shell integration could not be written: {error}"),
+                        )
+                    },
+                )?,
+            )
+        }
         Call::TerminateGroup { leader } => {
             if leader <= 1 {
                 return Err(HostError::new(
