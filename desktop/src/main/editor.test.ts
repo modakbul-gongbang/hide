@@ -11,7 +11,7 @@ function deps(platform: NodeJS.Platform, files: string[], spotlight?: ChildResul
   const runs: string[][] = [];
   return {
     platform,
-    home: "/Users/op",
+    home: "/Users/alice",
     searchPath: platform === "win32" ? ["C:\\Tools", "C:\\VSCode\\bin"] : ["/usr/local/bin", "/usr/bin"],
     exists: (file) => files.includes(file),
     isExecutable: (file) => files.includes(file),
@@ -26,7 +26,7 @@ function deps(platform: NodeJS.Platform, files: string[], spotlight?: ChildResul
 
 describe("findEditor", () => {
   it("finds VS Code on macOS in either Applications folder without starting anything, and opens by bundle id", async () => {
-    const probe = deps("darwin", ["/Users/op/Applications/Visual Studio Code.app"]);
+    const probe = deps("darwin", ["/Users/alice/Applications/Visual Studio Code.app"]);
     expect(await findEditor(probe)).toEqual({ file: "/usr/bin/open", args: ["-b", VSCODE_BUNDLE_ID], detached: false, via: "bundle" });
     expect(probe.runs).toEqual([]);
   });
