@@ -403,7 +403,7 @@ export class DesktopHost {
    * presenter asks for permission, which the wizard's button does (D-02).
    */
   private listenToastActivation(): void {
-    Notification.isSupported();
+    this.log.event("notify.presenter", { supported: Notification.isSupported() });
     Notification.handleActivation((details) => {
       const id = launchedId(details.arguments);
       this.log.event("notify.activated", { type: details.type, named: id !== null });

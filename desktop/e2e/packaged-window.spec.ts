@@ -41,9 +41,11 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     expect(fs.realpathSync.native(await app.evaluate(() => process.resourcesPath))).toBe(fs.realpathSync.native(resources));
     expect(run.daemonPid()).not.toBeNull();
     // Launch builds Electron's notification presenter on Windows, which makes the Start Menu
-    // shortcut a toast is attributed through, named from the executable's product name.
-    const shortcut = process.platform === "win32" ? path.join(process.env.APPDATA!, "Microsoft", "Windows", "Start Menu", "Programs", "hide.lnk") : null;
-    if (shortcut) await expect.poll(() => fs.existsSync(shortcut), { timeout: 10_000 }).toBe(true);
+    // shortcut a toast is attributed through, named from the executable's product name; the
+    // Start Menu is a known folder of the profile the app resolves, the fixture's here.
+    const roaming = await app.evaluate(({ app: electron }) => electron.getPath("appData"));
+    const shortcut = process.platform === "win32" ? path.join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "hide.lnk") : null;
+    if (shortcut) await expect.poll(() => fs.existsSync(shortcut), { message: shortcut, timeout: 10_000 }).toBe(true);
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
     await screenshot(page, "packaged-window");
