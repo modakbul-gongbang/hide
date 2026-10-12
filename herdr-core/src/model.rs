@@ -4631,6 +4631,10 @@ pub struct BackgroundAiSnapshot {
     /// Why the saved choice could not be read or written. The defaults are in
     /// use while this is set; it is never left empty to stand for success.
     pub unavailable_reason: Option<String>,
+    /// The Usage limit: the share of an agent's week Hide AI may use before a
+    /// background request moves to the next agent of the order. `None` is
+    /// No limit (PRD hide-ai-usage-limit D-01).
+    pub usage_limit: Option<u8>,
 }
 
 impl BackgroundAiSnapshot {
@@ -4645,6 +4649,7 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
+            usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }
     }
@@ -4696,6 +4701,21 @@ pub struct BackgroundAiProviderSnapshot {
     /// `--model` (B36). True for the agents measured against nothing yet.
     pub cli_default: bool,
     pub models_unavailable_reason: Option<String>,
+    /// The agent's weekly usage as the toolbar's usage read last answered it;
+    /// absent when it gave no figure, and then the agent is never held back
+    /// by the usage limit (PRD hide-ai-usage-limit D-07).
+    pub weekly: Option<BackgroundAiWeekly>,
+    /// The weekly figure is at or past the usage limit: this agent cannot
+    /// answer a request Hide AI starts on its own (D-02).
+    pub past_limit: bool,
+}
+
+/// One agent's weekly usage: the share spent and when the window resets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiWeekly {
+    pub used_percent: f64,
+    /// Unix milliseconds, when the agent said.
+    pub resets_at_ms: Option<u64>,
 }
 
 impl BackgroundAiProviderSnapshot {
@@ -4729,12 +4749,17 @@ pub struct BackgroundAiRefusalSnapshot {
     /// The agent that cannot answer: Runs on.
     pub provider: String,
     /// The router's availability class for it: `usage_limited`,
-    /// `needs_login`, `not_installed`, `unavailable` or `unsupported`.
+    /// `past_limit` (at or past the operator's usage limit), `needs_login`,
+    /// `not_installed`, `unavailable` or `unsupported`.
     pub reason: String,
     /// When a usage limit ends, as unix milliseconds, when the agent said.
     pub retry_at_ms: Option<u64>,
     /// The listed agent answering instead; absent when none can (B42).
     pub using: Option<String>,
+    /// For `past_limit`: the agent's weekly share and the limit it is past,
+    /// so the screen says `past your 90% limit` from the core's own numbers.
+    pub used_percent: Option<f64>,
+    pub limit: Option<u8>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,

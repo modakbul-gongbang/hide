@@ -298,6 +298,9 @@ impl Core {
         // Before any coordinator starts, because each builds its label worker
         // on these, and before the kit runs, because the plugin state the
         // store imports once is what the kit's retirement deletes.
+        // Taken before the match: a guard in its scrutinee would be held
+        // through the arms, which lock the runtime again.
+        let usage_gate = lock_recover(&runtime).usage_gate();
         let labels = match crate::labels::LabelServices::start(
             std::path::Path::new(&options.app_state_path)
                 .parent()
@@ -306,6 +309,7 @@ impl Core {
             Arc::downgrade(&runtime),
             &options.node_id,
             Arc::clone(&own_node),
+            usage_gate,
         ) {
             Ok(services) => {
                 let services = Arc::new(services);

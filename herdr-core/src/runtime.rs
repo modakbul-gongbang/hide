@@ -54,6 +54,7 @@ mod tab_focus;
 mod terminal;
 mod terminal_input;
 mod tree_close;
+mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
 mod workspace_control;
@@ -1295,6 +1296,12 @@ pub struct Runtime {
     usage_window_visible: bool,
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
+    /// The usage limit and the weekly figures the label and Memory routers
+    /// judge each request by; written from the settings and the usage rows
+    /// (`runtime/usage_limit.rs`).
+    usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Whether the diagnostic log last said the order is paused by the limit.
+    usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
     pending_tab_rename: Option<rename::PendingRename>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
@@ -2010,6 +2017,8 @@ impl Runtime {
             usage_window_visible: false,
             usage_popover_open: false,
             usage_popover_open_generation: 0,
+            usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
             panes_closing: HashSet::new(),
