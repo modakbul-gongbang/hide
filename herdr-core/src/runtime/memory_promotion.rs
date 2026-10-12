@@ -1413,6 +1413,20 @@ mod tests {
                 .promotion_start(&crate::node::test_node(), "/checkouts/fixture")
                 .unwrap()
         };
+        // A node's Project's agent starts on that node, never here (PRD
+        // core-host-node-move B14).
+        assert_eq!(start().machine, None);
+        let elsewhere = crate::node::NodeId::parse("node-elsewhere").unwrap();
+        assert_eq!(
+            runtime
+                .lock()
+                .unwrap()
+                .promotion_start(&elsewhere, "/checkouts/fixture")
+                .unwrap()
+                .machine
+                .as_deref(),
+            Some("node-elsewhere")
+        );
 
         let mut store = MemoryStore::open(&root.path().join("memory.sqlite3")).unwrap();
         store
