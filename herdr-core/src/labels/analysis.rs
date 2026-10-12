@@ -173,28 +173,35 @@ static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
 });
 static HOME_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     // Account names are private; the remaining folders and file name identify
-    // a delegated task. Quoted homes can contain account spaces or end at
-    // the closing quote. An unquoted Windows account with spaces must end
+    // a delegated task. Consume a quoted path through its matching quote so
+    // another quote in the account or a home-looking tail cannot split it.
+    // An unquoted Windows account with spaces must end
     // at a separator without trailing whitespace or invalid name characters,
     // so a bare home cannot consume prose through a later path's separator.
     // A path component cannot start another home prefix.
-    Regex::new(
+    let root = r"(?:(?:/Users|/home)/|(?i:[a-z]:[\\/]Users[\\/]))";
+    let quoted = [
+        ('"', "double_root"),
+        ('\'', "single_root"),
+        ('`', "backtick_root"),
+    ]
+    .map(|(quote, name)| format!(r"{quote}(?i:file:///?)?(?P<{name}>{root})[^{quote}\r\n]*{quote}"))
+    .join("|");
+    Regex::new(&format!(
         r#"(?x)
-        (?P<quoted_boundary>['"`](?i:file:///?)?)
-        (?P<quoted_home>(?:(?:/Users|/home)/|(?i:[a-z]:[\\/]Users[\\/]))[^/\\\r\n'"`]+)
-        (?P<quoted_end>[/\\'"`])
+        (?P<quoted>{quoted})
         |
         (?P<boundary>(?:^|[^\w./\\~])(?i:file:///?)?)
         (?P<home>
-            (?:/Users|/home)/[^/\\\s'"`]+/?
+            (?:/Users|/home)/[^/\\\s"]+/?
             |
             (?i:[a-z]:[\\/]Users[\\/])
             (?:
-                [^\\/\s'"`<>:*?|](?:[^\\/\x00-\x1f'"`<>:*?|]*[^\\/\s'"`<>:*?|])?[\\/]
-                |[^\\/\s'"`]+
+                [^\\/\s"<>:*?|](?:[^\\/\x00-\x1f"<>:*?|]*[^\\/\s"<>:*?|])?[\\/]
+                |[^\\/\s"]+
             )
         )"#,
-    )
+    ))
     .expect("valid home prefix expression")
 });
 
@@ -454,14 +461,25 @@ fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
     let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {
-        if let Some(boundary) = captures.name("quoted_boundary") {
-            let ending = &captures["quoted_end"];
-            let ending = if matches!(ending, "/" | "\\") {
-                "/"
-            } else {
-                ending
+        if let Some(quoted) = captures.name("quoted") {
+            let root = ["double_root", "single_root", "backtick_root"]
+                .into_iter()
+                .find_map(|name| captures.name(name))
+                .expect("quoted path has a home root");
+            let path = quoted.as_str();
+            let closing_quote = path.len() - 1;
+            let account_and_tail = &path[root.end() - quoted.start()..closing_quote];
+            if account_and_tail.is_empty() || account_and_tail.starts_with(['/', '\\']) {
+                return path.to_owned();
+            }
+            let boundary = &path[..root.start() - quoted.start()];
+            let ending = &path[closing_quote..];
+            return match account_and_tail.find(['/', '\\']) {
+                Some(separator) => {
+                    format!("{boundary}~/{}{ending}", &account_and_tail[separator + 1..])
+                }
+                None => format!("{boundary}~{ending}"),
             };
-            return format!("{}~{ending}", boundary.as_str());
         }
         let boundary = &captures["boundary"];
         let home = &captures["home"];
@@ -688,6 +706,9 @@ mod tests {
         ]
         .join("\\");
         let spaced_windows_home = ["d:", "users", "Example Account"].join("\\");
+        let apostrophe_windows_home = ["C:", "Users", "Example'Account"].join("\\");
+        let apostrophe_windows_path =
+            [apostrophe_windows_home.as_str(), "rest", "brief.md"].join("\\");
         let mut failures = Vec::new();
         for (request, expected_request) in [
             (
@@ -714,6 +735,12 @@ mod tests {
             (
                 "/Users/example/한글 폴더/example/brief.md",
                 "~/한글 폴더/example/brief.md",
+            ),
+            (apostrophe_windows_path.as_str(), r"~/rest\brief.md"),
+            (apostrophe_windows_home.as_str(), "~"),
+            (
+                "/Users/example/notes /Users/alice/brief.md",
+                "~/notes /Users/alice/brief.md",
             ),
         ]
         .map(|(path, expected)| {
@@ -752,13 +779,27 @@ mod tests {
                     "open file:///C:/Users/example/x/brief.md",
                     "open file:///~/x/brief.md",
                 ),
+                (
+                    "Read '/home/alice/tasks/brief.md' and execute it.",
+                    "Read '~/tasks/brief.md' and execute it.",
+                ),
+                (
+                    "Read `C:/Users/example/tasks/brief.md` and execute it.",
+                    "Read `~/tasks/brief.md` and execute it.",
+                ),
             ]
             .map(|(request, expected)| (request.to_owned(), expected.to_owned())),
         )
-        .chain([(
-            format!("Read {spaced_windows_path} and execute it."),
-            r"Read ~/worktrees/fix-search\brief.md and execute it.".to_owned(),
-        )]) {
+        .chain([
+            (
+                format!("Read {spaced_windows_path} and execute it."),
+                r"Read ~/worktrees/fix-search\brief.md and execute it.".to_owned(),
+            ),
+            (
+                format!("Read {apostrophe_windows_path} and execute it."),
+                r"Read ~/rest\brief.md and execute it.".to_owned(),
+            ),
+        ]) {
             let events = [human(&request, 1)];
             for context in [
                 analysis_context(&events, &|_| true),
