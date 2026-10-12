@@ -68,7 +68,7 @@ pub enum NodeEvent {
     Revoke { token: String },
     /// A `hide` command opened a stream. `caller` is what the node proved
     /// about the process that opened it, as it opened ([`StreamCaller`]);
-    /// absent when the node proved nothing, and from a node that predates it.
+    /// absent when the node proved nothing.
     StreamOpen {
         stream: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,10 +137,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// `caller` rides within protocol 28: a node that predates it opens a
-    /// stream as before, and a core that predates it reads a newer node's
-    /// line without the field, so a mixed pair keeps serving commands and
-    /// the core asks `PaneInspect` for each, as it did.
+    /// A stream the node proved nothing for opens without `caller`, and the
+    /// core reads that line as no proof; a proved stream names the pane and
+    /// the identity the node read.
     #[test]
     fn a_stream_open_reads_with_or_without_its_caller() {
         let older: NodeEvent =
@@ -172,15 +171,13 @@ mod tests {
                 "identity": {"terminal_id": "t-1", "shell_pid": 42, "shell_started": 7},
             }})
         );
-        /// The event as a core before `caller` declared it.
-        #[derive(Debug, Deserialize, PartialEq)]
-        #[serde(tag = "event", rename_all = "snake_case")]
-        enum Before {
-            StreamOpen { stream: u64 },
-        }
         assert_eq!(
-            serde_json::from_value::<Before>(line).unwrap(),
-            Before::StreamOpen { stream: 3 }
+            serde_json::to_value(NodeEvent::StreamOpen {
+                stream: 3,
+                caller: None
+            })
+            .unwrap(),
+            json!({"event": "stream_open", "stream": 3})
         );
     }
 }

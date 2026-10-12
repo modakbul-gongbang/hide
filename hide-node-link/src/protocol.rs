@@ -102,10 +102,10 @@ use crate::error::HostError;
 /// only because no peer of another build reads it: a node that dials its
 /// core links only on the core's exact build (PRD core-host-node-move B10,
 /// option C), and Factory runs never go to a device the core dials.
-/// An event may gain an optional field within 28 when either side may lack
-/// it: [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent from an
-/// older node, whose commands the core checks with `pane_inspect` as before,
-/// and an older core reads past it.
+/// An event may gain an optional field within 28 for the same reason:
+/// [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent when the node
+/// proved nothing, and the core then checks the command with `pane_inspect`;
+/// a core uploads its own build to a device it dials, so no peer lacks it.
 pub const PROTOCOL_VERSION: u32 = 28;
 
 /// What a link stream the core opens on a node that dialed it reaches on
