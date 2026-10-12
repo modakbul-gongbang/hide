@@ -3850,10 +3850,7 @@ fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
     );
 }
 
-/// PRD sidebar-titlebar-refresh B2, B5 (D-19). Opening a sleeping project
-/// holds it open until an agent wakes, without touching the project's own
-/// fold; once it wakes the key is forgotten, so the next sleep starts folded.
-/// The No agents fold opens through the shared fold event and its own key.
+/// A tab holding one pane, for an agent row to stand in.
 fn tab_with_pane(pane_id: &str) -> TabSnapshot {
     TabSnapshot {
         agent: None,
@@ -3885,6 +3882,10 @@ fn tab_with_pane(pane_id: &str) -> TabSnapshot {
     }
 }
 
+/// PRD sidebar-titlebar-refresh B2, B5 (D-19). Opening a sleeping project
+/// holds it open until an agent wakes, without touching the project's own
+/// fold; once it wakes the key is forgotten, so the next sleep starts folded.
+/// The No agents fold opens through the shared fold event and its own key.
 #[test]
 fn a_sleeping_project_stays_open_until_it_wakes() {
     let mut runtime = runtime();

@@ -778,7 +778,12 @@ fn still_naming(value: &Value, change: &OwnerChange, at: &str) -> Option<String>
     let qualified = format!("remote:{old_id}:");
     // A new owner known by its node id keeps that id as the owner's.
     let alias = old_id != change.new_owner;
-    let carries = |text: &str| text.starts_with(&qualified);
+    // A sleeping project's fold names the project after its own prefix.
+    let carries = |text: &str| {
+        text.strip_prefix("asleep/")
+            .unwrap_or(text)
+            .starts_with(&qualified)
+    };
     let is_alias = |text: &str| {
         alias
             && (text == old_id
