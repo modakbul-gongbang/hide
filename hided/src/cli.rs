@@ -660,6 +660,29 @@ fn memory_text(
             if !cited.is_empty() {
                 lines.push(format!("Files: {}", cited.join(", ")));
             }
+            let evidence = result["evidence"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| {
+                            let value = text(&row["value"]);
+                            let mark = match (row["present"].as_bool(), row["fingerprint"].as_str())
+                            {
+                                (Some(false), _) => " (not found)".to_owned(),
+                                (_, Some(fingerprint)) => format!(
+                                    " ({})",
+                                    fingerprint.chars().take(15).collect::<String>()
+                                ),
+                                _ => String::new(),
+                            };
+                            format!("{} {value}{mark}", text(&row["kind"]))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !evidence.is_empty() {
+                lines.push(format!("Rests on: {}", evidence.join(", ")));
+            }
             if result["verifying"] == true {
                 lines.push(
                     "Not verified: a file or name this card rests on changed, so check it against the repository before relying on it."

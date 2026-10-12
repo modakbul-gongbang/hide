@@ -195,7 +195,13 @@ impl PreparedMemory {
                     return Err("memory_card_forgotten".into());
                 }
                 self.report(&identity.id, MemoryChange::Other);
-                Ok(card(&item))
+                let evidence = store
+                    .detail(&identity.id, &item.id)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .evidence;
+                let mut answer = card(&item);
+                answer["evidence"] = json!(evidence);
+                Ok(answer)
             }
             MemoryCommand::Forget { number } => {
                 let item = store
@@ -862,6 +868,11 @@ mod tests {
         assert_eq!(card["kind"], "rule");
         assert_eq!(card["sources"], 1);
         assert_eq!(card["cited_paths"], json!(["src/lib.rs"]));
+        assert_eq!(
+            card["evidence"],
+            json!([]),
+            "a card made with none rests on none"
+        );
         let item = fixture
             .store()
             .item_by_number(&fixture.project_id, 1)

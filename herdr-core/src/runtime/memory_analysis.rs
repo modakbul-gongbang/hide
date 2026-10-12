@@ -380,10 +380,7 @@ impl Runtime {
             .map(|settings| crate::ai::memory_router(&own_node, settings));
         let (nodes, unreached) = self.memory_nodes();
         let delegated = self.delegated_sessions();
-        let home = self
-            .home_path
-            .clone()
-            .map(|home| (self.node.clone(), home));
+        let home = self.home_path.clone().map(|home| (self.node.clone(), home));
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());

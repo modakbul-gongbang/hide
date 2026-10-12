@@ -75,7 +75,7 @@ pub fn still_holds(stored: &Evidence, fact: &EvidenceFact) -> Option<bool> {
         EvidenceFact::Missing => Some(!stored.present),
         EvidenceFact::Found { fingerprint } => Some(match stored.kind {
             // A name that existed must still exist; one that was not found
-            // when stored was never evidence, so it cannot have moved.
+            // when stored is kept only to be shown, so it cannot have moved.
             EvidenceKind::Path | EvidenceKind::Command => true,
             EvidenceKind::File => {
                 stored.present
@@ -87,7 +87,8 @@ pub fn still_holds(stored: &Evidence, fact: &EvidenceFact) -> Option<bool> {
 
 /// The repository paths and script names a card's text writes, in order, at
 /// most [`NAME_CANDIDATE_LIMIT`] together. Whether any exists is the node's
-/// to say: a name found nowhere when the card is written was never evidence.
+/// to say: a name found nowhere when the card is written is kept as not
+/// found only when it looks like a file, and never breaks the card.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WrittenNames {
     pub paths: Vec<String>,

@@ -79,6 +79,25 @@ impl<'a> CheckoutFacts<'a> {
         let states = self.real_paths(&wanted);
         let mut rows = Vec::new();
         for (path, state) in wanted.iter().zip(states) {
+            if matches!(state, Some(PathState::Missing)) {
+                // A name that looks like a file (it has an extension) and is
+                // not there is kept as not found, so `show` can say so; prose
+                // such as `Pin/Unpin` has none and is not kept.
+                if path
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.contains('.'))
+                    && rows.len() < EVIDENCE_ROW_LIMIT
+                {
+                    rows.push(Evidence {
+                        kind: EvidenceKind::Path,
+                        value: path.clone(),
+                        fingerprint: None,
+                        present: false,
+                    });
+                }
+                continue;
+            }
             if !matches!(state, Some(PathState::Real { .. })) {
                 continue;
             }
@@ -106,13 +125,20 @@ impl<'a> CheckoutFacts<'a> {
             if rows.len() >= EVIDENCE_ROW_LIMIT {
                 break;
             }
-            if matches!(self.name_fact(name), EvidenceFact::Found { .. }) {
-                rows.push(Evidence {
+            match self.name_fact(name) {
+                EvidenceFact::Found { .. } => rows.push(Evidence {
                     kind: EvidenceKind::Command,
                     value: name.clone(),
                     fingerprint: None,
                     present: true,
-                });
+                }),
+                EvidenceFact::Missing => rows.push(Evidence {
+                    kind: EvidenceKind::Command,
+                    value: name.clone(),
+                    fingerprint: None,
+                    present: false,
+                }),
+                EvidenceFact::Unknown => {}
             }
         }
         rows.truncate(EVIDENCE_ROW_LIMIT);
@@ -410,18 +436,21 @@ mod tests {
                     row.kind.as_str(),
                     row.value.as_str(),
                     row.fingerprint.is_some(),
+                    row.present,
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(
             described,
             [
-                ("file", "docs/BUILD.md", true),
-                ("path", "scripts/verify-web.sh", false),
-                ("path", "macos", false),
-                ("command", "verify-web.sh", false),
+                ("file", "docs/BUILD.md", true, true),
+                ("path", "scripts/verify-web.sh", false, true),
+                ("path", "scripts/never.sh", false, false),
+                ("path", "macos", false, true),
+                ("command", "build_dev_app.sh", false, false),
+                ("command", "verify-web.sh", false, true),
             ],
-            "a name found nowhere was never evidence"
+            "a file-like name found nowhere is kept as not found, prose is not"
         );
         assert!(
             facts

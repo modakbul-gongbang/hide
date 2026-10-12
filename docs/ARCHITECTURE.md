@@ -155,7 +155,7 @@ Disabling Memory stops new analysis and injection without deleting its data, whi
 
 ### What a card rests on
 
-Every card carries its evidence (PRD memory-card-quality D-05, D-06): the repository files it cites with a SHA-256 content fingerprint, and the repository paths and script names its text writes, each kept only when it existed when the card was written (`hide-memory/src/evidence.rs`, `herdr-core/src/runtime/memory_evidence.rs`), at most 16 rows per revision.
+Every card carries its evidence (PRD memory-card-quality D-05, D-06): the repository files it cites with a SHA-256 content fingerprint, and the repository paths and script names its text writes, each kept when it existed when the card was written (a name with a file extension that did not exist is kept as not found, which `hide memory show` says, and never breaks the card; prose such as `Pin/Unpin` is not kept) (`hide-memory/src/evidence.rs`, `herdr-core/src/runtime/memory_evidence.rs`), at most 16 rows per revision.
 The facts come from the node that holds the checkout, on the analysis worker and never under the runtime lock, with no protocol change: `Call::RealPaths` for existence, `Call::Revision` for a file's fingerprint (at most 300 a Project's walk) and `Call::Index` for a script's file name, read once a walk, with a truncated index unable to say a name is gone.
 They are read against the Project's own root, so a session in a worktree does not fingerprint a branch's files.
 A node that cannot answer leaves a card as it was.

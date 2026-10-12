@@ -1981,6 +1981,7 @@ impl MemoryStore {
              LEFT JOIN card_promotions p ON p.item_id=i.id \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','lesson') AND r.verified_at_ms IS NOT NULL \
              AND ((i.promotion_ok_revision IS i.current_revision)=?6) \
+             AND (?6 OR i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?7) \
              AND (p.item_id IS NULL OR p.state='outdated' OR (p.state='dismissed' AND p.revision!=i.current_revision))) \
              WHERE human>=?3 OR pulled>=?4 ORDER BY human DESC,pulled DESC,number LIMIT ?5",
         )?;
@@ -1992,7 +1993,8 @@ impl MemoryStore {
                     PROMOTION_HUMAN_SESSIONS,
                     PROMOTION_PULLED_SESSIONS,
                     limit as u64,
-                    checked
+                    checked,
+                    now_unix_ms.saturating_sub(crate::REVERIFY_INTERVAL_MS)
                 ],
                 |row| {
                     Ok(PromotionSuggestion {
@@ -4884,6 +4886,14 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .map(|s| s.number)
                 .collect::<Vec<_>>(),
             [1]
+        );
+        // Asked about today already: not due again, so no call is counted for it.
+        assert!(store.begin_verification(&card.id, 65).unwrap());
+        assert!(
+            store
+                .promotion_unchecked(&project, 70, 3)
+                .unwrap()
+                .is_empty()
         );
     }
 
