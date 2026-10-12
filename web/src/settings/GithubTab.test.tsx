@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useShellStore } from "../store";
-import { GeneralTab } from "./GeneralTab";
+import { GithubTab } from "./GithubTab";
 
 // The shell's modules reach xterm, which asks jsdom for a canvas it lacks.
 vi.hoisted(() => {
@@ -53,7 +53,7 @@ async function mount(next: ReturnType<typeof signedOut>) {
   const saved = useShellStore.getState();
   await act(async () => {
     useShellStore.setState(next as never);
-    root.render(<TooltipProvider><GeneralTab actions={actions} /></TooltipProvider>);
+    root.render(<TooltipProvider><GithubTab actions={actions} /></TooltipProvider>);
   });
   return {
     copied,
@@ -87,7 +87,7 @@ it("keeps the gh row as it was on the core's own machine, a node dialing in or n
   await unmount();
 });
 
-it("draws the tab again for a project change, not for a snapshot change it does not read", async () => {
+it("draws the page again for a project change, not for a snapshot change it does not read", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
   const container = document.createElement("div");
@@ -98,8 +98,8 @@ it("draws the tab again for a project change, not for a snapshot change it does 
   await act(async () => {
     useShellStore.setState(signedOut() as never);
     root.render(
-      <Profiler id="general" onRender={() => { draws += 1; }}>
-        <TooltipProvider><GeneralTab actions={createActions(() => true)} /></TooltipProvider>
+      <Profiler id="github" onRender={() => { draws += 1; }}>
+        <TooltipProvider><GithubTab actions={createActions(() => true)} /></TooltipProvider>
       </Profiler>,
     );
   });

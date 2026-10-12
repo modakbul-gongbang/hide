@@ -170,10 +170,22 @@ async function showPairing(page: Page): Promise<void> {
   await page.locator('[data-mobile-show-code="true"]').click({ timeout: 20_000 });
 }
 
-/** Picks a push mode in the one dropdown. */
+/** Picks a push mode in the one dropdown on Settings > Notifications (PRD settings-left-nav B6), and returns to Mobile. */
 async function choosePush(page: Page, mode: "off" | "app_closed" | "always"): Promise<void> {
+  await page.locator('[data-settings-tab="notifications"]').click();
   await page.locator("[data-push-select]").click();
   await page.locator(`[data-push-choice="${mode}"]`).click();
+  await expect(page.locator(`[data-push-detail="${mode}"]`)).toBeVisible();
+  await page.locator('[data-settings-tab="mobile"]').click();
+  await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
+}
+
+/** The push mode Settings > Notifications shows, read there before returning to Mobile. */
+async function expectPush(page: Page, label: string): Promise<void> {
+  await page.locator('[data-settings-tab="notifications"]').click();
+  await expect(page.locator("[data-push-select]")).toHaveText(label);
+  await page.locator('[data-settings-tab="mobile"]').click();
+  await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
 }
 
 /** The QR's `#pair=...` fragment, opened on this loopback daemon instead of the ts.net address. */
@@ -235,7 +247,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const toggle = page.locator('[data-mobile-switch="true"]');
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await expect(page.locator('[data-mobile-tab="true"]')).toContainText("Over Tailscale, only inside your tailnet.");
-    await expect(page.locator("[data-push-select]")).toHaveText("Off");
+    await expect(page.locator("[data-push-select]")).toHaveCount(0);
+    await expectPush(page, "Off");
     expect(tailscale.calls()).toBe("");
 
     // B2: the CLI is missing, so the first step carries the download link and the rest wait.
@@ -610,7 +623,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
 
     // B29: the push mode survived the restart.
     await openMobileSettings(page, daemon);
-    await expect(page.locator("[data-push-select]")).toHaveText("Only when the app is closed");
+    await expectPush(page, "Only when the app is closed");
 
     // B14: three more phones on record make four; a fifth is refused with the reason.
     const record = (id: string, lastSeen: number) => ({

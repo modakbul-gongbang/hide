@@ -12,9 +12,11 @@ import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { FirstRunWizard, useSetupWalk } from "../FirstRunWizard";
 import type { HostBridge, NotificationPermission } from "../host";
+import type { MobileState } from "../mobileSettings";
 import { clientI18n } from "../i18n/translator";
 import { OverviewPage } from "../Overview";
 import { SettingsGate } from "../SettingsSheet";
+import { SETTINGS_GROUPS, type SettingsTab } from "../settings";
 import { Sidebar } from "../sidebar";
 import type { AiProvider, KitAgent, KitPiece, SnapshotRest } from "../snapshot";
 import { StartPanelHost } from "../StartPanel";
@@ -57,6 +59,8 @@ export type OnboardingSceneParams = {
   language: "en" | "ko";
   /** The interface text scale Appearance's font size sets (`--interface-scale`); the largest is 17/13 (B41). */
   scale: number;
+  /** The Settings page a `settings-*` state opens (PRD settings-left-nav); Notifications unless the query names another. */
+  page?: SettingsTab;
 };
 
 export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneParams {
@@ -68,10 +72,30 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   const language = params.get("lang") === "ko" || params.get("content") === "long" ? "ko" : "en";
   const scale = Number(params.get("scale") ?? "1");
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale };
+  const page = params.get("page") ?? "notifications";
+  if (!SETTINGS_GROUPS.some((group) => group.tabs.includes(page as SettingsTab)) && page !== "about") throw new Error(`Unknown Settings page ${page}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language, scale, page: page as SettingsTab };
 }
 
 const HOME = "/Users/me";
+
+/** Phone access off, no phone paired, push only while the app is closed: the daemon's `mobile` frame on a fresh Mac. */
+const SCENE_MOBILE: MobileState = {
+  enabled: false,
+  exposure: "off",
+  checklist: null,
+  download_url: "https://example.test/tailscale",
+  admin_url: "https://example.test/admin",
+  foreign_target: null,
+  failure: null,
+  url: null,
+  qr: null,
+  code_expires_at_ms: null,
+  phones: [],
+  max_phones: 4,
+  push_mode: "app_closed",
+  now_ms: 0,
+};
 const PLATFORM: Record<OnboardingSystem, string> = { mac: "darwin", windows: "win32", linux: "linux" };
 
 /** The kit's agents in its order, each as KitAgentSnapshot reports it on a Mac whose kit has not run. */
@@ -173,12 +197,12 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
   } as unknown as SnapshotRest;
 }
 
-export function OnboardingScene({ theme, state, system, language, scale }: OnboardingSceneParams) {
+export function OnboardingScene({ theme, state, system, language, scale, page = "notifications" }: OnboardingSceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   // The host and the stores are in place before the first render, since the wizard asks the host which one it is in.
   useMemo(() => {
     window.hideHost = sceneHost(system, permissionOf(state, system));
-    useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1 } as never);
+    useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1, mobile: SCENE_MOBILE } as never);
     useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewOpen: false } as never);
   }, [state, system]);
 
@@ -201,14 +225,14 @@ export function OnboardingScene({ theme, state, system, language, scale }: Onboa
       press();
     };
     if (state === "agents-setup") useSetupWalk.getState().open();
-    if (state.startsWith("settings-")) useUiStore.getState().openSettings("general");
+    if (state.startsWith("settings-")) useUiStore.getState().openSettings(page);
     if (state.startsWith("start-panel")) useStartPanel.getState().open(false, { projectId: "my-app", kind: state === "start-panel" ? "claude" : "codex" });
     // Effects run twice in development, so the toggle is pressed only while it is closed.
     if (state === "agents-changes") click('[data-first-run-what-changes][aria-expanded="false"]');
     // The pass that took the press has landed.
     if (state === "agents-failed") click("[data-onboarding-apply]", () => useShellStore.setState((current) => ({ revision: current.revision + 1 }) as never));
     if (state !== "agents-changes" && state !== "agents-failed") settle();
-  }, [state]);
+  }, [state, page]);
 
   useLayoutEffect(() => {
     void clientI18n.changeLanguage(language);

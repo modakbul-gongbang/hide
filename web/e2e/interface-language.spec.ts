@@ -55,12 +55,13 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       await choose(left, language!);
       for (const page of [left, right]) {
         await expect(page.locator("html")).toHaveAttribute("lang", language!);
-        await expect(page.locator("[data-settings] h2")).toHaveText(heading!);
+        await expect(page.locator("[data-settings] nav h2")).toHaveText(heading!);
         await expect(page.locator('[data-settings-tab="general"]')).toHaveText(general!);
       }
       // The window's own machine is product copy and follows the language
       // (PRD core-host-node-move B2); paths remain byte-for-byte unchanged.
       await expect(left.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE[language!]!);
+      await left.locator('[data-settings-tab="about"]').click();
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
       await expect(left.locator("[data-sidebar-mode]")).toHaveCount(0);
       await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);

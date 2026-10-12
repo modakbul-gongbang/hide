@@ -77,8 +77,9 @@ test("the wizard walks agents, notifications and the first project, never return
   await expect(page.locator("[data-main-screen], [data-workspace-screen]").first()).toBeVisible({ timeout: 30_000 });
   await expect(wizard).toHaveCount(0);
 
-  // B30: Settings > General keeps the switch the step turned on.
+  // B30: Settings > Notifications keeps the switch the step turned on (PRD settings-left-nav B6).
   await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="notifications"]').click();
   await expect(page.locator('[data-settings-group="notifications"] [data-notification-switch]')).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
 

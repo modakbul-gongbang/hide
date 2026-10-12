@@ -159,9 +159,10 @@ test("reads without sideways scrolling in Korean and English, light and dark, on
   try {
     const list = await openAgents(page, daemon);
     await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
-    await page.setViewportSize({ width: 560, height: 1000 });
+    // The smallest window (PRD settings-left-nav B13): the list keeps its width beside the page.
+    await page.setViewportSize({ width: 720, height: 1000 });
     await list.locator("[data-agents-not-installed] summary").click();
-    const panel = page.locator('[data-settings="true"] [role="tabpanel"]');
+    const panel = page.locator('[data-settings="true"] [data-settings-page]');
     const overflow = () => panel.evaluate((node) => node.scrollWidth - node.clientWidth);
     for (const [language, theme] of [
       ["en", "light"],
@@ -177,7 +178,7 @@ test("reads without sideways scrolling in Korean and English, light and dark, on
       await expect(page.locator("[data-theme-choice]")).toHaveAttribute("data-theme-choice", theme);
       await page.locator('[data-settings-tab="agents"]').click();
       await expect(list).toBeVisible();
-      // The tab strip fades the left tab out; the picture waits for the fade so it shows the resting sheet.
+      // The list fades the left page's item out; the picture waits for the fade so it shows the resting sheet.
       await expect(page.locator('[data-settings-tab="general"]')).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expect.poll(overflow).toBeLessThanOrEqual(0);
       await screenshot(page, `agents-${language}-${theme}-narrow`);
