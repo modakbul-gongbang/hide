@@ -1749,12 +1749,18 @@ fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::Usa
     runtime.lock().ok().map(|guard| guard.usage_activity())
 }
 
-/// Whether background Memory analysis wants the weekly usage read.
+/// Whether the weekly usage read runs with no window attached: Memory analysis
+/// wants it, or the usage limit needs a fresh figure.
 fn read_memory_reads_usage(context: &SessionSyncContext) -> bool {
     context
         .runtime
         .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.memory_reads_usage()))
+        .and_then(|runtime| {
+            runtime
+                .lock()
+                .ok()
+                .map(|guard| guard.reads_usage_headless())
+        })
         .unwrap_or(false)
 }
 

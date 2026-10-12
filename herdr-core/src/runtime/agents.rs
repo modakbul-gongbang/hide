@@ -847,6 +847,7 @@ impl Runtime {
         let summary = crate::agent_state::summarize(agents, connected);
         if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
+            self.agent_worked_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;

@@ -74,8 +74,15 @@ impl Runtime {
         self.ai_active()
             && self.usage_limit().threshold().is_some()
             && (self.usage_pause_announced
-                || unix_milliseconds().saturating_sub(self.pet_active_at_unix_ms)
-                    < LIMIT_USAGE_WANTED_MS)
+                || (self.agent_worked_at_unix_ms != 0
+                    && unix_milliseconds().saturating_sub(self.agent_worked_at_unix_ms)
+                        < LIMIT_USAGE_WANTED_MS))
+    }
+
+    /// Whether the usage reader runs with no window attached: Memory has work
+    /// or the limit wants a fresh figure.
+    pub(crate) fn reads_usage_headless(&self) -> bool {
+        self.memory_reads_usage() || self.limit_reads_usage()
     }
 
     /// The limit the operator chose, 90% while the settings are not read.

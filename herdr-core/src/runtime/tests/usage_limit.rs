@@ -232,11 +232,14 @@ fn reading_the_same_usage_again_changes_nothing() {
 #[test]
 fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_quiet() {
     let mut runtime = two_agents();
-    // A core starts counting as lately active; a quiet one has been idle past the hint.
-    runtime.pet_active_at_unix_ms = 0;
+    // A core that has not seen an agent work reads nothing, however new it is.
     assert!(
         !runtime.usage_activity().window_visible,
         "a quiet daemon under the limit reads nothing"
+    );
+    assert!(
+        !runtime.reads_usage_headless(),
+        "the coordinator's headless gate agrees"
     );
 
     runtime.ingest_provider_usage(vec![
@@ -245,8 +248,8 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
     ]);
     assert!(runtime.usage_paused());
     assert!(
-        runtime.usage_activity().window_visible,
-        "a paused order needs a fresh figure to lift"
+        runtime.usage_activity().window_visible && runtime.reads_usage_headless(),
+        "a paused order needs a fresh figure to lift, and the coordinator's gate lets it"
     );
 
     runtime.dispatch_json(&ai_event(serde_json::json!({"usage_limit": "none"})));
@@ -258,7 +261,7 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
     runtime.dispatch_json(&ai_event(serde_json::json!({"usage_limit": 90})));
     runtime.ingest_provider_usage(vec![weekly("claude", Some(10.0), next_week_ms())]);
     assert!(!runtime.usage_paused());
-    runtime.pet_active_at_unix_ms = unix_milliseconds();
+    runtime.agent_worked_at_unix_ms = unix_milliseconds();
     assert!(
         runtime.usage_activity().window_visible,
         "an agent worked lately, so labels are judged by a fresh figure"

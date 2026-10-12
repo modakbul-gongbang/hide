@@ -1426,6 +1426,9 @@ pub struct Runtime {
     /// measures idleness from here, so roam and sleep are driven by real
     /// session activity rather than wall-clock uptime.
     pet_active_at_unix_ms: u64,
+    /// When an agent last worked or waited on the operator; 0 until one has
+    /// (the pet's own clock starts at launch, this one must not).
+    agent_worked_at_unix_ms: u64,
     pet_waking_until_unix_ms: u64,
     pet_dragging: bool,
     /// The pane the operator chose to look at, and the only pane whose read
@@ -2080,6 +2083,7 @@ impl Runtime {
             state_save_active: false,
             state_save_worker: None,
             pet_active_at_unix_ms: unix_milliseconds(),
+            agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
