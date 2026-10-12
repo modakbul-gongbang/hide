@@ -62,7 +62,18 @@ export type RaisedAsk = {
   human_notice: boolean;
 };
 
+/** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
+export type HideAiTask = { kind: string; target?: string };
+
+/** Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none. */
+export type HideAi = { task?: HideAiTask };
+
+/** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
+export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
+
 export type AgentRow = {
+  /** Set by the core from the coordination record of the spawn, never from a branch name. */
+  hide_ai?: HideAi;
   resolved?: { at_unix_ms: number; source: "operator" | "automatic" } | null;
   /** Resolved within the last 24 hours, so Sessions still lists it. */
   resolved_recent?: boolean;
@@ -1615,6 +1626,7 @@ export type SnapshotRest = {
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    hide_ai_checkouts?: HideAiCheckout[];
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;

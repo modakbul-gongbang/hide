@@ -5,6 +5,7 @@ import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { originLine } from "../hideAiOrigin";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -189,7 +190,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs pl-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          <AgentMark kind={agent.agent_kind} />
+          {/* In a project's tree the Hide AI group says who started the row; alone, the provider's icon wears the badge (D-03, D-04). */}
+          <AgentMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
@@ -220,6 +222,11 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
             <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
               {lineText(t, agent, line)}
+            </span>
+          ) : null}
+          {tree && agent.hide_ai ? (
+            <span aria-hidden="true" data-agent-task={originLine(t, agent.hide_ai)} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
+              {originLine(t, agent.hide_ai)}
             </span>
           ) : null}
           {remote ? (
