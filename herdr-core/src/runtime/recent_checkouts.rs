@@ -43,13 +43,6 @@ impl Runtime {
             return;
         }
         let branch = checkout.branch.as_deref().unwrap_or(&checkout.label);
-        let device_name = self
-            .snapshot
-            .navigator
-            .devices
-            .iter()
-            .find(|device| device.id == device_id)
-            .map_or(device_id, |device| device.label.as_str());
         if self
             .snapshot
             .ui_state
@@ -60,7 +53,6 @@ impl Runtime {
                     && head.checkout_id == checkout_id
                     && head.project_name == workspace.label
                     && head.branch == branch
-                    && head.device_name == device_name
             })
         {
             return;
@@ -70,7 +62,6 @@ impl Runtime {
             checkout_id: checkout_id.to_owned(),
             project_name: workspace.label.clone(),
             branch: branch.to_owned(),
-            device_name: device_name.to_owned(),
         };
         let recent = &mut self.snapshot.ui_state.recent_checkouts;
         recent.retain(|held| {

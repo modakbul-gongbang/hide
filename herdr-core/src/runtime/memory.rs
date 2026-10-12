@@ -4,7 +4,7 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_memory::{MemoryStore, SessionCursorRecord, SessionSourceRecord};
 use hide_node_link::protocol::Call;
-use hide_node_link::sessions::{SessionChunk, SessionStat};
+use hide_node_link::sessions::SessionStat;
 use hide_session::{Agent, ProjectSession, SessionAvailability};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -404,12 +404,15 @@ pub(super) fn session_stat(
     .map_err(|error| error.to_string())
 }
 
-/// One bounded read of `session` past the saved checkpoint, on its node.
-pub(super) fn session_chunk(
+/// One bounded read of `session`'s conversation past the saved checkpoint,
+/// on its node, through the reader the label read and search use: a record
+/// longer than the line cap is read past without being held, counted in
+/// `skipped_reasons`, so it never stops the session's later turns.
+pub(super) fn session_conversation(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
     saved: Option<&SessionCursorRecord>,
-) -> Result<SessionChunk, String> {
+) -> Result<hide_session::ConversationRead, String> {
     hide_node_link::link::check_reader_support(
         sessions_node,
         session.agent,
@@ -418,24 +421,35 @@ pub(super) fn session_chunk(
     .map_err(|error| error.to_string())?;
     let checkpoint = saved
         .filter(|record| !record.checkpoint.is_empty())
-        .map(|record| serde_json::from_slice(&record.checkpoint))
-        .transpose()
-        .map_err(|error| format!("session_checkpoint:{error}"))?;
+        .map(|record| saved_checkpoint(&record.checkpoint))
+        .transpose()?;
     hide_node_link::link::call_as_reader(
         sessions_node,
         session.agent,
-        hide_node_link::sessions::ReaderFeature::Memory,
-        Call::SessionChunk {
-            scope: Some(hide_session::SessionReadScope {
+        hide_node_link::sessions::ReaderFeature::Conversation,
+        Call::SessionConversation {
+            agent: session.agent,
+            path: session.locator.to_string_lossy().into_owned(),
+            scope: hide_session::SessionReadScope {
                 id: session.id.clone(),
                 cwd: session.checkout_path.to_string_lossy().into_owned(),
-            }),
-            path: session.locator.to_string_lossy().into_owned(),
+            },
             checkpoint,
         },
         SESSION_CALL_TIMEOUT,
     )
     .map_err(|error| error.to_string())
+}
+
+/// A saved Memory cursor. One saved before Memory read through the
+/// conversation reader holds the line cursor alone, and resumes at its
+/// offset.
+fn saved_checkpoint(bytes: &[u8]) -> Result<hide_session::ConversationCheckpoint, String> {
+    serde_json::from_slice(bytes).or_else(|error| {
+        serde_json::from_slice::<hide_session::CursorCheckpoint>(bytes)
+            .map(Into::into)
+            .map_err(|_| format!("session_checkpoint:{error}"))
+    })
 }
 
 pub(super) fn digest(parts: &[&str]) -> String {

@@ -1317,7 +1317,7 @@ mod tests {
         let connection = rusqlite::Connection::open(state.join(PROJECT_MEMORY)).unwrap();
         connection
             .execute(
-                "INSERT INTO receipt_cursors VALUES(?1,'claude','s1',0,x'',NULL,1)",
+                "INSERT INTO receipt_cursors VALUES(?1,'claude','s1',0,x'',NULL,1,0)",
                 [&old_project],
             )
             .unwrap();

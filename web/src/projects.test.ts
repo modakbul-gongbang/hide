@@ -359,7 +359,7 @@ describe("sidebar row activation", () => {
       { id: "recent", exists: true }, { id: "missing", exists: false },
     ] as Checkout[];
     const project = workspace("repo", { agent_scope: emptyScope(), device_id: "mini", checkouts });
-    const visit = (device_id: string, checkout_id: string) => ({ device_id, checkout_id, project_name: "repo", branch: checkout_id, device_name: device_id });
+    const visit = (device_id: string, checkout_id: string) => ({ device_id, checkout_id, project_name: "repo", branch: checkout_id });
     expect(projectCheckout(project, [visit("local", "first"), visit("mini", "missing"), visit("mini", "recent")])?.id).toBe("recent");
     expect(projectCheckout(project)?.id).toBe("primary");
     expect(projectCheckout({ ...project, checkouts: [checkouts[0]!, checkouts[2]!] })?.id).toBe("first");

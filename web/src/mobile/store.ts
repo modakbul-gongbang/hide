@@ -164,7 +164,7 @@ export function applyFrame(frame: ServerFrame): void {
       return;
     }
     case "start_catalog":
-      patch({ startCatalog: { targets: frame.targets, kinds: frame.kinds, remembered: frame.remembered } });
+      patch({ startCatalog: { targets: frame.targets, core_platform: frame.core_platform, kinds: frame.kinds, remembered: frame.remembered } });
       return;
     case "push_state":
       patch({ notifications: frame.notifications === "on" ? "on" : state.notifications });

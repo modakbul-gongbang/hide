@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { coreMachineName, coreShared, machineName, moveMachines, screenNodeFromHash, windowFirst } from "./screenMachine";
+import { coreMachineName, coreShared, machineName, moveMachines, screenNodeFromHash, systemMachineKey, windowFirst } from "./screenMachine";
 
 describe("the screen's own machine (PRD core-host-node-remote-core B13)", () => {
   it("is the node the hash names beside the token", () => {
@@ -19,8 +19,20 @@ describe("the screen's own machine (PRD core-host-node-remote-core B13)", () => 
   });
 });
 
+describe("systemMachineKey", () => {
+  it("names a machine by the system its device row reports, not the one the shell runs on", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(systemMachineKey("macos aarch64")).toBe("common.thisMac");
+    expect(systemMachineKey("windows x86_64")).toBe("common.thisPc");
+    expect(systemMachineKey("linux x86_64")).toBe("common.thisComputer");
+    // A system it does not recognize is a computer.
+    expect(systemMachineKey("")).toBe("common.thisComputer");
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("what this window calls each machine (PRD core-host-node-move B2, N1)", () => {
-  const device = (id: string, kind: string, over: Record<string, unknown> = {}) => ({ id, kind, label: id === "core" ? "This Mac" : id, ...over }) as never;
+  const device = (id: string, kind: string, over: Record<string, unknown> = {}) => ({ id, kind, label: id === "core" ? null : id, ...over }) as never;
   const devices = [device("core", "local", { machine_name: "Mac mini" }), device("mbp", "remote", { label: "MacBook Pro", dials_in: true }), device("box", "remote", { label: "build-box" })];
   const t = ((key: string) => ({ "common.thisMac": "이 Mac", "common.thisPc": "내 PC" })[key] ?? key) as never;
 

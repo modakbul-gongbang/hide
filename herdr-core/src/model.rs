@@ -640,7 +640,11 @@ impl ProviderUsageSnapshot {
 pub struct DeviceSnapshot {
     pub agent_scope: crate::agent_state::Scope,
     pub id: String,
-    pub label: String,
+    /// The name the operator registered the device under. The core's own
+    /// row has none: its name is what its system calls it (This Mac, This
+    /// PC, This computer), which each shell says in its own language from
+    /// `host.platform`, so no English sentence travels the wire.
+    pub label: Option<String>,
     pub kind: String,
     /// `local` for this Mac; for an SSH device `ready`, `unavailable` or
     /// `disabled`, read off its remote status.
@@ -2601,6 +2605,9 @@ pub struct MemoryRowSnapshot {
     /// Reads with `hide memory show`.
     pub pull_count: u64,
     pub updated_at_unix_ms: u64,
+    /// The card waits to be checked against the repository again and is not
+    /// given to agents meanwhile (`확인 중`).
+    pub verifying: bool,
     /// The card's way into the repository's own files while it is on one;
     /// absent for a card that is not, was dismissed or whose pull request
     /// closed unmerged (B30-B32).
@@ -2651,7 +2658,8 @@ pub enum MemoryQuestionSnapshot {
     Promote {
         number: u64,
         title: String,
-        human_source_count: usize,
+        /// Distinct sessions that carried the operator's own words.
+        human_session_count: usize,
         pulled_session_count: usize,
     },
     /// The agent ended without a pull request: "PR 없이 끝남", try again.
@@ -3170,7 +3178,10 @@ pub const RECENT_PANE_LIMIT: usize = 50;
 /// resolve, and a checkout id already names the project it is in on this
 /// machine, so the shell finds the project from the checkout in the live
 /// catalog. The names are the ones the checkout had when it was last in
-/// front; a connected device's row is drawn from its catalog instead.
+/// front; a connected device's row is drawn from its catalog instead. No
+/// device name is kept: the row's device is a listed one, which the shell
+/// names from its row in its own language. A record from an older build
+/// still carries a `device_name`, which is read past.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RecentCheckout {
     pub device_id: String,
@@ -3178,7 +3189,6 @@ pub struct RecentCheckout {
     pub project_name: String,
     /// The checkout's branch, else its label.
     pub branch: String,
-    pub device_name: String,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time

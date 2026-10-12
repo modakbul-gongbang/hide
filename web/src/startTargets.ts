@@ -6,6 +6,7 @@
 
 import type { TFunction } from "i18next";
 import { thisMachineKey } from "./devices";
+import { machineName } from "./screenMachine";
 import { remoteContext } from "./remote";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { frontCheckout, localDeviceId } from "./snapshot";
@@ -37,7 +38,7 @@ export const homeKey = (deviceId: string) => `home:${deviceId}`;
 export const checkoutKey = (deviceId: string, path: string) => `checkout:${deviceId}:${path}`;
 
 /** The core's own node before the snapshot names it: the empty id, which an event carries as no `device_id`. */
-const localDevice = (t: TFunction<"translation">): Pick<Device, "id" | "label" | "kind"> => ({ id: "", label: t(thisMachineKey(null)), kind: "local" });
+const localDevice: Pick<Device, "id" | "kind"> = { id: "", kind: "local" };
 
 /** A device's workspaces as the catalog lists them, and whether the device answers commands now. */
 function deviceWorkspaces(rest: SnapshotRest, device: Pick<Device, "id" | "kind">): { workspaces: Workspace[]; connected: boolean } {
@@ -47,11 +48,11 @@ function deviceWorkspaces(rest: SnapshotRest, device: Pick<Device, "id" | "kind"
   return { workspaces: session?.workspaces ?? [], connected: status?.state === "connected" && session !== null };
 }
 
-function groupOf(rest: SnapshotRest, device: Pick<Device, "id" | "label" | "kind">, front: boolean, t: TFunction<"translation">): TargetGroup {
+function groupOf(rest: SnapshotRest, device: Pick<Device, "id" | "kind">, name: string, front: boolean, t: TFunction<"translation">): TargetGroup {
   const { workspaces, connected } = deviceWorkspaces(rest, device);
   const disabled = connected ? null : "not_connected";
   // Only the front device's items go unprefixed: the trigger already sits where that device is.
-  const prefix = front ? "" : `${device.label} · `;
+  const prefix = front ? "" : `${name} · `;
   const items: StartTarget[] = [{ kind: "home", key: homeKey(device.id), deviceId: device.id, label: `${prefix}${t("common.home")}`, disabled }];
   for (const workspace of workspaces) {
     if (workspace.is_home || workspace.temporary) continue;
@@ -69,7 +70,7 @@ function groupOf(rest: SnapshotRest, device: Pick<Device, "id" | "label" | "kind
       });
     }
   }
-  return { deviceId: device.id, deviceLabel: device.label, connected, items };
+  return { deviceId: device.id, deviceLabel: name, connected, items };
 }
 
 /** The checkout a project's start lands on: its main one, else the first that exists. */
@@ -104,11 +105,14 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean,
  */
 export function startTargets(rest: SnapshotRest | null, screen: Screen | null, t: TFunction<"translation">, settings = false, projectId: string | null = null): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [localDevice(t)];
+  const listed = rest.navigator?.devices?.length ? rest.navigator.devices : null;
+  const devices = listed ?? [localDevice];
   const named = screen?.kind === "main" ? screen.deviceId : undefined;
   const frontId = named && devices.some((device) => device.id === named) ? named : (remoteContext(rest)?.device.id ?? localDeviceId(rest));
   const ordered = [...devices.filter((device) => device.id === frontId), ...devices.filter((device) => device.id !== frontId)];
-  const groups = ordered.map((device) => groupOf(rest, device, device.id === frontId, t));
+  // Each device as this window names it; before the snapshot lists any, the one machine is this window's.
+  const name = (id: string) => (listed ? machineName(listed, id, t) : t(thisMachineKey(null)));
+  const groups = ordered.map((device) => groupOf(rest, device, name(device.id), device.id === frontId, t));
   const items = groups.flatMap((group) => group.items);
   const usable = (key: string) => items.some((item) => item.key === key && item.disabled === null);
   const front = groups[0];

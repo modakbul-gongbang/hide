@@ -13,7 +13,7 @@ import { thisMachineKey } from "./devices";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
-import { machineName } from "./screenMachine";
+import { machineName, registeredName } from "./screenMachine";
 import { entryBox } from "./agentGraph";
 import { hideAiPlace } from "./hideAiOrigin";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
@@ -178,10 +178,10 @@ function deviceAvailability(device: Device, status: RemoteStatus | undefined): D
   if (device.kind !== "remote") return { state: "ready" };
   if (!status || status.state === "not_connected") return { state: "loading", text: translate("devices.state.connecting") };
   if (status.state !== "connected" && status.state !== "stale") {
-    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceState", { device: device.label, state: status.state.replace(/_/g, " ") }), retry: status.state === "disabled" ? null : "connect" };
+    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceState", { device: registeredName(device), state: status.state.replace(/_/g, " ") }), retry: status.state === "disabled" ? null : "connect" };
   }
   if (status.state === "stale") {
-    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceStale", { device: device.label }), retry: "connect" };
+    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceStale", { device: registeredName(device) }), retry: "connect" };
   }
   const catalog = status.catalog;
   if (catalog?.state === "resolving") return { state: "loading", text: translate("overview.availability.readingProjects") };

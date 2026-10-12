@@ -9,6 +9,7 @@ import { cn } from "../lib/utils";
 import { remoteTargetOfPane } from "../remote";
 import type { AgentRow, RaisedAsk } from "../snapshot";
 import { statusText } from "../agentStatus";
+import { machineName } from "../screenMachine";
 import { useShellStore } from "../store";
 import { SIBLINGS_SHOWN } from "../sidebarTree";
 import { useUiStore } from "../ui";
@@ -298,7 +299,7 @@ function TreeItem({
   const child = line.agent;
   const parentDevice = parent.device_id ?? remoteTargetOfPane(rest, parent.pane_id) ?? localDeviceId(rest);
   const device = child.device_id ?? remoteTargetOfPane(rest, child.pane_id) ?? localDeviceId(rest);
-  const deviceLabel = child.device_label ?? rest?.navigator?.devices?.find((row) => row.id === device)?.label;
+  const deviceLabel = child.device_label ?? machineName(rest?.navigator?.devices, device, t);
   const unavailable = !deviceConnected(rest, device);
   const reason = unavailable ? rest?.status?.remote?.find((row) => row.target_id === device)?.message ?? t("devices.rail.notConnected") : null;
   // A draft's Open goes to the parent holding it, which can sit on another device.

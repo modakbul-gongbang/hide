@@ -8,7 +8,7 @@ export type CheckoutLine = {
   /** The checkout's branch or label; null when neither it nor the agent names one. */
   branch: string | null;
   pullRequest: number | null;
-  device: string | null;
+  deviceId: string | null;
 };
 
 export type FoldedLineage = {
@@ -101,7 +101,7 @@ export function foldedLineage(parent: AgentRow, agents: AgentRow[], workspaces: 
         agent,
         branch,
         pullRequest: group.fact?.checkout.pull_request?.number ?? null,
-        device: agent.device_id !== parent.device_id ? (agent.device_label ?? null) : null,
+        deviceId: agent.device_id !== parent.device_id ? (agent.device_id ?? null) : null,
       };
     })
     .sort((a, b) => attention(a.agent) - attention(b.agent) || (a.branch ?? "").localeCompare(b.branch ?? ""));

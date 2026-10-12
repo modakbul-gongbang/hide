@@ -522,7 +522,7 @@ Manual acceptance in the desktop app additionally covers row click versus header
 
 Opening Sessions starts one bounded background catalog read for the focused local Project; filtering and searching operate on the retained snapshot and start no subprocess.
 One Memory pass at a time runs on a worker, every 60 s or at once when a live session's pane closes, and walks every Memory-enabled local Project; a session is analyzed only after its file has been unchanged for 30 minutes or its pane closed (PRD project-memory-v2 D-07).
-A pass reads each session's size and time once (one local stat through the node), at most one bounded receipt read and, when analysis is due, one bounded chunk per session; an unchanged session reads no transcript byte, writes no SQLite row and makes no provider call, and a pass that changed nothing publishes nothing.
+A pass reads each session's size and time once (one local stat through the node), at most one bounded receipt read and, when analysis is due, one bounded conversation read per session; an unchanged session reads no transcript byte, writes no SQLite row and makes no provider call, and a pass that changed nothing publishes nothing.
 Idle, a pass over an enabled Project with N sessions costs N stats, N cursor reads and no write; driven, it adds one bounded read per session written since its cursor and, past the quiet rule, one provider call per 64 KiB group.
 The daily cap counts a call when it is admitted, so a failing provider spends it too; that is the runaway bound, and the provider's backoff keeps failures to a few dozen a day.
 With no window attached, the usage reader runs on its own 5-minute schedule for 30 minutes after a pass last had a session due, so the weekly hold works headless; that is at most one usage read per provider every 5 minutes, and none while no session is due.
@@ -555,7 +555,7 @@ The hook accepts at most 256 KiB of input and asks the core with one `hide works
 The hook waits until 1,250 ms after its start, where the letter pull ends, so a turn's worst case is the pull's; the core's side starts no model, embedding, transcript scan, child process, network request beyond the node call, or database write.
 Missing, locked, corrupt, stale, unresolved, unreachable or over-deadline inputs exit successfully with empty context so prompt submission continues.
 `SessionStart` reads the Project's index under the same read-only and fail-open ownership and the same 1,250 ms wait: at most 20 one-line rule, decision and lesson cards and no body.
-`hide memory show|search|forget|undo|placed` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
+`hide memory show|search|forget|undo|outdated|placed` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
 Manual acceptance in the desktop app uses one exact worktree-local `hided` PID and window against a private Herdr server and private app state.

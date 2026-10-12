@@ -110,7 +110,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         <Header project={project} actions={actions} busy={busy} />
         {project.enabled ? null : (
           <div className="-mt-sm flex flex-col items-start gap-sm">
-            <p className="break-keep text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
+            <p className="break-keep [overflow-wrap:anywhere] text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
             {count > 0 ? (
               <button type="button" className="text-caption text-muted-foreground underline-offset-4 hover:underline" onClick={() => setDeleting(true)} data-memory-delete="link">
                 {t("memory.deleteData")}
@@ -223,7 +223,7 @@ function Question({ question, project, actions, busy, last }: { question: Memory
         <span className="break-words break-keep text-body text-foreground">{question.title}</span>
         {question.kind === "promote" ? (
           <>
-            <span className="break-keep text-caption text-muted-foreground">{t("memory.promote.reason", { human: question.human_source_count, sessions: question.pulled_session_count })}</span>
+            <span className="break-keep text-caption text-muted-foreground">{t("memory.promote.reason", { human: question.human_session_count, sessions: question.pulled_session_count })}</span>
             <span className="text-caption text-foreground">{t("memory.promote.ask")}</span>
             <span className="flex items-center gap-sm">
               <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(id, "promote", question.number)} data-memory-promote={question.number}>
@@ -345,6 +345,9 @@ function CardToggle({ number, project, actions }: { number: number; project: Pro
   );
 }
 
+/** Promotion states that already draw their own status line under a card. */
+const STATUS_STATES: ReadonlySet<string | undefined> = new Set(["running", "pr_open", "unconfirmed"]);
+
 function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: ProjectMemory; actions: Actions; busy: boolean }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
@@ -410,6 +413,12 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
                 <span className="min-w-0 truncate">{t(`memory.github.${row.promotion.github_failure}`)}</span>
               </>
             ) : null}
+          </span>
+        ) : null}
+        {row.verifying && !STATUS_STATES.has(row.promotion?.state) ? (
+          // Quiet and alone: the operator has nothing to do (design 13).
+          <span className="text-caption text-muted-foreground" data-memory-verifying={row.number}>
+            <span className="whitespace-nowrap">{t("memory.verifying")}</span>
           </span>
         ) : null}
         {row.promotion?.state === "pr_open" && row.promotion.pr_number !== null ? (

@@ -107,7 +107,6 @@ fn a_record_carries_the_names_a_row_is_drawn_from() {
             checkout_id: "c-alpha".to_owned(),
             project_name: "alpha".to_owned(),
             branch: "branch-alpha".to_owned(),
-            device_name: crate::workspace::LOCAL_DEVICE_LABEL.to_owned(),
         }]
     );
 }
@@ -273,7 +272,6 @@ fn unregistering_a_project_of_a_disconnected_device_drops_its_folder_checkout() 
         checkout_id: checkout,
         project_name: "api".to_owned(),
         branch: "main".to_owned(),
-        device_name: "mini".to_owned(),
     };
     runtime.snapshot.ui_state.recent_checkouts = vec![
         record(crate::device_catalog::checkout_id("mini", "/srv/api")),
@@ -286,4 +284,17 @@ fn unregistering_a_project_of_a_disconnected_device_drops_its_folder_checkout() 
         recent(&runtime),
         [crate::device_catalog::checkout_id("mini", "/srv/other")]
     );
+}
+
+/// A record an older build saved still names its device in English
+/// (`device_name: "This Mac"`); it loads, and the name is not kept, since the
+/// shell names a recent row's device from its row.
+#[test]
+fn a_record_from_an_older_build_loads_without_its_device_name() {
+    let record: RecentCheckout = serde_json::from_value(serde_json::json!({
+        "device_id": "local", "checkout_id": "c-alpha", "project_name": "alpha",
+        "branch": "main", "device_name": "This Mac",
+    }))
+    .expect("an older record loads");
+    assert!(!serde_json::to_string(&record).unwrap().contains("This Mac"));
 }

@@ -79,7 +79,7 @@ describe("folded checkout lineage", () => {
     expect(presentation.badgeChildren.map((row) => row.pane_id)).toEqual(["same"]);
     expect(presentation.lines.map((line) => line.branch)).toEqual(["alpha", "review-branch-with-a-very-long-name", "remote-work"]);
     expect(presentation.lines[1]?.pullRequest).toBe(173);
-    expect(presentation.lines[2]?.device).toBe("mini");
+    expect(presentation.lines[2]?.deviceId).toBe("mini");
     expect(presentation.overflow).toBe(1);
   });
 });

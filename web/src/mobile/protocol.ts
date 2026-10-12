@@ -79,7 +79,7 @@ export type StartTarget = {
   device_id: string;
   /** The place on the device; null is the device's Home. */
   place: string | null;
-  /** The device's name; null is this Mac. */
+  /** The device's name; null is the core's own machine, named from the catalog's `core_platform`. */
   device_label: string | null;
   connected: boolean;
 };
@@ -89,6 +89,8 @@ export type StartKindEntry = { id: StartKind; models: string[] };
 /** What the start sheet lists, as hided sends it while the sheet is open. */
 export type StartCatalog = {
   targets: StartTarget[];
+  /** The core's machine's system as its device row says it (`macos aarch64`), from which the phone says This Mac, This PC or This computer. */
+  core_platform: string | null;
   kinds: StartKindEntry[];
   /** The kind and each kind's model the last start chose, shared with the desktop. */
   remembered: { kind: StartKind | null; models: Partial<Record<StartKind, string>> };

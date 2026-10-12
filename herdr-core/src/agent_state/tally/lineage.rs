@@ -21,7 +21,9 @@ pub struct Line {
     pub candidates: Vec<String>,
     pub branch: Option<String>,
     pub pull_request: Option<u32>,
-    pub device: Option<String>,
+    /// The device the line's agents run on, by id, when it is not the
+    /// parent's; the shell names it in its language.
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -236,7 +238,7 @@ pub(super) fn checkout_trees(
 pub(super) fn folded(
     agents: &[&SidebarAgentSnapshot],
     workspaces: &[&WorkspaceSnapshot],
-    places: &HashMap<&str, (&str, &str)>,
+    places: &HashMap<&str, &str>,
 ) -> BTreeMap<String, Folded> {
     let by_pane: HashMap<_, _> = agents
         .iter()
@@ -296,7 +298,10 @@ pub(super) fn folded(
                     .unwrap_or_else(|| {
                         format!(
                             "{}\0{}",
-                            places.get(row.pane_id.as_str()).map_or("unknown", |p| p.0),
+                            places
+                                .get(row.pane_id.as_str())
+                                .copied()
+                                .unwrap_or("unknown"),
                             row.checkout_label.as_deref().unwrap_or(&row.pane_id)
                         )
                     });
@@ -329,9 +334,9 @@ pub(super) fn folded(
                         .map(|c| c.branch.clone().unwrap_or_else(|| c.label.clone()))
                         .or_else(|| row.checkout_label.clone()),
                     pull_request: fact.and_then(|c| c.pull_request.as_ref().map(|p| p.number)),
-                    device: device
-                        .filter(|d| parent_device.map(|p| p.0) != Some(d.0))
-                        .map(|d| d.1.to_owned()),
+                    device_id: device
+                        .filter(|d| parent_device != Some(*d))
+                        .map(|d| (*d).to_owned()),
                 });
             }
             result.tiers = tiers.into_values().collect();

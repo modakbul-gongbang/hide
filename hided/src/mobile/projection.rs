@@ -61,7 +61,7 @@ mod tests {
                         {"label": "notes", "branch": null, "tabs": [{"panes": [{"id": "w1:p4"}]}]},
                     ]},
                 ],
-                "devices": [{"id": "local", "label": "This Mac"}, {"id": "mini", "label": "mini"}],
+                "devices": [{"id": "local", "label": null}, {"id": "mini", "label": "mini"}],
             },
             "status": {"remote": [
                 {"target_id": "mini", "state": "connected", "session": {

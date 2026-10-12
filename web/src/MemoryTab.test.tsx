@@ -29,7 +29,7 @@ const rest = {
 } as unknown as SnapshotRest;
 const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => ({
   number, title: `card ${number}`, kind: "rule", human_source_count: 1, provided_session_count: 2,
-  pull_count: 3, updated_at_unix_ms: Date.now(), promotion: null, ...overrides,
+  pull_count: 3, updated_at_unix_ms: Date.now(), verifying: false, promotion: null, ...overrides,
 });
 const memory = (overrides: Partial<ProjectMemory> = {}): ProjectMemory => ({
   workspace_id: "p", unavailable: null, loading: false, enabled: true, capacity_reached: false,
@@ -92,11 +92,11 @@ describe("the Memory tab", () => {
   it("asks about a suggested card and a failed promotion, and sends the card's number", async () => {
     await render(memory({
       questions: [
-        { kind: "promote", number: 3, title: "card 3", human_source_count: 3, pulled_session_count: 9 },
+        { kind: "promote", number: 3, title: "card 3", human_session_count: 3, pulled_session_count: 9 },
         { kind: "failed", number: 7, title: "card 7" },
       ],
     }));
-    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("Operator's words 3 · pulled in 9 sessions in 14 days");
+    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("Operator's words in 3 sessions · pulled in 9 sessions in 14 days");
     // Both cards are asked about, so no list repeats them.
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
     await click("[data-memory-promote='3']");
@@ -136,6 +136,22 @@ describe("the Memory tab", () => {
     expect(merged?.className).toContain("opacity-");
     expect(merged?.textContent).toContain("AGENTS.md");
     expect(merged?.textContent).toContain("In the file · not injected");
+  });
+
+  it("marks a card waiting to be checked in its status slot and nothing else, quietly", async () => {
+    await render(memory({
+      rows: [
+        row(3, { verifying: true }),
+        row(7),
+        row(9, { verifying: true, promotion: { state: "running", agent: null, pr_number: null, target_path: null, github_failure: null } }),
+      ],
+    }));
+    const mark = container.querySelector("[data-memory-card='3'] [data-memory-verifying]");
+    expect(mark?.textContent).toBe("Checking");
+    expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
+    // One status line at a time: a promotion that runs draws its own.
+    expect(container.querySelector("[data-memory-card='9'] [data-memory-verifying]")).toBeNull();
+    expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("Retry");
   });
 
   it("deletes the Project's data only after the confirmation names the count", async () => {
