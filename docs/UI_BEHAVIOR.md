@@ -1651,7 +1651,7 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
 Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
-The list reads, top to bottom: the group name `App` with General, Notifications, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+The list reads, top to bottom: the group name `App` with General, Notifications, Usage, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
 Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
 The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
 A page has its title and no description line (B4).
@@ -1668,6 +1668,19 @@ General is Appearance alone: one group with Language, Theme, Accent and Interfac
 Notifications holds every notification Hide sends, in two groups (PRD settings-left-nav B6).
 The first, named for this machine and only in the desktop app, has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
 The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile below describes.
+
+### Usage
+
+Usage follows Notifications in the App group, with a gauge mark and the localized Usage title.
+The page walks the shared adapter declaration so all seven agents appear even before a read.
+An agent with limit support has one card: its mark and name with Hide, then a row for each declared account window with its current value and a pin switch.
+A window the account reports as not offered has no row or switch.
+The initial choices are the weekly window for Claude and Codex; the core stores the choices for every connected window and retains them across restart.
+At three pins, an unselected switch is disabled with “The sidebar shows at most three chips. Switch one off to pick this one.” beneath that row; removing a pin enables it again.
+Hide folds the card to its header, Hidden and Show, preserves the pins, and removes the agent from chips and the popover.
+The five agents without supported limits appear in No limit reading with a reason from the adapter declaration, without Hide or switches.
+Grok's weekly reader is not built, OpenCode Go would need an API key Hide does not hold, Pi and omp count toward their signed-in account, and Cursor would require its stored sign-in.
+The page reuses the settings group, row and switch parts; loading is an ellipsis and a missing reading is Unavailable, never an invented zero.
 
 ### GitHub
 

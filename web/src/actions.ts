@@ -7,7 +7,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints } from "./generated/hided-ws";
+import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -1032,6 +1032,12 @@ export function createActions(send: DispatchFn) {
      * open, the two hints the core's usage timer reads. They ride the UI-state
      * event, which replaces the whole state, so they go with its echo.
      */
+    setUsagePin(payload: UsagePinSetPayload) {
+      dispatch({ schema_version: 2, kind: "usage_pin_set", payload: { ...payload } });
+    },
+    setUsageHidden(payload: UsageHiddenSetPayload) {
+      dispatch({ schema_version: 2, kind: "usage_hidden_set", payload: { ...payload } });
+    },
     observeUsage(hints: UiStateUsageHints) {
       updateUiState(hints);
     },

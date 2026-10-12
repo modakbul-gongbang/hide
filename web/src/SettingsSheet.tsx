@@ -5,7 +5,7 @@
 // shows as pending until the snapshot says it landed. The sheet is the shell:
 // each page is its own module under `settings/`.
 
-import { BellIcon, BotIcon, createLucideIcon, InfoIcon, KeyboardIcon, MonitorSmartphoneIcon, SlidersHorizontalIcon, SmartphoneIcon, SparklesIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BellIcon, GaugeIcon, BotIcon, createLucideIcon, InfoIcon, KeyboardIcon, MonitorSmartphoneIcon, SlidersHorizontalIcon, SmartphoneIcon, SparklesIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -23,6 +23,7 @@ import { DevicesTab } from "./settings/DevicesTab";
 import { GeneralTab } from "./settings/GeneralTab";
 import { GithubTab } from "./settings/GithubTab";
 import { HideAiTab } from "./settings/HideAiTab";
+import { UsageTab } from "./settings/UsageTab";
 import { NotificationsTab } from "./settings/NotificationsTab";
 import { ShortcutsTab } from "./settings/ShortcutsTab";
 import { useShellStore } from "./store";
@@ -47,6 +48,7 @@ const GithubIcon = createLucideIcon("github", [
 const TAB_ICONS: Record<SettingsTab, LucideIcon> = {
   general: SlidersHorizontalIcon,
   notifications: BellIcon,
+  usage: GaugeIcon,
   devices: MonitorSmartphoneIcon,
   shortcuts: KeyboardIcon,
   agents: BotIcon,
@@ -119,6 +121,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             <TabsContent value={tab} className="min-h-0 overflow-auto px-xl pb-xl focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" data-settings-page={tab}>
               {tab === "general" ? <GeneralTab actions={actions} /> : null}
               {tab === "notifications" ? <NotificationsTab actions={actions} /> : null}
+              {tab === "usage" ? <UsageTab actions={actions} /> : null}
               {tab === "devices" ? <DevicesTab actions={actions} /> : null}
               {tab === "shortcuts" ? <ShortcutsTab actions={actions} /> : null}
               {tab === "agents" ? <AgentsTab actions={actions} /> : null}
