@@ -2553,6 +2553,9 @@ pub struct MemoryRowSnapshot {
     /// Reads with `hide memory show`.
     pub pull_count: u64,
     pub updated_at_unix_ms: u64,
+    /// The card waits to be checked against the repository again and is not
+    /// given to agents meanwhile (`확인 중`).
+    pub verifying: bool,
     /// The card's way into the repository's own files while it is on one;
     /// absent for a card that is not, was dismissed or whose pull request
     /// closed unmerged (B30-B32).
@@ -2603,7 +2606,8 @@ pub enum MemoryQuestionSnapshot {
     Promote {
         number: u64,
         title: String,
-        human_source_count: usize,
+        /// Distinct sessions that carried the operator's own words.
+        human_session_count: usize,
         pulled_session_count: usize,
     },
     /// The agent ended without a pull request: "PR 없이 끝남", try again.

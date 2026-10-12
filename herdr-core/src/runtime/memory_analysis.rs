@@ -270,6 +270,21 @@ impl Runtime {
         }
     }
 
+    /// The sessions some agent started as its child: a coordination record
+    /// with a `parent` (a handoff has an `origin` and is the operator's).
+    fn delegated_sessions(&self) -> HashSet<String> {
+        self.delivery_state()
+            .map(|ledger| {
+                ledger
+                    .agents
+                    .iter()
+                    .filter(|record| record.parent.is_some())
+                    .map(|record| record.session.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Starts a pass when one is due and none runs. Called from the
     /// coordinator's tick; everything the pass reads or writes happens on its
     /// worker.
@@ -300,6 +315,7 @@ impl Runtime {
             .as_ref()
             .map(|settings| crate::ai::memory_router(&own_node, settings));
         let node = self.node.clone();
+        let delegated = self.delegated_sessions();
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());
@@ -315,6 +331,7 @@ impl Runtime {
             live: work.live_sessions.clone(),
             closed: work.closed_sessions.clone(),
             held,
+            delegated,
             cancel,
         };
         let report_context = context.clone();
@@ -676,6 +693,9 @@ struct PassInput {
     closed: BTreeSet<MemorySession>,
     /// Projects whose analysis waits for a retry time.
     held: HashSet<String>,
+    /// Sessions another agent started: their first human message is that
+    /// agent's instruction, not the operator's (D-04).
+    delegated: HashSet<String>,
     cancel: CancelToken,
 }
 
@@ -910,6 +930,7 @@ fn walk_project(
             router,
             project_id,
             &session,
+            input.delegated.contains(&session.id),
             &input.cancel,
             &mut admit,
         ) {
@@ -1046,6 +1067,7 @@ fn read_receipts(
                 byte_offset: chunk.offset,
                 checkpoint,
                 last_content_hash: None,
+                operator_events: 0,
                 updated_at_unix_ms: now_ms(),
             },
         )
@@ -1120,6 +1142,7 @@ fn read_database_receipts(
                 checkpoint: serde_json::to_vec(&transcript.checkpoint)
                     .map_err(|error| error.to_string())?,
                 last_content_hash: None,
+                operator_events: 0,
                 updated_at_unix_ms: if transcript.has_more {
                     0
                 } else {
@@ -1269,6 +1292,7 @@ fn analyze_session(
     router: &AiRouter,
     project_id: &str,
     session: &ProjectSession,
+    delegated: bool,
     cancel: &CancelToken,
     admit: &mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>,
 ) -> Result<usize, AnalysisFailure> {
@@ -1289,10 +1313,16 @@ fn analyze_session(
         .zip(parsed.event_offsets)
         .filter(|(event, _)| matches!(event.kind, EventKind::Human | EventKind::Assistant))
         .map(|(event, offset)| {
+            // What another agent sent a session it started is that agent's
+            // instruction, not the operator's word (D-04).
+            let kind = match event.kind {
+                EventKind::Human if delegated => "parent_agent",
+                other => other.as_str(),
+            };
             json!({
                 "offset": offset,
                 "role": event.role,
-                "kind": event.kind.as_str(),
+                "kind": kind,
                 "at_unix_ms": event.at_unix_ms,
                 "text": event.text,
             })
@@ -1300,8 +1330,22 @@ fn analyze_session(
         .collect::<Vec<_>>();
     let checkout = session.checkout_path.to_string_lossy().into_owned();
     let mut learned = 0;
-    let mut last_hash = saved.and_then(|record| record.last_content_hash);
-    for group in event_groups(&events).map_err(local)? {
+    let (mut last_hash, earlier) = saved.map_or((None, 0), |record| {
+        (record.last_content_hash, record.operator_events)
+    });
+    let operator_events = earlier
+        + events
+            .iter()
+            .filter(|event| event["kind"] == EventKind::Human.as_str())
+            .count() as u64;
+    // A session with fewer than three operator words makes no new card; its
+    // receipts are read apart from this (D-03).
+    let groups = if operator_events < hide_memory::OPERATOR_EVENTS_MINIMUM {
+        Vec::new()
+    } else {
+        event_groups(&events).map_err(local)?
+    };
+    for group in groups {
         if cancel.is_cancelled() {
             return Err(AnalysisFailure::Cancelled);
         }
@@ -1335,6 +1379,7 @@ fn analyze_session(
                 byte_offset: chunk.offset,
                 checkpoint,
                 last_content_hash: last_hash,
+                operator_events,
                 updated_at_unix_ms: now_ms(),
             },
         )
@@ -1925,6 +1970,7 @@ mod tests {
                 live: live.then(|| key.clone()).into_iter().collect(),
                 closed: closed.then_some(key).into_iter().collect(),
                 held: HashSet::new(),
+                delegated: HashSet::new(),
                 cancel: CancelToken::new(),
             };
             let mut reports = Vec::new();

@@ -178,7 +178,9 @@ impl Runtime {
             .get(&(project_id.to_owned(), number, promotion.attempt))
             .and_then(|gone| gone.unconfirmed);
         let state = match promotion.state {
-            PromotionState::Dismissed | PromotionState::ClosedUnmerged => return None,
+            PromotionState::Dismissed
+            | PromotionState::ClosedUnmerged
+            | PromotionState::Outdated => return None,
             PromotionState::Running if unconfirmed.is_some() => MemoryPromotionState::Unconfirmed,
             PromotionState::Running => MemoryPromotionState::Running,
             PromotionState::PrOpen => MemoryPromotionState::PrOpen,

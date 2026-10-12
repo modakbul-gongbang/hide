@@ -405,7 +405,11 @@ fn outcome(outcome: &CandidateOutcome) -> Value {
         CandidateOutcome::Kept { number } => {
             json!({"outcome": "outranked", "card": card_name(*number)})
         }
-        CandidateOutcome::Discarded => json!({"outcome": "not_kept"}),
+        // `hide memory add` sets no new-card limit, so the limit cannot be
+        // reached here; it is the analysis pass's alone (D-02).
+        CandidateOutcome::Discarded | CandidateOutcome::SessionLimit => {
+            json!({"outcome": "not_kept"})
+        }
         CandidateOutcome::SecretRejected => json!({"outcome": "secret"}),
         CandidateOutcome::CapacityRejected => json!({"outcome": "full"}),
     }

@@ -439,7 +439,7 @@ impl Runtime {
             Some(MemoryQuestionSnapshot::Promote {
                 number: suggestion.number,
                 title: row.title.clone(),
-                human_source_count: suggestion.human_source_count,
+                human_session_count: suggestion.human_session_count,
                 pulled_session_count: suggestion.pulled_session_count,
             })
         }));
@@ -897,6 +897,7 @@ fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
         updated_at_unix_ms: item.updated_at_unix_ms,
+        verifying: item.verifying,
         promotion: None,
     }
 }
@@ -1174,7 +1175,7 @@ mod tests {
                 MemoryQuestionSnapshot::Promote {
                     number: 1,
                     title: "Lint runs before tests".to_owned(),
-                    human_source_count: 2,
+                    human_session_count: 2,
                     pulled_session_count: 0,
                 },
             ],
