@@ -196,3 +196,24 @@ html[data-view-drag="row-resize"] * {
     display: none;
   }
 }
+
+/*
+ * The window's top row is where the desktop app's window is dragged from
+ * (PRD sidebar-titlebar-refresh B19): the row is a drag region and every
+ * control inside it is not, so a press on the path, an icon or the device
+ * menu acts instead of dragging. A browser tab ignores the property.
+ */
+.window-drag {
+  -webkit-app-region: drag;
+}
+.window-drag :is(button, a, input, [role="button"], [role="menuitem"]) {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * The sidebar list scrolls under its stuck section header (D-05), so a
+ * focused row is brought into view below it, never under it (B10).
+ */
+[data-project-list] {
+  scroll-padding-top: var(--size-sidebar-section-header);
+}

@@ -776,6 +776,13 @@ export function createActions(send: DispatchFn) {
     bridge.revealPath(path);
   };
 
+  /** Opens a folder of this computer as a VS Code window through the desktop host; its outcome is the host's to log (B16). */
+  const openInEditor = (path: string) => {
+    const bridge = hostBridge();
+    if (!bridge) return diagnostic("open in VS Code: this host has no desktop app");
+    bridge.openInEditor(path);
+  };
+
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
     setWorkspaceView({ reveal: path });
@@ -1190,19 +1197,6 @@ export function createActions(send: DispatchFn) {
     },
 
     /**
-     * The Home row's `+`: a new terminal tab in the device's Home (D-13). The
-     * request id is kept so the pane it answers with is opened when it lists
-     * (`useHomeStart`); a refusal is read by the same id.
-     */
-    startHomeTab(deviceId: string) {
-      const requestId = remoteRequestId();
-      ui().setHomeStart({ requestId, deviceId, refusal: null });
-      const node = localDeviceId(rest());
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId, node) } });
-      if (deviceId === node) armKeyTarget(requestId);
-    },
-
-    /**
      * A Workspace chosen on All projects or an Overview, on any device (S6 B2, B21).
      * A Workspace on another device than the one in front is one event that
      * also brings its device forward, so a refusal moves neither. The screen
@@ -1605,6 +1599,7 @@ export function createActions(send: DispatchFn) {
      * tab has no such item.
      */
     revealExternal,
+    openInEditor,
 
     /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
     createWorktree(request: {
@@ -2027,11 +2022,6 @@ export function createActions(send: DispatchFn) {
       ui().setLens({ tab: "agents" });
       ui().setMainView("agents");
       if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
-    },
-
-    openHome(deviceId?: string) {
-      ui().setOverviewProject(null);
-      ui().setScreen({ kind: "main", ...(deviceId ? { deviceId } : {}) });
     },
 
     closeOverview() {

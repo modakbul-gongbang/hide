@@ -99,8 +99,8 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T", node: "local", screen: "local" };
-  const browser = { reveal: null, newTabChord: "⌥T", node: "local", screen: "local" };
+  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T", node: "local", screen: "local", editor: false };
+  const browser = { reveal: null, newTabChord: "⌥T", node: "local", screen: "local", editor: false };
   /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
   const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
     items.flatMap((item) => [...(item.separated ? ["─"] : []), item.shortcut ? `${item.label} ${item.shortcut}` : item.label]);

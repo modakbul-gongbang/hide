@@ -15,8 +15,6 @@ import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
 import type { KeyboardOwner } from "./viewFocus";
 import { DEFAULT_SLOTS, NO_CALLS_SEEN, type BodyStep, type CallsSeen, type Column, type ColumnSlots } from "./workspace";
 
-export type HomeStart = { requestId: string; deviceId: string; refusal: string | null };
-
 export type { ViewFocusRequest } from "./viewLayout";
 
 /** The columns the Workspace screen draws now beside Agent Views, and how many the body holds. */
@@ -264,12 +262,6 @@ type UiStore = {
   sidebarFocus: number;
   /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
   raisedOpen: readonly string[];
-  /**
-   * The Home row's new-tab start this page sent: its `request_id` until its
-   * pane is opened, then, when it was refused, the reason that device's Home
-   * row shows until the next start or a click on the row (PRD home-device-rail B21).
-   */
-  homeStart: HomeStart | null;
   /** The Factory secretary being started (PRD software-factory-ui B23). */
   secretaryStart: import("./factory/secretary").SecretaryStart | null;
   /** The Explorer row the operator last touched; the core owns the opened
@@ -357,7 +349,6 @@ type UiStore = {
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
-  setHomeStart: (homeStart: HomeStart | null) => void;
   setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
   toggleSidebarMode: () => void;
   toggleRaised: (group: string) => void;
@@ -415,7 +406,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "projects",
   sidebarFocus: 0,
   raisedOpen: [],
-  homeStart: null,
   secretaryStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -474,7 +464,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
     if (sidebarMode === "agents") console.info("sidebar.mode.retired", { mode: sidebarMode });
     set({ sidebarMode: "projects" });
   },
-  setHomeStart: (homeStart) => set({ homeStart }),
   setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);

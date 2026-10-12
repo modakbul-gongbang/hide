@@ -445,6 +445,23 @@ export type DiagnosticsInput = {
   userAgent: string;
 };
 
+/**
+ * Copy diagnostics' input from what the stores hold, the same for Settings'
+ * About and the sidebar's Help menu (PRD sidebar-titlebar-refresh D-12).
+ */
+export function diagnosticsInputOf(state: { daemon: DaemonInfo | null; connection: string; rest: { status?: { herdr?: HerdrStatus; environment?: EnvironmentStatus[]; diagnostics?: CoreDiagnostic[]; last_error?: { kind: string; message: string } | null } } | null }, userAgent: string): DiagnosticsInput {
+  const status = state.rest?.status;
+  return {
+    daemon: state.daemon,
+    connection: state.connection,
+    herdr: status?.herdr,
+    environment: status?.environment ?? [],
+    diagnostics: status?.diagnostics ?? [],
+    lastError: status?.last_error,
+    userAgent,
+  };
+}
+
 /** How many of the core's newest diagnostics the copy carries. */
 export const COPIED_DIAGNOSTICS = 40;
 

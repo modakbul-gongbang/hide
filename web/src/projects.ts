@@ -2,14 +2,15 @@ import { scopeOccurrences, type AgentRef } from "./agentScope";
 import type { AgentScope } from "./agentScope";
 // The Projects list as the sidebar draws it: the raised Needs You and Done
 // agents, then pinned rows under their own header, then the activity rows
-// with a per-device fold of inactive projects, and per project a fold of
-// inactive checkouts. The split only reads flags and groups the core set; no
-// age, merge or attention rule is repeated.
+// with a per-device fold of projects with no agents and one of inactive
+// projects, and per project a fold of inactive checkouts. The split only
+// reads flags and groups the core set; no age, merge or attention rule is
+// repeated.
 
 import type { TFunction } from "i18next";
 import { agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
 import { badgeWord, checksWord, PR_LOOK, reviewWord, settled, staleness } from "./prMark";
-import type { Checkout, InactiveProjectGroup, MarkCounts, PrState, PullRequest, RecentCheckout, Workspace } from "./snapshot";
+import type { Checkout, InactiveProjectGroup, MarkCounts, PrState, PullRequest, RecentCheckout, SnapshotRest, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
 export function projectCheckout(workspace: Workspace, recent: readonly RecentCheckout[] = []): Checkout | null {
@@ -26,7 +27,17 @@ export type ProjectRow =
   | { kind: "header"; section: "pinned" | "recent"; count: number }
   | { kind: "raised"; group: AgentGroup; agents: ListedAgent[]; more: ListedAgent[]; expanded: boolean }
   | { kind: "workspace"; workspace: Workspace; level: "root" | "child" }
+  | { kind: "no_agents"; group: InactiveProjectGroup; count: number }
   | { kind: "inactive_projects"; group: InactiveProjectGroup; count: number };
+
+/** The device folds of the Projects list, as the core grouped them (`navigator`). */
+export type ProjectFolds = Pick<NonNullable<SnapshotRest["navigator"]>, "inactive_projects" | "no_agent_projects">;
+
+/** Whether a project's checkouts are drawn: a sleeping project follows its own fold (D-19), any other the operator's. */
+export function projectExpanded(workspace: Workspace): boolean {
+  const asleep = workspace.agent_presence?.asleep;
+  return asleep ? asleep.expanded : workspace.expanded !== false;
+}
 
 /**
  * `listed` is every agent the Agents list shows. A raised section holds, in
@@ -39,7 +50,7 @@ export type ProjectRow =
  */
 export function projectRows(
   workspaces: Workspace[],
-  groups: InactiveProjectGroup[],
+  folds: ProjectFolds,
   listed: ListedAgent[],
   scope: AgentScope | null,
   openRaised: readonly string[] = [],
@@ -62,18 +73,22 @@ export function projectRows(
   const byId = new Map(recent.map((row) => [row.id, row]));
   const deviceIds = [...new Set(recent.map((row) => row.device_id))];
   for (const deviceId of deviceIds) {
-    const group = groups.find((row) => row.device_id === deviceId);
-    const inactiveIds = new Set(group?.project_ids ?? []);
+    const quiet = (folds.no_agent_projects ?? []).find((row) => row.device_id === deviceId);
+    const inactive = (folds.inactive_projects ?? []).find((row) => row.device_id === deviceId);
+    const folded = new Set([...(quiet?.project_ids ?? []), ...(inactive?.project_ids ?? [])]);
     for (const workspace of recent) {
-      if (workspace.device_id === deviceId && !inactiveIds.has(workspace.id)) {
+      if (workspace.device_id === deviceId && !folded.has(workspace.id)) {
         rows.push({ kind: "workspace", workspace, level: "root" });
       }
     }
-    if (!group) continue;
-    const inactive = group.project_ids.map((id) => byId.get(id)).filter((row): row is Workspace => !!row);
-    if (inactive.length === 0) continue;
-    rows.push({ kind: "inactive_projects", group, count: inactive.length });
-    if (group.expanded) for (const workspace of inactive) rows.push({ kind: "workspace", workspace, level: "child" });
+    // No agents, then Inactive projects (D-01): each a fold row with its projects under it while open.
+    for (const [kind, group] of [["no_agents", quiet], ["inactive_projects", inactive]] as const) {
+      if (!group) continue;
+      const members = group.project_ids.map((id) => byId.get(id)).filter((row): row is Workspace => !!row);
+      if (members.length === 0) continue;
+      rows.push({ kind, group, count: members.length });
+      if (group.expanded) for (const workspace of members) rows.push({ kind: "workspace", workspace, level: "child" });
+    }
   }
   return rows;
 }
@@ -348,7 +363,7 @@ export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boole
 
 /** A project row opens its usable checkout, then folds if that target is already open and unfolded. */
 export function projectRowExpansion(workspace: Workspace, target: Checkout | null, focusedCheckoutId: string | null, foldable: boolean): boolean | undefined {
-  return checkoutRowExpansion(foldable, target !== null && target.id === focusedCheckoutId, workspace.expanded !== false);
+  return checkoutRowExpansion(foldable, target !== null && target.id === focusedCheckoutId, projectExpanded(workspace));
 }
 
 /**

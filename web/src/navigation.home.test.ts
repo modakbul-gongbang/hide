@@ -83,10 +83,10 @@ describe("the device's Home is no project (PRD home-device-rail D-13, B16)", () 
 
   it("raises a Home agent's Needs You beside the projects' and names its place Home", () => {
     const listed = allAgents(REST.status!.remote, REST.navigator!.devices, [agent("h1", "needs_you"), agent("p1", "needs_you")]);
-    const rows = projectRows(contextWorkspaces(REST), [], listed, contextHome(REST));
+    const rows = projectRows(contextWorkspaces(REST), {}, listed, contextHome(REST));
     const raised = rows.find((row) => row.kind === "raised");
     expect(raised && raised.kind === "raised" ? raised.agents.map((row) => row.agent.pane_id) : []).toEqual(["h1", "p1"]);
-    const withoutHome = projectRows(contextWorkspaces(REST), [], listed);
+    const withoutHome = projectRows(contextWorkspaces(REST), {}, listed);
     const plain = withoutHome.find((row) => row.kind === "raised");
     expect(plain && plain.kind === "raised" ? plain.agents.map((row) => row.agent.pane_id) : []).toEqual(["p1"]);
     expect(agentPlaces(REST.navigator!.workspaces, REST.status!.remote, REST.navigator!.devices)(null, "h1")).toBe("Home");

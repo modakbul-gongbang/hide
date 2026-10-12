@@ -25,6 +25,8 @@ import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
+import { TitleRow } from "./TitleRow";
+import { readEditorAvailability } from "./host";
 import { focusedRemoteDevice, frontCheckout } from "./snapshot";
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
@@ -47,6 +49,8 @@ export function App() {
   useUsageWindowHint(actions);
   useFactoryNotifications(actions);
   useAgentNotifications(actions);
+  // Open in VS Code is offered only where the desktop app found it (D-14).
+  useEffect(() => readEditorAvailability(), []);
 
   useEffect(() => {
     const session = connectShell({
@@ -236,6 +240,7 @@ export function App() {
     <TooltipProvider>
       <InterfaceLanguageBoundary />
       <div className="relative flex h-full flex-col bg-background text-foreground">
+        <TitleRow actions={actions} />
         <ConnectionBadge actions={actions} />
         <NoticeBar actions={actions} />
         <AgentCloseNotice actions={actions} />

@@ -111,7 +111,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const checkout = (id: string, panes: string[]) => ({ id, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] });
     const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
     const listed = [agent("ask", { group: "needs_you" }), agent("parent"), agent("child")].map((row) => ({ agent: row, device: null }));
-    const rows = projectRows(workspaces, [], listed);
+    const rows = projectRows(workspaces, {}, listed);
     const numbered = new Map([[1, "ask"], [2, "parent"], [3, "child"]] as const);
     const numberOfPane = projectListNumbers(numbered, rows, workspaces);
     // Raised: the number sits there, and not again on its tree row.
@@ -130,10 +130,10 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
     const listed = panes.map((pane) => ({ agent: agent(pane, { group: "done" }), device: null }));
     const numbered = new Map([[4, "d4"]] as const);
-    const folded = projectListNumbers(numbered, projectRows(workspaces, [], listed), workspaces);
+    const folded = projectListNumbers(numbered, projectRows(workspaces, {}, listed), workspaces);
     expect(folded("d4", null)).toBeNull();
     expect(folded("d4", "main")).toBe(4);
-    const opened = projectListNumbers(numbered, projectRows(workspaces, [], listed, null, ["done"]), workspaces);
+    const opened = projectListNumbers(numbered, projectRows(workspaces, {}, listed, null, ["done"]), workspaces);
     expect(opened("d4", null)).toBe(4);
     expect(opened("d4", "main")).toBeNull();
   });

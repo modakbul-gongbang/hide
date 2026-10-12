@@ -2,7 +2,6 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { ChevronDownIcon, CirclePauseIcon, FactoryIcon, FolderGit2Icon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Kbd } from "./ui/kbd";
-import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
@@ -23,31 +22,39 @@ export type DeviceMenu = {
 };
 
 /**
- * The top of the sidebar (quick device-rail-badges, replacing PRD
- * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
- * the name of the device in front (`This Mac`, `mini Remote`) with Search at
- * its right end, the shared Overview row, with the project tree directly below
- * (whose Projects title carries Add project, PRD first-run-onboarding D-27). While
- * the rail is hidden the name is a menu that lists the devices, Add device
- * and Show rail, since the rail is no longer the way to another device. A
- * device that cannot be read shows its name alone: it has no list to switch.
- * Drawn from what the caller reads out of the stores, so a test renders it
- * without them.
+ * The device in front (`This Mac`, `mini Remote`) as the window's top row
+ * draws it over the rail and the sidebar (PRD sidebar-titlebar-refresh B17,
+ * B21). While the rail is hidden the name is a menu that lists the devices,
+ * Add device and Show rail, since the rail is no longer the way to another
+ * device.
+ */
+export function DeviceTitle({ rail, title, deviceMenu }: { rail: boolean; title: { name: string; note: string | null }; deviceMenu: DeviceMenu }) {
+  if (!rail) return <HiddenRailMenu title={title} menu={deviceMenu} />;
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-sm">
+      <span className="min-w-0 truncate text-subhead font-semibold text-foreground" data-sidebar-title-name="true">
+        {title.name}
+      </span>
+      {title.note ? <span className="shrink-0 text-caption text-muted-foreground">{title.note}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * The top of the sidebar under the window's top row (PRD
+ * sidebar-titlebar-refresh D-08): a visible Search row with the ⌘K chord as
+ * bound, then the shared Overview row and the Factory place, with the project
+ * tree directly below (whose Projects title carries Add project, PRD
+ * first-run-onboarding D-27). Drawn from what the caller reads out of the
+ * stores, so a test renders it without them.
  */
 export function SidebarHeader({
-  rail,
-  title,
   overview,
   factory,
   compact = false,
   searchChord,
-  deviceMenu,
   onSearch,
 }: {
-  /** The device rail is showing; hidden, the name opens the device menu. */
-  rail: boolean;
-  /** The device in front, and the smaller word after it. */
-  title: { name: string; note: string | null };
   compact?: boolean;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   /**
@@ -57,35 +64,22 @@ export function SidebarHeader({
    */
   factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
-  deviceMenu: DeviceMenu;
   onSearch: () => void;
 }) {
   const { t } = useInterfaceTranslation();
-  const search = (
-    <Hint label={t("common.search")} shortcut={searchChord}>
-      <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
-        <SearchIcon />
-      </Button>
-    </Hint>
-  );
-  const name = (
-    <span className="min-w-0 truncate text-subhead font-semibold text-foreground" data-sidebar-title-name="true">
-      {title.name}
-    </span>
-  );
-  const note = title.note ? <span className="shrink-0 text-caption text-muted-foreground">{title.note}</span> : null;
   return (
     <>
-      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md" data-sidebar-title="true">
-        {rail ? (
-          <span className="flex min-w-0 flex-1 items-baseline gap-sm">
-            {name}
-            {note}
-          </span>
-        ) : (
-          <HiddenRailMenu title={title} menu={deviceMenu} />
-        )}
-        {search}
+      <div className="shrink-0 px-sm pt-sm pb-xs">
+        <button
+          type="button"
+          data-sidebar-search="true"
+          onClick={onSearch}
+          className="flex h-(--size-sidebar-search) w-full items-center gap-sm rounded-sm border border-border bg-background px-sm text-left text-body text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <SearchIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("common.search")}</span>
+          {searchChord ? <Kbd data-sidebar-search-chord={searchChord}>{searchChord}</Kbd> : null}
+        </button>
       </div>
       {overview ? (
         <Hint label={overview.count > 0 ? t("overview.needsYouHint", { count: overview.count }) : t("overview.title")} shortcut={overview.chord}>
@@ -135,7 +129,7 @@ export function SidebarHeader({
 }
 
 /** The device name as a menu while the rail is hidden: every device, Add device, and the way to show the rail again. */
-function HiddenRailMenu({ title, menu }: { title: { name: string; note: string | null }; menu: DeviceMenu }) {
+export function HiddenRailMenu({ title, menu }: { title: { name: string; note: string | null }; menu: DeviceMenu }) {
   const { t } = useInterfaceTranslation();
   return (
     <DropdownMenu>
