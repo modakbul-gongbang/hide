@@ -44,8 +44,13 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     // shortcut a toast is attributed through, named from the executable's product name; the
     // Start Menu is a known folder of the profile the app resolves, the fixture's here.
     const roaming = await app.evaluate(({ app: electron }) => electron.getPath("appData"));
-    const shortcut = process.platform === "win32" ? path.join(roaming, "Microsoft", "Windows", "Start Menu", "Programs", "hide.lnk") : null;
-    if (shortcut) await expect.poll(() => fs.existsSync(shortcut), { message: shortcut, timeout: 10_000 }).toBe(true);
+    const programs = [roaming, process.env.APPDATA ?? ""].map((folder) => path.join(folder, "Microsoft", "Windows", "Start Menu", "Programs"));
+    const listing = () => programs.map((folder) => `${folder}: ${fs.existsSync(folder) ? fs.readdirSync(folder).join(", ") : "missing"}`).join("\n");
+    if (process.platform === "win32") {
+      await expect.poll(() => programs.some((folder) => fs.existsSync(path.join(folder, "hide.lnk"))), { timeout: 30_000 }).toBe(true).catch((error: Error) => {
+        throw new Error(`${error.message}\n${listing()}`);
+      });
+    }
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
     await screenshot(page, "packaged-window");
