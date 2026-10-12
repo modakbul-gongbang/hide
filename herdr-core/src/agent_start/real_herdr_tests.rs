@@ -328,15 +328,15 @@ fn unix_agent(herdr: &PrivateHerdr) {
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 }
 
-/// Herdr starts Windows agents through PowerShell: `claude.ps1` is found as
-/// a script, records its folder and arguments, and runs a copy of
-/// `timeout.exe` named `claude.exe`, which Herdr reads as the agent.
 /// Appends a line to a file in the fixture home, again while another pane
 /// holds the file: Windows refuses a second writer, and two panes record at
 /// once.
 #[cfg(windows)]
 const RECORD: &str = "function Record($file, $line) { for ($i = 0; $i -lt 50; $i++) { try { Add-Content -ErrorAction Stop -Path \"$env:USERPROFILE\\$file\" -Value $line; return } catch { Start-Sleep -Milliseconds 100 } }; throw \"$file stayed locked\" }\r\n";
 
+/// Herdr starts Windows agents through PowerShell: `claude.ps1` is found as
+/// a script, records its folder and arguments, and runs a copy of
+/// `timeout.exe` named `claude.exe`, which Herdr reads as the agent.
 #[cfg(windows)]
 fn windows_agent(herdr: &PrivateHerdr) {
     let agent = herdr.home.join("agent");
@@ -649,13 +649,12 @@ fn startup_question(shell: &str, variable: &str) {
         .collect();
     args.sort();
     let first_folder = if cfg!(windows) { "sub" } else { "m43" };
-    assert_eq!(
-        args,
-        [
-            format!("{first_folder} promote m43"),
-            "m72 promote m72".to_owned()
-        ]
-    );
+    let mut expected = [
+        format!("{first_folder} promote m43"),
+        "m72 promote m72".to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(args, expected);
 
     // A server restart brings the tabs back with their labels, running
     // Herdr's own shell; the launch is not run again.
