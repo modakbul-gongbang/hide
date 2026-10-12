@@ -246,7 +246,9 @@ Hide's own close of that pane is not read as the operator closing it, so the Tas
 Until the close lands the worker reads as asleep, and a wake asked meanwhile is asked again on the next tick.
 A wake resumes the saved conversation in a tab of its own, and the new pane is found only through that record, never by its label, folder, name or native session id alone.
 Once the agent in the new pane shows the saved native session, the host binds the worker there before it delivers anything.
-The old registration ends, the Factory is registered as parent again, the new pane is registered under the worker's name and worktree, and the watch starts on the new pane.
+The registration the worker held is moved to the new pane by the delivery store with its letters and watch (`docs/delivery.md`), so the worker keeps its agent id.
+Only when that registration was ended while it slept does the host end the old one, register the Factory as parent again and register the new pane under the worker's name and worktree.
+The watch starts on the new pane either way.
 The Task's worker takes the new pane and registration in one engine step that records `worker.rebound`, so a pane Herdr reuses for another agent cannot be taken for it.
 The letters held for the worker follow it to the new pane, and none wait in front of the pane that closed.
 The record stays `Woken` until the engine has saved the new pane, and a record no one binds within an hour is dropped with the `agent_sleep.woken_unbound` diagnostic.

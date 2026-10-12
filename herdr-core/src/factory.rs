@@ -1707,7 +1707,9 @@ impl CoreWorkers {
         drop(runtime);
         for entry in dormant {
             let outcome = match &entry.state {
-                DormantState::Woken { pane } => self.bind_pane(engine, &entry, pane),
+                DormantState::Woken { pane, continued } => {
+                    self.bind_pane(engine, &entry, pane, *continued)
+                }
                 DormantState::WakeFailed(detail) => {
                     let old = (entry.old_pane.as_str(), entry.worker.agent.as_deref());
                     engine.worker_wake_failed(&entry.worker.factory, old, detail);
@@ -1738,41 +1740,49 @@ impl CoreWorkers {
         engine: &mut Engine,
         entry: &crate::runtime::DormantWorker,
         pane: &str,
+        continued: bool,
     ) -> Result<(), String> {
         let worker = &entry.worker;
         let runtime = self.runtime().map_err(|failure| failure.detail)?;
         let delivery = guard(&runtime).factory_delivery(&worker.factory);
         drop(runtime);
         let (client, authority, actor) = delivery?;
-        // The old registration goes first when it still stands, so its name
-        // is free for the new one (as a restart does).
-        if let Some(old) = &worker.agent {
-            let _ = crate::coordination::run(
-                client.clone(),
-                delivery::worker::Authority {
-                    caller: authority.caller.clone(),
-                    context: authority.context.clone(),
-                },
-                actor.clone(),
-                crate::coordination::Command::End {
-                    id: old.clone(),
-                    actor: None,
-                },
-            );
-        }
-        let parent = crate::coordination::register_code_owned(&client, &authority, &actor)?;
-        let agent = crate::coordination::register_woken(
-            &client,
-            &authority,
-            &actor,
-            &parent,
-            &crate::coordination::WokenWorker {
-                pane,
-                kind: &entry.kind,
-                name: &worker.name,
-                worktree: &worker.worktree,
-            },
-        )?;
+        let agent = match (&worker.agent, continued) {
+            // The delivery store moved the registration to the woken pane
+            // with its letters and watch: the worker keeps its agent id.
+            (Some(agent), true) => agent.clone(),
+            _ => {
+                // The old registration goes first when it still stands, so
+                // its name is free for the new one (as a restart does).
+                if let Some(old) = &worker.agent {
+                    let _ = crate::coordination::run(
+                        client.clone(),
+                        delivery::worker::Authority {
+                            caller: authority.caller.clone(),
+                            context: authority.context.clone(),
+                        },
+                        actor.clone(),
+                        crate::coordination::Command::End {
+                            id: old.clone(),
+                            actor: None,
+                        },
+                    );
+                }
+                let parent = crate::coordination::register_code_owned(&client, &authority, &actor)?;
+                crate::coordination::register_woken(
+                    &client,
+                    &authority,
+                    &actor,
+                    &parent,
+                    &crate::coordination::WokenWorker {
+                        pane,
+                        kind: &entry.kind,
+                        name: &worker.name,
+                        worktree: &worker.worktree,
+                    },
+                )?
+            }
+        };
         let old = (entry.old_pane.as_str(), worker.agent.as_deref());
         match engine.worker_rebound(&worker.factory, old, pane, &agent) {
             Some(bound) => {

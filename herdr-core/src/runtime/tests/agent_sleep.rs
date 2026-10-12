@@ -840,7 +840,9 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                     old_pane: SLEEPER.into(),
                     kind: kind.into(),
                     state: crate::runtime::DormantState::Woken {
-                        pane: "w-order:t3:p".into()
+                        pane: "w-order:t3:p".into(),
+                        // This fixture's worker held no delivery registration.
+                        continued: false,
                     },
                 }]
             );
@@ -935,7 +937,7 @@ fn close_pane_runtime(kind: &str) -> Runtime {
 #[test]
 fn factory_sleep_saves_a_close_pane_agents_intent_bound_to_its_worker() {
     use crate::agent_sleep::DormantPhase;
-    for kind in ["pi", "omp", "grok"] {
+    for kind in ["pi", "omp"] {
         for published in [true, false] {
             let mut runtime = close_pane_runtime(kind);
             let worker = factory_worker("agent-7");
@@ -972,6 +974,16 @@ fn factory_sleep_saves_a_close_pane_agents_intent_bound_to_its_worker() {
             assert!(runtime.factory_worker_probe(SLEEPER).asleep);
         }
     }
+}
+
+/// A close-pane agent the Factory does not sleep is refused before anything
+/// is saved or closed: its pane stays and its Task keeps working.
+#[test]
+fn factory_sleep_refuses_a_close_pane_agent_outside_pi_and_omp() {
+    let mut runtime = close_pane_runtime("grok");
+    assert_eq!(runtime.factory_sleep(SLEEPER), Err("agent_cannot_sleep"));
+    let store = &runtime.snapshot.ui_state.agent_sleep;
+    assert!(store.records.is_empty() && store.dormant.is_empty());
 }
 
 /// Sessions are not saved past the in-flight budget: the Factory asks again
@@ -1021,6 +1033,7 @@ fn factory_wake_binds_the_saved_conversation_to_its_worker_as_the_wake_begins() 
         factory: "f-1".into(),
         agent: Some("agent-7".into()),
         name: "factory-fixture-T-1".into(),
+        node: None,
         pane: Some(SLEEPER.into()),
         runtime: hide_factory::model::Runtime::CLAUDE,
         worktree: CHECKOUT.into(),
@@ -2017,6 +2030,56 @@ fn a_sleeping_childs_registration_letters_and_watch_pass_to_the_pane_that_wakes_
             .pane_id,
         WOKEN
     );
+}
+
+/// A Factory's worker that sleeps by closing its pane keeps its record until
+/// the Factory binds the pane it woke in; the registration the delivery store
+/// moved there is the worker's own, so the Factory keeps its agent id (#857).
+#[test]
+fn a_factory_workers_moved_registration_is_reported_with_its_woken_pane() {
+    let sleeping = SleepingChild::new();
+    {
+        let mut runtime = sleeping.shared.lock().unwrap();
+        let record = runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&sleeping.id)
+            .unwrap();
+        record.factory = Some(factory_worker("agent-2"));
+    }
+    sleeping.pane_closed();
+    sleeping.woken(CHILD_NATIVE);
+    sleeping.pass();
+    wait(
+        &sleeping.shared,
+        "the registration to reach the woken pane",
+        |runtime| {
+            runtime
+                .factory_dormant_workers()
+                .iter()
+                .any(|worker| matches!(worker.state, crate::runtime::DormantState::Woken { .. }))
+        },
+    );
+    let mut runtime = sleeping.shared.lock().unwrap();
+    let workers = runtime.factory_dormant_workers();
+    assert_eq!(workers.len(), 1);
+    assert_eq!(
+        workers[0].state,
+        crate::runtime::DormantState::Woken {
+            pane: WOKEN.into(),
+            continued: true,
+        }
+    );
+    assert_eq!(workers[0].worker.agent.as_deref(), Some("agent-2"));
+    // The record stays for the Factory until it has bound the pane.
+    assert_eq!(
+        runtime.snapshot.ui_state.agent_sleep.dormant[&sleeping.id].phase,
+        crate::agent_sleep::DormantPhase::Woken
+    );
+    runtime.factory_dormant_release(&sleeping.id);
+    assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
 }
 
 /// A pane that is not the same conversation never inherits the registration:

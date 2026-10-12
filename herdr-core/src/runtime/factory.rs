@@ -74,7 +74,10 @@ pub(crate) struct DormantWorker {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DormantState {
     /// The conversation runs in this pane, confirmed by the core.
-    Woken { pane: String },
+    /// `continued`: the registration the worker held is now the pane's own
+    /// (the delivery store moved it with its letters and watch), so the
+    /// Factory keeps the same agent id instead of registering a new one.
+    Woken { pane: String, continued: bool },
     /// The wake did not complete; the core keeps the conversation.
     WakeFailed(&'static str),
 }
@@ -923,7 +926,10 @@ impl Runtime {
             .filter(|(_, record)| record.node_id == self.node.as_str())
             .filter_map(|(id, record)| {
                 let state = match (record.phase, record.wake_pane_id.as_ref()) {
-                    (DormantPhase::Woken, Some(pane)) => DormantState::Woken { pane: pane.clone() },
+                    (DormantPhase::Woken, Some(pane)) => DormantState::Woken {
+                        pane: pane.clone(),
+                        continued: self.registration_continued_in(record, pane),
+                    },
                     (DormantPhase::Failed, _) if record.closed => {
                         DormantState::WakeFailed("wake_failed")
                     }
@@ -939,6 +945,23 @@ impl Runtime {
                 })
             })
             .collect()
+    }
+
+    /// Whether the registration the sleeping session held now belongs to the
+    /// pane it woke in, as the delivery store moved it.
+    fn registration_continued_in(&self, record: &DormantRecord, pane: &str) -> bool {
+        let (Some(registration), Some(observed), Ok(ledger)) = (
+            record.registration.as_ref(),
+            self.delivery_observations.get(pane),
+            self.delivery_ledger.as_ref(),
+        ) else {
+            return false;
+        };
+        ledger.agents.iter().any(|agent| {
+            agent.id == registration.id
+                && !agent.ended
+                && agent.actor.same_identity(&observed.actor)
+        })
     }
 
     /// The Factory has bound a woken worker's pane: the way back is not
