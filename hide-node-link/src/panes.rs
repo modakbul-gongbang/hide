@@ -66,8 +66,14 @@ pub enum NodeEvent {
     /// A credential the node handed out is no longer held: its reference
     /// expired, was removed, or its holder ended.
     Revoke { token: String },
-    /// A `hide` command opened a stream.
-    StreamOpen { stream: u64 },
+    /// A `hide` command opened a stream. `caller` is what the node proved
+    /// about the process that opened it, as it opened ([`StreamCaller`]);
+    /// absent when the node proved nothing.
+    StreamOpen {
+        stream: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caller: Option<StreamCaller>,
+    },
     /// Base64 bytes the command sent.
     StreamData { stream: u64, data: String },
     /// The command's side of the stream ended.
@@ -92,6 +98,18 @@ pub enum NodeEvent {
     },
 }
 
+/// Who opened a stream, as the node proved it when the stream opened: the
+/// process holding a one-shot credential the node issued for `pane_id`,
+/// descended from that pane's shell, whose identity the node read from its
+/// Herdr then. The core checks the stream's command against it rather than
+/// asking [`crate::protocol::Call::PaneInspect`], and only for a credential
+/// the same link vouched for the same pane.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct StreamCaller {
+    pub pane_id: String,
+    pub identity: PaneIdentity,
+}
+
 /// The core's answer to a [`NodeEvent::PaneProof`]: the credential, or why
 /// there is none in the reason codes a caller already acts on.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -112,4 +130,54 @@ pub enum ProofAnswer {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PanesStarted {
     pub socket: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A stream the node proved nothing for opens without `caller`, and the
+    /// core reads that line as no proof; a proved stream names the pane and
+    /// the identity the node read.
+    #[test]
+    fn a_stream_open_reads_with_or_without_its_caller() {
+        let older: NodeEvent =
+            serde_json::from_value(json!({"event": "stream_open", "stream": 3})).unwrap();
+        assert_eq!(
+            older,
+            NodeEvent::StreamOpen {
+                stream: 3,
+                caller: None
+            }
+        );
+        let caller = StreamCaller {
+            pane_id: "w1:p2".to_owned(),
+            identity: PaneIdentity {
+                terminal_id: "t-1".to_owned(),
+                shell_pid: 42,
+                shell_started: 7,
+            },
+        };
+        let line = serde_json::to_value(NodeEvent::StreamOpen {
+            stream: 3,
+            caller: Some(caller),
+        })
+        .unwrap();
+        assert_eq!(
+            line,
+            json!({"event": "stream_open", "stream": 3, "caller": {
+                "pane_id": "w1:p2",
+                "identity": {"terminal_id": "t-1", "shell_pid": 42, "shell_started": 7},
+            }})
+        );
+        assert_eq!(
+            serde_json::to_value(NodeEvent::StreamOpen {
+                stream: 3,
+                caller: None
+            })
+            .unwrap(),
+            json!({"event": "stream_open", "stream": 3})
+        );
+    }
 }
