@@ -60,9 +60,11 @@ describe("the Memory tab", () => {
   });
 
   async function render(project: ProjectMemory | null, tool: "memory" | "explorer" = "memory") {
-    useShellStore.setState({ connection: "live", rest, memory: { project } });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>));
+    await act(async () => {
+      useShellStore.setState({ connection: "live", rest, memory: { project } });
+      root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>);
+    });
   }
   const sent = (kind: string) => events.filter((event) => event.kind === kind).map((event) => event.payload);
   const click = async (selector: string) => {
@@ -169,6 +171,12 @@ describe("the Memory tab", () => {
     // One status line at a time: a promotion that runs draws its own.
     expect(container.querySelector("[data-memory-card='9'] [data-memory-verifying]")).toBeNull();
     expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("Retry");
+  });
+
+  it("does not call cards already in repository documents a pending check", async () => {
+    await render(memory({ usable_cards: 0, rows: [row(3, { promotion: { state: "merged", agent: null, pr_number: 44, target_path: "AGENTS.md", github_failure: null } })] }));
+    expect(container.querySelector("[data-memory-empty]")).toBeNull();
+    expect(container.textContent).toContain("In the file · not injected");
   });
 
   it("marks only the running card as checking and explains zero usable cards", async () => {

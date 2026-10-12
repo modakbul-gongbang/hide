@@ -324,7 +324,7 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
           </DropdownMenuContent>
         </DropdownMenu>
       </h3>
-      {project.usable_cards === 0 && project.analysis !== "ai_not_ready" ? <MemoryEmpty project={project} /> : null}
+      {project.usable_cards === 0 && project.analysis !== "ai_not_ready" && (project.rows.length === 0 || project.rows.some((row) => row.verifying)) ? <MemoryEmpty project={project} /> : null}
       {project.rows.length === 0 ? null : (
         <>
           <Input value={query} onChange={(event) => { editing.current = true; setQuery(event.target.value); }} placeholder={t("memory.search")} aria-label={t("memory.search")} data-memory-search="true" />

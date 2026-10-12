@@ -536,7 +536,7 @@ The first five show, the rest fold under `그 외 N`, and a card shown in full i
 A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
 A card waiting to be checked against the repository again shows `확인 대기` in its existing status line; only the card the worker is checking shows `확인 중`.
 Exhausted checking calls show `오늘 확인 예산 소진`; a promotion keeps priority in that same status slot.
-When no card is usable, the existing empty slot says why and that accepted cards return one by one, or that the checking budget resumes on the next UTC day.
+When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one, or that the checking budget resumes on the next UTC day.
 An older consent shows a short re-consent explanation under the existing off disclosure and points to the switch above; it never enables or injects on its own.
 The core supplies the usable count, current card and reasons, and the shell only draws them; no banner, alert, toast or panel is added.
 The word is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
