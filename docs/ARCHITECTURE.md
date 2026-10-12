@@ -783,6 +783,16 @@ The same store retains the public price cache and the last network-attempt time;
 Daily totals hold four fixed token-only context bands, not another table of call identities, preserving tier-aware repricing across event expiry within the existing row and database caps.
 The separately owned price-fetch thread returns a bounded table to the ledger's sole writer, which persists it before publishing it.
 
+`usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
+Only the core's own native-node rows enter these calendars.
+New tokens include input, output and cache writes, never cache reads; reasoning is already part of output.
+Nonzero closed days determine nearest-rank quartiles, or quarter-of-maximum thresholds below seven active closed days, so today's unfinished spike cannot recolor history.
+The calendar starts on the first record's week, capped to the surface's week count, and stays anchored 45 days back during first backfill; agent selection preserves the calendar and the other agents' shares.
+Empty days during backfill remain pending, zero-call ranges remain no data, and cost reasons carry at most eight distinct unpriced model names plus the omitted count, together with price-loading, stale-price and incomplete-usage facts.
+Agent hover costs cover retained history even when its first days precede the displayed calendar.
+Provider provenance is bounded to 32 distinct native ids, and crossing that bound refuses the projection rather than omitting an id silently.
+Calendar arithmetic uses civil dates across daylight-saving transitions, and a current streak may include yesterday while today is still empty.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.

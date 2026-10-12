@@ -13,7 +13,8 @@ use hide_session::{
     usage::{Candidate, Candidates, Checkpoint, Step},
 };
 
-use super::prices::{Cache, Fetch, Table};
+use super::prices::{Cache, Fetch};
+use super::query::{self, Projection};
 use super::store::{Daily, Store};
 
 const REST: Duration = Duration::from_millis(20);
@@ -33,10 +34,9 @@ pub struct Progress {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
-    pub daily: Arc<Vec<Daily>>,
+    pub projection: Option<Arc<Projection>>,
     pub progress: Vec<Progress>,
     pub failure: Option<&'static str>,
-    pub prices: Option<Arc<Table>>,
     pub price_failure: Option<&'static str>,
 }
 
@@ -129,10 +129,9 @@ impl Worker {
                         }
                         Err(code) => {
                             let report = Report {
-                                daily: Arc::new(Vec::new()),
+                                projection: None,
                                 progress: Vec::new(),
                                 failure: Some(code),
-                                prices: None,
                                 price_failure: None,
                             };
                             if previous.as_ref() != Some(&report) {
@@ -492,15 +491,29 @@ impl Engine {
                 Err(code) => self.failed(code),
             }
         }
+        let progress: Vec<_> = self
+            .agents
+            .iter()
+            .map(|work| work.progress.clone())
+            .collect();
+        let projection = match query::prepare(
+            &self.daily,
+            &progress,
+            self.prices.table.as_ref(),
+            &self.device,
+            crate::links::now_ms(),
+            &jiff::tz::TimeZone::system(),
+        ) {
+            Ok(projection) => projection.map(Arc::new),
+            Err(code) => {
+                self.failed(code);
+                None
+            }
+        };
         Report {
-            daily: self.daily.clone(),
-            progress: self
-                .agents
-                .iter()
-                .map(|work| work.progress.clone())
-                .collect(),
+            projection,
+            progress,
             failure: self.failure,
-            prices: self.prices.table.clone().map(Arc::new),
             price_failure: self.price_failure,
         }
     }

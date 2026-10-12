@@ -74,11 +74,12 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
     let node = OwnNode::new(home.path());
     let mut first = Engine::open(&path, "physical-device".into()).unwrap();
     let report = finish(&mut first, &node);
-    assert_eq!(report.daily.len(), 1);
-    assert_eq!(report.daily[0].totals.new_tokens().unwrap(), 60);
-    assert_eq!(report.daily[0].totals.tokens.cache_read, 900);
+    let amount = &report.projection.as_ref().unwrap().year.all.amount;
+    assert_eq!(amount.calls, 1);
+    assert_eq!(amount.new_tokens, 60);
+    assert_eq!(amount.tokens.cache_read, 900);
     assert!(
-        !serde_json::to_string(report.daily.as_ref())
+        !serde_json::to_string(report.projection.as_ref().unwrap().as_ref())
             .unwrap()
             .contains("PRIVATE_BODY_SENTINEL")
     );
@@ -97,7 +98,10 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
             },
         );
     }
-    assert_eq!(restarted.report().daily, report.daily);
+    assert_eq!(
+        &restarted.report().projection.unwrap().year.all.amount,
+        amount
+    );
     assert!(
         restarted
             .store
@@ -112,8 +116,12 @@ fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
         Engine::open(&path, "physical-device".into())
             .unwrap()
             .report()
-            .daily,
-        report.daily
+            .projection
+            .unwrap()
+            .year
+            .all
+            .amount,
+        *amount
     );
 }
 
@@ -142,11 +150,20 @@ fn usage_worker_refusal_keeps_backfill_open_and_recovers_from_durable_progress()
         .unwrap();
     assert!(claude.reading);
     assert_eq!(claude.failure, Some("usage_read_failed"));
-    assert!(failed.daily.is_empty());
+    assert_eq!(failed.projection.unwrap().year.all.amount.calls, 0);
     drop(first);
     node.fail_read.store(false, Ordering::SeqCst);
     let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
-    assert_eq!(finish(&mut restarted, &node).daily[0].totals.calls, 1);
+    assert_eq!(
+        finish(&mut restarted, &node)
+            .projection
+            .unwrap()
+            .year
+            .all
+            .amount
+            .calls,
+        1
+    );
 }
 
 #[test]

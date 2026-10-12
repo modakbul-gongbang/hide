@@ -2,6 +2,7 @@
 //! readers return normalized calls and never open this store.
 
 pub mod prices;
+pub mod query;
 pub mod store;
 pub mod worker;
 
