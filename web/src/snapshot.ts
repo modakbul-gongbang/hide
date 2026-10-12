@@ -1707,7 +1707,7 @@ export type SnapshotRest = {
     agent_onboarding_agents?: string[];
     /** The first-run wizard's progress (PRD first-run-onboarding D-07): absent on a Mac that never had one; another flow `version` is not this build's to show. */
     first_run?: FirstRun | null;
-    /** Settings > General's Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
+    /** Settings > Notifications' Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
     desktop_notifications?: boolean;
     /** The screens whose one-line introduction was shown (B43). */
     screen_intros_seen?: ScreenIntro[];

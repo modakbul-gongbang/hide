@@ -1236,8 +1236,8 @@ The notifications step's description names the system that shows the notificatio
 Turning them on stores the switch and sends one test notification, `Notifications work`, which is what makes macOS ask; while macOS's dialog waits the step says `Waiting for your answer…` and holds `Turn on notifications`, an allowed answer shows `Notifications are on` with `Send a test`, and a refusal shows `macOS is blocking Hide's notifications` with `Open System Settings`, which opens Hide's page of the system's notification settings; once answered the footer offers Continue, drawn as a secondary button while macOS blocks, and a blocked state is not counted as on (B14, B15).
 The step reads macOS's permission every two seconds while it is open, one read at a time, so a change in System Settings shows within seconds; an already allowed Mac shows `Notifications are on` at once, with Continue, which turns the switch on with the step; nothing is said before the first read; a permission Hide cannot read shows `Hide can't read the notification setting` with `Send a test`, and the reason goes to the host log (B16-B18).
 On Windows and Linux the step has no permission to show: turning on stores the switch and sends the test once (B19).
-A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > General shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
-Settings > General's Notifications group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front; the app icon marks agents that need you.` (B30).
+A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > Notifications shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
+Settings > Notifications' desktop group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front; the app icon marks agents that need you.` (B30).
 `Not now` goes on with the switch off, even after `Turn on notifications` was pressed while macOS still asks, in the same event that leaves the step, and `Also on your phone →` opens Settings > Mobile over the wizard, which returns to the step when it closes (B21).
 The project step is Add a project under `Add your first project`, with its Host select, Browse folder, Clone from URL and Create new project, its refusals and its clone progress, and `Skip for now` (B22, B25); its Host list has no Add device, which would take the wizard's place, and only a project on the chosen host counts as the one added.
 The first project added ends the wizard and opens the start panel once, on that project, with the first agent that is on and signed in (in the order Claude Code, Codex, Grok, Pi), else the first agent that is on, and the keyboard in its text box; with no agent on it opens no panel and the wizard closes to the empty Home, whose Start an agent is the way on; a later project opens nothing (D-15, B23, B24).
@@ -1619,19 +1619,35 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
-Settings has six tabs, in this order: General, Agents, Hide AI, Devices, Mobile and Shortcuts.
-Each tab's description line says what it holds, and the tab names are the same in every language.
-While a remote device is selected, a small device chip beside the tab description says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
+Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
+The list reads, top to bottom: the group name `App` with General, Notifications, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
+The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
+A page has its title and no description line (B4).
+While a remote device is selected, a small device chip beside the page title says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+Esc and the close button close Settings and leave the screen under it as it was (B14).
+Settings opens on General unless the way in names a page: Explorer's and a device row's Add device open Devices with its Add dialog in front, Memory's and Factory's Hide AI links open Hide AI, and the first-run wizard's phone link opens Mobile (B11).
 
 ### General
 
-General holds three groups, Appearance, Connections and About, and in the desktop app a Notifications group between Appearance and Connections.
-Notifications has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
-Appearance is one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes.
-Connections has the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects.
+General is Appearance alone: one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5).
+
+### Notifications
+
+Notifications holds every notification Hide sends, in two groups (PRD settings-left-nav B6).
+The first, named for this machine and only in the desktop app, has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
+The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile below describes.
+
+### GitHub
+
+GitHub is the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects (PRD settings-left-nav B8).
 The core reads GitHub with its own machine's `gh`, so in a window on another machine a signed-out `gh` is named on the core's machine ("Not signed in to gh on Mac mini") with the command that fixes it there (Run on Mac mini, `gh auth login`, with Copy) in place of `gh`'s own reason; on the core's own machine the row is as it was (PRD core-host-node-move B15, B1).
 Hide has no GitHub sign-in of its own, so there is no connect or reconnect action beyond that read.
-About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics.
+
+### About
+
+About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics (PRD settings-left-nav B9).
 The Protocol row shows one number while the protocol Hide expects and the one Herdr answered are the same, and `<received> (expects <expected>)` when they differ.
 Version and Protocol come from the answer to `session.snapshot` the core last accepted, so a Herdr that is connected never shows a missing version or protocol.
 
@@ -1767,18 +1783,18 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
 
 ### Settings > Mobile
 
-Settings has a Mobile tab after Devices.
+Mobile is a page of Settings' This Mac group, after Hide AI.
 Its switch, 폰에서 hide 열기, is off at first, and its one-line description says it works over Tailscale and only inside the tailnet (PRD settings-cleanup B59).
 While the switch is off hide runs no Tailscale command.
 Turned on, the three Mac checks (Tailscale installed, logged in, MagicDNS and HTTPS on for the tailnet) fold into one line, `Tailscale is ready`, once they all pass (B57); a failing step shows only itself with a warning and its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link) and nothing for the steps that passed or still wait.
 The phone side, Tailscale on the phone with the same account, is guidance hide cannot check and is part of the `폰 연결하기` row's description.
-The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
-Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the tab makes no code and voids none (B58).
+The page rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
+Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the page makes no code and voids none (B58).
 Pressing it shows the QR, 폰 카메라로 찍으세요, the ts.net address and the code's m:ss countdown, and the row's button becomes `QR 숨기기`, which takes the code out again; a pairing phone spends the code and the QR goes, so the next phone needs `QR 보기` again.
 An HTTPS entry hide did not make shows its target in one line and no pairing row; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
 A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
-푸시 알림 is one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
+The push to the phone is on Settings > Notifications, not on this page (PRD settings-left-nav B7): one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
 
 ### The phone app
 

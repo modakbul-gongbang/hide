@@ -33,14 +33,14 @@ Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, see
 `/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
 `/gallery?scene=onboarding` is the shell's real `Sidebar` and Home behind the real first-run wizard, start panel or Settings sheet over a synthetic This Mac with the seven agents and a stand-in desktop host (`web/src/gallery/OnboardingScene.tsx`), with the content `Screen / Onboarding` draws.
-Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`) and `content` (`reference`, or `long` for the Korean copy); the root carries `data-scene-ready` once the presses a state needs have landed.
+Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`), `content` (`reference`, or `long` for the Korean copy), `scale` (the interface text scale) and, for a `settings-*` state, `page` (the Settings page it opens, Notifications by default, any id of `SETTINGS_GROUPS` or `about`); the root carries `data-scene-ready` once the presses a state needs have landed.
 `/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `lang` (`ko` by default, or `en`, `ja`, `zh-CN`), `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `start_failed`, `forgotten`, `verifying`), the states the Memory screen's design draws, `start_failed` for the `failed` card whose status names the question its new pane's shell stopped at, the same row with other words, and `verifying` for the quiet `확인 중` mark that reuses the status line's existing style.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 Onboarding is `Screen / Onboarding`, built by `onboardingBoards` in `scripts/pen-screens-onboarding.mjs`.
-It draws the first run as one board per subject, each in both themes: the wizard as a dialog over the dimmed shell, step 1 with its tiles, What changes and its failed, no-agent and reopened states, step 2 in every answer on macOS, Windows and Linux, step 3, the start panel it closes into, the empty Home, the sidebar's Add project on the Projects label, Settings > General Notifications on each system, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light only).
+It draws the first run as one board per subject, each in both themes: the wizard as a dialog over the dimmed shell, step 1 with its tiles, What changes and its failed, no-agent and reopened states, step 2 in every answer on macOS, Windows and Linux, step 3, the start panel it closes into, the empty Home, the sidebar's Add project on the Projects label, Settings > Notifications on each system (drawn with `Screen / Settings`' sheet), the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light only).
 Each board's themed frame keeps the node id of the approved bundle (`<board>-light`, `<board>-dark`), so a design review exports the same node from the committed file.
-Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.tsx`, `web/src/firstRun.ts`, `web/src/StartPanel.tsx`, `web/src/MainScreen.tsx`, `web/src/sidebar.tsx`, `web/src/settings/GeneralTab.tsx`, `web/src/ScreenIntro.tsx` and `desktop/static/status.css`.
+Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.tsx`, `web/src/firstRun.ts`, `web/src/StartPanel.tsx`, `web/src/MainScreen.tsx`, `web/src/sidebar.tsx`, `web/src/settings/NotificationsTab.tsx`, `web/src/ScreenIntro.tsx` and `desktop/static/status.css`.
 
 ## The flow: scratch to one PR
 
@@ -195,16 +195,12 @@ Project Sessions is `Screen / Project Sessions`.
 It draws the Project Overview on its Conversation history tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
-Settings is `Screen / Settings`.
-It draws the seven tabs the sheet had before the settings cleanup (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
-The shipped Settings has six tabs (General, Agents, Hide AI, Devices, Mobile, Shortcuts), so the sheet is stale in these ways until it is redrawn:
-- its tab strip lists Appearance, Issues and Performance, which no longer exist as tabs, and lacks Hide AI and Mobile;
-- its Appearance frame is now the Appearance group of General;
-- it has no Agents list (seven agents, one machine at a time, Installed and Not installed), no Hide AI tab, and no Add device that lists ssh config Hosts.
-
-The code and `docs/UI_BEHAVIOR.md` own the tab list and what each tab shows; the sheet owns only the Group/Row look.
-The Mobile tab's strip and content are drawn on `Screen / Mobile`.
-Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
+Settings is `Screen / Settings`, built by `settingsBoards` in `scripts/pen-screens-settings.mjs` from the boards the operator approved (PRD settings-left-nav D-11).
+It draws the ⌘, sheet with its list on the left, App (General, Notifications, Devices, Shortcuts) and This Mac (Agents, Hide AI, Mobile, GitHub) with About at the list's foot, and each page under its title alone: General as Appearance, Notifications with This Mac and Phone, Agents with its machine switch, Hide AI, GitHub and About.
+Its States board draws a remote device's chip beside the page title, the smallest window (720×480), and the longest copy, Korean at the largest interface text, Light only.
+The list, the title and the pages are drawn on local tokens and library refs, not as a `Component /` master, because they are one screen's parts; `settingsFrame` in the same file is the sheet around any page, so `Screen / Onboarding`, `Screen / Core move` and `Screen / Mobile` draw Settings with the same list and title.
+Agent marks that ship only as SVG (Pi, Cursor and the others in `web/src/assets/agents/`) draw empty in Pen, which fills an image only from a raster.
+Its web files are `web/src/SettingsSheet.tsx`, `web/src/settings.ts` and the pages under `web/src/settings/`.
 
 Palette is `Screen / Palette`.
 It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
@@ -235,7 +231,7 @@ Beside each theme's sidebar it draws a pull-request row under the pointer with i
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`, plus the rail component under `web/src/`.
 
 Mobile is `Screen / Mobile`.
-It draws Settings > Mobile, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지, and the three push modes.
+It draws Settings > Mobile as a page of `Screen / Settings`' sheet, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, and the connected phones (2 / 4) with 해지; the push modes are on Settings > Notifications.
 Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).
 The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
 The Settings > Mobile frames are stale against the shipped tab: they draw the QR open with a `새 코드` button as soon as the checks pass, and one row per Tailscale check.

@@ -12,8 +12,9 @@
 // approved bundle's, word for word.
 
 import {BADGE_VARIANTS, BUTTON_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
+import {settingsParts} from './pen-screens-settings.mjs';
 
-export function coreMoveRows(tokens, {themedXref}, suffix) {
+export function coreMoveRows(tokens, root, {themedXref, screenIconButton, screenSwatch}, suffix) {
   // Ids are unique per theme frame and stable across runs: the generator walks
   // the same code in the same order every time. The frames the review targets
   // pair with the approved bundle carry names of their own (`named`).
@@ -25,8 +26,9 @@ export function coreMoveRows(tokens, {themedXref}, suffix) {
   const FG = '$--foreground', SUB = '$--subtle-foreground', MUT = '$--muted-foreground';
   const WARN = '$--warning', OK = '$--success', BAD = '$--destructive', BORDER = '$--border', PRIMARY = '$--primary';
   const XXS = n('--spacing-xxs'), XS = n('--spacing-xs'), SM = n('--spacing-sm'), MD = n('--spacing-md'), LG = n('--spacing-lg'), XL = n('--spacing-xl');
-  const SHEET_W = n('--size-settings-sheet-w');
-  const BODY_W = SHEET_W - 2 * XL;
+  const settings = settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch});
+  const SHEET_W = settings.SHEET_W;
+  const BODY_W = SHEET_W - settings.NAV_W - 2 * settings.PAD_X;
   const DIALOG_W = n('--size-add-device-sheet-w');
   const RAIL_W = n('--size-rail');
   const DIM = n('--opacity-dimmed');
@@ -58,7 +60,6 @@ export function coreMoveRows(tokens, {themedXref}, suffix) {
     const v = BADGE_VARIANTS.outline;
     return themedXref(uid('bdg'), 'eHAjc', `Badge ${label}`, v.overrides, {xXuNa: iconName ? {enabled: true, icon: iconName, fill: v.fg} : {enabled: false}, n8L5dm: {content: label, fill: v.fg}});
   }
-  const tabs = (items, active) => items.map((label, i) => themedXref(uid('tab'), 'tab-m', label, i === active ? {fill: '$--secondary'} : {}, {'tab-t': {content: label, fill: i === active ? FG : SUB}}));
   const MENU_STATE = {default: {}, highlighted: {fill: '$--accent', text: '$--accent-foreground'}, disabled: {text: MUT}, destructive: {text: BAD}};
   function menuItem(label, {state = 'default', reason, reasonWidth = 120} = {}) {
     const s = MENU_STATE[state];
@@ -125,18 +126,8 @@ export function coreMoveRows(tokens, {themedXref}, suffix) {
       f('top', 'Top', {width: 'fill_container', gap: MD, alignItems: 'center'}, [label, right]),
     ]);
   }
-  const TAB_NAMES = ['일반', '에이전트', 'Hide AI', '기기', '모바일', '단축키'];
-  // The Settings sheet (SettingsSheet.tsx) on its Devices tab.
-  function sheet(content, height) {
-    return f('sheet', 'Settings', {layout: 'vertical', width: SHEET_W, height, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: BORDER, strokeWidth: 1, strokeAlignment: 'inner', clip: true}, [
-      f('hdr', 'Header', {width: SHEET_W, padding: [LG, XL], gap: MD, alignItems: 'start', stroke: BORDER, strokeWidth: {bottom: 1}, strokeAlignment: 'inner'}, [
-        f('ht', 'Text', {layout: 'vertical', width: 'fill_container', gap: XXS}, [t('설정', {size: '$--text-headline', weight: '600'}), body('Hide가 SSH로 연결하는 기기입니다. 로그인은 SSH 설정에서 처리합니다.')]),
-        iconButton('x'),
-      ]),
-      f('nav', 'Tabs', {width: SHEET_W, padding: [SM, XL], gap: XS, fill: '$--sidebar', stroke: BORDER, strokeWidth: {bottom: 1}, strokeAlignment: 'inner'}, tabs(TAB_NAMES, 3)),
-      f('bd', 'Body', {layout: 'vertical', width: SHEET_W, padding: [LG, XL], gap: LG}, content),
-    ]);
-  }
+  // The Settings sheet (SettingsSheet.tsx, Screen / Settings) on its Devices page.
+  const sheet = (content, height) => settings.settingsFrame(uid('set'), {page: 'devices', lang: 'ko', height, body: () => content});
   const devicesTab = rows => [group('기기', rows, {action: button('기기 추가', {size: 'sm', icon: 'plus'})})];
 
   // -- the board frame ---------------------------------------------------------------
@@ -173,7 +164,8 @@ export function coreMoveRows(tokens, {themedXref}, suffix) {
   // -- 0 · the core marker and the move's entry (B2, D-06) ---------------------------
 
   function markerBoard() {
-    const H = 360;
+    // Tall enough for Settings' whole list, About at its foot.
+    const H = 440;
     const before = (opts = {}) => sheet(devicesTab([
       deviceRow('mac', {core: true, selected: true}),
       deviceRow('mini', {menuOpen: opts.miniMenu}),
@@ -189,9 +181,9 @@ export function coreMoveRows(tokens, {themedXref}, suffix) {
     const macMenu = menu(250, [menuItem('연결 정보…'), menuSep(), menuItem('core를 이 Mac으로 되돌리기…', {state: 'highlighted'}), menuItem('Mac mini core와 연결 끊기…')]);
     return board('0 Core marker and the move entry', 'B2, D-06. Today\'s rows plus an outline `core` badge, with the same crown the rail tile wears, beside the core machine\'s name; its hint is `core 실행 중`. The move starts from a connected device\'s ⋯ (`core를 이 기기로 옮기기…`), dimmed with `연결 안 됨` otherwise. The menu item carries no reason line: in this menu that slot means why an item is off, and the dialog says why to move before anything changes. After the move this Mac\'s ⋯ holds the way back and the disconnect (B16), named by the machine (`Mac mini core와 연결 끊기…`) rather than `원격 core`.', [
       labeled('Before: core on this Mac', named(before(), 'devices'), SHEET_W),
-      labeled('Before: Mac mini ⋯', named(over(before({miniMenu: true}), SHEET_W + 40, H, [[miniMenu, 420, 250]]), 'devices-menu'), SHEET_W + 40),
-      labeled('Before: a device that is not connected', named(over(before({boxMenu: true}), SHEET_W + 40, H + 60, [[boxMenu, 358, 304]]), 'devices-offline'), SHEET_W + 40),
-      labeled('After: core on Mac mini, this Mac ⋯', named(over(after({macMenu: true}), SHEET_W + 40, H, [[macMenu, 408, 208], [tip('core 실행 중'), 100, 252]]), 'node-menu'), SHEET_W + 40),
+      labeled('Before: Mac mini ⋯', named(over(before({miniMenu: true}), SHEET_W + 40, H, [[miniMenu, 580, 180]]), 'devices-menu'), SHEET_W + 40),
+      labeled('Before: a device that is not connected', named(over(before({boxMenu: true}), SHEET_W + 40, H + 60, [[boxMenu, 518, 234]]), 'devices-offline'), SHEET_W + 40),
+      labeled('After: core on Mac mini, this Mac ⋯', named(over(after({macMenu: true}), SHEET_W + 40, H, [[macMenu, 568, 138], [tip('core 실행 중'), 300, 182]]), 'node-menu'), SHEET_W + 40),
     ]);
   }
 

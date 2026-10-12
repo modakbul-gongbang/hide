@@ -1,9 +1,10 @@
 // Settings > Mobile (PRD mobile-companion B1-B7, B10, B14, B15, B29, B39;
 // settings-cleanup B57-B59): the switch, one ready line or only the failing
 // Tailscale steps with their fix, the QR once hided has confirmed its serve
-// entry and Show QR is pressed, the paired phones with Revoke, and the push
-// mode in one dropdown. Every value is the daemon's `mobile` frame; every
-// control sends one `mobile_*` event.
+// entry and Show QR is pressed, and the paired phones with Revoke; the push
+// mode is on Settings > Notifications (PRD settings-left-nav B6, B7). Every
+// value is the daemon's `mobile` frame; every control sends one `mobile_*`
+// event.
 
 import { AlertTriangleIcon, CircleAlertIcon, ExternalLinkIcon } from "lucide-react";
 import qrcode from "qrcode-generator";
@@ -12,11 +13,9 @@ import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { Button } from "./components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Switch } from "./components/ui/switch";
 import { Group, Note, Row, Status } from "./components/settings-rows";
 import {
-  PUSH_CHOICES,
   checklistView,
   codeCountdown,
   exposureLine,
@@ -24,7 +23,6 @@ import {
   phonesTitle,
   type FailedStep,
   type MobileState,
-  type PushMode,
 } from "./mobileSettings";
 import { useShellStore } from "./store";
 
@@ -59,32 +57,7 @@ export function MobileTab({ actions }: { actions: Actions }) {
         {mobile.enabled || mobile.exposure === "failed" ? <Pairing state={mobile} actions={actions} /> : null}
       </Group>
       {mobile.phones.length > 0 ? <Phones state={mobile} actions={actions} /> : null}
-      <Group title={t("mobileSetup.push")}>
-        <PushMode mode={mobile.push_mode} actions={actions} />
-      </Group>
     </div>
-  );
-}
-
-/** Push to the phone in one dropdown; only the chosen item's description shows (B59). */
-function PushMode({ mode, actions }: { mode: PushMode; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const chosen = PUSH_CHOICES.find((choice) => choice.id === mode);
-  return (
-    <Row label={t("mobileSetup.pushTo")} detail={chosen ? <Note data-push-detail={chosen.id}>{t(chosen.detail)}</Note> : null}>
-      <Select value={mode} onValueChange={(value) => actions.setPushMode(value as PushMode)}>
-        <SelectTrigger aria-label={t("mobileSetup.push")} data-push-select="true">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {PUSH_CHOICES.map((choice) => (
-            <SelectItem key={choice.id} value={choice.id} data-push-choice={choice.id}>
-              {t(choice.label)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Row>
   );
 }
 

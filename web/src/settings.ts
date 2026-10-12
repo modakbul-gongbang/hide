@@ -13,9 +13,17 @@ import { redact } from "./redact";
 
 type Translate = TFunction<"translation">;
 
-export type SettingsTab = "general" | "agents" | "hideAi" | "devices" | "mobile" | "shortcuts";
+export type SettingsTab = "general" | "notifications" | "devices" | "shortcuts" | "agents" | "hideAi" | "mobile" | "github" | "about";
 
-export const SETTINGS_TABS: readonly SettingsTab[] = ["general", "agents", "hideAi", "devices", "mobile", "shortcuts"];
+/**
+ * The Settings list, top to bottom (PRD settings-left-nav B2): the App group,
+ * then the group this window's machine names (This Mac), then About apart at
+ * the foot. A group's name is a label, never a page.
+ */
+export const SETTINGS_GROUPS: readonly { id: "app" | "machine"; tabs: readonly SettingsTab[] }[] = [
+  { id: "app", tabs: ["general", "notifications", "devices", "shortcuts"] },
+  { id: "machine", tabs: ["agents", "hideAi", "mobile", "github"] },
+];
 
 /**
  * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core

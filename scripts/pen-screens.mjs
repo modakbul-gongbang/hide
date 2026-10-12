@@ -38,6 +38,7 @@ import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
 import {onboardingBoards} from './pen-screens-onboarding.mjs';
+import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
@@ -244,15 +245,6 @@ function screenRadioItem(id, label, selected) {
     themedXref(`${id}-dot`, 'rad-m', label, {}, {'rad-dot': {enabled: selected}}),
     text(`${id}-label`, label, {weight: '500'}),
   ]);
-}
-
-// The master's own Range width (96) and Thumb x (88) are one fixed demo state,
-// not tied to any value; `fraction` (0-1) places both at the same point along
-// the 160px-wide track the master draws, thumb centered on the range's end.
-function screenSlider(id, fraction) {
-  const trackWidth = 160, thumbRadius = 8;
-  const fillWidth = Math.round(trackWidth * fraction);
-  return themedXref(id, 'sld-m', 'Slider', {}, {'sld-range': {width: fillWidth}, 'sld-thumb': {x: fillWidth - thumbRadius}});
 }
 
 const MENU_ITEM_STATE = {default: {}, highlighted: {fill: '$--accent', text: '$--accent-foreground'}, disabled: {text: '$--muted-foreground'}, destructive: {text: '$--destructive'}};
@@ -3246,73 +3238,18 @@ function buildSessions(tokens) {
 
 // -- Screen / Settings ----------------------------------------------------------
 
-// Group/Row (web/src/components/settings-rows.tsx): a titled card of
-// hairline-divided rows with a note line below it, matching HideSettingsGroup.
-function settingsGroup(id, title, note, rows, width) {
-  const box = frame(`${id}-box`, 'Box', {
-    layout: 'vertical', gap: 0, width, cornerRadius: '$--radius-md', fill: '$--card',
-    stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-  }, rows.flatMap((row, index) => index === 0 ? [row] : [
-    {type: 'line', id: `${id}-sep-${index}`, name: 'Divider', width: 'fill_container', height: 0, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'center'},
-    row,
-  ]));
-  return frame(id, title, {layout: 'vertical', gap: '$--spacing-sm', width}, [
-    text(`${id}-title`, title, {size: '$--text-body', weight: '600', fill: '$--subtle-foreground'}),
-    box,
-    text(`${id}-note`, note, {size: '$--text-body', fill: '$--muted-foreground', width}),
-  ]);
-}
+const SETTINGS_SPEC = 'web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_GROUPS, settings-rows.tsx Group/Row and the pages under web/src/settings/ (PRD settings-left-nav B1-B15): the ⌘, sheet, 880 wide, with a 200 list on its left in place of the tab strip, App (General, Notifications, Devices, Shortcuts) and This Mac (Agents, Hide AI, Mobile, GitHub), About at the list\u2019s foot, and the chosen page on its right under its title alone, without a description line. General holds Appearance alone; Notifications holds This Mac\u2019s desktop notifications and the Phone push; GitHub and About are pages of their own; Agents keeps its machine switch inside the page. Copy is the shipped catalog; values are invented.';
 
-function settingsRow(id, label, control) {
-  return frame(id, 'Row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-md']}, [
-    text(`${id}-label`, label, {size: '$--text-subhead'}),
-    frame(`${id}-control`, 'Control', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, Array.isArray(control) ? control : [control]),
-  ]);
-}
-
-function buildSettings(tokens) {
-  const W = num(tokens, '--size-settings-sheet-w');
-  const TABS = ['General', 'Appearance', 'Agents', 'Issues', 'Devices', 'Performance', 'Shortcuts'];
-  const SUBTITLE = 'Theme, accent and interface density.';
-  const OWNER = 'Appearance, shortcuts, Background AI, hooks and the device list are kept by hided on fixture.';
-  const ACCENTS = [
-    {name: 'Lime', token: '$--accent-choice-lime'},
-    {name: 'Sky', token: '$--accent-choice-sky'},
-    {name: 'Violet', token: '$--accent-choice-violet'},
-    {name: 'Amber', token: '$--accent-choice-amber'},
-  ];
-  const bodyW = W - 2 * 32;
-  function build(suffix) {
-    const header = frame(`set-hdr-${suffix}`, 'Header', {layout: 'horizontal', alignItems: 'start', gap: '$--spacing-md', width: W, padding: '$--spacing-lg'}, [
-      frame(`set-hdrtext-${suffix}`, 'Text', {layout: 'vertical', gap: '$--spacing-xxs', width: W - 64 - 24}, [
-        text(`set-title-${suffix}`, 'Settings', {size: '$--text-headline', weight: '600'}),
-        text(`set-sub-${suffix}`, SUBTITLE, {size: '$--text-body', fill: '$--subtle-foreground'}),
-        text(`set-owner-${suffix}`, OWNER, {size: '$--text-caption', fill: '$--muted-foreground', width: W - 64 - 24}),
-      ]),
-      screenIconButton(`set-close-${suffix}`, 'x'),
-    ]);
-    const nav = frame(`set-nav-${suffix}`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: W, padding: ['$--spacing-sm', '$--spacing-lg'], fill: '$--sidebar'},
-      tabRefs(`set-tabs-${suffix}`, TABS, 1));
-    const accentRow = settingsRow(`set-accent-${suffix}`, 'Accent', [
-      ...ACCENTS.map((a, i) => screenSwatch(`set-swatch-${i}-${suffix}`, a.token, i === 0)),
-      text(`set-accenthex-${suffix}`, '#B9FF66', {mono: true, fill: '$--subtle-foreground'}),
-    ]);
-    // Each row shows its own theme selected, matching the web page it depicts
-    // rather than a single fixed demo state: System=0, Light=1, Dark=2.
-    const themeIndex = suffix === 'd' ? 2 : 1;
-    const theme = settingsGroup(`set-theme-${suffix}`, 'Theme',
-      'System follows macOS as it changes. Accent tints primary buttons, focus rings and the editor caret; agent status colors keep their meaning whatever the accent.',
-      [settingsRow(`set-appearance-${suffix}`, 'Appearance', screenToggleGroup(`set-appearance-v-${suffix}`, ['System', 'Light', 'Dark'], themeIndex)), accentRow], bodyW);
-    const density = settingsGroup(`set-density-${suffix}`, 'Density',
-      'Terminal and editor text keep their own size (⌘= and ⌘- in a pane or document).',
-      [settingsRow(`set-font-${suffix}`, 'Interface font', [screenSlider(`set-slider-${suffix}`, 1 / 3), text(`set-fontval-${suffix}`, '13 pt', {mono: true})])], bodyW);
-    const body = frame(`set-body-${suffix}`, 'Body', {layout: 'vertical', gap: '$--spacing-lg', width: W, padding: '$--spacing-lg'}, [theme, density]);
-    return [frame(`set-dialog-${suffix}`, 'Settings', {
-      layout: 'vertical', gap: 0, width: W, cornerRadius: '$--radius-lg', fill: '$--popover',
-      stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-    }, [header, nav, body])];
-  }
-  return screenSheet('screen-settings', 'Screen / Settings', 'web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_TABS, settings-rows.tsx Group/Row: the seven-tab strip (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and, on Appearance, the Theme group (ToggleGroup + accent swatches) and Density group (Slider), matching web/src/SettingsSheet.tsx’s AppearanceTab exactly rather than a Select-based approximation.', build, build);
+// Each board is a captioned section in one column, built by pen-screens-settings.mjs.
+function buildSettings(tokens, root) {
+  const boards = settingsBoards(tokens, root, {themedXref, screenIconButton, screenSwatch});
+  const build = suffix => [frame(`set-column-${suffix}`, 'Boards', {layout: 'vertical', gap: '$--spacing-xxl'},
+    boards.map(board => frame(`${board.id}-${suffix}`, board.name, {layout: 'vertical', gap: '$--spacing-md'}, [
+      text(`${board.id}-${suffix}-title`, board.name, {size: '$--text-title', weight: '600'}),
+      text(`${board.id}-${suffix}-spec`, board.spec, {size: '$--text-caption', fill: '$--muted-foreground', width: 1100}),
+      ...board.build(suffix),
+    ])))];
+  return screenSheet('screen-settings', 'Screen / Settings', SETTINGS_SPEC, build, build);
 }
 
 // -- Screen / Palette ------------------------------------------------------------
@@ -4343,7 +4280,8 @@ function buildProjectsSidebar(tokens) {
 // because no library master draws a phone screen, so every size is a number this
 // builder owns. The machine name and tailnet are placeholders, and the QR is a
 // deterministic pattern, never a real code.
-function buildMobile(tokens) {
+function buildMobile(tokens, root) {
+  const settingsSheetParts = settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch});
   const XS = num(tokens, '--spacing-xs'), SM = num(tokens, '--spacing-sm'), MD = num(tokens, '--spacing-md');
   const LG = num(tokens, '--spacing-lg'), XL = num(tokens, '--spacing-xl');
   const SP = {xs: '$--spacing-xs', sm: '$--spacing-sm', md: '$--spacing-md', lg: '$--spacing-lg', xl: '$--spacing-xl'};
@@ -4639,8 +4577,8 @@ function buildMobile(tokens) {
     ]);
   }
 
-  // -- Settings > Mobile --
-  const ROW_W = SET_W - 2 * XL;
+  // -- Settings > Mobile, the page right of Settings' list (PRD settings-left-nav) --
+  const ROW_W = SET_W - settingsSheetParts.NAV_W - 2 * settingsSheetParts.PAD_X;
   // Deterministic pseudo-QR: three finder patterns and a seeded module field, drawn
   // as rows of cells. Black on white in both themes, as a camera needs it.
   function qr(id, size = 168) {
@@ -4664,15 +4602,6 @@ function buildMobile(tokens) {
     }
     return frame(id, 'QR', {layout: 'vertical', gap: 0, width: size, height: size, padding: pad, fill: '#FFFFFF', cornerRadius: '$--radius-md'}, rows);
   }
-  // settings.ts SETTINGS_TABS with Mobile after Devices (PRD mobile-companion B1).
-  const TABS = ['General', 'Appearance', 'Agents', 'Devices', 'Mobile', 'Performance', 'Shortcuts'];
-  function tabStrip(id) {
-    return frame(`${id}-w`, 'Tabs', {layout: 'vertical', gap: 0, width: SET_W}, [
-      frame(id, 'Tab strip', {layout: 'horizontal', gap: SP.xs, width: SET_W, padding: [SP.sm, SP.xl], fill: '$--sidebar'}, TABS.map((t, i) =>
-        frame(`${id}-t${i}`, t, {padding: [4, 10], cornerRadius: '$--radius-sm', ...(t === 'Mobile' ? {fill: '$--secondary'} : {})}, [text(`${id}-tt${i}`, t, {size: '$--text-body', weight: t === 'Mobile' ? '600' : '400', fill: t === 'Mobile' ? FG : MUTED})]))),
-      rule(`${id}-rule`, SET_W),
-    ]);
-  }
   function groupTitle(id, label) {
     return frame(id, label, {width: ROW_W, padding: [SP.lg, 0, SP.xs, 0]}, [text(`${id}-t`, label, {size: '$--text-caption', weight: '500', fill: MUTED})]);
   }
@@ -4693,9 +4622,6 @@ function buildMobile(tokens) {
     return frame(id, 'Switch', {width: 32, height: 18, cornerRadius: PILL, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
       frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: PILL, fill: on ? '$--primary-foreground' : MUTED}, []),
     ]);
-  }
-  function radio(id, on) {
-    return frame(id, 'Radio', {width: 14, height: 14, cornerRadius: PILL, stroke: on ? '$--primary' : '$--border', strokeWidth: on ? 4 : 1, strokeAlignment: 'inner', fill: '$--background'}, []);
   }
   function linkButton(id, label, danger = false) {
     return frame(id, label, {padding: [4, 10], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [text(`${id}-t`, label, {size: '$--text-body', fill: danger ? BAD : FG})]);
@@ -4736,16 +4662,9 @@ function buildMobile(tokens) {
       groupTitle(`${id}-g1`, '연결된 폰 · 2 / 4'),
       row(`${id}-p1`, {label: 'iPhone 15 Pro', detail: '방금 · 알림 받는 중', trailing: linkButton(`${id}-p1r`, '해지', true)}),
       row(`${id}-p2`, {label: 'iPad', detail: '3일 전 · 4일 뒤 자동 해지', trailing: linkButton(`${id}-p2r`, '해지', true)}),
-      groupTitle(`${id}-g2`, '푸시 알림'),
-      row(`${id}-r0`, {label: '끔', leading: radio(`${id}-r0b`, false)}),
-      row(`${id}-r1`, {label: '앱이 닫혀 있을 때만', detail: '데스크톱 hide가 연결돼 있지 않은 동안만 폰으로 보냅니다. 내 확인 대기와 끝 두 전이에서만.', leading: radio(`${id}-r1b`, true)}),
-      row(`${id}-r2`, {label: '항상', leading: radio(`${id}-r2b`, false)}),
     ] : [];
-    return frame(id, passing ? 'Settings · Mobile · ready' : 'Settings · Mobile · blocked', {layout: 'vertical', width: SET_W, fill: '$--background', cornerRadius: 12, clip: true, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-      frame(`${id}-ttl`, 'Sheet title', {layout: 'horizontal', alignItems: 'center', width: SET_W, height: 44, padding: [0, SP.xl], fill: '$--sidebar'}, [text(`${id}-tt`, 'Settings', {size: '$--text-title', weight: '600', fill: FG}), spacer(`${id}-ts`), icon(`${id}-tx`, 'x', {size: 14, fill: MUTED})]),
-      tabStrip(`${id}-tabs`),
-      frame(`${id}-body`, 'Body', {layout: 'vertical', width: SET_W, padding: [0, SP.xl, SP.xl, SP.xl]}, [...content, ...qrBlock, ...phones]),
-    ]);
+    // The push mode is on Settings > Notifications (PRD settings-left-nav B7).
+    return {...settingsSheetParts.settingsFrame(id, {page: 'mobile', lang: 'ko', height: passing ? 760 : 520, body: () => [...content, ...qrBlock, ...phones]}), name: passing ? 'Settings · Mobile · ready' : 'Settings · Mobile · blocked'};
   }
 
   // -- sheet --
@@ -4801,8 +4720,8 @@ function buildFactory(tokens) {
 
 const CORE_MOVE_SPEC = 'web/src/settings/DevicesTab.tsx, DeviceRow.tsx, CoreMoveDialog.tsx, web/src/components/device-rail.tsx, web/src/badge.tsx, web/src/connection.ts, web/src/coreMove.ts (PRD core-host-node-move B2-B5, B10, B16, W1-W4, D-06; the design the operator chose in three review rounds): the core marker and the move\'s entry on today\'s Devices rows, the move as one dialog over Settings in five states (checks failed, confirm, moving, failed, done), the rail with the crown notched into the core machine\'s tile in both machines\' windows, and the window states outside Settings: the strip while the core moves, while this machine updates its core and while the core cannot be reached, the desktop host\'s status page for an app older than the core, and the strip after the operator ended the link here, which follows W3 and was not in the approved bundle. The copy is the approved bundle\'s; every name and number is invented example content.';
 
-function buildCoreMove(tokens) {
-  const build = suffix => coreMoveRows(tokens, {themedXref}, suffix);
+function buildCoreMove(tokens, root) {
+  const build = suffix => coreMoveRows(tokens, root, {themedXref, screenIconButton, screenSwatch}, suffix);
   return screenSheet('screen-core-move', 'Screen / Core move', CORE_MOVE_SPEC, build, build);
 }
 
@@ -4857,14 +4776,14 @@ function buildOverview(tokens) {
 
 // -- Screen / Onboarding ---------------------------------------------------------
 
-const ONBOARDING_SPEC = 'web/src/FirstRunWizard.tsx, NotificationControls.tsx, firstRun.ts, StartPanel.tsx, MainScreen.tsx (EmptyHomeView), sidebar.tsx, settings/GeneralTab.tsx, ScreenIntro.tsx and desktop/static/status.css (PRD first-run-onboarding D-20, D-27, B1-B52): the first run in three steps as a dialog over the dimmed shell, with the three-segment bar and "1 of 3" on top. Step 1 is the seven agents in the kit order as tiles that say whether each is ready, signed out, checking or not installed, the What changes disclosure that lists each file Hide writes once with the agents that share it, the Hide AI line beside Continue, and its failed, no-agent and reopened states. Step 2 is the notification line on each system and in each answer macOS can give, with the one press that answers it and Also on your phone. Step 3 is Add a project inside the wizard. Then the start panel it closes into (with Not signed in beside an agent that is), the empty Home in its two states, the sidebar whose only Add project is the + on the Projects label, Settings > General Notifications on macOS, on Windows and Linux and with no notification service, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light). Paths, projects and the build line are invented.';
+const ONBOARDING_SPEC = 'web/src/FirstRunWizard.tsx, NotificationControls.tsx, firstRun.ts, StartPanel.tsx, MainScreen.tsx (EmptyHomeView), sidebar.tsx, settings/NotificationsTab.tsx, ScreenIntro.tsx and desktop/static/status.css (PRD first-run-onboarding D-20, D-27, B1-B52): the first run in three steps as a dialog over the dimmed shell, with the three-segment bar and "1 of 3" on top. Step 1 is the seven agents in the kit order as tiles that say whether each is ready, signed out, checking or not installed, the What changes disclosure that lists each file Hide writes once with the agents that share it, the Hide AI line beside Continue, and its failed, no-agent and reopened states. Step 2 is the notification line on each system and in each answer macOS can give, with the one press that answers it and Also on your phone. Step 3 is Add a project inside the wizard. Then the start panel it closes into (with Not signed in beside an agent that is), the empty Home in its two states, the sidebar whose only Add project is the + on the Projects label, Settings > Notifications on macOS, on Windows and Linux and with no notification service, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light). Paths, projects and the build line are invented.';
 
 // Each board is a captioned section in one column. Its themed frame keeps the
 // id and geometry the approved bundle's node has (agents/runs/first-run-onboarding
 // design baseline, `<board>-light` / `<board>-dark`), so a design review exports
 // the same node from this file; the ids inside are prefixed to stay unique.
 function buildOnboarding(tokens, root) {
-  const boards = onboardingBoards(tokens, root, {themedXref, screenButton, screenIconButton, screenSelect, screenTabs, tabRefs});
+  const boards = onboardingBoards(tokens, root, {themedXref, screenButton, screenIconButton, screenSelect, screenSwatch, screenTabs});
   const prefix = node => ({...node, id: `onb-${node.id}`, ...(node.children ? {children: node.children.map(prefix)} : {})});
   const build = suffix => {
     const mode = suffix === 'l' ? 'Light' : 'Dark';
@@ -4886,15 +4805,15 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Project Overview', build: () => buildProjectOverview(tokens)},
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
-    {name: 'Screen / Settings', build: () => buildSettings(tokens)},
+    {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
     {name: 'Screen / Menus and Overlays', build: () => buildMenus(tokens)},
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
-    {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
+    {name: 'Screen / Mobile', build: () => buildMobile(tokens, root)},
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
     {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens, root)},
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
-    {name: 'Screen / Core move', build: () => buildCoreMove(tokens)},
+    {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
   ];
 }

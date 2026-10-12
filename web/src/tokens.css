@@ -260,7 +260,8 @@
   --size-search-sheet-w: 570px;
   --size-search-sheet-h: 430px;
   --size-gallery-scene-h: 880px;
-  --size-settings-sheet-w: 720px;
+  --size-settings-sheet-w: 880px;
+  --size-settings-nav-w: 200px;
   --size-settings-sheet-h: 560px;
   --size-settings-sheet-h-max: 800px;
   --size-settings-sheet-window-inset: 40px;

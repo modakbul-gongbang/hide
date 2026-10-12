@@ -43600,7 +43600,7 @@
     },
     "--size-settings-sheet-w": {
       "type": "number",
-      "value": 720
+      "value": 880
     },
     "--size-settings-sheet-h": {
       "type": "number",
@@ -44849,6 +44849,10 @@
     "--size-hide-badge-mark": {
       "type": "number",
       "value": 9
+    },
+    "--size-settings-nav-w": {
+      "type": "number",
+      "value": 200
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
