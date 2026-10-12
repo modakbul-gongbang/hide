@@ -84,9 +84,9 @@ pub(crate) const NAME_RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// then the screen's last line after [`crate::coordination::DETAIL`] when it
 /// could be read.
 pub(crate) const SHELL_STARTING: &str = "shell_starting";
-/// The shells whose startup files Hide's shell integration reaches through
-/// the environment, which therefore mark their first prompt.
-const MARKING_SHELLS: [&str; 2] = ["zsh", "fish"];
+/// The shells Hide's shell integration reaches, which therefore mark their
+/// first prompt, by program name without `.exe`.
+const MARKING_SHELLS: [&str; 6] = ["zsh", "fish", "bash", "pwsh", "powershell", "cmd"];
 /// The pane token the integration's first prompt reports
 /// (`hide_host::shell_integration::PROMPT_TOKEN`).
 const PROMPT_TOKEN: &str = "hide_prompt";
@@ -396,10 +396,10 @@ impl Shell<'_> {
         // file replaced the shell with) marks nothing, so nothing is waited
         // for; its start is confirmed after it was typed. Its name is read
         // only while it is in the foreground, so until then it is waited for.
-        if group
-            .shell_name()
-            .is_some_and(|name| !MARKING_SHELLS.contains(&name))
-        {
+        if group.shell_name().is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            !MARKING_SHELLS.contains(&name.strip_suffix(".exe").unwrap_or(&name))
+        }) {
             self.awaits_mark.set(false);
             return Ok(false);
         }
@@ -509,6 +509,9 @@ impl Shell<'_> {
 
 #[cfg(all(test, unix))]
 mod real_herdr_tests;
+
+#[cfg(test)]
+mod argv_shell_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1049,14 +1052,15 @@ mod tests {
         }
     }
 
-    /// bash takes no startup file through the environment, so it never marks
-    /// a prompt and nothing waits for one.
+    /// A shell the integration does not reach (`sh`, or one a startup file
+    /// replaced the shell with) never marks a prompt, so nothing waits for
+    /// one.
     #[test]
     fn a_shell_the_integration_does_not_reach_is_started_without_waiting_for_a_mark() {
-        let herdr = FakeHerdr::start("agent-start-bash", |method, _| match method {
+        let herdr = FakeHerdr::start("agent-start-sh", |method, _| match method {
             "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
                 "pane_id": "w1:p1", "shell_pid": SHELL, "foreground_process_group_id": SHELL,
-                "foreground_processes": [{"pid": SHELL, "name": "-bash"}]}}),
+                "foreground_processes": [{"pid": SHELL, "name": "-sh"}]}}),
             "agent.start" => started(),
             other => panic!("unexpected {other}"),
         });
