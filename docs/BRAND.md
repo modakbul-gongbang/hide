@@ -39,6 +39,7 @@ Keep the image's proportions, lower-right crop, eye spacing, and full square bac
 Do not add glow, gradients, expressions, accessories, or a different color to signal agent state.
 At small sizes, use the full mark rather than extracting either eye.
 
+Inside the app the mark names Hide AI as the one who started an agent, never an agent's state: it heads the Hide AI group of a project's tree and, as an 11-pixel badge, sits on the corner of the provider icon of a row that stands alone (`web/src/AgentMark.tsx`, `web/src/assets/hide-mark.png`, a 64-pixel derivative of the full square mark).
 The macOS app icon at `desktop/resources/hide-icon-1024.png` is the mark inside a rounded 896-pixel tile with a 64-pixel transparent inset on a 1024-pixel canvas.
 `desktop/resources/hide.icns` packages that icon for the app.
 The mobile web icons in `web/public/m/` are size derivatives of the full square mark.

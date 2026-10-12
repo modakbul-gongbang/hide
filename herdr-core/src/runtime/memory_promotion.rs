@@ -1266,6 +1266,10 @@ fn spawn_agent(
             branch,
             path: None,
             args,
+            task: Some(crate::coordination::SpawnTask {
+                kind: crate::coordination::MEMORY_PROMOTE_TASK.into(),
+                target: Some(format!("m{number}")),
+            }),
         },
     )?;
     view["id"]
@@ -1809,6 +1813,17 @@ mod tests {
             ledger.agents.iter().any(|record| record.name
                 == crate::delivery::Actor::hide(HIDE_MEMORY_ROLE, "test-node").name),
             "Hide is registered as the agent's origin"
+        );
+        let [spawn] = ledger.spawns.as_slice() else {
+            panic!("one spawn was asked for");
+        };
+        assert_eq!(
+            spawn.task,
+            Some(crate::coordination::SpawnTask {
+                kind: "memory_promote".into(),
+                target: Some("m1".into()),
+            }),
+            "the spawn names its task, so the screen can say what Hide AI does"
         );
 
         let mut running = failed.clone();

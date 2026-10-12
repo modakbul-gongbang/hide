@@ -102,12 +102,16 @@ use crate::error::HostError;
 /// only because no peer of another build reads it: a node that dials its
 /// core links only on the core's exact build (PRD core-host-node-move B10,
 /// option C), and Factory runs never go to a device the core dials.
+/// An event may gain an optional field within 28 for the same reason:
+/// [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent when the node
+/// proved nothing, and the core then checks the command with `pane_inspect`;
+/// a core uploads its own build to a device it dials, so no peer lacks it.
 /// 29: `shell_integration` writes the startup files that mark a pane shell's
 /// first prompt and answers the command and environment an agent's pane
 /// starts its shell with, so a start types only once the shell has finished
-/// starting. A node on 28 would
-/// refuse it as unknown, and a start on that device could be typed into a
-/// startup question, so it is refused at Hello and reinstalled.
+/// starting. A node on 28 would refuse it as unknown, and a start on that
+/// device could be typed into a startup question, so it is refused at Hello
+/// and reinstalled.
 pub const PROTOCOL_VERSION: u32 = 29;
 
 /// How a pane's shell is started so that it marks its first prompt

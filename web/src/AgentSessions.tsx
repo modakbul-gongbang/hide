@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { markTone } from "./agentRow";
+import { hideAiWords } from "./hideAiOrigin";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
 import { AskLine, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
@@ -163,10 +164,10 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
         <button type="button" data-session-focus="row" disabled={!model.available} onClick={(event) => { event.stopPropagation(); open_(); }}
           onKeyDown={(event) => treeKey(event, open, () => actions.toggleSessionTree(agent.pane_id))}
           aria-current={selected ? "true" : undefined}
-          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, agent.agent_kind, statusText(t, agent.status_code)].join(", ")} title={agent.identity_label}
+          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, agent.agent_kind, statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={agent.identity_label}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
           {/* Unfinished Idle work wears ◐ in the mark's place (B31); the line says what is left. */}
-          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} />
+          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} hideAi={agent.hide_ai ? "card" : null} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
         </button>
         {needsYou || open ? null : <DescendantMark agent={agent} />}

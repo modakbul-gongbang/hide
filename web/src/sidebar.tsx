@@ -6,6 +6,8 @@ import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, Fo
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
+import { HideMark } from "./AgentMark";
+import { hideAiCheckoutOf, originLine, splitByOrigin } from "./hideAiOrigin";
 import { useFactoryTurnCount } from "./factory/hooks";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./factory/request";
 import { paneListed } from "./factory/secretary";
@@ -55,7 +57,7 @@ import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
-import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -612,7 +614,9 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
   const children = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, directChildren(agent, agents)])), [agents]);
-  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices, t]);
+  // A row Hide AI started names its task in its place line, so the place reads the agents too.
+  const hideAiOf = useMemo(() => new Map(agents.flatMap((agent) => (agent.hide_ai ? [[agent.pane_id, agent.hide_ai] as const] : []))), [agents]);
+  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices, hideAiOf), [localWorkspaces, remoteStatuses, devices, hideAiOf, t]);
   // An ⌥ hold shows each agent's number once, on its raised row or else its
   // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
   const numbered = useUiStore((s) => s.hint === "agents");
@@ -909,6 +913,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const active = activeCheckouts(workspace);
   const inactive = inactiveCheckouts(workspace);
   const rowsByCheckout = useMemo(() => checkoutAgentRows(workspace, agents, "sidebar"), [workspace, agents]);
+  const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
   const expanded = !disclosure || workspace.expanded !== false;
   const inset = level === "child" ? "pl-(--size-lineage-indent)" : "";
   const folder = folderCheckout(workspace);
@@ -930,11 +935,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
+  // The operator's checkouts keep their place; the ones Hide AI made gather behind them under one head (D-03, D-06).
+  const { operator, hideAi: madeByHideAi } = splitByOrigin(hideAiListed, workspace, active);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
       key={checkout.id}
       workspace={workspace}
       checkout={checkout}
+      hideAi={hideAiCheckoutOf(hideAiListed, workspace, checkout)}
       agentRows={rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS}
       focused={context.workspaceScreen && checkout.id === context.focusedCheckoutId}
       context={context}
@@ -980,7 +988,8 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {active.map(checkoutRow)}
+          {operator.map(checkoutRow)}
+          {madeByHideAi.length > 0 ? <HideAiGroup count={madeByHideAi.length}>{madeByHideAi.map(checkoutRow)}</HideAiGroup> : null}
           {(workspace.session_folds?.empty.length ?? 0) > 0 ? <li>
             <FoldRow label={[t("agentSessions.emptyWorktrees"), workspace.session_folds!.open_prs > 0 ? t("agentSessions.openPrs", { count: workspace.session_folds!.open_prs }) : null].filter(Boolean).join(" · ")}
               count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
@@ -1010,6 +1019,26 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
 const NO_BOARD_ROWS: BoardRow[] = [];
 
 /**
+ * The checkouts Hide AI made for a project, behind the operator's own under
+ * one head: its mark, its name and how many (PRD hide-ai-origin-mark D-03).
+ * The rows inside carry no badge, since the head says who made them; the
+ * caller draws the group only while it has a checkout (D-08).
+ */
+function HideAiGroup({ count, children }: { count: number; children: ReactNode }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <li data-hide-ai-group="true">
+      <div className="flex min-h-(--size-sidebar-line) items-center gap-xs pt-xs pr-xs text-micro font-medium text-muted-foreground" style={{ paddingLeft: CHECKOUT_COLUMN }} data-hide-ai-head="true" aria-hidden="true">
+        <HideMark className="size-(--size-icon-sm)" />
+        <span>{t("hideAi.name")}</span>
+        <span data-hide-ai-count={count}>{count}</span>
+      </div>
+      <ul aria-label={t("hideAi.group", { count })}>{children}</ul>
+    </li>
+  );
+}
+
+/**
  * The row of this project that carries the focused checkout's selection while
  * a fold hides that checkout's own row: the folded project's row, or the
  * empty-worktree or Inactive fold that holds it. Null while the checkout's row
@@ -1028,13 +1057,14 @@ function focusFold(workspace: Workspace, checkoutId: string | null, expanded: bo
 
 function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
   const { t } = useInterfaceTranslation();
+  const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
   const rows = workspaces.flatMap((workspace) => workspace.checkouts.filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id)).map((checkout) => ({ workspace, checkout })));
   if (rows.length === 0) return null;
   const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
   const current = !expanded && context.workspaceScreen && rows.some(({ checkout }) => checkout.id === context.focusedCheckoutId);
   return <li data-session-cleanup={deviceId}>
     <FoldRow label={t("agentSessions.cleanup")} count={rows.length} expanded={expanded} level="project" current={current} onToggle={() => context.actions.toggleSessionFold(`cleanup/${deviceId}`)} />
-    {expanded ? <ul>{rows.map(({ workspace, checkout }) => <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout}
+    {expanded ? <ul>{rows.map(({ workspace, checkout }) => <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout} hideAi={hideAiCheckoutOf(hideAiListed, workspace, checkout)}
       agentRows={checkoutAgentRows(workspace, context.agents, "sidebar").get(checkout.id) ?? NO_BOARD_ROWS}
       focused={context.workspaceScreen && context.focusedCheckoutId === checkout.id} context={context} />)}</ul> : null}
   </li>;
@@ -1049,11 +1079,12 @@ function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number) {
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number, hideAi: HideAiCheckout | null) {
   const hasRows = agentRows.length + sleepingCount > 0;
   const foldable = context.disclosure && hasRows;
   const open = hasRows && !context.openCheckouts.includes(checkout.id);
-  const purpose = checkout.purpose?.text ?? null;
+  // A checkout Hide AI made names its task where the purpose stands, ahead of the purpose (D-03).
+  const purpose = [hideAi ? originLine(t, hideAi) : null, checkout.purpose?.text ?? null].filter(Boolean).join(" · ") || null;
   const parents = [...new Set(agentRows
     .filter((row) => row.depth === 0)
     .map((row) => context.agents.find((candidate) => candidate.pane_id === row.agent.lineage_parent_pane_id))
@@ -1078,12 +1109,15 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
 const CheckoutRowView = memo(function CheckoutRowView({
   workspace,
   checkout,
+  hideAi,
   agentRows,
   focused,
   context,
 }: {
   workspace: Workspace;
   checkout: Checkout;
+  /** Set for a checkout Hide AI made: its task is named on the row (D-03). */
+  hideAi: HideAiCheckout | null;
   agentRows: BoardRow[];
   focused: boolean;
   context: ListContext;
@@ -1095,7 +1129,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, hideAi);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
@@ -1196,7 +1230,7 @@ const FolderRowView = memo(function FolderRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, null);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>

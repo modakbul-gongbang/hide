@@ -291,6 +291,9 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 
 Hide itself is a second code-owned identity, `hide:<role>` of kind `hide`, today only `hide:memory`: the origin of the agent a Memory card's promotion starts ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory)).
 It is registered on its first spawn, sends nothing and receives nothing, and a pane or agent name that starts with `hide:` is refused at registration like `factory:`.
+A spawn is Hide AI's own when it is a handoff whose origin is that identity (`coordination::started::hide_started`): a Factory worker is a delegation of a Factory identity and a pane agent's handoff has a pane's identity as its origin, so neither counts, and no branch or worktree name ever decides it.
+Only that identity may give a spawn a `task` (`SpawnTask`: a `kind` code such as `memory_promote` and a `target` such as the card `m72`, the codes the screen words), on a handoff; any other caller that sets one is refused `task_reserved`, and the task is part of the intent, so the same intent with another task is an `intent_conflict`.
+A receipt from before the task existed has none, and its agent and checkout are still Hide AI's, which the screen names `Hide AI` alone.
 
 ## Agent registration and spawning
 

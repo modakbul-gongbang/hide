@@ -85,6 +85,17 @@ impl<'a> Credential<'a> {
         })
     }
 
+    /// What a request on this credential does once its answer is in: a
+    /// named reference is persistent and is claimed, a one-shot one ends
+    /// with its connection.
+    fn after_answer(&self) -> AfterAnswer {
+        if self.named {
+            AfterAnswer::Claim
+        } else {
+            AfterAnswer::Close
+        }
+    }
+
     /// Replaces a named reference the daemon no longer holds with a bare
     /// one-shot bootstrap. False when `reason` does not say the reference is
     /// gone or the credential was already bootstrapped, so a request retries
@@ -103,13 +114,28 @@ impl<'a> Credential<'a> {
     /// credential check) or, as a lost claim acknowledgement, after a read;
     /// a lost claim after an action keeps its result, so the second run
     /// never repeats an applied action.
-    fn run<T>(&mut self, mut request: impl FnMut(&Path) -> Result<T, String>) -> Result<T, String> {
-        match request(&self.path) {
-            Err(reason) if self.renew(&reason)? => request(&self.path),
+    fn run<T>(
+        &mut self,
+        mut request: impl FnMut(&Path, AfterAnswer) -> Result<T, String>,
+    ) -> Result<T, String> {
+        match request(&self.path, self.after_answer()) {
+            Err(reason) if self.renew(&reason)? => request(&self.path, self.after_answer()),
             outcome => outcome,
         }
         .map_err(reported)
     }
+}
+
+/// What a request does with its credential once the daemon answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AfterAnswer {
+    /// Claims it: a persistent reference (`HIDE_CAP_REF`) outlives its
+    /// unclaimed period only once a command acknowledged an answer with it.
+    Claim,
+    /// Closes the connection: the daemon revokes a one-shot reference's
+    /// token when that connection ends and the command removes its file, so
+    /// a claim would be one more round trip for a token about to go.
+    Close,
 }
 
 /// No daemon listens where the reference points, before anything was sent:
@@ -283,6 +309,12 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     if bytes.len() > 4096 {
         return Err("invalid_reference".to_owned());
     }
+    // References are written without a flush, so a power loss can leave one
+    // empty: it holds no credential, and reads as gone so a named reference
+    // renews rather than failing every command.
+    if bytes.is_empty() {
+        return Err("credential_expired".to_owned());
+    }
     let reference: Reference =
         serde_json::from_slice(&bytes).map_err(|_| "invalid_reference".to_owned())?;
     if reference.token.len() != 64 || !reference.token.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -299,17 +331,22 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
 }
 
 pub fn request(credential: &mut Credential, query: &str) -> Result<Value, String> {
-    credential.run(|path| request_query(path, query, None))
+    credential.run(|path, after| request_query(path, query, None, after))
 }
 
 pub fn browser_connect(
     credential: &mut Credential,
     display_id: Option<&str>,
 ) -> Result<Value, String> {
-    credential.run(|path| request_query(path, "browser_connect", display_id))
+    credential.run(|path, after| request_query(path, "browser_connect", display_id, after))
 }
 
-fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<Value, String> {
+fn request_query(
+    path: &Path,
+    query: &str,
+    display_id: Option<&str>,
+    after: AfterAnswer,
+) -> Result<Value, String> {
     let reference = read_reference(path)?;
     let request_id = fresh_request_id()?;
     run_exchange(
@@ -318,6 +355,7 @@ fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<V
         json!({"type":"workspace_query","request_id":request_id,"query":query,"display_id":display_id}),
         &request_id,
         false,
+        after,
     )
 }
 
@@ -326,7 +364,7 @@ pub fn request_links(
     credential: &mut Credential,
     query: &herdr_core::links::query::LinksQuery,
 ) -> Result<Value, String> {
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange(
@@ -335,6 +373,7 @@ pub fn request_links(
             json!({"type":"links","request_id":request_id,"query":query}),
             &request_id,
             false,
+            after,
         )
     })
 }
@@ -357,7 +396,7 @@ pub fn request_memory(
         | herdr_core::memory_command::MemoryCommand::Outdated { .. } => (true, TIMEOUT),
         herdr_core::memory_command::MemoryCommand::Search { .. } => (false, TIMEOUT),
     };
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -367,6 +406,7 @@ pub fn request_memory(
             &request_id,
             action,
             timeout,
+            after,
         )
     })
 }
@@ -389,7 +429,7 @@ pub fn request_delivery(
         } => REMOTE_SPAWN_TIMEOUT,
         _ => TIMEOUT,
     };
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -401,6 +441,7 @@ pub fn request_delivery(
             &request_id,
             true,
             timeout,
+            after,
         )
     })
 }
@@ -412,7 +453,7 @@ pub fn request_factory(
     command: &hide_factory::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
         run_exchange_within(
@@ -424,6 +465,7 @@ pub fn request_factory(
             &request_id,
             true,
             FACTORY_TIMEOUT,
+            after,
         )
     })
 }
@@ -455,9 +497,11 @@ pub fn request_factory_question_guard(
         )
         .await
         .map_err(|_| "factory_guard_expired".to_owned())??;
-        tokio::time::timeout_at(deadline, claim(&mut socket, path))
-            .await
-            .map_err(|_| "factory_guard_expired".to_owned())??;
+        if credential.after_answer() == AfterAnswer::Claim {
+            tokio::time::timeout_at(deadline, claim(&mut socket, path))
+                .await
+                .map_err(|_| "factory_guard_expired".to_owned())??;
+        }
         Ok(value)
     })
 }
@@ -516,16 +560,19 @@ pub fn request_memory_hook(credential: &Credential, mut ask: Value) -> Result<Va
         )
         .await
         .map_err(|_| "memory_deadline".to_owned())??;
-        tokio::time::timeout_at(deadline, claim(&mut socket, path))
-            .await
-            .map_err(|_| "memory_deadline".to_owned())??;
+        if credential.after_answer() == AfterAnswer::Claim {
+            tokio::time::timeout_at(deadline, claim(&mut socket, path))
+                .await
+                .map_err(|_| "memory_deadline".to_owned())??;
+        }
         Ok(value)
     })
 }
 
 /// The relay socket for one `hide browser` page command: the same scoped
-/// handshake and claim as every Workspace request, after which the socket
-/// carries CDP frames to the caller's display. A refusal keeps the daemon's
+/// handshake as every Workspace request and a claim whatever the credential,
+/// since the daemon starts the relay only for a claimed one, after which the
+/// socket carries CDP frames to the caller's display. A refusal keeps the daemon's
 /// reason and next action.
 /// The relay socket, and whether the display is its area's selected View.
 pub(crate) async fn browser_relay(
@@ -623,7 +670,7 @@ pub fn request_action(
     if !valid_request_id(request_id) {
         return Err("invalid_request_id".to_owned());
     }
-    credential.run(|path| {
+    credential.run(|path, after| {
         let reference = read_reference(path)?;
         run_exchange(
             path,
@@ -631,6 +678,7 @@ pub fn request_action(
             json!({"type":"workspace_action","request_id":request_id,"command":&action}),
             request_id,
             true,
+            after,
         )
     })
 }
@@ -663,8 +711,9 @@ fn run_exchange(
     payload: Value,
     request_id: &str,
     action: bool,
+    after: AfterAnswer,
 ) -> Result<Value, String> {
-    run_exchange_within(path, reference, payload, request_id, action, TIMEOUT)
+    run_exchange_within(path, reference, payload, request_id, action, TIMEOUT, after)
 }
 
 fn run_exchange_within(
@@ -674,6 +723,7 @@ fn run_exchange_within(
     request_id: &str,
     action: bool,
     timeout: Duration,
+    after: AfterAnswer,
 ) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -684,6 +734,10 @@ fn run_exchange_within(
             .await
             .map_err(|_| "request_timeout".to_owned())?
     })?;
+    // The answer is in; a one-shot credential's connection ends here.
+    if after == AfterAnswer::Close {
+        return Ok(value);
+    }
     let claimed = runtime.block_on(async {
         tokio::time::timeout(Duration::from_secs(2), claim(&mut socket, path))
             .await
@@ -907,7 +961,7 @@ async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
 
     // Mode bits widen the file for the refusal.
     #[cfg(unix)]
@@ -933,6 +987,17 @@ mod tests {
         permissions.set_mode(0o644);
         fs::set_permissions(&path, permissions).unwrap();
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_reference_reads_as_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("reference.json");
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(read_reference(&path), Err(reason) if reason == "credential_expired"));
     }
 
     /// What a node writes up its link, one line at a time.
@@ -1056,6 +1121,125 @@ mod tests {
         panes.remove_folder();
     }
 
+    /// Waits, at most a hang guard's while, until `done` holds.
+    #[allow(clippy::disallowed_methods)] // polls a state the daemon changes on its own task, bounded by a deadline
+    fn until(mut done: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !done() {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    }
+
+    /// A one-shot command against a running daemon sends no claim and
+    /// writes no claimed marker, and the daemon revokes its token once the
+    /// connection ends; a named reference's command still claims. This
+    /// process stands in for the pane's shell, so every credential stays
+    /// alive until the daemon or the command ends it.
+    #[test]
+    fn a_one_shot_command_is_not_claimed_and_its_token_ends_with_its_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Env {
+            home: directory.path().to_path_buf(),
+            herdr_socket_path: None,
+            herdr_bin_path: None,
+            state_dir: directory.path().to_path_buf(),
+            legacy_state_dir: None,
+            keep_alive: true,
+            vite_origin: None,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            idle_secs: 600,
+            build: None,
+            starter_program: None,
+            open_command: None,
+            host_helper_root: None,
+            host_cli_dir: None,
+            pane_id: None,
+            tailscale_bin: Some(directory.path().join("no-tailscale")),
+            search_path: None,
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let running = runtime
+            .block_on(crate::start_daemon(env.clone()))
+            .expect("start daemon");
+        let registry = Arc::clone(&running.pane_capabilities);
+        let shell = i32::try_from(std::process::id()).unwrap();
+        let attestation = crate::pane_auth::Attestation::pane(
+            "w1:p1",
+            herdr_core::workspace_control::Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            shell,
+        );
+        let holder = (shell, hide_node::pane_proof::process_start(shell).unwrap());
+        let issue = |nonce: char, holder: Option<(i32, u64)>| {
+            let (path, _) = registry
+                .issue(
+                    &attestation,
+                    &nonce.to_string().repeat(32),
+                    running.port,
+                    holder,
+                )
+                .unwrap();
+            let token = read_reference(&path).unwrap().token;
+            (path, token)
+        };
+        let one_shot = |path: &Path| Credential {
+            env: &env,
+            path: path.to_path_buf(),
+            named: false,
+            _one_shot: Some(OneShotReference(path.to_path_buf())),
+        };
+        // This daemon has no Herdr to read the pane from, so each command is
+        // answered with that refusal; what follows an answer is the same.
+        let answered = |credential: &mut Credential| {
+            let answer = request(credential, "info").unwrap();
+            assert_eq!(answer["reason"], "pane_unavailable", "{answer}");
+        };
+
+        // A one-shot credential as a bare command bootstraps it: the daemon
+        // ends the token with the connection.
+        let (path, token) = issue('1', Some(holder));
+        let mut credential = one_shot(&path);
+        answered(&mut credential);
+        assert!(
+            until(|| registry.get(&token).is_none()),
+            "the daemon kept a one-shot token past its connection"
+        );
+        drop(credential);
+        assert!(!path.exists());
+
+        // The same command on a token the daemon would keep: it sends no
+        // claim, so neither side records one.
+        let (path, token) = issue('2', None);
+        let mut credential = one_shot(&path);
+        answered(&mut credential);
+        assert!(!path.with_extension("claimed").exists());
+        assert_eq!(registry.claimed(&token), Some(false));
+        drop(credential);
+
+        // A named reference is persistent, and its command claims it.
+        let (path, token) = issue('3', None);
+        let mut credential = Credential::named(&env, path.clone());
+        answered(&mut credential);
+        assert!(path.with_extension("claimed").is_file());
+        assert_eq!(registry.claimed(&token), Some(true));
+
+        running.stop();
+        drop(running);
+        drop(runtime);
+    }
+
     #[test]
     fn action_result_survives_a_lost_claim_ack() {
         let (sender, receiver) = mpsc::channel();
@@ -1100,6 +1284,7 @@ mod tests {
             json!({"type":"workspace_action","request_id":"1-retry"}),
             "1-retry",
             true,
+            AfterAnswer::Claim,
         )
         .unwrap();
         assert_eq!(answer["result"]["view_id"], "view-1");

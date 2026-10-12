@@ -215,6 +215,7 @@ mod tests {
             sleep: None,
             row_facts: None,
             reply_wait: false,
+            hide_ai: None,
             request: None,
         }
     }

@@ -679,10 +679,15 @@ impl Runtime {
             .as_ref()
             .ok()
             .is_none_or(|previous| waiters(previous) != waiters(&ledger));
+        // Only a change in what Hide started moves a row's mark or a checkout's
+        // group, so a letter's step or a watch never rebuilds the lineage.
+        let started = crate::coordination::started::hide_started(&ledger);
+        let started_moved = started != self.hide_started;
+        self.hide_started = started;
         self.delivery_ledger = Ok(ledger);
         let continued = self.settle_dormant_registrations();
         self.feed_link_parents();
-        let lineage = waiters_moved && self.refresh_agent_lineage();
+        let lineage = (waiters_moved || started_moved) && self.refresh_agent_lineage();
         changed
             | reopened
             | continued

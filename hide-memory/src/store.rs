@@ -3341,14 +3341,19 @@ fn require_schema(connection: &Connection) -> Result<(), MemoryError> {
 }
 
 fn check_projection_integrity(connection: &Connection) -> Result<(), MemoryError> {
+    // `memory_fts.item_id` is UNINDEXED, so joining the index table directly
+    // scans it once per active card; every hook's open paid that (174 ms at
+    // 914 cards). Read it once instead: SQLite indexes the materialized rows
+    // for the join.
     let stale: bool = connection.query_row(
-        "SELECT EXISTS(
+        "WITH f AS MATERIALIZED (SELECT item_id, project_id, body FROM memory_fts)
+        SELECT EXISTS(
             SELECT 1 FROM memory_items i
             JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision
-            LEFT JOIN memory_fts f ON f.item_id=i.id
+            LEFT JOIN f ON f.item_id=i.id
             WHERE i.lifecycle='active' AND (f.item_id IS NULL OR f.project_id!=i.project_id OR f.body!=r.body)
             UNION ALL
-            SELECT 1 FROM memory_fts f
+            SELECT 1 FROM f
             LEFT JOIN memory_items i ON i.id=f.item_id
             WHERE i.id IS NULL OR i.lifecycle!='active' OR i.project_id!=f.project_id
         )",
@@ -6136,26 +6141,33 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
 
     #[test]
     fn hook_reader_refuses_a_stale_search_projection() {
-        let (temp, mut store, project) = store();
-        store
-            .apply_candidates(
-                &batch(&project, "b1", "h1"),
-                &[candidate(
-                    "Keep the projection consistent",
-                    CandidateRelation::New,
-                )],
-            )
-            .unwrap();
-        store
-            .connection
-            .execute("DELETE FROM memory_fts", [])
-            .unwrap();
-        drop(store);
+        for stale in [
+            "DELETE FROM memory_fts",
+            "UPDATE memory_fts SET body=body||' changed'",
+            "UPDATE memory_fts SET project_id='another-project'",
+            "INSERT INTO memory_fts(item_id,project_id,body,normalized_terms) VALUES('gone','gone','gone','gone')",
+        ] {
+            let (temp, mut store, project) = store();
+            store
+                .apply_candidates(
+                    &batch(&project, "b1", "h1"),
+                    &[candidate(
+                        "Keep the projection consistent",
+                        CandidateRelation::New,
+                    )],
+                )
+                .unwrap();
+            store.connection.execute(stale, []).unwrap();
+            drop(store);
 
-        assert!(matches!(
-            MemoryStore::open_hook_read_only(&temp.path().join("memory.sqlite3")),
-            Err(MemoryError::Integrity(reason)) if reason == "memory_projection_stale"
-        ));
+            assert!(
+                matches!(
+                    MemoryStore::open_hook_read_only(&temp.path().join("memory.sqlite3")),
+                    Err(MemoryError::Integrity(reason)) if reason == "memory_projection_stale"
+                ),
+                "{stale}"
+            );
+        }
     }
 
     #[test]

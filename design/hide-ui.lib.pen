@@ -42447,6 +42447,534 @@
       "width": "fit_content",
       "x": 8800,
       "y": 7264
+    },
+    {
+      "type": "frame",
+      "id": "cmp-hide-ai-origin",
+      "name": "Component / Hide AI origin",
+      "children": [
+        {
+          "type": "text",
+          "id": "cmp-hide-ai-origin-title",
+          "name": "Hide AI origin",
+          "content": "Hide AI origin",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "cmp-hide-ai-origin-spec",
+          "name": "web/src/AgentMark.tsx and th",
+          "content": "web/src/AgentMark.tsx and the Hide AI group of web/src/sidebar.tsx (PRD hide-ai-origin-mark D-03, D-04): Hide AI started the agent, a fact the core reads from the coordination record of the spawn. In a project's tree the checkouts Hide AI made gather behind the operator's under a head, the full Hide mark at the icon size, the name Hide AI and the number of checkouts; the head exists only while the project has one, and the rows inside carry no badge. Where a row stands alone (the sidebar's Needs You and Done, Sessions), the provider's icon wears an 11 badge on its lower-right corner, a plate in the panel's colour holding the 9 mark; a Tools column is a card, so its badge takes the card's colour. The work itself (Memory 올리기 · m72) is words on the row, never an icon, because Hide AI will start other work.",
+          "fill": "$--subtle-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 820
+        },
+        {
+          "type": "frame",
+          "id": "cmp-hide-ai-origin-masters",
+          "name": "Masters",
+          "children": [
+            {
+              "type": "frame",
+              "id": "hao-head",
+              "name": "Hide AI head",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hao-head-mark",
+                  "name": "Hide mark",
+                  "children": [],
+                  "width": 12,
+                  "height": 12,
+                  "cornerRadius": "$--radius-xs",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../web/src/assets/hide-mark.png",
+                    "mode": "contain"
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "hao-head-name",
+                  "name": "Hide AI",
+                  "content": "Hide AI",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "hao-head-count",
+                  "name": "2",
+                  "content": "2",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "500"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xs",
+              "alignItems": "center",
+              "height": 20,
+              "width": "fit_content",
+              "padding": [
+                "$--spacing-xs",
+                "$--spacing-xs",
+                0,
+                0
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hao-badged-icon",
+              "name": "Provider icon with Hide badge",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hao-icon",
+                  "name": "Provider artwork",
+                  "children": [],
+                  "x": 0,
+                  "y": 0,
+                  "width": 16,
+                  "height": 16,
+                  "cornerRadius": "$--radius-xs",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../web/src/assets/agent-claude.png",
+                    "mode": "contain"
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "hao-badge",
+                  "name": "Hide badge",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hao-badge-mark",
+                      "name": "Hide mark",
+                      "children": [],
+                      "width": 9,
+                      "height": 9,
+                      "cornerRadius": "$--radius-xs",
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/hide-mark.png",
+                        "mode": "contain"
+                      }
+                    }
+                  ],
+                  "x": 6,
+                  "y": 6,
+                  "width": 11,
+                  "height": 11,
+                  "cornerRadius": "$--radius-xs",
+                  "fill": "$--sidebar",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "justifyContent": "center"
+                }
+              ],
+              "reusable": true,
+              "layout": "none",
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "layout": "horizontal",
+          "gap": "$--spacing-xl",
+          "alignItems": "start"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-hide-ai-origin-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "hao-l-head-cell",
+              "name": "Head, two checkouts",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-head-cap",
+                  "name": "Head, two checkouts",
+                  "content": "Head, two checkouts",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-l-head",
+                  "type": "ref",
+                  "ref": "hao-head",
+                  "name": "Hide AI head"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-l-head-one-cell",
+              "name": "Head, one checkout",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-head-one-cap",
+                  "name": "Head, one checkout",
+                  "content": "Head, one checkout",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-l-head-one",
+                  "type": "ref",
+                  "ref": "hao-head",
+                  "name": "Hide AI head",
+                  "descendants": {
+                    "hao-head-count": {
+                      "content": "1"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-l-badge-claude-cell",
+              "name": "Badge on Claude",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-badge-claude-cap",
+                  "name": "Badge on Claude",
+                  "content": "Badge on Claude",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-l-badge-claude",
+                  "type": "ref",
+                  "ref": "hao-badged-icon",
+                  "name": "Provider icon with Hide badge"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-l-badge-codex-cell",
+              "name": "Badge on Codex",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-badge-codex-cap",
+                  "name": "Badge on Codex",
+                  "content": "Badge on Codex",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-l-badge-codex",
+                  "type": "ref",
+                  "ref": "hao-badged-icon",
+                  "name": "Provider icon with Hide badge",
+                  "descendants": {
+                    "hao-icon": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "contain"
+                      }
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-l-on-card",
+              "name": "Badge on a card panel",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-on-card-cap",
+                  "name": "Badge on a card panel (Sessi",
+                  "content": "Badge on a card panel (Sessions)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "hao-l-on-card-panel",
+                  "name": "Card panel",
+                  "children": [
+                    {
+                      "id": "hao-l-badge-card",
+                      "type": "ref",
+                      "ref": "hao-badged-icon",
+                      "name": "Provider icon with Hide badge",
+                      "descendants": {
+                        "hao-badge": {
+                          "fill": "$--card"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "padding": "$--spacing-sm",
+                  "fill": "$--card",
+                  "cornerRadius": "$--radius-sm",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--sidebar",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-hide-ai-origin-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "hao-d-head-cell",
+              "name": "Head, two checkouts",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-head-cap",
+                  "name": "Head, two checkouts",
+                  "content": "Head, two checkouts",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-d-head",
+                  "type": "ref",
+                  "ref": "hao-head",
+                  "name": "Hide AI head"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-d-head-one-cell",
+              "name": "Head, one checkout",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-head-one-cap",
+                  "name": "Head, one checkout",
+                  "content": "Head, one checkout",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-d-head-one",
+                  "type": "ref",
+                  "ref": "hao-head",
+                  "name": "Hide AI head",
+                  "descendants": {
+                    "hao-head-count": {
+                      "content": "1"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-d-badge-claude-cell",
+              "name": "Badge on Claude",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-badge-claude-cap",
+                  "name": "Badge on Claude",
+                  "content": "Badge on Claude",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-d-badge-claude",
+                  "type": "ref",
+                  "ref": "hao-badged-icon",
+                  "name": "Provider icon with Hide badge"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-d-badge-codex-cell",
+              "name": "Badge on Codex",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-badge-codex-cap",
+                  "name": "Badge on Codex",
+                  "content": "Badge on Codex",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "hao-d-badge-codex",
+                  "type": "ref",
+                  "ref": "hao-badged-icon",
+                  "name": "Provider icon with Hide badge",
+                  "descendants": {
+                    "hao-icon": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "contain"
+                      }
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-d-on-card",
+              "name": "Badge on a card panel",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-on-card-cap",
+                  "name": "Badge on a card panel (Sessi",
+                  "content": "Badge on a card panel (Sessions)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "hao-d-on-card-panel",
+                  "name": "Card panel",
+                  "children": [
+                    {
+                      "id": "hao-d-badge-card",
+                      "type": "ref",
+                      "ref": "hao-badged-icon",
+                      "name": "Provider icon with Hide badge",
+                      "descendants": {
+                        "hao-badge": {
+                          "fill": "$--card"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "padding": "$--spacing-sm",
+                  "fill": "$--card",
+                  "cornerRadius": "$--radius-sm",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--sidebar",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "cornerRadius": "$--radius-lg",
+      "width": "fit_content",
+      "x": 11200,
+      "y": 7264
     }
   ],
   "themes": {
@@ -44313,6 +44841,14 @@
     "--size-status-copy": {
       "type": "number",
       "value": 460
+    },
+    "--size-hide-badge": {
+      "type": "number",
+      "value": 11
+    },
+    "--size-hide-badge-mark": {
+      "type": "number",
+      "value": 9
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

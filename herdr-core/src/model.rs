@@ -530,9 +530,31 @@ pub struct NavigatorSnapshot {
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+    /// The checkouts Hide AI started an agent in, by device and path. A list
+    /// beside the checkouts, not a field on them, because a checkout row is
+    /// rebuilt from Git and Herdr at several places and would lose a value
+    /// laid on it; the shell joins it by `(device_id, path)`.
+    pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
+}
+
+/// Hide AI started this agent, read from the coordination ledger's record of
+/// the spawn and never from a branch name. `task` is what it was started for.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HideAiSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
+}
+
+/// A checkout Hide AI made for an agent it started.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HideAiCheckoutSnapshot {
+    pub device_id: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -1201,6 +1223,11 @@ pub struct SidebarAgentSnapshot {
     /// read, so it does not make `row_facts` present.
     #[serde(skip_serializing)]
     pub(crate) reply_wait: bool,
+    /// Hide AI started this agent (PRD hide-ai-origin-mark D-01). Set by the
+    /// runtime from the coordination ledger, so a session read never makes
+    /// it; absent from the wire for every other agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hide_ai: Option<HideAiSnapshot>,
     /// The request view's part of the row: the verb and since when, the
     /// request and reply lines, the pull requests (`request_view.rs`).
     /// Absent until the core has built it.
@@ -4921,6 +4948,7 @@ impl Snapshot {
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
+                hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
             },

@@ -14,7 +14,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use hide_node::ssh::{PaneEvents, RemoteHost};
 use hide_node_link::panes::{
-    MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer,
+    MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer, StreamCaller,
 };
 use hide_node_link::protocol::Call;
 use serde_json::json;
@@ -132,7 +132,15 @@ impl NodePanes {
         });
     }
 
-    fn open_stream(&self, node: &str, link: &RemoteHost, stream: u64) {
+    /// Serves a stream `node` opened over `link`, with the caller the node
+    /// proved for it, if any.
+    fn open_stream(
+        &self,
+        node: &str,
+        link: &RemoteHost,
+        stream: u64,
+        caller: Option<StreamCaller>,
+    ) {
         let key = StreamKey {
             node: node.to_owned(),
             link: link_key(link),
@@ -165,8 +173,13 @@ impl NodePanes {
         }
         let node = node.to_owned();
         let link = link.clone();
+        let attested = caller.map(|caller| pane_auth::StreamAttestation {
+            node: node.clone(),
+            link: link.clone(),
+            caller,
+        });
         self.runtime
-            .spawn(serve_stream(state, node, link, stream, receiver));
+            .spawn(serve_stream(state, node, link, stream, attested, receiver));
     }
 
     fn stream_data(&self, node: &str, link: &RemoteHost, stream: u64, data: &str) {
@@ -244,7 +257,9 @@ impl PaneEvents for Events {
                     state.pane_capabilities.revoke_vouched(node, link, &token);
                 }
             }
-            NodeEvent::StreamOpen { stream } => panes.open_stream(node, link, stream),
+            NodeEvent::StreamOpen { stream, caller } => {
+                panes.open_stream(node, link, stream, caller)
+            }
             NodeEvent::StreamData { stream, data } => panes.stream_data(node, link, stream, &data),
             NodeEvent::StreamClosed { stream } => panes.stream_closed(node, link, stream),
             NodeEvent::Refused { pane_id, reason } => {
@@ -372,6 +387,7 @@ async fn serve_stream(
     node: String,
     link: RemoteHost,
     stream: u64,
+    attested: Option<pane_auth::StreamAttestation>,
     mut incoming: mpsc::Receiver<Vec<u8>>,
 ) {
     let (ours, theirs) = tokio::io::duplex(MAX_CHUNK * 2);
@@ -379,6 +395,7 @@ async fn serve_stream(
         state,
         node,
         link.clone(),
+        attested,
         theirs,
     ));
     let (mut reader, mut writer) = tokio::io::split(ours);
@@ -498,7 +515,14 @@ mod tests {
                 // The control allowance is 32 queued plus running responses.
                 // No server state means each open must be answered with close.
                 for stream in 1..=33 {
-                    events.event("mini", &reader_link, NodeEvent::StreamOpen { stream });
+                    events.event(
+                        "mini",
+                        &reader_link,
+                        NodeEvent::StreamOpen {
+                            stream,
+                            caller: None,
+                        },
+                    );
                 }
                 events.event("mini", &reader_link, NodeEvent::StreamClosed { stream: 1 });
             })

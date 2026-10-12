@@ -1058,6 +1058,9 @@ pub(crate) struct DeviceGithubRead {
 pub struct Runtime {
     snapshot: Snapshot,
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    /// What the ledger says Hide itself started, derived again only when a
+    /// ledger change moves it (PRD hide-ai-origin-mark D-01).
+    hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
@@ -1915,6 +1918,10 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            hide_started: delivery_ledger
+                .as_ref()
+                .map(|ledger| crate::coordination::started::hide_started(ledger))
+                .unwrap_or_default(),
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
