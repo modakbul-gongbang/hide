@@ -218,6 +218,42 @@ impl PrivateHerdr {
         tab.pane_id
     }
 
+    /// A workspace Herdr made with its own first tab, as `worktree.create`
+    /// does, whose tab is then replaced by one running `launch`: the only
+    /// tab left in it.
+    fn replaced_first_tab(&self, label: &str, launch: &ShellLaunch) -> String {
+        let cwd = self.home.join(label);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let (workspace_id, tab_id, pane_id) = crate::wire::created_workspace(self.request(
+            "workspace.create",
+            json!({"cwd": cwd, "label": label, "focus": false}),
+        ))
+        .unwrap();
+        let mut env = launch.env.clone();
+        env.insert("PATH".into(), pane_path(self));
+        let tab = crate::live::replace_tab(
+            &self.connector(),
+            crate::live::OwnedTab {
+                workspace_id: workspace_id.clone(),
+                tab_id: tab_id.clone(),
+                pane_id,
+                launched: false,
+            },
+            cwd.to_str().unwrap(),
+            label,
+            false,
+            env,
+            Some(&launch.command),
+        );
+        assert!(tab.launched, "{label}: the first tab was replaced");
+        let tabs = self.request("tab.list", json!({"workspace_id": workspace_id}));
+        let tabs = tabs["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 1, "{label}: one tab is left: {tabs:?}");
+        assert_eq!(tabs[0]["tab_id"].as_str(), Some(tab.tab_id.as_str()));
+        assert_ne!(tab.tab_id, tab_id, "{label}: Herdr's own tab is gone");
+        tab.pane_id
+    }
+
     fn wait_on(&self, pane: &str, within: Duration, what: &str, done: impl FnMut() -> bool) {
         self.wait_until(within, done, || {
             format!(
@@ -461,7 +497,9 @@ fn startup_question(shell: &str, variable: &str) {
         .to_owned();
     let operator_tab = created["tab"]["tab_id"].as_str().unwrap().to_owned();
 
-    let first = herdr.tab(&workspace, "m43", Some(&launch));
+    // m43 starts as a new worktree's agent does, in the first tab of a
+    // workspace of its own; m72 as an agent tab in an existing one.
+    let first = herdr.replaced_first_tab("m43", &launch);
     let second = herdr.tab(&workspace, "m72", Some(&launch));
     for pane in [&first, &second] {
         herdr.wait_on(
@@ -472,15 +510,16 @@ fn startup_question(shell: &str, variable: &str) {
         );
     }
     for (pane, name) in [(&first, "m43"), (&second, "m72")] {
-        let Err(StartError::ShellStarting(line)) = start(
+        let answer = start(
             &herdr,
             pane,
             name,
             ShellStart::of_tab(true, Some(&launch)),
             Duration::from_secs(2),
-        ) else {
+        );
+        let Err(StartError::ShellStarting(line)) = answer else {
             panic!(
-                "{name}: a shell held by its question is not a start; pane shows:\n{}\nprocesses: {}",
+                "{name}: a shell held by its question is not a start, but {answer:?}; pane shows:\n{}\nprocesses: {}",
                 herdr.screen(pane),
                 herdr.processes(pane)
             );
@@ -604,7 +643,7 @@ fn startup_question(shell: &str, variable: &str) {
     // Herdr's own shell; the launch is not run again.
     herdr.stop();
     herdr.start();
-    let tabs = herdr.request("tab.list", json!({"workspace_id": workspace}));
+    let tabs = herdr.request("tab.list", json!({}));
     let labels: Vec<_> = tabs["tabs"]
         .as_array()
         .unwrap()
