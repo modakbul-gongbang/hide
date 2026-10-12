@@ -359,9 +359,11 @@ fn user_files(herdr: &PrivateHerdr, shell: &str) {
 
 /// The Windows PowerShell profile asks the question. The profile lives in
 /// the Documents folder, which follows `USERPROFILE`, so with the server's
-/// home it is the test's own file, not the account's.
+/// home it is the test's own file, not the account's. Windows names no
+/// Documents folder that does not exist, and PowerShell then has no profile.
 #[cfg(windows)]
 fn user_files(herdr: &PrivateHerdr, _shell: &str) {
+    std::fs::create_dir_all(herdr.home.join("Documents")).unwrap();
     let profile = Command::new("powershell.exe")
         .args(["-NoProfile", "-Command", "$PROFILE.CurrentUserCurrentHost"])
         .env("USERPROFILE", &herdr.home)
