@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
-import { countSent, enterWorkspace } from "../../web/e2e/wire";
+import { countSent, enterWorkspace, showProjectRow } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, screenshot, test, type Isolated } from "./fixture";
 import { quietFor } from "../../web/e2e/wait";
 
@@ -207,7 +207,7 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     // Recent Projects gamma, beta, fixture: fixture is current.
     const checkout = (name: string) => page.locator("[data-project]", { hasText: name }).locator("[data-checkout]").first();
     for (const name of ["gamma", "beta", "fixture"]) {
-      await checkout(name).click();
+      await (await showProjectRow(page, checkout(name))).click();
       await expect(checkout(name)).toHaveAttribute("aria-current", "true");
     }
 
