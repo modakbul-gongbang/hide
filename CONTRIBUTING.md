@@ -212,7 +212,9 @@ They never enter a commit; write them under `agents/runs/<slug>/`, which is igno
 ## Releases
 
 A release is a tag on a commit that is already on `main`, never on a branch.
-Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, with nothing for a person to do (operator decision 2026-10-12, `release.yml`):
+Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, with nothing for a person to do (operator decision 2026-10-12, `release.yml`).
+A `vX.Y.Z-rc.N` tag runs the same gates and publishes a pre-release that is never the latest, for trying a signed build before its stable release ([docs/BUILD.md](docs/BUILD.md#release-asset-gate)).
+The gates:
 - The tagged commit's own `verify` push run on main must have passed; it ran every lane, the desktop and web end-to-end suites, Windows and the packages included.
   The release waits up to 90 minutes for it, and refuses a run that was cancelled or failed: rerun that run, or tag a later main commit whose run passed.
 - `verify-cargo.sh test` and `verify-web.sh` pass again on macOS.
@@ -220,7 +222,7 @@ Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, wit
   The macOS app is signed and notarized, then opened from its archive by the packaged-app specs (`local-kit.spec.ts` and `server-session-search.spec.ts`); on Windows and Linux `node desktop/scripts/smoke-package.mjs` unpacks each package, installs the kit, resolves the command in a fresh shell and checks daemon replacement with a second complete package fixture, and on Windows `desktop/e2e/packaged-window.spec.ts` opens the unpacked `hide.exe` with its window on a private HOME and keeps a screenshot of the shell it draws.
 - The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`.
 
-The writer then adds the six files to its exact draft, never deleting or overwriting one, reads the complete draft back, and publishes it as the latest release, which withhide.dev's download links follow; legacy drafts require separate coverage review.
+The writer then adds the six files to its exact draft, never deleting or overwriting one, reads the complete draft back, and publishes it: a stable tag as the latest release, which withhide.dev's download links follow, and an `-rc.N` tag as a pre-release those links ignore; legacy drafts require separate coverage review.
 The operator keeps immutable releases turned on in the repository's Settings; the workflow does not check it.
 A published release is therefore final: a fault the gates missed is fixed by the next version, not by changing the release.
 The macOS archive is signed with the Developer ID certificate and notarized (`HIDE_MACOS_SIGNING=developer-id`, [docs/BUILD.md](docs/BUILD.md)), and the release fails rather than ship it any other way.

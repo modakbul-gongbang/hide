@@ -236,7 +236,10 @@ The command installs nothing; [The Installed App Is The Operator's](../AGENTS.md
 
 ## Release asset gate
 
-The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
+The release workflow accepts only a `vX.Y.Z` or `vX.Y.Z-rc.N` tag (`N` at least 1, no leading zeros) whose commit is already an ancestor of protected `main`.
+The tag is the one source of the release's kind: `releaseKind` in `scripts/check-release-assets.mjs` reads it for the workflow's tag check, the asset names, the draft's `prerelease` flag, every check of the draft, and the publish call, so no second input can disagree with it.
+A `vX.Y.Z` tag is a stable release, published with `make_latest: "true"`; a `vX.Y.Z-rc.N` tag runs the same gates, the signed and notarized macOS build included, and is published as a pre-release with `make_latest: "false"`, which withhide.dev's download links ignore.
+Its packages report the version without the `v`, such as `0.4.0-rc.1`, and are named for it, such as `hide-v0.4.0-rc.1-macos-arm64.zip`; the macOS bundle version and the Windows file version are the numeric prefix, `0.4.0`.
 It serializes runs of the same tag and waits for all three packaging jobs before `node scripts/release-draft.mjs <tag> <event-commit-sha> <directory>` prepares the draft.
 The file-only entrypoint is `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]`.
 The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
@@ -248,7 +251,7 @@ The writer stops further preparation and preserves accepted assets; a retry vali
 The operator keeps immutable releases turned on in the repository's Settings; the workflow does not check it.
 
 The authenticated release and asset inventories are fully paginated, with a 100-page and 16 MiB limit; a tag lookup alone cannot establish that a draft is absent.
-Multiple releases for the same tag, an invalid inventory, or a published release block the run.
+Multiple releases for the same tag, an invalid inventory, a published release, or a draft of the other kind (a pre-release draft for a stable tag, or the reverse) block the run.
 A new draft records its event commit in its body; an existing draft must have that exact provenance record.
 Legacy drafts are not automatically reused.
 The provenance record describes this controlled writer's origin; it is not a cryptographic attestation or a defense against administrative bypass.
@@ -264,5 +267,5 @@ Each request has a 30-second bound, JSON responses are limited to 8 MiB, and the
 
 This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
 The Windows and Linux package smoke checks cover bundled tools, daemon startup, the embedded shell and daemon shutdown; the macOS packaged-app specs and the Windows packaged window open the app itself, and the tagged commit's main `verify` run covers the end-to-end suites.
-`release-draft.mjs --publish` publishes the draft as the latest release only after that final read, and only when every one of those release gates passed ([CONTRIBUTING.md](../CONTRIBUTING.md#releases)); without `--publish` it prepares the draft only.
+`release-draft.mjs --publish` publishes the draft, as the latest release for a stable tag and as a pre-release for an `-rc.N` tag, only after that final read, and only when every one of those release gates passed ([CONTRIBUTING.md](../CONTRIBUTING.md#releases)); without `--publish` it prepares the draft only.
 Its source guard does not establish that the repository setting is on; verify it before release work.

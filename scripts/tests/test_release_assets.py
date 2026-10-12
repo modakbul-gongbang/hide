@@ -20,12 +20,15 @@ class ReleaseAssetsTest(unittest.TestCase):
         runs.mkdir(parents=True, exist_ok=True)
         self.scratch = tempfile.TemporaryDirectory(dir=runs)
         self.addCleanup(self.scratch.cleanup)
-        self.directory = Path(self.scratch.name) / "packages"
+        self.write_packages("v1.2.3")
+
+    def write_packages(self, tag):
+        self.directory = Path(self.scratch.name) / f"packages-{tag}"
         self.directory.mkdir()
         self.names = [
-            "hide-v1.2.3-macos-arm64.zip",
-            "hide-v1.2.3-windows-x64.zip",
-            "hide-v1.2.3-linux-x64.tar.gz",
+            f"hide-{tag}-macos-arm64.zip",
+            f"hide-{tag}-windows-x64.zip",
+            f"hide-{tag}-linux-x64.tar.gz",
         ]
         for name in self.names:
             stream = io.BytesIO()
@@ -87,10 +90,25 @@ class ReleaseAssetsTest(unittest.TestCase):
         archive.write_bytes(b"")
         self.assertNotEqual(self.check().returncode, 0)
 
-    def test_stable_tag_required(self):
-        for tag in ["v1.2.3-beta.1", "v1.2.3+build", "v01.2.3", "1.2.3"]:
+    def test_only_stable_and_rc_tags_are_released(self):
+        for tag in ["v1.2.3-beta.1", "v1.2.3+build", "v01.2.3", "1.2.3", "v1.2.3-rc", "v1.2.3-rc.0",
+                    "v1.2.3-rc.01", "v1.2.3-RC.1", "v1.2.3-rc.1.2", "v1.2.3-rc.1+build"]:
             with self.subTest(tag=tag):
                 self.assertNotEqual(self.check(tag).returncode, 0)
+
+    def test_rc_packages_pass_and_only_a_prerelease_draft_resumes(self):
+        self.write_packages("v0.4.0-rc.1")
+        self.assertEqual(self.check("v0.4.0-rc.1").returncode, 0)
+        self.assertNotEqual(self.check("v0.4.0").returncode, 0)
+        draft = {"tag_name": "v0.4.0-rc.1", "draft": True, "prerelease": True,
+                 "assets": [{"name": "hide-v0.4.0-rc.1-macos-arm64.zip"}]}
+        self.assertEqual(self.check("v0.4.0-rc.1", release=draft).returncode, 0)
+        draft["prerelease"] = False
+        self.assertNotEqual(self.check("v0.4.0-rc.1", release=draft).returncode, 0)
+
+    def test_stable_tag_never_resumes_a_prerelease_draft(self):
+        draft = {"tag_name": "v1.2.3", "draft": True, "prerelease": True, "assets": []}
+        self.assertNotEqual(self.check(release=draft).returncode, 0)
 
     def test_partial_draft_retry_passes_and_public_release_fails(self):
         draft = {"tag_name": "v1.2.3", "draft": True, "prerelease": False,
