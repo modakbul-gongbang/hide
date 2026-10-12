@@ -11,6 +11,42 @@ const CLAUDE: &str = concat!(
 );
 
 #[test]
+fn usage_rewritten_file_rescans_and_large_batches_resume_without_loss() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join(hide_session::CLAUDE_SESSIONS);
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("rewrite.jsonl");
+    fs::write(&path, CLAUDE).unwrap();
+    let first = usage::read(home.path(), Agent::Claude, &path, None).unwrap();
+    // Rewrite the same inode and length, then grow it. A size-only resume
+    // would miss the changed first event entirely.
+    fs::write(&path, CLAUDE.replace("request-a", "request-b") + CLAUDE).unwrap();
+    let rewritten = usage::read(home.path(), Agent::Claude, &path, Some(first.checkpoint)).unwrap();
+    assert!(rewritten.rescanned);
+    assert_eq!(rewritten.events.len(), 2);
+    assert_ne!(rewritten.events[0].key, first.events[0].key);
+
+    fs::write(&path, CLAUDE.repeat(12_000)).unwrap();
+    let mut saved = None;
+    let mut count = 0;
+    let mut steps = 0;
+    loop {
+        let step = usage::read(home.path(), Agent::Claude, &path, saved).unwrap();
+        assert!(step.events.len() <= 8192);
+        assert!(step.read_bytes <= 1024 * 1024);
+        count += step.events.len();
+        steps += 1;
+        if !step.has_more {
+            break;
+        }
+        saved = Some(step.checkpoint);
+        assert!(steps < 12_001, "each step must make progress");
+    }
+    assert_eq!(count, 12_000);
+    assert!(steps > 1);
+}
+
+#[test]
 fn usage_read_resumes_torn_records_without_persisting_their_body() {
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join(hide_session::CLAUDE_SESSIONS);
@@ -88,10 +124,10 @@ fn usage_oversized_record_advances_in_bounded_steps_and_reports_its_loss() {
     bytes.extend_from_slice(CLAUDE.as_bytes());
     fs::write(&path, bytes).unwrap();
     let first = usage::read(home.path(), Agent::Claude, &path, None).unwrap();
-    assert_eq!(first.read_bytes, 1024 * 1024);
+    assert!(first.read_bytes <= 1024 * 1024);
     assert_eq!(first.skipped.get("record_capacity"), Some(&1));
     let second = usage::read(home.path(), Agent::Claude, &path, Some(first.checkpoint)).unwrap();
-    assert_eq!(second.read_bytes, 1024 * 1024);
+    assert!(second.read_bytes <= 1024 * 1024);
     let third = usage::read(home.path(), Agent::Claude, &path, Some(second.checkpoint)).unwrap();
     assert_eq!(third.events.len(), 1);
     assert!(third.skipped.is_empty());

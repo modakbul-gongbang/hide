@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,7 +20,10 @@ pub const CANDIDATE_LIMIT: usize = 10_000;
 const DISCOVERY_ENTRY_LIMIT: usize = 100_000;
 const DISCOVERY_DEPTH_LIMIT: usize = 16;
 const PATH_BYTES_LIMIT: usize = 4096;
-pub const PARSER_VERSION: u32 = 2;
+pub const PARSER_VERSION: u32 = 3;
+const STEP_TIME: Duration = Duration::from_millis(20);
+const STEP_EVENTS: usize = 8192;
+const WITNESS_BYTES: u64 = 256;
 
 /// Disjoint components: output already includes reasoning. One-hour writes
 /// are a subset of cache_write, retained only for their different price.
@@ -89,6 +93,45 @@ pub struct Checkpoint {
     parser_version: u32,
     context: records::Context,
     database: opencode::Cursor,
+    #[serde(default)]
+    witness: Option<Witness>,
+}
+
+/// Hashes only, never source bytes. The prefix and last consumed bytes catch
+/// replacement during append; a same-size rewrite is also fenced by its stamp.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Witness {
+    size: u64,
+    modified_ns: u64,
+    digest: String,
+}
+
+fn witness(file: &mut fs::File, offset: u64) -> Result<(Witness, u64), Refusal> {
+    let metadata = file.metadata().map_err(|_| Refusal::Unreadable)?;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|duration| u64::try_from(duration.as_nanos()).ok())
+        .ok_or(Refusal::Unreadable)?;
+    let count = offset.min(WITNESS_BYTES);
+    let mut digest = Sha256::new();
+    for start in [0, offset.saturating_sub(count)] {
+        file.seek(SeekFrom::Start(start))
+            .map_err(|_| Refusal::Unreadable)?;
+        let mut bytes = vec![0; count as usize];
+        file.read_exact(&mut bytes)
+            .map_err(|_| Refusal::Unreadable)?;
+        digest.update(bytes);
+    }
+    Ok((
+        Witness {
+            size: metadata.len(),
+            modified_ns,
+            digest: format!("{:x}", digest.finalize()),
+        },
+        count * 2,
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -226,6 +269,7 @@ pub fn read(
     path: &Path,
     saved: Option<Checkpoint>,
 ) -> Result<Step, Refusal> {
+    let started = Instant::now();
     if agent == Agent::OpenCode {
         checked_file(home, agent, path)?;
         return opencode::read(home, saved);
@@ -244,10 +288,24 @@ pub fn read(
         None
     };
     let mut checkpoint = saved.unwrap_or_default();
-    let rescanned = checkpoint.identity.is_some()
+    if serde_json::to_vec(&checkpoint)
+        .map_err(|_| Refusal::InvalidCheckpoint)?
+        .len()
+        > 16 * 1024
+    {
+        return Err(Refusal::InvalidCheckpoint);
+    }
+    let mut rescanned = checkpoint.identity.is_some()
         && (checkpoint.identity.as_ref() != Some(&identity)
             || size < checkpoint.offset
             || checkpoint.parser_version != PARSER_VERSION);
+    let mut witness_bytes = 0;
+    if !rescanned && let Some(saved) = &checkpoint.witness {
+        let (current, read) = witness(&mut file, checkpoint.offset)?;
+        witness_bytes += read;
+        rescanned = saved.digest != current.digest
+            || (saved.size == current.size && saved.modified_ns != current.modified_ns);
+    }
     if rescanned {
         checkpoint = Checkpoint::default();
     }
@@ -268,18 +326,27 @@ pub fn read(
         .map_err(|_| Refusal::Unreadable)?;
     let mut bytes = Vec::new();
     let metadata_bytes = summary.as_ref().map_or(0, |s| s.read_bytes);
-    file.take(SESSION_INCREMENT_READ_LIMIT_BYTES - metadata_bytes)
+    // Reserve both boundary checks inside the same one-MiB read budget.
+    let payload_budget = SESSION_INCREMENT_READ_LIMIT_BYTES - metadata_bytes - 4 * WITNESS_BYTES;
+    (&mut file)
+        .take(payload_budget)
         .read_to_end(&mut bytes)
         .map_err(|_| Refusal::Unreadable)?;
     let mut step = Step {
         events: Vec::new(),
         checkpoint,
-        read_bytes: bytes.len() as u64 + metadata_bytes,
+        read_bytes: bytes.len() as u64 + metadata_bytes + witness_bytes,
         has_more: false,
         rescanned,
         skipped: BTreeMap::new(),
     };
-    for fragment in bytes.split_inclusive(|b| *b == b'\n') {
+    let mut yielded = false;
+    for (index, fragment) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
+        // Grok's one native prompt may carry at most 128 model events.
+        if index > 0 && (started.elapsed() >= STEP_TIME || step.events.len() > STEP_EVENTS - 128) {
+            yielded = true;
+            break;
+        }
         let complete = fragment.last() == Some(&b'\n');
         if step.checkpoint.discarding || fragment.len() > SESSION_LINE_LIMIT_BYTES {
             if !step.checkpoint.discarding {
@@ -303,8 +370,11 @@ pub fn read(
             break;
         }
     }
+    let (current, read) = witness(&mut file, step.checkpoint.offset)?;
+    step.read_bytes += read;
+    step.checkpoint.witness = Some(current);
     step.has_more =
-        step.checkpoint.offset < size && step.read_bytes == SESSION_INCREMENT_READ_LIMIT_BYTES;
+        step.checkpoint.offset < size && (yielded || bytes.len() as u64 == payload_budget);
     Ok(step)
 }
 
