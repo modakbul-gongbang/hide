@@ -4,25 +4,19 @@
 use super::agents_settings_remote::{ai_event, ready_read};
 use super::*;
 
-const WEEK_MINUTES: u64 = 10_080;
-
-fn weekly(
-    provider: &str,
-    used: Option<f64>,
-    resets_at_ms: u64,
-) -> crate::model::ProviderUsageSnapshot {
-    crate::model::ProviderUsageSnapshot {
-        provider: provider.to_owned(),
-        label: provider.to_owned(),
-        window_minutes: WEEK_MINUTES,
-        state: "ready".to_owned(),
-        used_percent: used,
-        resets_at_unix_seconds: Some(resets_at_ms / 1_000),
-        message: None,
-        last_checked_at_unix_ms: None,
-        last_success_at_unix_ms: None,
-        last_error_kind: None,
-        buckets: Vec::new(),
+fn weekly(provider: &str, used: Option<f64>, resets_at_ms: u64) -> crate::usage::model::AgentUsage {
+    use crate::usage::model::*;
+    AgentUsage {
+        agent: provider.into(),
+        limits: match used {
+            Some(used_percent) => Cell::Reading {
+                value: LimitReading { windows: vec![WindowReading { kind: WindowKind::Weekly, scope: Scope::All,
+                    outcome: WindowOutcome::Open { used_percent, resets_at_s: resets_at_ms / 1000 } }] },
+                freshness: Freshness::Fresh, observed_at_ms: 0,
+            },
+            None => Cell::Unavailable { cause: Cause::SignedOut, last_checked_at_ms: None },
+        },
+        consumption: Cell::Unsupported,
     }
 }
 
@@ -84,7 +78,7 @@ fn a_limit_outside_one_to_a_hundred_is_refused() {
 fn a_row_carries_its_weekly_figure_and_whether_it_is_past_the_limit() {
     let mut runtime = two_agents();
     let reset = next_week_ms();
-    runtime.ingest_provider_usage(vec![weekly("claude", Some(86.0), reset)]);
+    runtime.ingest_usage(vec![weekly("claude", Some(86.0), reset)]);
 
     let claude = row(&runtime, "claude");
     let figure = claude.weekly.expect("Claude has a figure");
@@ -102,7 +96,7 @@ fn a_row_carries_its_weekly_figure_and_whether_it_is_past_the_limit() {
 #[test]
 fn runs_on_past_the_limit_names_the_fallback_that_answers() {
     let mut runtime = two_agents();
-    runtime.ingest_provider_usage(vec![weekly("claude", Some(93.0), next_week_ms())]);
+    runtime.ingest_usage(vec![weekly("claude", Some(93.0), next_week_ms())]);
     let refusal = runtime
         .snapshot
         .status
@@ -126,7 +120,7 @@ fn runs_on_past_the_limit_names_the_fallback_that_answers() {
 #[test]
 fn every_agent_past_the_limit_pauses_and_a_higher_limit_resumes() {
     let mut runtime = two_agents();
-    runtime.ingest_provider_usage(vec![
+    runtime.ingest_usage(vec![
         weekly("claude", Some(93.0), next_week_ms()),
         weekly("codex", Some(96.0), next_week_ms()),
     ]);
@@ -155,12 +149,12 @@ fn every_agent_past_the_limit_pauses_and_a_higher_limit_resumes() {
 #[test]
 fn a_new_week_resumes_hide_ai() {
     let mut runtime = two_agents();
-    runtime.ingest_provider_usage(vec![
+    runtime.ingest_usage(vec![
         weekly("claude", Some(93.0), next_week_ms()),
         weekly("codex", Some(96.0), next_week_ms()),
     ]);
     assert!(runtime.usage_paused());
-    runtime.ingest_provider_usage(vec![
+    runtime.ingest_usage(vec![
         weekly("claude", Some(2.0), next_week_ms()),
         weekly("codex", Some(96.0), next_week_ms()),
     ]);
@@ -173,7 +167,7 @@ fn a_new_week_resumes_hide_ai() {
 fn a_figure_from_a_week_that_is_over_stops_nothing() {
     let mut runtime = two_agents();
     let past = unix_milliseconds() - 60_000;
-    runtime.ingest_provider_usage(vec![
+    runtime.ingest_usage(vec![
         weekly("claude", Some(99.0), past),
         weekly("codex", Some(99.0), past),
     ]);
@@ -186,7 +180,7 @@ fn a_figure_from_a_week_that_is_over_stops_nothing() {
 fn an_empty_order_is_not_a_pause() {
     let mut runtime = runtime();
     runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
-    runtime.ingest_provider_usage(vec![weekly("claude", Some(99.0), next_week_ms())]);
+    runtime.ingest_usage(vec![weekly("claude", Some(99.0), next_week_ms())]);
     assert!(!runtime.usage_paused());
 }
 
@@ -195,11 +189,11 @@ fn an_empty_order_is_not_a_pause() {
 fn the_pause_and_its_end_are_logged_once_each() {
     let mut runtime = two_agents();
     let (_, records) = crate::diagnostics::capture(|| {
-        runtime.ingest_provider_usage(vec![
+        runtime.ingest_usage(vec![
             weekly("claude", Some(93.0), next_week_ms()),
             weekly("codex", Some(96.0), next_week_ms()),
         ]);
-        runtime.ingest_provider_usage(vec![
+        runtime.ingest_usage(vec![
             weekly("claude", Some(94.0), next_week_ms()),
             weekly("codex", Some(96.0), next_week_ms()),
         ]);
@@ -218,8 +212,8 @@ fn the_pause_and_its_end_are_logged_once_each() {
 fn reading_the_same_usage_again_changes_nothing() {
     let mut runtime = two_agents();
     let rows = vec![weekly("claude", Some(86.0), next_week_ms())];
-    assert!(runtime.ingest_provider_usage(rows.clone()));
-    assert!(!runtime.ingest_provider_usage(rows));
+    assert!(runtime.ingest_usage(rows.clone()));
+    assert!(!runtime.ingest_usage(rows));
     assert!(
         !runtime.refresh_ai_standing(),
         "nothing moved with the clock either"
@@ -242,7 +236,7 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
         "the coordinator's headless gate agrees"
     );
 
-    runtime.ingest_provider_usage(vec![
+    runtime.ingest_usage(vec![
         weekly("claude", Some(93.0), next_week_ms()),
         weekly("codex", Some(96.0), next_week_ms()),
     ]);
@@ -259,7 +253,7 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
     );
 
     runtime.dispatch_json(&ai_event(serde_json::json!({"usage_limit": 90})));
-    runtime.ingest_provider_usage(vec![weekly("claude", Some(10.0), next_week_ms())]);
+    runtime.ingest_usage(vec![weekly("claude", Some(10.0), next_week_ms())]);
     assert!(!runtime.usage_paused());
     runtime.agent_worked_at_unix_ms = unix_milliseconds();
     assert!(

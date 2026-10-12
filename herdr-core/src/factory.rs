@@ -1883,7 +1883,8 @@ impl WorkerRuntime for CoreWorkers {
 
     /// The usage row the agent's adapter declares (D-52).
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
-        let provider = runtime.adapter().usage?.adapter().herdr.name;
+        runtime.adapter().usage.limit_sources().next()?;
+        let provider = runtime.adapter().herdr.name;
         let core = self.runtime().ok()?;
         guard(&core).factory_usage_limit(provider, now_ms())
     }

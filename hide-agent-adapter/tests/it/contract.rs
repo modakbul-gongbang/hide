@@ -162,9 +162,9 @@ fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
         let fixture = fixtures.iter().find(|value| value["id"] == row.id).unwrap();
         assert_eq!(
             fixture["usage"].as_object().unwrap().len(),
-            row.usage_declaration.cells().len()
+            row.usage.cells().len()
         );
-        for (name, cell) in row.usage_declaration.cells() {
+        for (name, cell) in row.usage.cells() {
             let actual = match cell {
                 Support::Supported(source) => match source {
                     UsageSource::Limit(LimitSource::ClaudeUsageText) => "claude_usage_text".into(),
@@ -198,10 +198,24 @@ fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
 
 #[test]
 fn usage_coverage_is_generated_from_the_complete_registry() {
-    let expected: Vec<_> = ADAPTERS.iter().map(|row| serde_json::json!({
-        "agent": row.id,
-        "cells": row.usage_declaration.cells().into_iter().collect::<std::collections::BTreeMap<_, _>>()
-    })).collect();
+    let docs = std::fs::read_to_string(root().join("docs/AI_PROVIDERS.md")).unwrap();
+    let table = docs
+        .split("<!-- usage-coverage:start -->\n")
+        .nth(1)
+        .unwrap()
+        .split("<!-- usage-coverage:end -->")
+        .next()
+        .unwrap();
+    assert_eq!(table, hide_agent_adapter::usage::coverage_markdown());
+    let expected: Vec<_> = ADAPTERS
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "agent": row.id,
+                "cells": row.usage.cells().into_iter().collect::<std::collections::BTreeMap<_, _>>()
+            })
+        })
+        .collect();
     let actual: Value = serde_json::from_slice(
         &std::fs::read(root().join("contracts/usage-coverage.json")).unwrap(),
     )
@@ -213,7 +227,7 @@ fn usage_coverage_is_generated_from_the_complete_registry() {
     );
     // Multiple windows from one source never schedule multiple requests.
     for row in ADAPTERS {
-        let sources: Vec<_> = row.usage_declaration.limit_sources().collect();
+        let sources: Vec<_> = row.usage.limit_sources().collect();
         assert_eq!(
             sources.len(),
             usize::from(matches!(row.id, "claude-code" | "codex"))

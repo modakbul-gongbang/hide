@@ -45,21 +45,15 @@ impl Runtime {
     /// agent with no figure, or one whose window has reset, has no reading
     /// and is never held back (D-07).
     fn weekly_readings(&self) -> BTreeMap<ProviderId, UsageReading> {
-        self.snapshot
-            .navigator
-            .provider_usage
-            .iter()
-            .filter(|row| row.window_minutes == crate::usage::WEEKLY_WINDOW_MINUTES)
-            .filter_map(|row| {
-                Some((
-                    ProviderId::from_id(&row.provider)?,
-                    UsageReading {
-                        used_percent: row.used_percent?,
-                        resets_at_unix_ms: row
-                            .resets_at_unix_seconds
-                            .map(|seconds| seconds.saturating_mul(1_000)),
-                    },
-                ))
+        self.usage_order()
+            .into_iter()
+            .filter_map(|provider| {
+                let (used_percent, resets_at_s) = self.snapshot.navigator.usage
+                    .weekly_reading(provider.as_str(), unix_milliseconds() / 1000)?;
+                Some((provider, UsageReading {
+                    used_percent,
+                    resets_at_unix_ms: Some(resets_at_s.saturating_mul(1000)),
+                }))
             })
             .collect()
     }
@@ -82,7 +76,7 @@ impl Runtime {
     /// Whether the usage reader runs with no window attached: Memory has work
     /// or the limit wants a fresh figure.
     pub(crate) fn reads_usage_headless(&self) -> bool {
-        self.memory_reads_usage() || self.limit_reads_usage()
+        self.memory_reads_usage() || self.limit_reads_usage() || !self.factory_recipients.is_empty()
     }
 
     /// The limit the operator chose, 90% while the settings are not read.

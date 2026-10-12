@@ -359,21 +359,6 @@ pub enum FindDialect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UsageDialect {
-    Claude,
-    Codex,
-}
-
-impl UsageDialect {
-    pub const fn adapter(self) -> &'static AgentAdapter {
-        match self {
-            Self::Claude => AgentId::ClaudeCode.adapter(),
-            Self::Codex => AgentId::Codex.adapter(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillLocation {
     Shared,
     Claude,
@@ -436,8 +421,7 @@ pub struct AgentAdapter {
     pub titles: Option<SessionFormat>,
     pub start: Option<LaunchDialect>,
     pub find: Option<FindDialect>,
-    pub usage: Option<UsageDialect>,
-    pub usage_declaration: usage::UsageDeclaration,
+    pub usage: usage::UsageDeclaration,
     pub doc_url: &'static str,
     pub install_url: &'static str,
     pub logo_id: &'static str,

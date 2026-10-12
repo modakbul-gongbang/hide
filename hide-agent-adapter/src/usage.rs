@@ -181,3 +181,26 @@ pub const fn not_built<S>(layer: u8) -> Support<S> {
         "Ship the declared usage layer and its reader.",
     )
 }
+
+/// The documentation table shares the exhaustive coverage walk with JSON.
+pub fn coverage_markdown() -> String {
+    let mut out = String::from(
+        "| Agent | 5h | Weekly | Scoped | Monthly | Tokens | Cost | Models | Session | Project |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+    );
+    for row in crate::ADAPTERS {
+        out.push_str(&format!("| {} |", row.label));
+        for (_, cell) in row.usage.cells() {
+            let value = match cell {
+                Support::Supported(_) => "Supported".into(),
+                Support::Unsupported(absence) => match absence.kind {
+                    AbsenceKind::NoSuchData => "No such data".into(),
+                    AbsenceKind::Excluded => "Excluded".into(),
+                    AbsenceKind::NotBuilt { layer } => format!("Not built (L{layer})"),
+                },
+            };
+            out.push_str(&format!(" {value} |"));
+        }
+        out.push('\n');
+    }
+    out
+}

@@ -32,7 +32,7 @@ pub enum HookKind {
 
 pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
     super::ADAPTERS.iter().map(|row| WebAdapter {
-        usage: row.usage_declaration,
+        usage: row.usage,
         id: row.id,
         aliases: row.aliases,
         label: row.label,

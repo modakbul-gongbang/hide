@@ -2093,7 +2093,13 @@ A device's `file_bytes` names the checkout `root` beside the path: hided admits 
 A helper's range is accepted only as the range asked for (the same offset and file size, never longer, and shorter only where the read ends), so a helper cannot stretch one read into millions of round trips or end it early as if the file were shorter.
 One client runs at most two device reads at once: a third ends the oldest, which is answered `file_bytes_error` with reason `superseded` and its own request id, so whatever waited on it settles (D-15).
 Every frame and reason code lives in `contracts/hided-ws.schema.json`.
-A snapshot section is declared there once the web reads it through the contract (`providerUsage`, `uiStateUsageHints`); the type generator emits only what a frame reaches, so `web/scripts/gen-types.mjs` names each such `$def` to emit beside the frames.
+A snapshot section is declared there once the web reads it through the contract (`usageSnapshot`, `usagePreferences`, `uiStateUsageHints`); the type generator emits only what a frame reaches, so `web/scripts/gen-types.mjs` names each such `$def` to emit beside the frames.
+Usage has one node row for the core's own node and one agent row per declared adapter (`herdr-core/src/usage/model.rs`); each row separates limit and consumption cells.
+A cell is unsupported, loading, unavailable with a cause, or a reading with freshness and observation time; limit readings contain independently typed five-hour, weekly and scoped windows.
+Consumption is uninhabited in layers 1 and 2 and is published as unsupported.
+The UI preferences store pinned `(agent, window)` pairs (at most three) and hidden agents; `usage_pin_set` and `usage_hidden_set` are desired-state events, and a generic `ui_state_update` preserves these fields so a stale window cannot overwrite another window's choice.
+The core rejects undeclared windows and account windows reported as not offered; Hide preserves the agent's pins for Show.
+
 
 ### The Explorer, editor and viewers
 

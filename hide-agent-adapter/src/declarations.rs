@@ -36,8 +36,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Claude),
         start: Some(LaunchDialect::Claude),
         find: Some(FindDialect::ClaudeTranscript),
-        usage: Some(UsageDialect::Claude),
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: Support::Supported(LimitSource::ClaudeUsageText),
                 weekly: Support::Supported(LimitSource::ClaudeUsageText),
@@ -100,8 +99,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Codex),
         start: Some(LaunchDialect::Codex),
         find: Some(FindDialect::CodexTranscript),
-        usage: Some(UsageDialect::Codex),
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: Support::Supported(LimitSource::CodexUsage),
                 weekly: Support::Supported(LimitSource::CodexUsage),
@@ -166,8 +164,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Grok),
         start: Some(LaunchDialect::Grok),
         find: None,
-        usage: None,
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: absent(
                     AbsenceKind::NoSuchData,
@@ -237,8 +234,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::OpenCode),
         start: Some(LaunchDialect::OpenCode),
         find: None,
-        usage: None,
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: absent(
                     AbsenceKind::Excluded,
@@ -318,8 +314,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Pi),
         start: Some(LaunchDialect::Pi),
         find: None,
-        usage: None,
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: absent(
                     AbsenceKind::NoSuchData,
@@ -395,8 +390,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Omp),
         start: Some(LaunchDialect::Omp),
         find: None,
-        usage: None,
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: absent(
                     AbsenceKind::NoSuchData,
@@ -478,8 +472,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: None,
         start: Some(LaunchDialect::Cursor),
         find: None,
-        usage: None,
-        usage_declaration: UsageDeclaration {
+        usage: UsageDeclaration {
             limits: LimitDeclaration {
                 five_hour: absent(
                     AbsenceKind::Excluded,

@@ -103,6 +103,8 @@ struct StoredUiState {
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
     #[serde(default)]
+    usage: crate::usage::prefs::UsagePreferences,
+    #[serde(default)]
     agent_onboarding: Option<crate::model::AgentOnboarding>,
     #[serde(default)]
     agent_onboarding_agents: Vec<String>,
@@ -362,6 +364,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             accent_hex: stored.accent_hex,
             theme,
             interface_language: stored.interface_language,
+            usage: stored.usage.restored(),
             agent_onboarding: stored.agent_onboarding,
             agent_onboarding_agents: stored.agent_onboarding_agents,
             first_run: stored.first_run,
@@ -470,6 +473,7 @@ pub fn save(
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
+        usage: state.usage.clone(),
         agent_onboarding: state.agent_onboarding,
         agent_onboarding_agents: state.agent_onboarding_agents.clone(),
         first_run: state.first_run,

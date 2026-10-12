@@ -402,3 +402,66 @@ fn the_factory_reads_the_explicit_language_or_none_for_the_systems() {
     runtime.dispatch_json(&language_set(serde_json::Value::Null));
     assert_eq!(runtime.factory_interface_language(), None);
 }
+
+#[test]
+fn usage_pins_are_bounded_shared_and_survive_restart_and_stale_saves() {
+    let (_state, path) = state_path("usage-pins");
+    let mut runtime = runtime_at(&path);
+    let stale = ui_state_update(&runtime, serde_json::json!({ "font_size": 15 }));
+    let event = |kind: &str, payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload,
+        }))
+        .unwrap()
+    };
+    assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+    let pin = event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"claude","window":"five_hour","enabled":true}),
+    );
+    assert!(runtime.dispatch_json(&pin));
+    assert!(
+        !runtime.dispatch_json(&pin),
+        "same desired value is idempotent"
+    );
+    let expected = runtime.snapshot.ui_state.usage.clone();
+    runtime.dispatch_json(&event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"codex","window":"five_hour","enabled":true}),
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "fourth pin refused by core"
+    );
+    runtime.dispatch_json(&event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"pi","window":"weekly","enabled":true}),
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "unsupported agent refused"
+    );
+    runtime.dispatch_json(&event(
+        "usage_hidden_set",
+        serde_json::json!({"agent":"claude","hidden":true}),
+    ));
+    let expected = runtime.snapshot.ui_state.usage.clone();
+    runtime.dispatch_json(&stale);
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "stale page cannot overwrite usage choices"
+    );
+    drop(runtime);
+    let mut restarted = runtime_at(&path);
+    assert_eq!(restarted.snapshot.ui_state.usage, expected);
+    assert_eq!(restarted.usage_activity().hidden, vec!["claude"]);
+    restarted.dispatch_json(&event(
+        "usage_hidden_set",
+        serde_json::json!({"agent":"claude","hidden":false}),
+    ));
+    assert!(restarted.snapshot.ui_state.usage.hidden.is_empty());
+    assert_eq!(
+        restarted.snapshot.ui_state.usage.pinned, expected.pinned,
+        "Show restores the chosen windows"
+    );
+}
