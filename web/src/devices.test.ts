@@ -1,6 +1,6 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, SnapshotRest } from "./snapshot";
@@ -44,6 +44,9 @@ function rest(devices: string[] = ["mini", "build-box"]): SnapshotRest {
 }
 
 describe("the device rail's facts (quick device-rail-badges)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" }));
+  afterEach(() => vi.unstubAllGlobals());
   it("shows the rail with one device alone, and hides it only when the core says so (B1, B6)", () => {
     expect(railShown(rest([]))).toBe(true);
     expect(railShown(rest())).toBe(true);

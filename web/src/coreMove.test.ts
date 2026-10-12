@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { windowStrip } from "./connection";
 import { stepMarks, type MoveView } from "./coreMove";
 import { createInterfaceI18n } from "./i18n/instance";
@@ -39,6 +39,9 @@ describe("which form the dialog shows", () => {
 });
 
 describe("the strip above the window (W1 to W3)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" }));
+  afterEach(() => vi.unstubAllGlobals());
   const machines = { from: "This Mac", to: "Mac mini" };
 
   it("offers to give up the move's wait only while the move offers it, and acts on nothing itself (amendment 4)", async () => {
