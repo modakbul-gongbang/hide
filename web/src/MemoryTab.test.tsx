@@ -84,7 +84,7 @@ describe("the Memory tab", () => {
   });
 
   it("opens the Project and shows the tab's dot from any tool while its Project has a question", async () => {
-    await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7" }] }), "explorer");
+    await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7", start_failure: null }] }), "explorer");
     expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
     expect(container.querySelector('[data-tool-dot="memory"]')).not.toBeNull();
   });
@@ -93,7 +93,7 @@ describe("the Memory tab", () => {
     await render(memory({
       questions: [
         { kind: "promote", number: 3, title: "card 3", human_source_count: 3, pulled_session_count: 9 },
-        { kind: "failed", number: 7, title: "card 7" },
+        { kind: "failed", number: 7, title: "card 7", start_failure: null },
       ],
     }));
     expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("Operator's words 3 · pulled in 9 sessions in 14 days");
@@ -107,6 +107,22 @@ describe("the Memory tab", () => {
       { workspace_id: "p", action: "dismiss", number: 3 },
       { workspace_id: "p", action: "promote", number: 7 },
     ]);
+  });
+
+  it("says in a failed card's status why its agent never started, with the question its shell stopped at", async () => {
+    await render(memory({
+      questions: [
+        { kind: "failed", number: 7, title: "card 7", start_failure: null },
+        { kind: "failed", number: 8, title: "card 8", start_failure: { code: "shell_starting", detail: "Update now? [Y/n]" } },
+        { kind: "failed", number: 9, title: "card 9", start_failure: { code: "agent_not_started", detail: null } },
+      ],
+    }));
+    const status = (number: number) => container.querySelector(`[data-memory-card='${number}'] [data-memory-failure]`)?.textContent;
+    expect(status(7)).toBe("Ended without a PR");
+    expect(status(8)).toBe("The shell stopped at a question: Update now? [Y/n]");
+    expect(status(9)).toBe("The agent didn't start");
+    // Retry stays the one action; nothing else is offered.
+    expect(container.querySelectorAll("[data-memory-retry]")).toHaveLength(3);
   });
 
   it("shows a promotion's agent, its pull request, and a merged card dimmed with its file", async () => {

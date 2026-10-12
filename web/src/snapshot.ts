@@ -1453,7 +1453,13 @@ export type MemoryRow = {
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_source_count: number; pulled_session_count: number }
-  | { kind: "failed"; number: number; title: string };
+  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
+
+/**
+ * Why a failed promotion's agent never started (`memory_start_failure_code`):
+ * `detail` is the line its new pane's shell stopped at, for `shell_starting`.
+ */
+export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "other"; detail: string | null };
 
 /** The card shown in full (`memory_expand`). */
 export type MemoryCard = {
