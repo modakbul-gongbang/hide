@@ -1572,6 +1572,30 @@ mod tests {
     }
 
     #[test]
+    fn a_sleeping_or_no_agents_fold_still_naming_the_old_id_is_found() {
+        let change = forward();
+        let asleep = format!("asleep/remote:{ALIAS}:project:{C_ROOT}");
+        let no_agents = format!("no_agents/{ALIAS}");
+        for (state, place) in [
+            (json!({ asleep.clone(): true }), format!("/{asleep}")),
+            (json!({"folds": [asleep.clone()]}), "/folds/0".to_owned()),
+            (json!({ no_agents.clone(): true }), format!("/{no_agents}")),
+            (json!({"folds": [no_agents]}), "/folds/0".to_owned()),
+        ] {
+            assert_eq!(still_naming(&state, &change, ""), Some(place), "{state}");
+        }
+        let moved = format!("asleep/remote:{C}:project:{C_ROOT}");
+        assert_eq!(
+            still_naming(
+                &json!({ moved: true, "no_agents/studio": true }),
+                &change,
+                ""
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn a_folder_another_node_owns_or_no_node_owns_yet_is_refused() {
         let dir = macbook_folder();
         let state = dir.path();
