@@ -148,6 +148,11 @@ pub struct SpawnRecord {
     /// agent (`executor::spawn`).
     #[serde(default)]
     pub typed: u32,
+    /// The shell `pane` was launched with Hide's integration in, by program
+    /// name, so every start in it waits for that shell's first prompt; none
+    /// when the pane runs Herdr's own shell.
+    #[serde(default)]
+    pub shell: Option<String>,
     pub child: Option<String>,
     // Completion and the initial watch are one durable store transaction.
     // Later report/end/watch-stop events never invalidate this receipt.
@@ -176,6 +181,8 @@ pub(crate) enum Mutation {
         pane: Option<String>,
         /// The terminal `pane` runs, recorded with it.
         terminal: Option<String>,
+        /// The integrated shell `pane` runs, recorded with it.
+        shell: Option<String>,
         child: Option<String>,
     },
     /// Herdr took a start of the spawn's agent in its pane.
@@ -502,6 +509,7 @@ pub(crate) fn apply(
                 pane: None,
                 terminal: None,
                 typed: 0,
+                shell: None,
                 child: None,
                 completed: false,
                 auto_watch_id: None,
@@ -514,6 +522,7 @@ pub(crate) fn apply(
             path,
             pane,
             terminal,
+            shell,
             child,
         } => {
             let parent = ledger
@@ -553,6 +562,9 @@ pub(crate) fn apply(
             };
             if terminal.is_some() {
                 record.terminal = terminal.clone()
+            };
+            if shell.is_some() {
+                record.shell = shell.clone()
             };
             if child.is_some() {
                 record.child = child.clone()
@@ -1312,6 +1324,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: Some("child-pane".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             4,
@@ -1330,6 +1343,7 @@ mod tests {
                     path: None,
                     pane: Some("wrong".into()),
                     terminal: None,
+                    shell: None,
                     child: None
                 },
                 5
@@ -1457,6 +1471,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: Some("worker".into()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             2,
@@ -1883,6 +1898,7 @@ mod tests {
                 path: Some("/fixture/topic".into()),
                 pane: None,
                 terminal: None,
+                shell: None,
                 child: None,
             },
             Mutation::BindChild {

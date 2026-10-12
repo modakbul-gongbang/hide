@@ -476,7 +476,7 @@ fn startup_question(shell: &str, variable: &str) {
             &herdr,
             pane,
             name,
-            ShellStart::Integrated,
+            ShellStart::of_tab(true, Some(&launch)),
             Duration::from_secs(2),
         ) else {
             panic!(
@@ -567,7 +567,7 @@ fn startup_question(shell: &str, variable: &str) {
             &herdr,
             pane,
             name,
-            ShellStart::Integrated,
+            ShellStart::of_tab(true, Some(&launch)),
             Duration::from_secs(30),
         )
         .unwrap_or_else(|error| panic!("{name}: {error:?}"));

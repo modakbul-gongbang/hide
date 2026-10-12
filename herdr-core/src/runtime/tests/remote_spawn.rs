@@ -25,6 +25,9 @@ const WORKTREE: &str = "/srv/repo.worktrees/topic";
 struct Node {
     repository: AtomicBool,
     installed: AtomicBool,
+    /// Whether the node writes the shell integration, so its panes run
+    /// Hide's launch of zsh.
+    integrated: AtomicBool,
     /// How many checks the spawn has asked this node.
     calls: AtomicUsize,
 }
@@ -41,6 +44,9 @@ impl NodeLink for Node {
             Call::AgentInstalled { name } => {
                 assert_eq!(name, "codex");
                 json!(self.installed.load(Ordering::SeqCst))
+            }
+            Call::ShellIntegration if self.integrated.load(Ordering::SeqCst) => {
+                json!({"command": ["/bin/zsh", "-l"], "env": {"ZDOTDIR": "/hide/zsh"}})
             }
             // A device whose node writes no shell integration: its panes
             // start plain, and a start is confirmed after typing.
@@ -70,12 +76,16 @@ fn agent_row(session: bool, shows: bool) -> Value {
 /// The device's Herdr: no worktree yet, one created on request, an agent that
 /// exists once it is started, unless `shows` is false. A start whose agent
 /// does not show holds its name (`held`) until the test says Herdr's deadline
-/// passed; `agent.get` then answers the name is gone.
+/// passed; `agent.get` then answers the name is gone. The pane shows its
+/// shell's first-prompt mark once `unmarked` reads of it have passed, and
+/// `refused` makes Herdr refuse the next start before typing anything.
 fn device_herdr(
     started: Arc<AtomicBool>,
     identified: Arc<AtomicBool>,
     shows: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
+    unmarked: Arc<AtomicUsize>,
+    refused: Arc<AtomicBool>,
 ) -> FakeHerdr {
     FakeHerdr::start_with_errors("remote-spawn", move |method, _| {
         Ok(match method {
@@ -96,12 +106,26 @@ fn device_herdr(
                     "is_linked_worktree": true, "is_prunable": false, "label": "repo",
                     "open_workspace_id": "w2", "path": WORKTREE}
             }),
-            "pane.get" => json!({"type": "pane_info", "pane": {"workspace_id": "w2",
-            "tab_id": "w2:t1", "pane_id": "w2:p1", "terminal_id": "device-terminal",
-            "focused": false, "agent_status": "idle", "revision": 0}}),
+            "layout.apply" => json!({"type": "layout_apply", "layout": {"workspace_id": "w2",
+            "tab_id": "w2:t2", "zoomed": false, "focused_pane_id": "w2:p1",
+            "root": {"type": "pane", "pane_id": "w2:p1"}}}),
+            "pane.get" => {
+                let marked = unmarked
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                        left.checked_sub(1)
+                    })
+                    .is_err();
+                json!({"type": "pane_info", "pane": {"workspace_id": "w2",
+                "tab_id": "w2:t1", "pane_id": "w2:p1", "terminal_id": "device-terminal",
+                "focused": false, "agent_status": "idle", "revision": 0,
+                "tokens": if marked { json!({"hide_prompt": "1"}) } else { json!({}) }}})
+            }
             "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
             "pane_id": "w2:p1", "shell_pid": 4100, "foreground_process_group_id": 4100,
             "foreground_processes": [{"pid": 4100, "name": "zsh"}]}}),
+            "agent.start" if refused.swap(false, Ordering::SeqCst) => {
+                return Err(("internal_error".into(), "the start was refused".into()));
+            }
             "agent.start" => {
                 started.store(true, Ordering::SeqCst);
                 held.store(true, Ordering::SeqCst);
@@ -141,6 +165,10 @@ struct Spawner {
     shows: Arc<AtomicBool>,
     /// Whether Herdr still holds the name of a start whose agent did not show.
     held: Arc<AtomicBool>,
+    /// How many more reads of the pane show no first-prompt mark.
+    unmarked: Arc<AtomicUsize>,
+    /// Whether Herdr refuses the next start.
+    refused: Arc<AtomicBool>,
     herdr: FakeHerdr,
     path: PathBuf,
     _worker: Worker,
@@ -171,10 +199,20 @@ fn spawner() -> Spawner {
     let identified = Arc::new(AtomicBool::new(true));
     let shows = Arc::new(AtomicBool::new(true));
     let held = Arc::new(AtomicBool::new(false));
-    let herdr = device_herdr(started, identified.clone(), shows.clone(), held.clone());
+    let unmarked = Arc::new(AtomicUsize::new(0));
+    let refused = Arc::new(AtomicBool::new(false));
+    let herdr = device_herdr(
+        started,
+        identified.clone(),
+        shows.clone(),
+        held.clone(),
+        unmarked.clone(),
+        refused.clone(),
+    );
     let node = Arc::new(Node {
         repository: AtomicBool::new(true),
         installed: AtomicBool::new(true),
+        integrated: AtomicBool::new(false),
         calls: AtomicUsize::new(0),
     });
     {
@@ -279,6 +317,8 @@ fn spawner() -> Spawner {
         identified,
         shows,
         held,
+        unmarked,
+        refused,
         herdr,
         path,
         _worker: worker,
@@ -530,6 +570,42 @@ fn the_same_intent_types_its_start_once_more_only_after_herdr_lets_the_name_go()
     assert_eq!(ask().expect_err("not started"), "agent_not_started");
     let methods = spawner.herdr.methods();
     assert_eq!(count(&methods, "agent.start"), 2, "{methods:?}");
+    assert_eq!(count(&methods, "worktree.create"), 1, "{methods:?}");
+}
+
+/// B1, D-04: a spawn whose pane runs Hide's launch of the shell keeps
+/// waiting for that shell's first prompt on every later ask of the same
+/// intent, so a retry never types into a question the shell still asks.
+#[test]
+fn a_retry_of_an_integrated_spawn_still_waits_for_the_first_prompt() {
+    let spawner = spawner();
+    spawner.node.integrated.store(true, Ordering::SeqCst);
+    spawner.refused.store(true, Ordering::SeqCst);
+    let ask = || spawner.spawn(Some("here"), Some(DEVICE), "integrated");
+    ask().expect_err("Herdr refused the first start");
+    assert_eq!(
+        spawner.count("layout.apply"),
+        1,
+        "the seed tab runs the launch"
+    );
+    assert_eq!(spawner.ledger().spawns[0].shell.as_deref(), Some("zsh"));
+    assert_eq!(spawner.ledger().spawns[0].typed, 0);
+    // The shell is still at its startup question: three reads show no mark.
+    spawner.unmarked.store(3, Ordering::SeqCst);
+    let reads = spawner.count("pane.get");
+    ask().expect("the retry starts once the first prompt is marked");
+    assert_eq!(spawner.unmarked.load(Ordering::SeqCst), 0);
+    assert!(spawner.count("pane.get") >= reads + 4);
+    let methods = spawner.herdr.methods();
+    let marked = methods
+        .iter()
+        .rposition(|method| method == "pane.get")
+        .unwrap();
+    let typed = methods
+        .iter()
+        .rposition(|method| method == "agent.start")
+        .unwrap();
+    assert!(marked < typed, "{methods:?}");
     assert_eq!(count(&methods, "worktree.create"), 1, "{methods:?}");
 }
 

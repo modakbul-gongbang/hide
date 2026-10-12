@@ -3085,11 +3085,7 @@ fn run_agent_fork_with_registration(
             )
         })
         .flatten();
-    let shell = if launch.is_some() {
-        crate::agent_start::ShellStart::Integrated
-    } else {
-        crate::agent_start::ShellStart::Plain
-    };
+    let shell = crate::agent_start::ShellStart::of_tab(true, launch.as_ref());
     let child_pane_id = if proven {
         let cwd = request
             .cwd

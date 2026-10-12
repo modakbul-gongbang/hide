@@ -4500,6 +4500,7 @@ impl Runtime {
                 .codex_daemon(operation.device_id.as_deref().unwrap_or(self.node.as_str())),
             shell: self
                 .task_pane_shell
+                .clone()
                 .filter(|(task, _)| *task == id)
                 .map_or(crate::agent_start::ShellStart::Plain, |(_, shell)| shell),
         })

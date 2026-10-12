@@ -3141,7 +3141,9 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
-            shell: crate::agent_start::ShellStart::Integrated,
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         }),
     ));
     let operation = runtime.snapshot().task_operation.clone().unwrap();
@@ -3159,7 +3161,9 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             kind: "claude".to_owned(),
             prompt: None,
             args: Vec::new(),
-            shell: crate::agent_start::ShellStart::Integrated,
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         })
     );
     // An acknowledgement while the agent is still starting keeps the slot.

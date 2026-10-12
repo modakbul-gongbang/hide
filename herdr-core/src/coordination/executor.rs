@@ -625,10 +625,10 @@ fn spawn(
     // command continues once it answers again.
     let (spawn_id, on_device) = (reserved.id.clone(), reserved.machine.is_some());
     let placed = (|| -> Result<Value, String> {
-        // How the pane's shell says it has finished starting: known only for
-        // a pane this call made.
-        let mut shell = ShellStart::Plain;
         if reserved.pane.is_none() {
+            // How the pane's shell says it has finished starting, recorded
+            // with the pane so every later start in it waits the same way.
+            let shell;
             // Reconcile a worktree whose creation reply was interrupted. The
             // existing local/device connector and checkout owner are shared with
             // the product's worktree/start path; no spawn-specific SSH exists.
@@ -661,29 +661,35 @@ fn spawn(
                 let snapshot =
                     crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
                 let label = format!("hide:{}", reserved.id);
-                let existing_pane = snapshot
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                // A tab under the spawn's label is one this spawn opened, with
+                // the launch when there is one; a workspace under it holds
+                // Herdr's own first tab, which was never replaced.
+                let labelled_tab = snapshot
                     .tabs
                     .iter()
                     .find(|tab| tab.label == label)
                     .and_then(|tab| snapshot.panes.iter().find(|pane| pane.tab_id == tab.tab_id))
-                    .or_else(|| {
-                        snapshot
-                            .workspaces
-                            .iter()
-                            .find(|workspace| workspace.label == label)
-                            .and_then(|workspace| {
-                                snapshot
-                                    .panes
-                                    .iter()
-                                    .find(|pane| pane.workspace_id == workspace.workspace_id)
-                            })
-                    })
-                    .map(|pane| pane.pane_id.clone());
+                    .map(|pane| (pane.pane_id.clone(), true));
+                let existing_pane = labelled_tab.or_else(|| {
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.label == label)
+                        .and_then(|workspace| {
+                            snapshot
+                                .panes
+                                .iter()
+                                .find(|pane| pane.workspace_id == workspace.workspace_id)
+                        })
+                        .map(|pane| (pane.pane_id.clone(), false))
+                });
                 let pane = match existing_pane {
-                    Some(pane) => pane,
+                    Some((pane, launched)) => {
+                        shell = ShellStart::of_tab(launched, launch.as_ref());
+                        pane
+                    }
                     None => {
-                        let launch =
-                            crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
                         let tab = crate::live::open_owner_tab(
                             connector.as_ref(),
                             &owner,
@@ -697,7 +703,7 @@ fn spawn(
                             launch.as_ref().map(|launch| launch.command.as_slice()),
                         )
                         .map_err(|error| format!("{error:?}"))?;
-                        shell = launched_shell(&tab, launch.as_ref());
+                        shell = ShellStart::of_tab(tab.launched, launch.as_ref());
                         tab.pane_id
                     }
                 };
@@ -734,7 +740,7 @@ fn spawn(
                         .unwrap_or_default(),
                     launch.as_ref().map(|launch| launch.command.as_slice()),
                 );
-                shell = launched_shell(&tab, launch.as_ref());
+                shell = ShellStart::of_tab(tab.launched, launch.as_ref());
                 (created.path, tab.pane_id)
             };
             // The terminal is recorded with the pane, so a later attempt can
@@ -749,6 +755,7 @@ fn spawn(
                     path: Some(checkout),
                     pane: Some(pane),
                     terminal: Some(terminal),
+                    shell: shell.program().map(str::to_owned),
                     child: None,
                 },
             )?)
@@ -756,6 +763,7 @@ fn spawn(
         }
         let pane = reserved.pane.clone().ok_or("spawn_unavailable")?;
         let pane = pane.as_str();
+        let shell = ShellStart::launched(reserved.shell.clone());
         let observed = agents(connector.as_ref())?;
         let live = observed
             .iter()
@@ -872,17 +880,6 @@ fn spawn(
 
 /// How the shell of a tab Hide made for a spawn says it has finished
 /// starting: by its mark when the tab runs the integration's launch.
-fn launched_shell(
-    tab: &crate::live::OwnedTab,
-    launch: Option<&hide_node_link::protocol::ShellLaunch>,
-) -> ShellStart {
-    if tab.launched && launch.is_some() {
-        ShellStart::Integrated
-    } else {
-        ShellStart::Plain
-    }
-}
-
 /// Whether Herdr has let go of `name`. Herdr holds the name of a start whose
 /// agent never showed until that start's own deadline, and settles a passed
 /// deadline only when the name is read, which this `agent.get` is.
@@ -1281,6 +1278,7 @@ mod tests {
                         path: Some("/fixture.worktrees/801".into()),
                         pane: Some(pane.into()),
                         terminal: terminal.map(Into::into),
+                        shell: None,
                         child: None,
                     },
                     1,
@@ -1530,6 +1528,7 @@ mod tests {
                     path: Some("/fixture/topic".into()),
                     pane: Some("recipient".into()),
                     terminal: None,
+                    shell: None,
                     child: None,
                 },
                 now,

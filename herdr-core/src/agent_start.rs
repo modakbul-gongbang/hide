@@ -39,8 +39,9 @@
 //! a pane ([`ShellStart::Integrated`]) waits for that mark too. A shell that
 //! never shows it within the bound, stopped at a question, is a start that
 //! did not happen, and the screen's last line says what it waits for. A
-//! shell the integration does not reach (sh, nu, cmd), or a pane made
-//! another way (a split), is started on the shell holding the terminal, and
+//! shell the integration does not reach (sh, nu, cmd, or one a startup file
+//! replaced the launched shell with), or a pane made another way (a split),
+//! is started on the shell holding the terminal, and
 //! the start is confirmed after it was typed, by its spawn
 //! (`coordination::executor`).
 //!
@@ -85,9 +86,6 @@ pub(crate) const NAME_RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// then the screen's last line after [`crate::coordination::DETAIL`] when it
 /// could be read.
 pub(crate) const SHELL_STARTING: &str = "shell_starting";
-/// The shells Hide's shell integration starts, which therefore mark their
-/// first prompt, by program name without `.exe`.
-const MARKING_SHELLS: [&str; 4] = ["zsh", "fish", "bash", "powershell"];
 /// The pane token the integration's first prompt reports
 /// (`hide_host::shell_integration::PROMPT_TOKEN`).
 const PROMPT_TOKEN: &str = "hide_prompt";
@@ -95,15 +93,59 @@ const PROMPT_TOKEN: &str = "hide_prompt";
 const SCREEN_LINE_CHARS: usize = 120;
 
 /// What says a pane's shell has finished starting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ShellStart {
-    /// The caller made the pane run Hide's [`ShellLaunch`], whose shell
-    /// marks its first prompt, and the start waits for that mark.
-    Integrated,
+    /// The caller made the pane run Hide's [`ShellLaunch`] of the shell
+    /// `program`, which marks its first prompt, and the start waits for that
+    /// mark while that shell holds the terminal.
+    Integrated { program: String },
     /// No mark is coming (a pane made before, by someone else, or where the
     /// integration could not be written): the shell holding the terminal is
     /// the only sign.
     Plain,
+}
+
+impl ShellStart {
+    /// How the shell of a tab says it has finished starting: by its mark
+    /// when the tab runs `launch`, else by holding the terminal.
+    pub(crate) fn of_tab(launched: bool, launch: Option<&ShellLaunch>) -> Self {
+        match launch.and_then(|launch| launch.command.first()) {
+            Some(shell) if launched => Self::Integrated {
+                program: program_name(shell),
+            },
+            _ => Self::Plain,
+        }
+    }
+
+    /// How the shell of a pane recorded as launched in `program` says it has
+    /// finished starting.
+    pub(crate) fn launched(program: Option<String>) -> Self {
+        program.map_or(Self::Plain, |program| Self::Integrated { program })
+    }
+
+    /// The shell this start waits on for a mark, if any.
+    pub(crate) fn program(&self) -> Option<&str> {
+        match self {
+            Self::Integrated { program } => Some(program),
+            Self::Plain => None,
+        }
+    }
+}
+
+/// A shell's program name as a pane's process list shows it: the last part
+/// of its path, without a login shell's leading `-` or Windows' `.exe`,
+/// lower case.
+fn program_name(shell: &str) -> String {
+    let name = shell
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(shell)
+        .trim_start_matches('-')
+        .to_ascii_lowercase();
+    match name.strip_suffix(".exe") {
+        Some(name) => name.to_owned(),
+        None => name,
+    }
 }
 
 /// Why a start did not settle with Herdr's answer to `agent.start`.
@@ -249,7 +291,11 @@ fn start_within(
         correlation_id,
         pane_id,
         line: wire::agent_start_line_bytes(&params),
-        awaits_mark: std::cell::Cell::new(start == ShellStart::Integrated),
+        awaits_mark: std::cell::Cell::new(matches!(start, ShellStart::Integrated { .. })),
+        program: match start {
+            ShellStart::Integrated { program } => Some(program),
+            ShellStart::Plain => None,
+        },
     };
     let mut settled = false;
     loop {
@@ -291,8 +337,8 @@ fn start_within(
     }
 }
 
-/// The pane a start waits on, how many bytes its start line types, and
-/// whether its first prompt's mark is still awaited.
+/// The pane a start waits on, how many bytes its start line types, whether
+/// its first prompt's mark is still awaited, and from which shell.
 struct Shell<'a> {
     connector: &'a dyn ApiConnector,
     node: Option<&'a dyn NodeLink>,
@@ -300,6 +346,7 @@ struct Shell<'a> {
     pane_id: &'a str,
     line: usize,
     awaits_mark: std::cell::Cell<bool>,
+    program: Option<String>,
 }
 
 /// What a start still waited for when its wait ran out.
@@ -390,14 +437,23 @@ impl Shell<'_> {
         if !self.awaits_mark.get() {
             return Ok(false);
         }
-        // A shell the integration does not reach (bash, or one a startup
-        // file replaced the shell with) marks nothing, so nothing is waited
-        // for; its start is confirmed after it was typed. Its name is read
-        // only while it is in the foreground, so until then it is waited for.
-        if group.shell_name().is_some_and(|name| {
-            let name = name.to_ascii_lowercase();
-            !MARKING_SHELLS.contains(&name.strip_suffix(".exe").unwrap_or(&name))
-        }) {
+        // A shell other than the one launched (a startup file that runs
+        // `exec fish`) marks nothing, so nothing is waited for; its start is
+        // confirmed after it was typed. Its name is read only while it is in
+        // the foreground, so until then it is waited for.
+        if let Some(name) = group
+            .shell_name()
+            .map(program_name)
+            .filter(|name| Some(name) != self.program.as_ref())
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "agent_start",
+                "kind": "shell_wait.other_shell",
+                "request": self.correlation_id,
+                "pane_id": self.pane_id,
+                "launched": self.program,
+                "shell": name,
+            }));
             self.awaits_mark.set(false);
             return Ok(false);
         }
@@ -989,7 +1045,9 @@ mod tests {
             None,
             "test:start",
             "w1:p1",
-            ShellStart::Integrated,
+            ShellStart::Integrated {
+                program: "zsh".into(),
+            },
             json!({"pane_id": "w1:p1"}),
             Duration::from_secs(5),
             wait,
@@ -1047,19 +1105,48 @@ mod tests {
         }
     }
 
-    /// A shell the integration does not reach (`sh`, or one a startup file
-    /// replaced the shell with) never marks a prompt, so nothing waits for
-    /// one.
+    /// A startup file that replaces the launched shell with another one
+    /// (`exec fish` in a `.zshrc`) leaves a shell that never marks a prompt,
+    /// so nothing waits for one.
     #[test]
-    fn a_shell_the_integration_does_not_reach_is_started_without_waiting_for_a_mark() {
-        let herdr = FakeHerdr::start("agent-start-sh", |method, _| match method {
+    fn a_shell_other_than_the_launched_one_is_started_without_waiting_for_a_mark() {
+        let herdr = FakeHerdr::start("agent-start-exec", |method, _| match method {
             "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
                 "pane_id": "w1:p1", "shell_pid": SHELL, "foreground_process_group_id": SHELL,
-                "foreground_processes": [{"pid": SHELL, "name": "-sh"}]}}),
+                "foreground_processes": [{"pid": SHELL, "name": "-fish"}]}}),
             "agent.start" => started(),
             other => panic!("unexpected {other}"),
         });
         assert!(start_integrated(&herdr, Duration::from_secs(5)).is_ok());
         assert_eq!(herdr.methods(), ["pane.process_info", "agent.start"]);
+    }
+
+    #[test]
+    fn a_launched_shell_is_named_as_its_pane_lists_it() {
+        let launch = |shell: &str| ShellLaunch {
+            command: vec![shell.into(), "-l".into()],
+            env: Default::default(),
+        };
+        for (shell, program) in [
+            ("/bin/zsh", "zsh"),
+            ("/opt/homebrew/bin/fish", "fish"),
+            (
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "powershell",
+            ),
+            ("powershell.exe", "powershell"),
+        ] {
+            assert_eq!(
+                ShellStart::of_tab(true, Some(&launch(shell))),
+                ShellStart::Integrated {
+                    program: program.into()
+                }
+            );
+        }
+        assert_eq!(
+            ShellStart::of_tab(false, Some(&launch("/bin/zsh"))),
+            ShellStart::Plain
+        );
+        assert_eq!(ShellStart::of_tab(true, None), ShellStart::Plain);
     }
 }

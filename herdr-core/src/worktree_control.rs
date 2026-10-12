@@ -1515,11 +1515,7 @@ fn create_checkout_tab(
     .map_err(|failure| failure.message().to_owned())?;
     // A tab that does not run the launch (Herdr's own shell, or no launch
     // for this shell) gives no mark.
-    let shell = if tab.launched && launch.is_some() {
-        crate::agent_start::ShellStart::Integrated
-    } else {
-        crate::agent_start::ShellStart::Plain
-    };
+    let shell = crate::agent_start::ShellStart::of_tab(tab.launched, launch);
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id: tab.pane_id,
