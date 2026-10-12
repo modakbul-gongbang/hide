@@ -5,23 +5,37 @@
 //! projection.
 
 mod engine;
+mod evidence;
 pub mod hook;
 mod matcher;
 mod redaction;
 mod store;
+mod verify;
 
 pub use engine::{
     AliasBackfill, AnalysisOutput, HideNativeAnalyzer, HideNativeOutputError,
     SYSTEM_PROMPT_LIMIT_BYTES,
 };
+pub use evidence::{
+    EVIDENCE_ROW_LIMIT, Evidence, EvidenceFact, EvidenceKind, NAME_CANDIDATE_LIMIT, WrittenNames,
+    still_holds, written_names,
+};
 pub use redaction::{RedactedText, redact};
 pub use store::{
-    AnalysisBatch, ApplySummary, Candidate, CandidateKind, CandidateOutcome, CandidateRelation,
-    ComparisonCard, CursorReader, DeleteProjectOutcome, InjectedItem, Injection, InjectionKind,
-    InjectionOutcome, MemoryDetail, MemoryError, MemoryItem, MemoryLifecycle, MemorySource,
-    MemoryStore, PreviousRevision, ProjectMemoryState, Promotion, PromotionState,
-    PromotionSuggestion, ReceiptRecord, RetrievalQuery, SessionCursorRecord, SessionSourceRecord,
-    StoreMode, card_name, parse_card_name, repository_path,
+    AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateKind, CandidateOutcome,
+    CandidateRelation, CardEvidence, ComparisonCard, CursorReader, DeleteProjectOutcome,
+    InjectedItem, Injection, InjectionKind, InjectionOutcome, MemoryDetail, MemoryError,
+    MemoryItem, MemoryLifecycle, MemorySource, MemoryStore, PendingCard, PreviousRevision,
+    ProjectMemoryState, Promotion, PromotionState, PromotionSuggestion, ReceiptRecord,
+    RetrievalQuery, SessionCursorRecord, SessionSourceRecord, StoreMode, card_name,
+    parse_card_name, repository_path,
+};
+pub use verify::{
+    Correction, DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt,
+    FILE_EXCERPT_BYTES, FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT,
+    PROMOTE_CHECK_FEATURE, PromoteCheck, PromoteCheckCard, VERIFY_FEATURE, Verification,
+    VerifyError, cited_files, parse_promote_check, parse_verification, pointer_target,
+    promote_check_request, query_words, relevant_excerpt, sensitive_path, verify_request,
 };
 
 /// The Memory store's file name inside a state folder.
@@ -62,12 +76,31 @@ pub const RECEIPT_STALE_AFTER_MS: u64 = 30 * 86_400_000;
 pub const DAILY_ANALYSIS_CALL_LIMIT: u64 = 1_000;
 /// The most one retrieval spends in the store, inside the hook's wait.
 pub const HOOK_DEADLINE_MS: u64 = 100;
-/// The bar a rule, decision or lesson card crosses to be suggested for a
-/// repository file (PRD project-memory-v2 D-25, an assumption to check
-/// against two weeks of use): the operator's words in this many sources, or
-/// reads from this many sessions within the window.
-pub const PROMOTION_HUMAN_SOURCES: u64 = 2;
+/// The bar a rule or lesson card crosses to be suggested for a repository
+/// file (PRD memory-card-quality D-09, D-10): the operator's words in this
+/// many different sessions, or reads from this many different sessions
+/// within the window, with its evidence unchanged since it was last verified.
+pub const PROMOTION_HUMAN_SESSIONS: u64 = 2;
 pub const PROMOTION_PULLED_SESSIONS: u64 = 3;
 pub const PROMOTION_WINDOW_MS: u64 = 14 * 86_400_000;
 /// The most suggestions open at once (B29).
 pub const PROMOTION_OPEN_LIMIT: usize = 3;
+/// New cards one analyzed session may make (PRD memory-card-quality D-02);
+/// a card that is the same, a correction or a conflict does not count.
+pub const NEW_CARDS_PER_SESSION: usize = 2;
+/// A session with fewer of the operator's own events than this makes no new
+/// card (D-03).
+pub const OPERATOR_EVENTS_MINIMUM: u64 = 3;
+/// The most characters of the reason an agent gives when it calls a card
+/// outdated.
+pub const OUTDATED_REASON_LIMIT_CHARS: usize = 500;
+/// A card is verified again at most once in this long (D-07, B10).
+pub const REVERIFY_INTERVAL_MS: u64 = 86_400_000;
+/// Cards one pass verifies again, and cards one pass checks before a
+/// suggestion (D-11): each is one provider call under the daily cap.
+pub const REVERIFY_PER_PASS: usize = 4;
+/// Checks of existing cards (a re-verification or a check before a
+/// suggestion) are made only while the day's calls are under this, so a
+/// store full of cards to check cannot use the cap analysis shares with them.
+pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
+pub const PROMOTION_CHECKS_PER_PASS: usize = 3;

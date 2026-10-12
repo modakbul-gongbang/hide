@@ -375,7 +375,8 @@ impl Runtime {
                             devices
                                 .iter()
                                 .find(|device| device.id == remote.target_id)
-                                .map_or(remote.target_id.as_str(), |device| device.label.as_str()),
+                                .and_then(|device| device.label.as_deref())
+                                .unwrap_or(remote.target_id.as_str()),
                         ),
                     )
                 })

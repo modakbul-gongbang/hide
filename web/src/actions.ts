@@ -32,7 +32,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
-import { screenDeviceId } from "./screenMachine";
+import { registeredName, screenDeviceId } from "./screenMachine";
 import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -245,7 +245,7 @@ export function createActions(send: DispatchFn) {
     const context = remoteContext(rest());
     if (!context) return null;
     if (!remoteConnected(context)) {
-      ui().setNotice({ text: translate("shell.deviceNotConnected", { device: context.device.label, command: translate(command) }), refreshable: false });
+      ui().setNotice({ text: translate("shell.deviceNotConnected", { device: registeredName(context.device), command: translate(command) }), refreshable: false });
       return null;
     }
     return { targetId: context.device.id, view: remoteView(context.session), agents: context.session?.agents ?? [] };
@@ -351,7 +351,7 @@ export function createActions(send: DispatchFn) {
       const project = context.session?.workspaces.find((row) => row.id === workspaceId);
       const checkout = project?.checkouts.find((row) => row.id === checkoutId);
       if (!checkout) {
-        return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.label}`);
+        return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.id}`);
       }
       sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;

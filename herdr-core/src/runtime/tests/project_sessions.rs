@@ -280,7 +280,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
         workspace::local_device(&crate::node::test_node(), None),
         DeviceSnapshot {
             id: "ssh-build".to_owned(),
-            label: "build-box".to_owned(),
+            label: Some("build-box".to_owned()),
             kind: "remote".to_owned(),
             state: "ready".to_owned(),
             message: None,
@@ -302,7 +302,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
         Some(
             format!(
                 "Sessions on build-box are not available here. Hide reads Codex and Claude Code sessions only on {}.",
-                crate::workspace::LOCAL_DEVICE_LABEL
+                crate::node::TEST_NODE
             )
             .as_str()
         )

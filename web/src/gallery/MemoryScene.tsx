@@ -9,21 +9,24 @@ import type { MemoryRow, ProjectMemory, SnapshotRest } from "../snapshot";
 import { useShellStore } from "../store";
 import { Tools } from "../Tools";
 
-export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "remote", "promote", "failed", "start_failed", "forgotten"] as const;
+export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "remote", "promote", "failed", "start_failed", "forgotten", "verifying"] as const;
 export type MemorySceneState = (typeof MEMORY_SCENE_STATES)[number];
-export type MemorySceneParams = { theme: "light" | "dark"; state: MemorySceneState; width: number };
+export type MemorySceneLanguage = "en" | "ko" | "zh-CN" | "ja";
+export type MemorySceneParams = { theme: "light" | "dark"; state: MemorySceneState; width: number; language: MemorySceneLanguage };
 
 export function memorySceneParams(params: URLSearchParams): MemorySceneParams {
   const state = params.get("state") ?? "workspace";
   if (!MEMORY_SCENE_STATES.includes(state as MemorySceneState)) throw new Error(`Unknown memory scene state ${state}`);
   const width = Number(params.get("width") ?? "360");
   if (!(width > 0)) throw new Error(`Scene width must be a positive number, got ${params.get("width")}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as MemorySceneState, width };
+  const language = params.get("lang") ?? "ko";
+  if (!["en", "ko", "zh-CN", "ja"].includes(language)) throw new Error(`Unknown memory scene language ${language}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as MemorySceneState, width, language: language as MemorySceneLanguage };
 }
 
 const MINUTE = 60_000;
 const row = (number: number, title: string, kind: MemoryRow["kind"], given: number, pulled: number, human: number, ago: number, promotion: MemoryRow["promotion"] = null): MemoryRow => ({
-  number, title, kind, provided_session_count: given, pull_count: pulled, human_source_count: human, updated_at_unix_ms: Date.now() - ago, promotion,
+  number, title, kind, provided_session_count: given, pull_count: pulled, human_source_count: human, updated_at_unix_ms: Date.now() - ago, verifying: false, promotion,
 });
 const ROWS: MemoryRow[] = [
   row(17, "스크린샷이 큰 세션을 읽다 막히면 종 알림이 멈추므로, 먼저 tool_result 크기를 확인한다", "lesson", 0, 0, 1, 60 * MINUTE),
@@ -55,8 +58,8 @@ function project(state: MemorySceneState): ProjectMemory {
   switch (state) {
     case "workspace":
       return { ...base, expanded: EXPANDED, questions: [
-        { kind: "promote", number: 3, title: ROWS[5]!.title, human_source_count: 3, pulled_session_count: 9 },
-        { kind: "promote", number: 5, title: ROWS[6]!.title, human_source_count: 2, pulled_session_count: 6 },
+        { kind: "promote", number: 3, title: ROWS[5]!.title, human_session_count: 3, pulled_session_count: 9 },
+        { kind: "promote", number: 5, title: ROWS[6]!.title, human_session_count: 2, pulled_session_count: 6 },
       ] };
     case "off": return { ...base, enabled: false };
     case "ai_not_ready": return { ...base, analysis: "ai_not_ready" };
@@ -66,11 +69,12 @@ function project(state: MemorySceneState): ProjectMemory {
     case "promote": return { ...base, rows: ROWS.slice(1, 4) };
     case "failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: null }] };
     case "start_failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: { code: "shell_starting", detail: "[oh-my-zsh] Would you like to update? [Y/n]" } }] };
+    case "verifying": return { ...base, rows: [{ ...ROWS[0]!, verifying: true }, ROWS[5]!, { ...ROWS[6]!, verifying: true }] };
     case "forgotten": return { ...base, rows: ROWS.filter((card) => card.number !== 9), forgotten: 9 };
   }
 }
 
-export function MemoryScene({ theme, state, width }: MemorySceneParams) {
+export function MemoryScene({ theme, state, width, language }: MemorySceneParams) {
   const actions = useMemo(() => createActions(() => true), []);
   const rest = useMemo(() => ({
     navigator: {
@@ -79,8 +83,8 @@ export function MemoryScene({ theme, state, width }: MemorySceneParams) {
       workspaces: [{ id: "herdr-ide", label: "herdr-ide", device_id: "local", path: "/projects/herdr-ide", checkouts: [{ id: "main", workspace_id: "herdr-ide", path: "/projects/herdr-ide", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
     },
     status: { background_ai: { enabled: state !== "ai_not_ready", provider: "claude", chosen: true, unavailable_reason: null, providers: [{ id: "claude", label: "Claude Code", agent: "claude-code", state: "ready", selectable: true }] } },
-    ui_state: { interface_language: "ko" },
-  }) as unknown as SnapshotRest, [state]);
+    ui_state: { interface_language: language },
+  }) as unknown as SnapshotRest, [state, language]);
   useLayoutEffect(() => {
     useShellStore.setState({ rest, memory: { project: project(state) }, connection: "gone" });
     document.documentElement.classList.toggle("dark", theme === "dark");

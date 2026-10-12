@@ -273,7 +273,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
         agent_scope: Default::default(),
         id: TARGET.to_owned(),
-        label: "Mac mini".to_owned(),
+        label: Some("Mac mini".to_owned()),
         kind: "remote".to_owned(),
         state: "connected".to_owned(),
         message: None,
@@ -329,7 +329,6 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
         let held = &runtime.snapshot.ui_state.recent_checkouts;
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].device_id, TARGET);
-        assert_eq!(held[0].device_name, "Mac mini");
         assert_eq!(
             held[0].checkout_id,
             device_catalog::checkout_id(TARGET, &t.linked)
@@ -1397,7 +1396,6 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         checkout_id: checkout.to_owned(),
         project_name: "p".to_owned(),
         branch: "main".to_owned(),
-        device_name: device.to_owned(),
     };
     runtime.snapshot.ui_state.recent_checkouts = vec![
         recent(TARGET, &format!("remote:{TARGET}:checkout:w1")),
@@ -1492,7 +1490,7 @@ fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
         agent_scope: Default::default(),
         id: TARGET.to_owned(),
-        label: "Mac mini".to_owned(),
+        label: Some("Mac mini".to_owned()),
         kind: "remote".to_owned(),
         state: "connected".to_owned(),
         message: None,

@@ -1303,13 +1303,6 @@ pub fn handle_with_progress(
         Call::SessionStat { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             crate::sessions::stat(path).map_err(|e| e.to_string())
         }),
-        Call::SessionChunk {
-            path,
-            checkpoint,
-            scope,
-        } => session_read(env, &path, scope.as_ref(), |path| {
-            crate::sessions::chunk(path, checkpoint).map_err(|e| e.to_string())
-        }),
         Call::PanesStart { .. }
         | Call::TerminalsStart { .. }
         | Call::PaneProofAnswer { .. }
@@ -1528,9 +1521,13 @@ mod tests {
                     path: path.clone(),
                     scope: None,
                 },
-                Call::SessionChunk {
+                Call::SessionConversation {
+                    agent: hide_session::Agent::Claude,
                     path: path.clone(),
-                    scope: None,
+                    scope: hide_session::SessionReadScope {
+                        id: "session".into(),
+                        cwd: "/".into(),
+                    },
                     checkpoint: None,
                 },
                 Call::SessionIndexRead {
@@ -1641,9 +1638,10 @@ mod tests {
                     path: path.display().to_string(),
                     scope: Some(scope.clone()),
                 },
-                Call::SessionChunk {
+                Call::SessionConversation {
+                    agent,
                     path: path.display().to_string(),
-                    scope: Some(scope.clone()),
+                    scope: scope.clone(),
                     checkpoint: None,
                 },
                 Call::SessionIndexRead {

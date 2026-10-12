@@ -93,7 +93,7 @@ const TWO_DEVICES = {
   navigator: {
     focused_device_id: "local",
     devices: [
-      { id: "local", label: "This Mac", kind: "local", state: "local", message: null },
+      { id: "local", label: null, kind: "local", state: "local", message: null },
       { id: "mini", label: "mini", kind: "remote", state: "ready", message: null },
       { id: "build-box", label: "build-box", kind: "remote", state: "unavailable", message: null },
     ],
@@ -294,7 +294,7 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
 // PRD cmdk-recent: the Recent rows are the core's recent checkouts, read
 // against the catalogs ⌘K holds. A record is `device:checkout`.
 describe("recent entries (PRD cmdk-recent)", () => {
-  const record = (device_id: string, checkout_id: string, project_name = "fixture", branch = "main", device_name = device_id) => ({ device_id, checkout_id, project_name, branch, device_name });
+  const record = (device_id: string, checkout_id: string, project_name = "fixture", branch = "main") => ({ device_id, checkout_id, project_name, branch });
   const withRecent = (records: ReturnType<typeof record>[], base: SnapshotRest = TWO_DEVICES) => ({ ...base, ui_state: { recent_checkouts: records } }) as unknown as SnapshotRest;
   const ids = (entries: SearchEntry[]) => entries.map((entry) => entry.checkoutId);
 
@@ -323,8 +323,8 @@ describe("recent entries (PRD cmdk-recent)", () => {
     expect(ids(recentEntries(rest, new Set(["c0"])))).toEqual(["c1", "c2", "c3", "c4", "c5"]);
   });
 
-  it("draws a checkout of a device that is not connected dimmed, from the names the record kept (B9)", () => {
-    const entries = recentEntries(withRecent([record("build-box", "remote:build-box:checkout:api", "api", "release", "build-box")]), new Set());
+  it("draws a checkout of a device that is not connected dimmed, from the names the record kept and the device's own row (B9)", () => {
+    const entries = recentEntries(withRecent([record("build-box", "remote:build-box:checkout:api", "api", "release")]), new Set());
     expect(entries).toEqual([expect.objectContaining({ title: "release", subtitle: "api", dimmed: true, deviceId: "build-box", chip: { label: "build-box", local: false } })]);
     expect(entries[0]?.workspaceId).toBeUndefined();
   });

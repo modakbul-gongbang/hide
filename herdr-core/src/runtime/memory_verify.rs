@@ -1,0 +1,494 @@
+//! The two checks a card gets after it was written (PRD memory-card-quality
+//! D-07, D-11): a card whose evidence moved is read against the repository
+//! again, and a card about to be offered for the repository's documents is
+//! read against the documents agents already have.
+//!
+//! Both are provider calls on the analysis worker under the analysis call
+//! cap and weekly deferral (D-08): a deferral leaves the card as it was, and
+//! a card is asked about at most once a day (B10). Nothing here runs under
+//! the runtime lock; the files come from the node, the operator's own
+//! instruction files from the account this process runs as.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use hide_ai::{AiError, AiRouter, CancelToken};
+use hide_memory::{
+    DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt, FILE_EXCERPT_BYTES,
+    GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, MemoryStore, PROMOTION_CHECKS_PER_PASS, PendingCard,
+    PromoteCheck, PromoteCheckCard, Promotion, PromotionState, REVERIFY_PER_PASS, Verification,
+    cited_files, parse_promote_check, parse_verification, pointer_target, promote_check_request,
+    query_words, relevant_excerpt, sensitive_path, verify_request, written_names,
+};
+use serde_json::json;
+
+use super::memory::{digest, now_ms};
+use super::memory_analysis::AnalysisFailure;
+use super::memory_evidence::CheckoutFacts;
+use crate::node_access::{NodeLink, read_bytes};
+
+/// What a Project's checks changed.
+#[derive(Default)]
+pub(super) struct Checked {
+    pub(super) changed: usize,
+    /// Calls the provider answered, usably or not.
+    pub(super) answered: usize,
+}
+
+type Admit<'a> = &'a mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>;
+
+fn provider_failure(error: AiError) -> AnalysisFailure {
+    match error {
+        AiError::Cancelled => AnalysisFailure::Cancelled,
+        error => AnalysisFailure::Provider(error),
+    }
+}
+
+/// A file as the node gave it, up to [`EXCERPT_SOURCE_BYTES`], before an
+/// excerpt for one card is chosen from it.
+struct Source {
+    path: String,
+    text: String,
+    truncated: bool,
+}
+
+/// An answer that arrived but cannot be used (not the schema, a correction
+/// with no text, a document never shown): the card's day is spent, so a card
+/// the model keeps answering badly does not hold the queue behind it or
+/// back the Project off at every pass. Nothing of the answer is logged.
+fn spend_unusable(
+    store: &mut MemoryStore,
+    item_id: &str,
+    project_id: &str,
+    number: u64,
+) -> Result<(), AnalysisFailure> {
+    store
+        .begin_verification(item_id, now_ms())
+        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "verification.unusable",
+        "project_id": project_id,
+        "card": number,
+    }));
+    Ok(())
+}
+
+/// Reads a checkout's file through the node.
+fn source(node: &dyn NodeLink, root: &str, relative: &str) -> Option<Source> {
+    if sensitive_path(relative) {
+        return None;
+    }
+    let range = read_bytes(node, root, relative, 0, EXCERPT_SOURCE_BYTES as u64).ok()?;
+    let bytes = range.bytes().ok()?;
+    Some(Source {
+        path: relative.to_owned(),
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        truncated: range.total > bytes.len() as u64,
+    })
+}
+
+/// The part of each source about the card, each cut to `limit`.
+fn excerpts(sources: &[Source], words: &[String], limit: usize) -> Vec<Excerpt> {
+    sources
+        .iter()
+        .map(|source| relevant_excerpt(&source.path, &source.text, source.truncated, words, limit))
+        .collect()
+}
+
+/// Asks about the Project's unverified cards one by one, at most
+/// [`REVERIFY_PER_PASS`] a pass, and applies each answer: a card that holds
+/// goes back to the index with its evidence taken again, an outdated one gets
+/// its corrected text as a new revision its Undo takes back, and one that no
+/// longer applies is forgotten, which Undo takes back too (B7-B9).
+#[allow(clippy::too_many_arguments)] // one Project's store, node, provider and the pass's limits
+pub(super) fn reverify_pending(
+    store: &mut MemoryStore,
+    node: &dyn NodeLink,
+    facts: &mut CheckoutFacts<'_>,
+    router: &AiRouter,
+    project_id: &str,
+    root: &str,
+    cancel: &CancelToken,
+    admit: Admit<'_>,
+) -> Result<Checked, AnalysisFailure> {
+    let local = |error: String| AnalysisFailure::Local(error);
+    let mut checked = Checked::default();
+    let cards = store
+        .pending_cards(project_id, now_ms(), REVERIFY_PER_PASS)
+        .map_err(|error| local(error.to_string()))?;
+    for card in cards {
+        if cancel.is_cancelled() {
+            return Err(AnalysisFailure::Cancelled);
+        }
+        // The deferral comes first, so a held-back card keeps its day.
+        admit(store)?;
+        // A card from before evidence was kept has none; what its text names
+        // is read now, so the check is not asked blind.
+        let mut card = card;
+        if card.evidence.is_empty() {
+            card.evidence = facts.gather(&card.body, &card.cited_paths);
+        }
+        let answers = facts.facts(&card.evidence);
+        let words = query_words(&[&card.title, &card.body, &card.aliases.join(" ")]);
+        let files = excerpts(
+            &cited_files(&card.evidence)
+                .into_iter()
+                .filter_map(|path| source(node, root, &path))
+                .collect::<Vec<_>>(),
+            &words,
+            FILE_EXCERPT_BYTES,
+        );
+        let request = verify_request(
+            digest(&[
+                "memory-verify",
+                project_id,
+                &card.item_id,
+                &card.revision.to_string(),
+                &now_ms().to_string(),
+            ]),
+            project_id,
+            &card,
+            &answers,
+            &files,
+        )
+        .map_err(|error| local(error.to_string()))?;
+        let verdict = router.execute(&request, cancel).and_then(|answer| {
+            parse_verification(&answer.value)
+                .map_err(|error| AiError::InvalidOutput(error.to_string()))
+        });
+        let verdict = match verdict {
+            Ok(verdict) => verdict,
+            Err(AiError::InvalidOutput(_)) => {
+                checked.answered += 1;
+                spend_unusable(store, &card.item_id, project_id, card.number)?;
+                continue;
+            }
+            Err(error) => return Err(provider_failure(error)),
+        };
+        checked.answered += 1;
+        // The day is spent by an answer, not by a call: a provider that
+        // failed leaves the card due for the next pass.
+        if !store
+            .begin_verification(&card.item_id, now_ms())
+            .map_err(|error| local(error.to_string()))?
+        {
+            continue;
+        }
+        let applied = match &verdict {
+            Verification::Valid => {
+                let evidence = facts.gather(&card.body, &card.cited_paths);
+                store.confirm_card(
+                    &card.item_id,
+                    card.revision,
+                    card.outdated_reason.as_deref(),
+                    &evidence,
+                    now_ms(),
+                )
+            }
+            Verification::Outdated(correction) => revise(
+                store,
+                facts,
+                project_id,
+                &card,
+                correction.clone(),
+                root,
+                node,
+            ),
+            Verification::Gone => store.forget_checked(project_id, &card.item_id, card.revision),
+        }
+        .map_err(|error| local(error.to_string()))?;
+        if applied {
+            checked.changed += 1;
+        }
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "verification.applied",
+            "project_id": project_id,
+            "card": card.number,
+            "verdict": match &verdict {
+                Verification::Valid => "valid",
+                Verification::Outdated(_) => "outdated",
+                Verification::Gone => "gone",
+            },
+            "applied": applied,
+        }));
+    }
+    Ok(checked)
+}
+
+fn revise(
+    store: &mut MemoryStore,
+    facts: &mut CheckoutFacts<'_>,
+    project_id: &str,
+    card: &PendingCard,
+    correction: hide_memory::Correction,
+    root: &str,
+    node: &dyn NodeLink,
+) -> Result<bool, hide_memory::MemoryError> {
+    let cited = super::memory_analysis::paths_inside(node, root, &card.cited_paths);
+    let cited = card
+        .cited_paths
+        .iter()
+        .filter(|path| cited.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let evidence = facts.gather(&correction.text, &cited);
+    let title = if correction.title.is_empty() {
+        card.title.as_str()
+    } else {
+        correction.title.as_str()
+    };
+    let aliases = if correction.aliases.is_empty() {
+        card.aliases.as_slice()
+    } else {
+        correction.aliases.as_slice()
+    };
+    store.revise_card(
+        project_id,
+        &card.item_id,
+        card.revision,
+        card.outdated_reason.as_deref(),
+        &correction.text,
+        title,
+        aliases,
+        &cited,
+        &evidence,
+        now_ms(),
+    )
+}
+
+/// The documents agents read at the start of work here: `AGENTS.md`,
+/// `CLAUDE.md` when it says something else, then the repository documents
+/// they point to, at most [`DOCUMENT_LIMIT`] and each cut to a bound.
+fn repository_sources(node: &dyn NodeLink, facts: &CheckoutFacts<'_>, root: &str) -> Vec<Source> {
+    let mut documents: Vec<Source> = Vec::new();
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        if let Some(found) = source(node, root, name)
+            && !documents.iter().any(|known| known.text == found.text)
+        {
+            documents.push(found);
+        }
+    }
+    let pointed = documents
+        .iter()
+        .flat_map(|document| written_names(&document.text).paths)
+        .filter(|path| path.ends_with(".md"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    for path in facts.existing(&pointed) {
+        if documents.len() >= DOCUMENT_LIMIT {
+            break;
+        }
+        if let Some(found) = source(node, root, &path)
+            && !documents.iter().any(|known| known.path == found.path)
+        {
+            documents.push(found);
+        }
+    }
+    documents.truncate(DOCUMENT_LIMIT);
+    documents
+}
+
+/// The operator's own instruction files, which agents read in every
+/// repository, through the node of the account this core runs as. A file that
+/// is not there is skipped, and one with the text of a file already read (a
+/// link to it) is not read twice.
+fn global_sources(node: &dyn NodeLink, home: Option<&Path>) -> Vec<Source> {
+    let Some(home) = home else {
+        return Vec::new();
+    };
+    let mut documents: Vec<Source> = Vec::new();
+    for (folder, name) in [
+        (".claude", "CLAUDE.md"),
+        (".codex", "AGENTS.md"),
+        (".config/agents", "AGENTS.md"),
+    ] {
+        if documents.len() >= GLOBAL_LIMIT {
+            break;
+        }
+        let root = home.join(folder).to_string_lossy().into_owned();
+        let Some(mut found) = source(node, &root, name) else {
+            continue;
+        };
+        if documents.iter().any(|known| known.text == found.text) {
+            continue;
+        }
+        // The name an agent knows it by, never the account's folder.
+        found.path = format!("~/{folder}/{name}");
+        documents.push(found);
+    }
+    documents
+}
+
+/// Reads each card about to be suggested against the evidence now and the
+/// documents agents already read, at most [`PROMOTION_CHECKS_PER_PASS`] a
+/// pass (D-11). A card to propose is marked checked at its current text so
+/// the tab asks about it; an outdated one is corrected like a re-verification
+/// (B16); one a repository document already says becomes a pointer at that
+/// file with no pull request (B15), and one the operator's global files
+/// already say is forgotten, which Undo takes back.
+#[allow(clippy::too_many_arguments)] // one Project's store, node, provider and the pass's limits
+pub(super) fn check_before_suggestion(
+    store: &mut MemoryStore,
+    node: &dyn NodeLink,
+    facts: &mut CheckoutFacts<'_>,
+    router: &AiRouter,
+    project_id: &str,
+    root: &str,
+    home: Option<&Path>,
+    cancel: &CancelToken,
+    admit: Admit<'_>,
+) -> Result<Checked, AnalysisFailure> {
+    let local = |error: String| AnalysisFailure::Local(error);
+    let mut checked = Checked::default();
+    let due = store
+        .promotion_unchecked(project_id, now_ms(), PROMOTION_CHECKS_PER_PASS)
+        .map_err(|error| local(error.to_string()))?;
+    if due.is_empty() {
+        return Ok(checked);
+    }
+    let repository = repository_sources(node, facts, root);
+    let global = global_sources(node, home);
+    let known = repository
+        .iter()
+        .chain(&global)
+        .map(|document| document.path.clone())
+        .collect::<Vec<_>>();
+    for suggestion in due {
+        if cancel.is_cancelled() {
+            return Err(AnalysisFailure::Cancelled);
+        }
+        let Some(item) = store
+            .item_by_number(project_id, suggestion.number)
+            .map_err(|error| local(error.to_string()))?
+        else {
+            continue;
+        };
+        let detail = store
+            .detail(project_id, &item.id)
+            .map_err(|error| local(error.to_string()))?;
+        let answers = facts.facts(&detail.evidence);
+        let words = query_words(&[&item.title, &item.body, &item.aliases.join(" ")]);
+        admit(store)?;
+        let request = promote_check_request(
+            digest(&[
+                "memory-promote-check",
+                project_id,
+                &item.id,
+                &item.revision.to_string(),
+            ]),
+            project_id,
+            &PromoteCheckCard {
+                number: item.number,
+                kind: item.kind,
+                title: &item.title,
+                body: &item.body,
+                evidence: &detail.evidence,
+                facts: &answers,
+            },
+            &excerpts(&repository, &words, DOCUMENT_EXCERPT_BYTES),
+            &excerpts(&global, &words, GLOBAL_EXCERPT_BYTES),
+        )
+        .map_err(|error| local(error.to_string()))?;
+        let verdict = router.execute(&request, cancel).and_then(|answer| {
+            parse_promote_check(&answer.value, &known)
+                .map_err(|error| AiError::InvalidOutput(error.to_string()))
+        });
+        let verdict = match verdict {
+            Ok(verdict) => verdict,
+            Err(AiError::InvalidOutput(_)) => {
+                checked.answered += 1;
+                spend_unusable(store, &item.id, project_id, item.number)?;
+                continue;
+            }
+            Err(error) => return Err(provider_failure(error)),
+        };
+        checked.answered += 1;
+        // The day's one answer about the card, so a card the check keeps
+        // correcting costs one call a day (B10).
+        if !store
+            .begin_verification(&item.id, now_ms())
+            .map_err(|error| local(error.to_string()))?
+        {
+            continue;
+        }
+        match verdict {
+            PromoteCheck::Propose => {
+                store
+                    .mark_promotion_checked(project_id, item.number, item.revision)
+                    .map_err(|error| local(error.to_string()))?;
+            }
+            PromoteCheck::Outdated(correction) => {
+                let pending = PendingCard {
+                    item_id: item.id.clone(),
+                    number: item.number,
+                    revision: item.revision,
+                    kind: item.kind,
+                    title: item.title.clone(),
+                    body: item.body.clone(),
+                    aliases: item.aliases.clone(),
+                    cited_paths: item.cited_paths.clone(),
+                    evidence: detail.evidence.clone(),
+                    outdated_reason: None,
+                };
+                if revise(store, facts, project_id, &pending, correction, root, node)
+                    .map_err(|error| local(error.to_string()))?
+                {
+                    checked.changed += 1;
+                }
+            }
+            PromoteCheck::InDocs { document } => {
+                if pointer_target(&document) && !document.starts_with("~/") {
+                    point_at(store, project_id, &item, &document)
+                        .map_err(|error| local(error.to_string()))?;
+                } else {
+                    store
+                        .forget_checked(project_id, &item.id, item.revision)
+                        .map_err(|error| local(error.to_string()))?;
+                }
+                checked.changed += 1;
+            }
+        }
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "promotion.checked",
+            "project_id": project_id,
+            "card": item.number,
+        }));
+    }
+    Ok(checked)
+}
+
+/// The card becomes a line pointing at the document that already says it:
+/// the merged state without a pull request, left out of every prompt.
+fn point_at(
+    store: &mut MemoryStore,
+    project_id: &str,
+    item: &hide_memory::MemoryItem,
+    document: &str,
+) -> Result<(), hide_memory::MemoryError> {
+    let attempt = store
+        .promotions(project_id)?
+        .into_iter()
+        .find(|(number, _)| *number == item.number)
+        .map_or(0, |(_, promotion)| promotion.attempt);
+    let now = now_ms();
+    store.set_promotion(
+        project_id,
+        item.number,
+        &Promotion {
+            state: PromotionState::Merged,
+            revision: item.revision,
+            attempt,
+            agent_id: None,
+            branch: None,
+            pr_number: None,
+            target_path: Some(document.to_owned()),
+            started_at_unix_ms: now,
+            updated_at_unix_ms: now,
+            failure: None,
+        },
+    )
+}

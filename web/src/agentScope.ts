@@ -40,7 +40,7 @@ export type AgentScope = {
   buckets: { turn: number; working: number; delegating: number; resting: number };
   turns: { question: number; approval: number; error: number; done: number };
   folded: Record<string, {
-    tiers: { key: string; candidates: string[]; branch: string | null; pull_request: number | null; device: string | null }[][];
+    tiers: { key: string; candidates: string[]; branch: string | null; pull_request: number | null; device_id: string | null }[][];
     overflow: number;
     badge_descendants: number;
     badge_counts: DescendantCounts;

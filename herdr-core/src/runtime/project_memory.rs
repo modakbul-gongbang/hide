@@ -252,16 +252,7 @@ impl Runtime {
             Err(_) => None,
         };
         let Some(node) = node else {
-            let device_name = self
-                .snapshot
-                .navigator
-                .devices
-                .iter()
-                .find(|device| device.id == workspace.device_id)
-                .map_or_else(
-                    || workspace.device_id.clone(),
-                    |device| device.label.clone(),
-                );
+            let device_name = self.device_name(&workspace.device_id);
             return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
         };
         Ok((node, workspace.path.clone()))
@@ -471,7 +462,7 @@ impl Runtime {
             Some(MemoryQuestionSnapshot::Promote {
                 number: suggestion.number,
                 title: row.title.clone(),
-                human_source_count: suggestion.human_source_count,
+                human_session_count: suggestion.human_session_count,
                 pulled_session_count: suggestion.pulled_session_count,
             })
         }));
@@ -938,6 +929,7 @@ fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
         updated_at_unix_ms: item.updated_at_unix_ms,
+        verifying: item.verifying,
         promotion: None,
     }
 }
@@ -1122,6 +1114,29 @@ mod tests {
                 ],
             )
             .unwrap();
+        // The operator said card 1 in a second session too, and the check
+        // before a suggestion passed: it is offered (D-10, D-11).
+        let first = store.item_by_number(&identity.id, 1).unwrap().unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "b-2".to_owned(),
+                    project_id: identity.id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "s-2".to_owned(),
+                    content_hash: "h-2".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    relation: CandidateRelation::Same {
+                        target_id: first.id,
+                    },
+                    ..card("Lint runs before tests", CandidateKind::Rule, vec![1])
+                }],
+            )
+            .unwrap();
+        store.mark_promotion_checked(&identity.id, 1, 1).unwrap();
         let promotion = |state, pr_number| Promotion {
             state,
             revision: 1,
@@ -1217,7 +1232,7 @@ mod tests {
                 MemoryQuestionSnapshot::Promote {
                     number: 1,
                     title: "Lint runs before tests".to_owned(),
-                    human_source_count: 2,
+                    human_session_count: 2,
                     pulled_session_count: 0,
                 },
             ],

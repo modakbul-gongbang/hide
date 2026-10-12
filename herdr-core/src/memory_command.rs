@@ -1,4 +1,4 @@
-//! `hide memory show|search|add|forget|undo|placed` (PRD project-memory-v2
+//! `hide memory show|search|add|forget|undo|placed|outdated` (PRD project-memory-v2
 //! B7, B8, B14-B16, B27, B30, D-03, D-11, D-25).
 //!
 //! hided names the caller from its pane capability; the core checks the
@@ -73,6 +73,13 @@ pub enum MemoryCommand {
         number: u64,
         path: String,
     },
+    /// The agent promoting card `number` found its text outdated: the
+    /// attempt ends without a pull request and the card is verified again
+    /// (D-12). The reason is what the agent saw, for that verification.
+    Outdated {
+        number: u64,
+        reason: String,
+    },
 }
 
 impl MemoryCommand {
@@ -86,6 +93,11 @@ impl MemoryCommand {
             }
             // Never Git's own folder: the path is shown to every agent once
             // the card's pull request merges.
+            Self::Outdated { number, reason } => {
+                *number > 0
+                    && !reason.trim().is_empty()
+                    && reason.chars().count() <= hide_memory::OUTDATED_REASON_LIMIT_CHARS
+            }
             Self::Placed { number, path } => {
                 *number > 0
                     && hide_memory::repository_path(path)
@@ -151,6 +163,7 @@ impl PreparedMemory {
             }));
             "memory_project_unavailable".to_owned()
         })?;
+        let root = identity.root.to_string_lossy().into_owned();
         let mut store = MemoryStore::open(&self.database).map_err(|error| {
             crate::diagnostic!(json!({
                 "component": "memory",
@@ -182,7 +195,13 @@ impl PreparedMemory {
                     return Err("memory_card_forgotten".into());
                 }
                 self.report(&identity.id, MemoryChange::Other);
-                Ok(card(&item))
+                let evidence = store
+                    .detail(&identity.id, &item.id)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .evidence;
+                let mut answer = card(&item);
+                answer["evidence"] = json!(evidence);
+                Ok(answer)
             }
             MemoryCommand::Forget { number } => {
                 let item = store
@@ -262,6 +281,48 @@ impl PreparedMemory {
                 self.report(&identity.id, MemoryChange::Other);
                 Ok(json!({"card": card_name(number), "path": path}))
             }
+            MemoryCommand::Outdated { number, reason } => {
+                let promotions = store
+                    .promotions(&identity.id)
+                    .map_err(|error| store_failure(&identity.id, &error))?;
+                if promotions.iter().any(|(card, promotion)| {
+                    *card == number
+                        && promotion.state == hide_memory::PromotionState::Running
+                        && promotion.agent_id.is_none()
+                }) {
+                    return Err("memory_promotion_agent_pending".into());
+                }
+                let (_, promotion) = promotions
+                    .into_iter()
+                    .find(|(card, _)| *card == number)
+                    .filter(|(_, promotion)| {
+                        matches!(
+                            promotion.state,
+                            hide_memory::PromotionState::Running
+                                | hide_memory::PromotionState::PrOpen
+                        ) && promotion
+                            .agent_id
+                            .as_ref()
+                            .is_some_and(|id| self.caller_agents.contains(id))
+                    })
+                    .ok_or("memory_card_not_promoting")?;
+                // Only while this attempt and agent still hold the card.
+                if !store
+                    .mark_outdated(&identity.id, number, &promotion, &reason, now)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                {
+                    return Err("memory_card_not_promoting".into());
+                }
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "promotion.outdated",
+                    "project_id": identity.id,
+                    "card": number,
+                    "reason_chars": reason.chars().count(),
+                }));
+                self.report(&identity.id, MemoryChange::Other);
+                Ok(json!({"card": card_name(number), "outcome": "outdated"}))
+            }
             MemoryCommand::Search { words } => {
                 let items = store
                     .search(&identity.id, &words, hide_memory::SEARCH_RESULT_LIMIT)
@@ -302,7 +363,7 @@ impl PreparedMemory {
                         0 => ADD_SESSION.to_owned(),
                         n => format!("{ADD_SESSION}-{n}"),
                     };
-                    let source = self.add_source(&identity.id, &session_id, deadline);
+                    let source = self.add_source(&identity.id, &root, &session_id, deadline);
                     let (_, batch_id) = batch_identity(&source, &serialized);
                     if !store
                         .has_batch(&batch_id)
@@ -326,7 +387,7 @@ impl PreparedMemory {
                     &mut store,
                     self.sessions_node.as_ref(),
                     &router,
-                    &self.add_source(&identity.id, &session_id, deadline),
+                    &self.add_source(&identity.id, &root, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
                     &mut |store| admit_call(store, WeeklyUsage::Unknown, false),
@@ -344,6 +405,7 @@ impl PreparedMemory {
     fn add_source<'a>(
         &'a self,
         project_id: &'a str,
+        root: &'a str,
         session_id: &'a str,
         deadline: Instant,
     ) -> BatchSource<'a> {
@@ -352,6 +414,8 @@ impl PreparedMemory {
             provider: ADD_PROVIDER,
             session_id,
             checkout_path: &self.checkout_path,
+            evidence_root: root,
+            new_card_limit: None,
             deadline: Some(deadline),
         }
     }
@@ -390,6 +454,7 @@ fn card(item: &MemoryItem) -> Value {
         "sources": item.source_count,
         "operator_sources": item.human_source_count,
         "cited_paths": item.cited_paths,
+        "verifying": item.verifying,
     })
 }
 
@@ -409,7 +474,11 @@ fn outcome(outcome: &CandidateOutcome) -> Value {
         CandidateOutcome::Kept { number } => {
             json!({"outcome": "outranked", "card": card_name(*number)})
         }
-        CandidateOutcome::Discarded => json!({"outcome": "not_kept"}),
+        // `hide memory add` sets no new-card limit, so the limit cannot be
+        // reached here; it is the analysis pass's alone (D-02).
+        CandidateOutcome::Discarded | CandidateOutcome::SessionLimit => {
+            json!({"outcome": "not_kept"})
+        }
         CandidateOutcome::SecretRejected => json!({"outcome": "secret"}),
         CandidateOutcome::CapacityRejected => json!({"outcome": "full"}),
     }
@@ -472,10 +541,13 @@ pub fn next_action(code: &str) -> &'static str {
         }
         "memory_text_too_long" => "Shorten the text to 4,000 characters and retry",
         "memory_card_not_promoting" => {
-            "Only the agent Hide started to put this card in the repository names its file"
+            "Only the agent Hide started to put this card in the repository names its file or calls it outdated"
         }
         "memory_promotion_agent_pending" => {
             "Hide has not confirmed this agent yet; run the same command again in a minute"
+        }
+        "memory_reason_invalid" => {
+            "Give a reason of at most 500 characters saying what in the card is outdated"
         }
         "memory_path_not_found" => {
             "Name a file that exists in this checkout, relative to its root, and retry"
@@ -722,6 +794,69 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_placing_a_card_calls_it_outdated_and_the_card_waits_to_be_verified() {
+        // D-12, B17: the attempt ends without a pull request.
+        let fixture = Fixture::new();
+        let outdated = || {
+            fixture.run(
+                MemoryCommand::Outdated {
+                    number: 1,
+                    reason: "the script it names is gone".to_owned(),
+                },
+                false,
+            )
+        };
+        assert_eq!(outdated(), Err("memory_card_not_promoting".into()));
+        let mut attempt = hide_memory::Promotion {
+            state: hide_memory::PromotionState::Running,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-1".into()),
+            branch: Some("hide-memory-m1".into()),
+            pr_number: None,
+            target_path: None,
+            started_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+            failure: None,
+        };
+        fixture
+            .store()
+            .set_promotion(&fixture.project_id, 1, &attempt)
+            .unwrap();
+        assert_eq!(
+            outdated(),
+            Err("memory_card_not_promoting".into()),
+            "another agent's attempt"
+        );
+        attempt.agent_id = Some("agent-9".into());
+        fixture
+            .store()
+            .set_promotion(&fixture.project_id, 1, &attempt)
+            .unwrap();
+        assert_eq!(
+            outdated().unwrap(),
+            json!({"card": "m1", "outcome": "outdated"})
+        );
+        assert_eq!(
+            fixture.store().promotions(&fixture.project_id).unwrap()[0]
+                .1
+                .state,
+            hide_memory::PromotionState::Outdated
+        );
+        let card = fixture
+            .run(MemoryCommand::Show { number: 1 }, false)
+            .unwrap();
+        assert_eq!(card["verifying"], true);
+        assert!(
+            !MemoryCommand::Outdated {
+                number: 1,
+                reason: " ".into()
+            }
+            .valid()
+        );
+    }
+
+    #[test]
     fn show_answers_the_card_with_its_files_and_counts_the_read_for_the_callers_session() {
         // B14, B27, D-18.
         let fixture = Fixture::new();
@@ -736,6 +871,11 @@ mod tests {
         assert_eq!(card["kind"], "rule");
         assert_eq!(card["sources"], 1);
         assert_eq!(card["cited_paths"], json!(["src/lib.rs"]));
+        assert_eq!(
+            card["evidence"],
+            json!([]),
+            "a card made with none rests on none"
+        );
         let item = fixture
             .store()
             .item_by_number(&fixture.project_id, 1)

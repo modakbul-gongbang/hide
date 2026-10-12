@@ -8,6 +8,7 @@
 
 import type { TFunction } from "i18next";
 import type { AgentRow, Checkout, Device, RemotePaneLayout, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
+import { registeredName } from "./screenMachine";
 
 export type RemoteContext = {
   device: Device;
@@ -227,7 +228,7 @@ export type DeviceCatalogLine = {
  * list, and an unconfirmed list is never shown as a confirmed one.
  */
 export function deviceCatalogLine(context: RemoteContext, t: TFunction<"translation">): DeviceCatalogLine | null {
-  const device = context.device.label;
+  const device = registeredName(context.device);
   const status = context.status;
   const session = context.session;
   const connected = status?.state === "connected";

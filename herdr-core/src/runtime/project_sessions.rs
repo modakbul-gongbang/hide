@@ -142,10 +142,7 @@ impl Runtime {
         let node = match self.linked_node(device_id) {
             Ok((node, _)) => node,
             Err("link_down") => {
-                return Err(format!(
-                    "{} is not connected.",
-                    self.device_label(device_id)
-                ));
+                return Err(format!("{} is not connected.", self.device_name(device_id)));
             }
             Err(_) => return Err(self.device_sessions_reason(device_id)),
         };
@@ -156,26 +153,9 @@ impl Runtime {
         Ok((node, workspace.path.clone()))
     }
 
-    fn device_label(&self, device_id: &str) -> String {
-        self.snapshot
-            .navigator
-            .devices
-            .iter()
-            .find(|device| device.id == device_id)
-            .map(|device| device.label.clone())
-            .unwrap_or_else(|| device_id.to_owned())
-    }
-
     fn device_sessions_reason(&self, device_id: &str) -> String {
-        let device = self.device_label(device_id);
-        let here = self
-            .snapshot
-            .navigator
-            .devices
-            .iter()
-            .find(|device| device.id == self.node.as_str())
-            .map(|device| device.label.clone())
-            .unwrap_or_else(|| workspace::local_device(&self.node, None).label);
+        let device = self.device_name(device_id);
+        let here = self.device_name(self.node.as_str());
         format!(
             "Sessions on {device} are not available here. Hide reads Codex and Claude Code sessions only on {here}."
         )
@@ -226,7 +206,7 @@ impl Runtime {
             (None, _) => Err("The session reader is unavailable.".to_owned()),
             (_, Err(_)) => Err(format!(
                 "{} is not connected.",
-                self.device_label(node.as_str())
+                self.device_name(node.as_str())
             )),
         };
         match started {
@@ -447,7 +427,7 @@ impl Runtime {
             }
             (_, _, Some((node, Err(_)))) => Err(format!(
                 "{} is not connected.",
-                self.device_label(node.as_str())
+                self.device_name(node.as_str())
             )),
         };
         match started {

@@ -4,7 +4,7 @@ import type { MemoryRow, ProjectMemory } from "./snapshot";
 
 const row = (number: number): MemoryRow => ({
   number, title: `card ${number}`, kind: "rule", human_source_count: 0, provided_session_count: 0,
-  pull_count: 0, updated_at_unix_ms: 0, promotion: null,
+  pull_count: 0, updated_at_unix_ms: 0, verifying: false, promotion: null,
 });
 const project = (overrides: Partial<ProjectMemory>): ProjectMemory => ({
   workspace_id: "p", unavailable: null, loading: false, enabled: true, capacity_reached: false,
