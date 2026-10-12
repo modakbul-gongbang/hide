@@ -17,7 +17,7 @@ use crate::{
     RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
@@ -345,6 +345,10 @@ pub struct Promotion {
     /// the attempt's.
     pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
+    /// Why a failed attempt's agent never started, as its spawn answered
+    /// (a refusal code, with its detail after a unit separator); `None` for
+    /// every other attempt.
+    pub failure: Option<String>,
 }
 
 /// A card whose use crossed the bar for a repository file, with the counts
@@ -1773,7 +1777,7 @@ impl MemoryStore {
     /// Every promotion of a Project's cards, by card number.
     pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms \
+            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure \
              FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 ORDER BY i.number",
         )?;
         let rows = statement
@@ -1791,6 +1795,7 @@ impl MemoryStore {
                         target_path: row.get(7)?,
                         started_at_unix_ms: row.get(8)?,
                         updated_at_unix_ms: row.get(9)?,
+                        failure: row.get(10)?,
                     },
                 ))
             })?
@@ -1867,6 +1872,27 @@ impl MemoryStore {
                 from.state.as_str(),
                 from.attempt
             ],
+        )?;
+        Ok(moved == 1)
+    }
+
+    /// Fails card `number`'s running attempt `from` because its agent never
+    /// started, keeping `failure` as the reason; answers false when the row
+    /// moved on since it was read.
+    pub fn fail_promotion_start(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        failure: &str,
+        now_unix_ms: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let moved = self.connection.execute(
+            "UPDATE card_promotions SET state='failed',failure=?1,updated_at_ms=?2 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?3 AND number=?4) \
+             AND state='running' AND attempt=?5 AND agent_id IS NULL",
+            params![failure, now_unix_ms, project_id, number, from.attempt],
         )?;
         Ok(moved == 1)
     }
@@ -1949,8 +1975,8 @@ impl MemoryStore {
             .optional()?
             .ok_or(MemoryError::MemoryMissing)?;
         self.connection.execute(
-            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
-             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms",
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure",
             params![
                 item_id,
                 promotion.state.as_str(),
@@ -1961,7 +1987,8 @@ impl MemoryStore {
                 promotion.pr_number,
                 promotion.target_path,
                 promotion.started_at_unix_ms,
-                promotion.updated_at_unix_ms
+                promotion.updated_at_unix_ms,
+                promotion.failure
             ],
         )?;
         Ok(())
@@ -2798,6 +2825,10 @@ COMMIT;"#,
     if version == 8 {
         back_up(connection, path, version)?;
         migrate_version_eight(connection)?;
+        version = 9;
+    }
+    if version == 9 {
+        migrate_version_nine(connection)?;
         version = SCHEMA_VERSION;
     }
     if version != SCHEMA_VERSION {
@@ -2933,6 +2964,31 @@ INSERT OR IGNORE INTO project_receipt_keys(project_id,auth_key) SELECT id,random
 PRAGMA user_version=6;
 COMMIT;"#,
     )?;
+    Ok(())
+}
+
+/// Version 10: a failed promotion keeps why its agent never started, which
+/// the card shows where it says the attempt ended.
+fn migrate_version_nine(connection: &Connection) -> Result<(), MemoryError> {
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<(), MemoryError> {
+        // Another opener may have migrated since the version was read.
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version != 9 {
+            return Ok(());
+        }
+        connection.execute_batch(
+            "ALTER TABLE card_promotions ADD COLUMN failure TEXT; PRAGMA user_version=10;",
+        )?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => connection.execute_batch("COMMIT")?,
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+    }
     Ok(())
 }
 
@@ -3330,7 +3386,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT);
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
 "#;
 
@@ -4549,6 +4605,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             target_path: None,
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
+            failure: None,
         };
         store.set_promotion(&project, 1, &dismissed(1)).unwrap();
         assert_eq!(suggested(&store), Vec::<u64>::new());
@@ -4944,6 +5001,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
         }
     }
 
@@ -5092,7 +5150,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                  ALTER TABLE receipt_cursors DROP COLUMN operator_events;
                  DROP TABLE memory_evidence;
                  CREATE TABLE cp8(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
-                 INSERT INTO cp8 SELECT * FROM card_promotions;
+                 INSERT INTO cp8 SELECT item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms FROM card_promotions;
                  DROP TABLE card_promotions;
                  ALTER TABLE cp8 RENAME TO card_promotions;
                  UPDATE projects SET disclosure_version=2;
@@ -5173,6 +5231,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             target_path: target_path.map(str::to_owned),
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
         };
         store.set_promotion(&project, 1, &merged(None)).unwrap();
         assert_eq!(given(&store), 0);
@@ -5284,6 +5343,38 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .set_promotion_agent(&project, 1, &unseen, "agent-9")
                 .unwrap(),
             "an agent already recorded stays"
+        );
+
+        // A start that failed keeps its reason, only on its own running
+        // attempt with no agent recorded.
+        assert!(
+            !store
+                .fail_promotion_start(&project, 1, &unseen, "agent_not_started", 7)
+                .unwrap(),
+            "the attempt has its agent"
+        );
+        store.set_promotion(&project, 1, &unseen).unwrap();
+        assert!(
+            !store
+                .fail_promotion_start(&project, 1, &retried, "agent_not_started", 7)
+                .unwrap(),
+            "another attempt"
+        );
+        assert!(
+            store
+                .fail_promotion_start(&project, 1, &unseen, "shell_starting", 7)
+                .unwrap()
+        );
+        let (_, failed) = store.promotions(&project).unwrap().remove(0);
+        assert_eq!(
+            (failed.state, failed.failure.as_deref()),
+            (PromotionState::Failed, Some("shell_starting"))
+        );
+        store.set_promotion(&project, 1, &unseen).unwrap();
+        assert_eq!(
+            store.promotions(&project).unwrap()[0].1.failure,
+            None,
+            "a new attempt starts with no reason"
         );
     }
 
@@ -6761,6 +6852,31 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     }
 
     #[test]
+    fn version_nine_migration_adds_the_start_failure_once() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE card_promotions DROP COLUMN failure; PRAGMA user_version=9;",
+            )
+            .unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        let version = |connection: &Connection| {
+            connection
+                .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(version(&connection), SCHEMA_VERSION);
+        connection
+            .execute("SELECT failure FROM card_promotions", [])
+            .unwrap();
+        // An opener that read version 9 before another migrated finds it done.
+        migrate_version_nine(&connection).unwrap();
+        assert_eq!(version(&connection), SCHEMA_VERSION);
+    }
+
+    #[test]
     fn version_five_migration_creates_project_receipt_keys() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA_V7).unwrap();
@@ -7032,6 +7148,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 target_path: None,
                 started_at_unix_ms: 1,
                 updated_at_unix_ms: 1,
+                failure: None,
             };
             store.set_promotion(&project, number, &promotion).unwrap();
         }

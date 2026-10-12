@@ -22,7 +22,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { cardName, memoryCards, memoryTime, sourceTime, visibleCards } from "./memoryList";
-import { catalogWorkspaces, frontCheckout, type MemoryCard, type MemoryCardKind, type MemoryQuestion, type MemoryRow, type ProjectMemory } from "./snapshot";
+import { catalogWorkspaces, frontCheckout, type MemoryCard, type MemoryCardKind, type MemoryQuestion, type MemoryStartFailure, type MemoryRow, type ProjectMemory } from "./snapshot";
 import { useShellStore } from "./store";
 
 const KIND: Record<MemoryCardKind, MessageKey> = { rule: "memory.kind.rule", decision: "memory.kind.decision", lesson: "memory.kind.lesson", fact: "memory.kind.fact" };
@@ -212,6 +212,20 @@ function Questions({ project, actions, busy }: { project: ProjectMemory; actions
   );
 }
 
+/** A failed question's status: why its agent never started, or that it ended with no pull request. */
+function failureKey(failure: MemoryStartFailure | null): MessageKey {
+  switch (failure?.code) {
+    case undefined:
+      return "memory.failed";
+    case "shell_starting":
+      return "memory.startFailure.shellStarting";
+    case "agent_not_started":
+      return "memory.startFailure.agentNotStarted";
+    case "other":
+      return "memory.startFailure.other";
+  }
+}
+
 function Question({ question, project, actions, busy, last }: { question: MemoryQuestion; project: ProjectMemory; actions: Actions; busy: boolean; last: boolean }) {
   const { t } = useInterfaceTranslation();
   const id = project.workspace_id;
@@ -236,9 +250,13 @@ function Question({ question, project, actions, busy, last }: { question: Memory
           </>
         ) : (
           <span className="flex items-center gap-sm">
-            <span className="flex min-w-0 flex-1 items-center gap-xs text-caption text-subtle-foreground">
-              <AlertCircleIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-warning" />
-              {t("memory.failed")}
+            <span className="flex min-w-0 flex-1 items-start gap-xs text-caption text-subtle-foreground">
+              <AlertCircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 text-warning" />
+              <span className="min-w-0 break-words" data-memory-failure={question.start_failure?.code ?? "no_pull_request"}>
+                {question.start_failure?.code === "shell_starting" && question.start_failure.detail
+                  ? t("memory.startFailure.shellQuestion", { line: question.start_failure.detail })
+                  : t(failureKey(question.start_failure))}
+              </span>
             </span>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, "promote", question.number)} data-memory-retry={question.number}>
               {t("memory.retry")}

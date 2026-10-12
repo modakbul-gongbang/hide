@@ -67,6 +67,13 @@ impl Local {
         self
     }
 
+    /// The node answers for an account whose panes start `shell`, rather
+    /// than the one this process's environment names.
+    pub fn with_shell(mut self, shell: hide_host::shell_integration::UserShell) -> Self {
+        self.env.shell = shell;
+        self
+    }
+
     /// This process's own account, as a device's helper answers. Its stop
     /// is its own: closing it ends the work it started, never the work of
     /// another node value in the same process, which a helper's process-wide
