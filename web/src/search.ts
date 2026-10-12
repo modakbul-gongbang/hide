@@ -7,7 +7,7 @@ import type { AgentScope } from "./agentScope";
 
 import { addressUrl } from "./browserViews";
 import { checkoutPlaces } from "./navigation";
-import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
+import { deviceConnected, frontDeviceId, localDeviceId, thisMachineKey } from "./devices";
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
@@ -165,7 +165,7 @@ export type SearchDevice = { agentScope: AgentScope | undefined; device: Device;
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
   // A snapshot that names no device is the core's own node alone, by the id it has before the snapshot names it.
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: localDeviceId(rest), label: translate("common.thisMac"), kind: "local" } as Device];
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: localDeviceId(rest), label: translate(thisMachineKey(null)), kind: "local" } as Device];
   for (const device of devices) {
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];

@@ -169,8 +169,9 @@ it("turns an agent on or off on the machine the list is for, and not while the m
 
 it("lists one machine at a time under a switch that appears only with a device, and shows an unreachable device as one line with Try again (B11)", async () => {
   const studio = device("studio", { kit: kit([agent("claude-code", { sessions: 0 }), agent("codex", { availability: "not_installed", enabled: false })]) });
-  const { q, all, click, unmount } = await mount(state([device("local"), studio]));
-  expect(all("[data-agents-machine]").map((item) => item.textContent)).toEqual(["This Mac", "Studio"]);
+  // The core's own machine is named as its system names it.
+  const { q, all, click, unmount } = await mount(state([device("local", { host: { platform: "windows x86_64" } as Device["host"] }), studio]));
+  expect(all("[data-agents-machine]").map((item) => item.textContent)).toEqual(["This PC", "Studio"]);
   expect(all("[data-agent-row]")).toHaveLength(7);
   await click(q('[data-agents-machine="studio"]'));
   expect(all("[data-agent-row]").map((row) => row.getAttribute("data-agent-row"))).toEqual(["studio:claude-code:on", "codex:not-installed"]);

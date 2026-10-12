@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, parseCloneUrl, projectNameProblem, projectPath, refusalText, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
@@ -11,8 +11,13 @@ const registration = (path: string, device_id = "local") => ({ id: path, label: 
 
 describe("Add a project", () => {
   it("lists this Mac first, then every registered device", () => {
+    // Before a snapshot names this machine, it is named for the system the shell runs on.
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
     expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This Mac" }]);
     expect(addProjectHosts(undefined, ko)).toEqual([{ id: "", label: "이 Mac" }]);
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This PC" }]);
+    vi.unstubAllGlobals();
     expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
       { id: "local", label: "Studio" },
       { id: "mini", label: "Mini" },
