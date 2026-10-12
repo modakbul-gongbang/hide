@@ -48,6 +48,109 @@ fn step(events: Vec<Event>) -> Step {
 }
 
 #[test]
+fn price_bands_reprice_expired_calls_and_daily_fetch_attempt_survives_restart() {
+    use crate::usage_ledger::prices::{Cache, Table, cost};
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let mut store = Store::open(&path).unwrap();
+    let now = instant("2026-10-01");
+    let zone = jiff::tz::TimeZone::UTC;
+    let mut low = call(1, "2026-08-01");
+    low.recorded_cost_micro_usd = None;
+    low.tokens = Tokens {
+        input: 100_000,
+        ..Tokens::default()
+    };
+    let mut high = low.clone();
+    high.key = format!("{:064x}", 2);
+    high.tokens.input += 1;
+    store
+        .ingest(
+            "node-a",
+            Agent::Claude,
+            &source(),
+            &step(vec![low, high]),
+            now,
+            &zone,
+        )
+        .unwrap();
+    store
+        .complete_backfill("node-a", Agent::Claude, now, &zone)
+        .unwrap();
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT count(*) FROM events", [], |row| row
+                .get::<_, u64>(0))
+            .unwrap(),
+        0
+    );
+    let source_prices = br#"{"model-a":{"litellm_provider":"anthropic","input_cost_per_token":0.000003,"output_cost_per_token":0,"input_cost_per_token_above_100k_tokens":0.000006,"output_cost_per_token_above_100k_tokens":0}}"#;
+    let table = Table::parse(source_prices, now).unwrap();
+    assert_eq!(
+        cost(&store.daily().unwrap()[0], Some(&table), now)
+            .unwrap()
+            .micro_usd,
+        900_006
+    );
+    store
+        .save_prices(&Cache {
+            attempted_at: Some(now),
+            table: Some(table),
+        })
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    let cached = store.prices().unwrap();
+    assert!(!cached.due(now + DAY_MS - 1));
+    assert!(cached.due(now + DAY_MS));
+    let repriced = String::from_utf8(source_prices.to_vec())
+        .unwrap()
+        .replace("0.000003", "0.000006")
+        .replace(
+            "0.000006,\"output_cost_per_token_above",
+            "0.000012,\"output_cost_per_token_above",
+        );
+    let table = Table::parse(repriced.as_bytes(), now).unwrap();
+    assert_eq!(
+        cost(&store.daily().unwrap()[0], Some(&table), now)
+            .unwrap()
+            .micro_usd,
+        1_800_012
+    );
+}
+
+#[test]
+fn price_cache_upgrade_preserves_existing_ledger_and_does_not_fetch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let mut store = Store::open(&path).unwrap();
+    let now = instant("2026-10-01");
+    store
+        .ingest(
+            "node-a",
+            Agent::Claude,
+            &source(),
+            &step(vec![call(1, "2026-10-01")]),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
+        .unwrap();
+    let before = store.daily().unwrap();
+    store
+        .connection
+        .execute_batch("DROP TABLE price_cache; PRAGMA user_version=1;")
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.daily().unwrap(), before);
+    assert_eq!(
+        store.prices().unwrap(),
+        crate::usage_ledger::prices::Cache::default()
+    );
+}
+
+#[test]
 fn replay_copies_restart_and_changed_completed_values_never_add_twice() {
     let dir = tempfile::tempdir().unwrap();
     let path = hide_kit::layout::usage_store(dir.path());

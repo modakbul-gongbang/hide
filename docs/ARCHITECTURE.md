@@ -779,6 +779,10 @@ Maintenance removes at most 512 expired events and 512 expired daily rows per tu
 The store uses SQLite WAL and full synchronous commits, refuses a damaged or newer store without rebuilding it, and travels with `MOVES_WITH_CORE` through the existing consistent SQLite copy.
 Native physical node identities and their qualified source paths stay unchanged when the core's owner changes.
 
+The same store retains the public price cache and the last network-attempt time; that state moves with the ledger so a core move cannot bypass the daily fetch bound.
+Daily totals hold four fixed token-only context bands, not another table of call identities, preserving tier-aware repricing across event expiry within the existing row and database caps.
+The separately owned price-fetch thread returns a bounded table to the ledger's sole writer, which persists it before publishing it.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.

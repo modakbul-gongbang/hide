@@ -13,6 +13,7 @@ use hide_session::{
     usage::{Candidate, Candidates, Checkpoint, Step},
 };
 
+use super::prices::{Cache, Fetch, Table};
 use super::store::{Daily, Store};
 
 const REST: Duration = Duration::from_millis(20);
@@ -35,6 +36,8 @@ pub struct Report {
     pub daily: Arc<Vec<Daily>>,
     pub progress: Vec<Progress>,
     pub failure: Option<&'static str>,
+    pub prices: Option<Arc<Table>>,
+    pub price_failure: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -101,6 +104,7 @@ impl Worker {
                             let mut published = None;
                             loop {
                                 if activity.visible {
+                                    engine.prices_step();
                                     engine.step(own.as_ref(), activity);
                                 }
                                 let interval =
@@ -128,6 +132,8 @@ impl Worker {
                                 daily: Arc::new(Vec::new()),
                                 progress: Vec::new(),
                                 failure: Some(code),
+                                prices: None,
+                                price_failure: None,
                             };
                             if previous.as_ref() != Some(&report) {
                                 diagnostic(code, None, 0);
@@ -185,6 +191,10 @@ struct Engine {
     pruned: Instant,
     pruning: bool,
     prune_retry: Option<Instant>,
+    prices: Cache,
+    price_fetch: Option<Fetch>,
+    price_failure: Option<&'static str>,
+    price_retry: Option<Instant>,
 }
 
 impl Engine {
@@ -211,6 +221,13 @@ impl Engine {
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
         let daily = Arc::new(store.daily()?);
+        let (prices, price_failure) = match store.prices() {
+            Ok(prices) => (prices, None),
+            Err(code) => {
+                diagnostic(code, None, 0);
+                (Cache::default(), Some(code))
+            }
+        };
         Ok(Self {
             store,
             device,
@@ -222,7 +239,58 @@ impl Engine {
             pruned: Instant::now(),
             pruning: true,
             prune_retry: None,
+            prices,
+            price_fetch: None,
+            price_failure,
+            price_retry: None,
         })
+    }
+
+    fn prices_step(&mut self) {
+        if let Some(outcome) = self.price_fetch.as_mut().and_then(Fetch::take) {
+            self.price_fetch = None;
+            let outcome = outcome.and_then(|table| {
+                let mut cache = self.prices.clone();
+                cache.table = Some(table);
+                self.store.save_prices(&cache)?;
+                self.prices = cache;
+                Ok(())
+            });
+            self.price_failure = outcome.err();
+            if let Some(code) = self.price_failure {
+                diagnostic(code, None, 0);
+            }
+        }
+        let now = crate::links::now_ms();
+        if self.price_fetch.is_some()
+            || !self.prices.due(now)
+            || self.price_retry.is_some_and(|at| at.elapsed() < RETRY)
+        {
+            return;
+        }
+        // Persist the attempt before any network activity, including failed
+        // attempts, so restarts cannot retry more than once per day.
+        let mut attempted = self.prices.clone();
+        attempted.attempted_at = Some(now);
+        match self.store.save_prices(&attempted) {
+            Ok(()) => {
+                self.prices = attempted;
+                match Fetch::start() {
+                    Ok(fetch) => self.price_fetch = Some(fetch),
+                    Err(code) => {
+                        self.price_failure = Some(code);
+                        diagnostic(code, None, 0);
+                    }
+                }
+            }
+            Err(code) => {
+                self.price_retry = Some(Instant::now());
+                if self.price_failure != Some(code) {
+                    diagnostic(code, None, 0);
+                }
+                self.price_failure = Some(code);
+            }
+        }
     }
 
     /// One node read and one atomic store step per turn, followed by a rest.
@@ -432,6 +500,8 @@ impl Engine {
                 .map(|work| work.progress.clone())
                 .collect(),
             failure: self.failure,
+            prices: self.prices.table.clone().map(Arc::new),
+            price_failure: self.price_failure,
         }
     }
 }

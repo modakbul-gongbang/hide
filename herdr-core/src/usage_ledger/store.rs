@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use super::{DAILY_DAYS, DAILY_LIMIT, DAY_MS, EVENT_DAYS, EVENT_LIMIT, local_day};
 
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const DEVICE_LIMIT: usize = 32;
 const BATCH_LIMIT: usize = 8192;
 const CHECKPOINT_BYTES: usize = 16 * 1024;
@@ -34,7 +34,8 @@ CREATE INDEX daily_day ON daily(day);
 CREATE TABLE cursors(device TEXT NOT NULL, agent TEXT NOT NULL, path TEXT NOT NULL,
     stamp TEXT NOT NULL, checkpoint TEXT NOT NULL, PRIMARY KEY(device,agent,path));
 CREATE TABLE devices(device TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0);
-PRAGMA user_version=1;
+CREATE TABLE price_cache(slot INTEGER PRIMARY KEY CHECK(slot=1), value TEXT NOT NULL);
+PRAGMA user_version=2;
 ";
 
 /// No error returned by this boundary includes source content or paths.
@@ -57,6 +58,10 @@ pub struct Totals {
     pub incomplete_calls: u64,
     /// Native provider ids only. Bounded by the model/provider vocabulary.
     pub providers: Vec<String>,
+    /// Fixed token-only bands preserve whole-call tier pricing after event
+    /// expiry. There are no call identities or source paths in these bands.
+    #[serde(default)]
+    pub price_bands: [Tokens; 4],
 }
 
 impl Totals {
@@ -72,6 +77,21 @@ impl Totals {
         plus(&mut self.tokens.cache_write_1h, event.tokens.cache_write_1h)?;
         if let Some(n) = event.tokens.reasoning {
             plus(self.tokens.reasoning.get_or_insert(0), n)?;
+        }
+        let prompt = event
+            .tokens
+            .input
+            .checked_add(event.tokens.cache_read)
+            .and_then(|n| n.checked_add(event.tokens.cache_write))
+            .ok_or("usage_total_overflow")?;
+        let band = &mut self.price_bands[super::prices::prompt_band(prompt)];
+        plus(&mut band.input, event.tokens.input)?;
+        plus(&mut band.output, event.tokens.output)?;
+        plus(&mut band.cache_read, event.tokens.cache_read)?;
+        plus(&mut band.cache_write, event.tokens.cache_write)?;
+        plus(&mut band.cache_write_1h, event.tokens.cache_write_1h)?;
+        if let Some(n) = event.tokens.reasoning {
+            plus(band.reasoning.get_or_insert(0), n)?;
         }
         plus(&mut self.calls, 1)?;
         if let Some(cost) = event.recorded_cost_micro_usd.filter(|_| !event.incomplete) {
@@ -137,7 +157,7 @@ impl Store {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(failed)?;
-        if version != 0 && version != VERSION {
+        if !(0..=VERSION).contains(&version) {
             return Err("usage_store_newer");
         }
         store
@@ -163,6 +183,8 @@ impl Store {
                 .connection
                 .execute_batch(&format!("BEGIN;{SCHEMA}COMMIT;"))
                 .map_err(failed)?;
+        } else if version == 1 {
+            store.connection.execute_batch("BEGIN; CREATE TABLE price_cache(slot INTEGER PRIMARY KEY CHECK(slot=1), value TEXT NOT NULL); PRAGMA user_version=2; COMMIT;").map_err(failed)?;
         }
         Ok(store)
     }
@@ -173,6 +195,35 @@ impl Store {
             1000,
             Some(move || start.elapsed() >= Duration::from_millis(250)),
         );
+    }
+
+    pub fn prices(&self) -> Result<super::prices::Cache, &'static str> {
+        self.budget();
+        let value: Option<String> = self
+            .connection
+            .query_row("SELECT value FROM price_cache WHERE slot=1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(failed)?;
+        let cache: super::prices::Cache = match value {
+            Some(value) if value.len() <= super::prices::CACHE_LIMIT => decode(&value)?,
+            Some(_) => return Err("usage_prices_capacity"),
+            None => return Ok(Default::default()),
+        };
+        cache.validate()?;
+        Ok(cache)
+    }
+
+    pub fn save_prices(&mut self, cache: &super::prices::Cache) -> Result<(), &'static str> {
+        cache.validate()?;
+        let value = encode(cache)?;
+        if value.len() > super::prices::CACHE_LIMIT {
+            return Err("usage_prices_capacity");
+        }
+        self.budget();
+        self.connection.execute("INSERT INTO price_cache VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET value=excluded.value", [value]).map_err(failed)?;
+        Ok(())
     }
 
     pub fn checkpoint(

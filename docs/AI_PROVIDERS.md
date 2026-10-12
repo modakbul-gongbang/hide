@@ -350,6 +350,23 @@ OpenCode reads completed assistant messages' `step-finish` parts, whose input al
 Each part supplies its own cost; the accumulated message cost is used only for a single-step message without a part cost, and message tokens never feed totals.
 Its bounded keyset cursor revisits the last timestamp for late rows and restarts on file replacement or a changed schema version, including `VACUUM`.
 
+### Historical cost estimates
+
+Native recorded costs remain authoritative for Grok, OpenCode, Pi and omp.
+Claude and Codex use exact model-id matches from the public [LiteLLM price JSON](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), restricted to first-party Anthropic and OpenAI rows.
+That root-level dataset is outside LiteLLM's enterprise subtree and covered by its [MIT license](https://github.com/BerriAI/litellm/blob/main/LICENSE); the copyright and permission notice travel with the cached table.
+LiteLLM was selected because its native one-hour cache-write fields avoid guessing that price from a five-minute rate.
+
+The estimate uses standard API rates, including disjoint cache reads, five-minute and one-hour writes, and whole-request context tiers; it is not subscription billing or a reconstruction of an unrecorded fast, batch or regional mode.
+Daily rollups retain token-only bands at the supported 100,000, 200,000 and 272,000 prompt-token thresholds, counting input plus both cache categories before choosing a band.
+This lets a later table reprice old days after individual events expire.
+An unknown model, new unsupported context threshold, missing nonzero token-category rate or incomplete native usage produces a partial lower bound, never an invented zero price.
+
+The worker fetches one constant URL, with no credentials, usage payload, model query or redirects, and a five-second global timeout and 16 MiB response cap.
+It records the attempt in the ledger before starting the request, including failed attempts, so restart cannot exceed one attempt per day.
+The retained table is capped at 2 MiB and 2,048 models and is stale after 60 days; a failed refresh keeps the last table, and an offline first run leaves tokens available while cost waits for a table.
+The price worker is joined on shutdown, and diagnostics contain fixed codes and counts rather than source paths or response bodies.
+
 ## Selection and fallback
 
 A request is asked of the chosen provider and then of each provider in the `fallback` list, in that order, once each, and of nothing else (`RouterConfig::priority` is exactly that list).
