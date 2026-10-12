@@ -414,9 +414,10 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
               <span aria-hidden="true" className="text-muted-foreground">/</span>
             </>
           ) : null}
-          {/* Home is no project (B16): its path is the folder every device keeps it in (D-03). */}
+          {/* Home is no project (B16): its path is the folder every device keeps it in (D-03).
+              Not a drag handle: its hint and the path menu need the pointer (B18, B19). */}
           <Hint label={`${home ? HOME_FOLDER : name} · ${checkout.path}`}>
-            <span className="min-w-0 truncate px-xs text-foreground" aria-current="page" data-workspace-location={home ? "home" : "checkout"}>
+            <span className="min-w-0 truncate px-xs text-foreground" aria-current="page" data-workspace-location={home ? "home" : "checkout"} data-window-control="true">
               {home ? HOME_FOLDER : name}
             </span>
           </Hint>

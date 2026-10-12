@@ -206,7 +206,7 @@ html[data-view-drag="row-resize"] * {
 .window-drag {
   -webkit-app-region: drag;
 }
-.window-drag :is(button, a, input, [role="button"], [role="menuitem"]) {
+.window-drag :is(button, a, input, [role="button"], [role="menuitem"], [data-window-control]) {
   -webkit-app-region: no-drag;
 }
 
