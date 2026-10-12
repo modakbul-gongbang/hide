@@ -6,6 +6,7 @@
 import type { TFunction } from "i18next";
 import type { Notice, StartCatalog, StartKind, StartKindEntry, StartTarget } from "./protocol";
 import { PROVIDER_KINDS, providerLabel } from "../agentPicker";
+import { systemMachineKey } from "../screenMachine";
 
 /** The longest instruction hided starts an agent with (hided/src/mobile/start.rs MAX_PROMPT_CHARS). */
 export const MAX_START_CHARS = 4000;
@@ -36,9 +37,13 @@ export function startProblem(text: string): "empty" | "too_long" | "control_char
   return null;
 }
 
-/** The sheet's target label: the device, then the place on it. The Mac's own names are data; Home and this Mac are named here. */
-export function targetText(t: TFunction<"translation">, target: StartTarget): string {
-  return `${target.device_label ?? t("common.thisMac")} · ${target.place ?? t("mobile.start.home")}`;
+/**
+ * The sheet's target label: the device, then the place on it. A registered
+ * device's name and a place are data; Home and the core's own machine are
+ * named here, the machine as its system calls it (`core_platform`).
+ */
+export function targetText(t: TFunction<"translation">, target: StartTarget, corePlatform: string | null): string {
+  return `${target.device_label ?? t(systemMachineKey(corePlatform ?? ""))} · ${target.place ?? t("mobile.start.home")}`;
 }
 
 /** What the sheet shows selected: This Mac's Home until the operator picks, the remembered kind and model until then. */

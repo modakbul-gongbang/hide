@@ -523,7 +523,7 @@ struct PlaceInput {
 #[derive(Clone, Debug, PartialEq)]
 struct DeviceInput {
     id: String,
-    label: String,
+    label: Option<String>,
     connected: bool,
     agents: Vec<SidebarAgentSnapshot>,
 }
@@ -553,7 +553,9 @@ struct Output {
 
 struct DeviceRows<'a> {
     id: &'a str,
-    label: &'a str,
+    /// The registered name; `None` for the core's own machine, which the
+    /// shell names in its language.
+    label: Option<&'a str>,
     connected: bool,
     projects: Vec<&'a WorkspaceSnapshot>,
     agents: Vec<&'a SidebarAgentSnapshot>,
@@ -567,7 +569,7 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
         .find(|d| d.kind != "remote");
     let mut devices = vec![DeviceRows {
         id: local.map_or("", |d| d.id.as_str()),
-        label: local.map_or("", |d| d.label.as_str()),
+        label: local.and_then(|d| d.label.as_deref()),
         connected: true,
         projects: snapshot.navigator.workspaces.iter().collect(),
         agents: snapshot.navigator.agents.iter().collect(),
@@ -580,7 +582,11 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
             .find(|d| d.id == remote.target_id);
         devices.push(DeviceRows {
             id: &remote.target_id,
-            label: device.map_or(remote.target_id.as_str(), |d| d.label.as_str()),
+            label: Some(
+                device
+                    .and_then(|d| d.label.as_deref())
+                    .unwrap_or(remote.target_id.as_str()),
+            ),
             connected: remote.state == "connected",
             projects: remote
                 .session
@@ -610,7 +616,7 @@ impl Cache {
                 .iter()
                 .map(|d| DeviceInput {
                     id: d.id.to_owned(),
-                    label: d.label.to_owned(),
+                    label: d.label.map(str::to_owned),
                     connected: d.connected,
                     agents: d.agents.iter().map(|r| (*r).clone()).collect(),
                 })
@@ -707,14 +713,10 @@ impl Cache {
             .collect();
         let places: HashMap<_, _> = devices
             .iter()
-            .flat_map(|d| {
-                d.agents
-                    .iter()
-                    .map(move |a| (a.pane_id.as_str(), (d.id, d.label)))
-            })
+            .flat_map(|d| d.agents.iter().map(move |a| (a.pane_id.as_str(), d.id)))
             .collect();
         let mut graph_members = Vec::new();
-        for (device_index, device) in devices.iter().enumerate() {
+        for device in &devices {
             let by_pane: HashMap<_, _> = device
                 .agents
                 .iter()
@@ -727,7 +729,7 @@ impl Cache {
                         project,
                         agent: by_pane[member.pane_id.as_str()],
                         checkout_id: member.checkout_id,
-                        device_label: (device_index != 0).then_some(device.label),
+                        device_label: device.label,
                     });
                 }
             }
@@ -893,11 +895,7 @@ impl Cache {
                 .map(|(index, a)| Listed {
                     pane_id: a.pane_id.clone(),
                     device_id: device.id.into(),
-                    device_label: if device.id.is_empty() && device.label.is_empty() {
-                        None
-                    } else {
-                        Some(device.label.into())
-                    },
+                    device_label: device.label.map(str::to_owned),
                     remote: device_index > 0,
                     index,
                 })

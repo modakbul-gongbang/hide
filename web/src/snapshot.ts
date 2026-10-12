@@ -834,7 +834,7 @@ export type RecentClosed = {
  * One entry of ⌘K's Recent list: the ids that open the checkout and the names
  * its row is drawn from while its device has no catalog to read them from.
  */
-export type RecentCheckout = { device_id: string; checkout_id: string; project_name: string; branch: string; device_name: string };
+export type RecentCheckout = { device_id: string; checkout_id: string; project_name: string; branch: string };
 
 /** The explorer's most recent filesystem change and how far it got. */
 export type ExplorerOperation = {
@@ -1043,7 +1043,11 @@ export type DeviceHost = {
 export type Device = {
   agent_scope: AgentScope;
   id: string;
-  label: string;
+  /**
+   * The name the operator registered the device under; null on the core's
+   * own row, which the shell names as its system does (`machineName`).
+   */
+  label: string | null;
   /** `local` for the daemon's own machine, `remote` for an SSH device. */
   kind: string;
   /** `local`, or for an SSH device `ready`, `unavailable` or `disabled`. */

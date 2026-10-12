@@ -12,6 +12,7 @@ const FRAME = `{
     {"id": "c1", "device_id": "local", "place": "hide · main", "device_label": null, "connected": true},
     {"id": "home:mini", "device_id": "mini", "place": null, "device_label": "mini", "connected": false}
   ],
+  "core_platform": "macos aarch64",
   "kinds": [
     {"id": "claude", "models": ["opus", "sonnet"]},
     {"id": "codex", "models": []}
@@ -27,12 +28,21 @@ describe("selectionOf", () => {
   it("defaults to This Mac's Home with the remembered kind and its model", () => {
     const selection = selectionOf(catalog, NO_CHOICE);
     expect(selection.target?.id).toBe("home:local");
-    expect(targetText(english, selection.target!)).toBe("This Mac · Home");
-    expect(targetText(korean, selection.target!)).toBe("이 Mac · 홈");
+    expect(targetText(english, selection.target!, catalog.core_platform)).toBe("This Mac · Home");
+    expect(targetText(korean, selection.target!, catalog.core_platform)).toBe("이 Mac · 홈");
     expect(selection.kind).toBe("codex");
     // Codex lists no model: the select is disabled on the default.
     expect(modelsOf(selection)).toEqual([]);
     expect(selection.model).toBe("");
+  });
+
+  it("names the core's machine as its system does, in the phone's language", () => {
+    const home = catalog.targets[0]!;
+    expect(targetText(english, home, "windows x86_64")).toBe("This PC · Home");
+    expect(targetText(korean, home, "windows x86_64")).toBe("내 PC · 홈");
+    expect(targetText(korean, home, "linux x86_64")).toBe("이 컴퓨터 · 홈");
+    // A registered device keeps the name it was registered under.
+    expect(targetText(korean, catalog.targets[2]!, "windows x86_64")).toBe("mini · 홈");
   });
 
   it("follows the operator's changes over the remembered choice", () => {
@@ -48,7 +58,7 @@ describe("selectionOf", () => {
   });
 
   it("shows the remembered model while the catalog is missing", () => {
-    const remembered: StartCatalog = { targets: catalog.targets, kinds: [], remembered: { kind: "claude", models: { claude: "opus" } } };
+    const remembered: StartCatalog = { targets: catalog.targets, core_platform: catalog.core_platform, kinds: [], remembered: { kind: "claude", models: { claude: "opus" } } };
     const selection = selectionOf(remembered, NO_CHOICE);
     expect(selection).toMatchObject({ kind: "claude", model: "opus", entry: null });
     expect(modelsOf(selection)).toEqual([]);

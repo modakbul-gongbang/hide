@@ -1191,7 +1191,7 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
         runtime.snapshot.navigator.devices.push(DeviceSnapshot {
             agent_scope: Default::default(),
             id: DEVICE.to_owned(),
-            label: "Device".to_owned(),
+            label: Some("Device".to_owned()),
             kind: "remote".to_owned(),
             state: "connected".to_owned(),
             message: None,

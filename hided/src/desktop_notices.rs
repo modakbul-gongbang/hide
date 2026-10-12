@@ -139,7 +139,7 @@ mod tests {
                 "workspaces": [{"label": "my-app", "is_git": true, "checkouts": [
                     {"label": "main", "branch": "main", "tabs": [{"panes": [{"id": "w1:p1"}]}]},
                 ]}],
-                "devices": [{"id": "node", "label": "This Mac"}],
+                "devices": [{"id": "node", "label": null}],
             },
         })
     }

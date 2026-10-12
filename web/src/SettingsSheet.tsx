@@ -14,6 +14,7 @@ import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MobileTab } from "./MobileTab";
 import { frontDeviceId } from "./devices";
+import { registeredName } from "./screenMachine";
 import { SETTINGS_TABS, type SettingsTab } from "./settings";
 import { AgentsTab } from "./settings/AgentsTab";
 import { DevicesTab } from "./settings/DevicesTab";
@@ -53,9 +54,9 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             <DialogDescription>{subtitle}</DialogDescription>
             {/* A remote device's name shows only while it is the selected device (B6). */}
             {selected?.kind === "remote" ? (
-              <Hint label={t("settings.ownerRemote", { device: selected.label })}>
+              <Hint label={t("settings.ownerRemote", { device: registeredName(selected) })}>
                 <span className="mt-xxs inline-block max-w-full truncate rounded-sm border border-border px-xs text-caption text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" tabIndex={0} data-settings-device={selected.id}>
-                  {selected.label}
+                  {registeredName(selected)}
                 </span>
               </Hint>
             ) : null}
