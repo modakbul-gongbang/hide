@@ -7,7 +7,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
-import { machineName, windowDeviceId, windowFirst } from "./screenMachine";
+import { machineName, thisMachineKey, windowDeviceId, windowFirst } from "./screenMachine";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 export type Host = { id: string; label: string };
@@ -18,7 +18,7 @@ export function addProjectHosts(devices: readonly Device[] | undefined, t: TFunc
   const rows = windowFirst(devices);
   const hosts = rows.map((device) => ({ id: device.id, label: machineName(devices, device.id, t) }));
   // Before the snapshot names this machine, it is the core's own node by the empty id.
-  return rows.some((device) => device.id === own) ? hosts : [{ id: own, label: t("common.thisMac") }, ...hosts];
+  return rows.some((device) => device.id === own) ? hosts : [{ id: own, label: t(thisMachineKey(null)) }, ...hosts];
 }
 
 /** The host the dialog opens on: the focused device while it is still listed, this Mac otherwise. */

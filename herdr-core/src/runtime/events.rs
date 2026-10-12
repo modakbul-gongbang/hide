@@ -639,11 +639,6 @@ pub(super) struct UiStateUpdatePayload {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct SessionsModePayload {
-    pub(super) mode: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct SessionsFilterPayload {
     pub(super) provider: String,
     #[serde(default)]
@@ -683,28 +678,43 @@ pub(super) struct ArchiveOpenPayload {
     pub(super) workspace_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct MemoryOpenForTurnPayload {
-    pub(super) item_ids: Vec<String>,
-}
-
 fn default_true() -> bool {
     true
 }
 
+/// One operator action on a catalog Project's Memory (PRD
+/// project-memory-v2 B19-B24), from its Memory tab. Cards are named by
+/// number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
-    pub(super) action: String,
+    pub(super) workspace_id: String,
+    pub(super) action: crate::model::MemoryAction,
+    /// The card a forget or an undo names.
     #[serde(default)]
-    pub(super) item_id: Option<String>,
+    pub(super) number: Option<u64>,
+}
+
+/// Opens a catalog Project's Memory for a screen; none closes it.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct MemoryOpenPayload {
     #[serde(default)]
-    pub(super) candidate_id: Option<String>,
+    pub(super) workspace_id: Option<String>,
+}
+
+/// Shows one card of the opened Project in full; none folds it.
+#[derive(Debug, Deserialize)]
+pub(super) struct MemoryExpandPayload {
+    pub(super) workspace_id: String,
     #[serde(default)]
-    pub(super) body: Option<String>,
+    pub(super) number: Option<u64>,
+}
+
+/// Searches the opened Project's cards; empty words clear the search.
+#[derive(Debug, Deserialize)]
+pub(super) struct MemorySearchPayload {
+    pub(super) workspace_id: String,
     #[serde(default)]
-    pub(super) batch_id: Option<String>,
-    #[serde(default)]
-    pub(super) conflict_choice: Option<String>,
+    pub(super) query: String,
 }
 
 /// Which changed file the changes view is showing the diff for. `None`
@@ -1293,11 +1303,12 @@ pub(super) enum Event {
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
     FactorySecretarySet(PaneTargetPayload),
-    SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
-    MemoryOpenForTurn(MemoryOpenForTurnPayload),
     MemoryAction(MemoryActionPayload),
+    MemoryOpen(MemoryOpenPayload),
+    MemoryExpand(MemoryExpandPayload),
+    MemorySearch(MemorySearchPayload),
     RetryConnect(RetryConnectPayload),
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
@@ -1505,7 +1516,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_refresh" => serde_json::from_value::<Option<SessionsRefreshPayload>>(payload)
             .map(|payload| Event::SessionsRefresh(payload.unwrap_or_default()))
             .map_err(|_| invalid_payload(&kind)),
-        "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
@@ -1517,8 +1527,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "factory_secretary_set" => decode!(PaneTargetPayload, FactorySecretarySet),
         "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
-        "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
+        "memory_open" => decode!(MemoryOpenPayload, MemoryOpen),
+        "memory_expand" => decode!(MemoryExpandPayload, MemoryExpand),
+        "memory_search" => decode!(MemorySearchPayload, MemorySearch),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
@@ -1674,7 +1686,6 @@ impl Runtime {
             Event::FactoryTaskClose => self.factory_task_close(),
             Event::FactorySecretarySet(payload) => self.factory_secretary_set(payload.pane_id),
             Event::LinksClose => self.close_links(),
-            Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
             }
@@ -1684,8 +1695,14 @@ impl Runtime {
                 }
                 None => self.open_archive_detail(&payload.kind, &payload.id, payload.preview),
             },
-            Event::MemoryOpenForTurn(payload) => self.open_memory_for_turn(payload.item_ids),
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
+            Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
+            Event::MemoryExpand(payload) => {
+                self.expand_memory_card(&payload.workspace_id, payload.number)
+            }
+            Event::MemorySearch(payload) => {
+                self.search_project_memory(&payload.workspace_id, payload.query)
+            }
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
@@ -2464,7 +2481,7 @@ impl Runtime {
                 if payload.device_id == self.node.as_str() {
                     self.set_error(
                         "device.local_remove_denied",
-                        "This Mac cannot be removed",
+                        format!("{} cannot be removed", crate::workspace::LOCAL_DEVICE_LABEL),
                         false,
                     );
                     return true;
@@ -3529,7 +3546,6 @@ impl Runtime {
                         .as_deref()
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
-                    sessions_mode_by_project: current.sessions_mode_by_project,
                     resolved_sessions: current.resolved_sessions,
                     session_resolution_inputs: current.session_resolution_inputs,
                     session_collapsed_checkout_ids: current.session_collapsed_checkout_ids,

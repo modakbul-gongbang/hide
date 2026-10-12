@@ -484,6 +484,22 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         scope(NODE),
         Ok((NODE.to_owned(), "/work/project".to_owned()))
     );
+    // The background pass walks the same machines; a dialed device is not
+    // among them, linked or not.
+    let pass_nodes = || {
+        let (nodes, unreached) = shared.lock().unwrap().memory_nodes();
+        (
+            nodes
+                .iter()
+                .map(|(node, _)| node.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            unreached
+                .iter()
+                .map(|node| node.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(pass_nodes(), (vec![own.clone(), NODE.to_owned()], vec![]));
     // The receipts the label reads find are checked against the same store:
     // this machine's and the linked node's, each read through its own link;
     // the dialed device's are dropped.
@@ -528,6 +544,8 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         runtime.host_snapshot(NODE).state != "ready"
     });
     assert_eq!(scope(NODE), Err("link_down"));
+    // A node whose link is down is walked once it is back.
+    assert_eq!(pass_nodes(), (vec![own], vec![NODE.to_owned()]));
 }
 
 /// A linked node's sessions are its own session files, read through its

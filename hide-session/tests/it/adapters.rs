@@ -3472,6 +3472,61 @@ fn hides_receipt_in_an_opencode_synthetic_part_is_reported_and_kept_out_of_the_c
     );
 }
 
+/// A hook's context Claude Code stored as an attachment carries Hide's Memory
+/// receipt to the label read, at the attachment record's offset, the turn a
+/// later read of the same file names it by; an operator's message quoting a
+/// receipt is no receipt (PRD project-memory-v2 D-16).
+#[test]
+fn a_claude_hook_attachment_receipt_is_reported_and_a_quoted_one_is_not() {
+    let home = home(Agent::Claude);
+    let path = home
+        .path()
+        .join(".claude/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl");
+    let receipt =
+        r#"<hide-memory-receipt event="UserPromptSubmit" count="1" items="m3@1" auth="aaaa" />"#;
+    let offset = std::fs::metadata(&path).unwrap().len();
+    let records = [
+        serde_json::json!({
+            "type": "attachment",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "sessionId": "a1b2c3d4-0000-4000-8000-000000000001",
+            "cwd": "/work/app",
+            "attachment": {
+                "type": "hook_additional_context",
+                "hookName": "UserPromptSubmit",
+                "hookEvent": "UserPromptSubmit",
+                "content": [format!("<hide-memory>\nKeep the parser pure.\n</hide-memory>\n{receipt}")],
+            },
+        }),
+        serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-10-11T00:00:01.000Z",
+            "sessionId": "a1b2c3d4-0000-4000-8000-000000000001",
+            "cwd": "/work/app",
+            "message": {"role": "user", "content": receipt},
+        }),
+    ];
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    for record in records {
+        use std::io::Write;
+        writeln!(file, "{record}").unwrap();
+    }
+    drop(file);
+
+    let transcript = read_whole(home.path(), Agent::Claude);
+
+    assert_eq!(
+        transcript.memory_receipts,
+        [hide_session::label_transcript::MemoryReceiptPart {
+            offset,
+            text: receipt.to_owned(),
+        }]
+    );
+}
+
 const OPENCODE_ROOT: &str = "ses_0a1b2c3d4e5f60718293a4b5c6";
 
 fn opencode_writer(home: &Path) -> rusqlite::Connection {

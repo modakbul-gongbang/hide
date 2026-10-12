@@ -69,12 +69,6 @@ const ROW_LIMIT_BYTES: i64 = SESSION_LINE_LIMIT_BYTES as i64;
 /// A message row holds the message's metadata, never its text; one over
 /// this is skipped without being loaded.
 const MESSAGE_LIMIT_BYTES: i64 = 64 * 1024;
-/// The most Memory receipts one read reports; Hide writes at most one a prompt.
-const RECEIPTS_PER_READ: usize = 64;
-/// A receipt line names item ids, revisions and a 64-character tag; a longer
-/// line is not one Hide wrote.
-const RECEIPT_LINE_LIMIT_BYTES: usize = 4 * 1024;
-const RECEIPT_MARKER: &str = "<hide-memory-receipt ";
 /// The most characters of a session title a read takes.
 const TITLE_LIMIT_CHARS: i64 = 512;
 /// The longest `directory` a session row may name; a longer one is no checkout.
@@ -961,18 +955,8 @@ impl Read {
     }
 
     fn receipts(&mut self, body: &str, offset: u64) {
-        for line in body.lines().map(str::trim) {
-            if !line.starts_with(RECEIPT_MARKER) {
-                continue;
-            }
-            if line.len() > RECEIPT_LINE_LIMIT_BYTES || self.receipts.len() >= RECEIPTS_PER_READ {
-                self.skip("memory_receipt_capacity");
-                continue;
-            }
-            self.receipts.push(MemoryReceiptPart {
-                offset,
-                text: line.to_owned(),
-            });
+        if !crate::label_transcript::note_receipts(&mut self.receipts, body, offset) {
+            self.skip("memory_receipt_capacity");
         }
     }
 

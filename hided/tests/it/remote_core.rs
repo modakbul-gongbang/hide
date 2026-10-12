@@ -1092,11 +1092,15 @@ fn seed_memory(
         },
         &[hide_memory::Candidate {
             text: rule.into(),
+            title: String::new(),
+            aliases: Vec::new(),
             kind: hide_memory::CandidateKind::Rule,
             confidence: 0.9,
             salience: 0.9,
             source_offsets: vec![1],
-            direct_human_source: true,
+            human_offsets: vec![1],
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
             relation: hide_memory::CandidateRelation::New,
         }],
     )?;
@@ -1120,8 +1124,7 @@ fn ask_memory_for(
     use std::io::Write;
     command
         .args(["workspace", "memory", "--event", event])
-        .args(["--runtime", "codex", "--session", "memory-session", "--cwd"])
-        .arg(cwd)
+        .args(["--runtime", "codex", "--session", "memory-session"])
         .current_dir(cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1207,8 +1210,9 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
                     && answer["result"]["outcome"] == "provided"
                     && answer["result"]["context"]
                         .as_str()
-                        .is_some_and(|context| context.contains("The node's checkout keeps its rule")
-                            && context.contains("<hide-memory-receipt event=\"SessionStart\"")
+                        .is_some_and(|context| context.contains("<hide-memory-index ")
+                            && context.contains("m1 The node's checkout keeps its rule")
+                            && !context.contains("hide-memory-receipt")
                             && !context.contains("The core's checkout")),
                 "the node's agent did not get its Project's Memory: {answer}"
             );
@@ -1236,6 +1240,23 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
                 )
             })?;
             ensure!(answer["ok"] == true, "the node's prompt ask: {answer}");
+            // `hide memory` from the node's agent reads the same store, for
+            // the node's Project.
+            let shown = tokio::task::block_in_place(|| {
+                let mut command = fixture.screen_command(&hide);
+                command
+                    .args(["memory", "show", "m1"])
+                    .current_dir(&node_project);
+                command.output()
+            })?;
+            let text = String::from_utf8_lossy(&shown.stdout);
+            ensure!(
+                shown.status.success()
+                    && text.contains("The node's checkout keeps its rule")
+                    && !text.contains("The core's checkout"),
+                "the node's hide memory show: {text} {}",
+                String::from_utf8_lossy(&shown.stderr)
+            );
             // B19: neither the Memory read nor the prompt is recorded with its
             // text, in either machine's log or anywhere in the core's state.
             let mut records = vec![

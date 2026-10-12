@@ -4,7 +4,7 @@
   "changed_file_status": ["modified", "added", "deleted", "untracked", "renamed", "conflict"],
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
-  "editor_tab_kind": ["file", "diff", "session", "memory"],
+  "editor_tab_kind": ["file", "diff", "session"],
   "factory_attempt_outcome": ["passed", "failed", "environment", "cancelled", "running"],
   "factory_attempt_stage": ["task", "pre_merge"],
   "factory_column": ["before", "moving", "stuck", "done"],
@@ -53,6 +53,10 @@
   "raise_verb": ["approval", "answer", "confirm", "draft"],
   "pr_state": ["failed", "pending", "mergeable", "draft", "merged", "closed"],
   "descendant_mark": ["raised", "working"],
-  "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
-  "strip_tab_kind": ["herdr", "file", "diff", "session", "memory"]
+  "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions", "memory"],
+  "strip_tab_kind": ["herdr", "file", "diff", "session"],
+  "memory_card_kind": ["rule", "decision", "lesson", "fact"],
+  "memory_analysis_state": ["idle", "analyzing", "ai_not_ready"],
+  "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed"],
+  "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss"]
 }

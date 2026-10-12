@@ -54,8 +54,8 @@ const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
 /// The most sighted pull requests waiting between two takes; a read that
 /// finds more keeps the newest.
 const SIGHTED_LIMIT: usize = 32;
-/// The most Memory receipts waiting between two takes; Hide's plugin writes at
-/// most one a prompt, so more means the core stopped taking them.
+/// The most Memory receipts waiting between two takes; a hook writes at most
+/// one a prompt, so more means the core stopped taking them.
 const RECEIPT_LIMIT: usize = 64;
 /// How long after a session printed a pull request's address its absence from
 /// GitHub's answer still sets off a read: a session prints the address of a
@@ -105,7 +105,7 @@ pub(crate) struct SightedPullRequest {
 
 /// A Memory receipt an agent's session stored, with what Memory needs to
 /// check and record it; the coordinator hands it to
-/// `Runtime::record_memory_receipts`.
+/// `Runtime::take_memory_handoff`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SightedMemoryReceipt {
     /// Memory's provider id: the agent's Herdr kind.
@@ -116,6 +116,20 @@ pub(crate) struct SightedMemoryReceipt {
     /// The message's index in the session; with the session it names the turn.
     pub(crate) offset: u64,
     pub(crate) text: String,
+}
+
+/// A session a live pane on the target's machine holds, as Memory names it:
+/// the provider (the agent's Herdr kind) and the session id.
+pub(crate) type MemorySession = (&'static str, String);
+
+/// What the label reads give Memory since the last take: the receipts they
+/// found, and the sessions live panes hold when that set moved, so Memory's
+/// own walk leaves those to the label read and analyzes a session as soon as
+/// its pane lets it go (PRD project-memory-v2 B2, D-16).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct MemoryHandoff {
+    pub(crate) receipts: Vec<SightedMemoryReceipt>,
+    pub(crate) live_sessions: Option<std::collections::BTreeSet<MemorySession>>,
 }
 
 /// One agent as the coordinator's replica holds it.
@@ -236,9 +250,11 @@ pub(crate) struct LabelWorker {
     /// What the reads since the last `take_sighted` found that the core has
     /// not read; see `note_sighted`.
     sighted: Vec<SightedPullRequest>,
-    /// What the reads since the last `take_memory_receipts` found; see
+    /// What the reads since the last `take_memory_handoff` found; see
     /// `note_receipts`.
     receipts: Vec<SightedMemoryReceipt>,
+    /// The live sessions the last handoff reported.
+    handed_sessions: std::collections::BTreeSet<MemorySession>,
     /// The operator's agent-summary switch (D-11). Off, no analysis is
     /// asked for and the overlay lays no AI field; reads go on, because the
     /// rows stand on what they find.
@@ -275,6 +291,7 @@ impl LabelWorker {
             pull_request_times: Arc::default(),
             sighted: Vec::new(),
             receipts: Vec::new(),
+            handed_sessions: Default::default(),
             summaries: true,
         })
     }
@@ -536,7 +553,7 @@ impl LabelWorker {
     /// Keeps the Memory receipts a read of this target's sessions found. Only
     /// an id-referenced session in a known cwd can name the Project and
     /// session Memory checks a receipt against; which machines have Memory is
-    /// the runtime's to decide (`Runtime::record_memory_receipts`).
+    /// the runtime's to decide (`Runtime::take_memory_handoff`).
     fn note_receipts(&mut self, pane_id: &str, receipts: &[MemoryReceiptPart]) {
         if receipts.is_empty() {
             return;
@@ -572,9 +589,30 @@ impl LabelWorker {
         }
     }
 
-    /// Takes the Memory receipts the reads since the last take found.
-    pub(crate) fn take_memory_receipts(&mut self) -> Vec<SightedMemoryReceipt> {
-        std::mem::take(&mut self.receipts)
+    /// Takes the Memory receipts the reads since the last take found, and
+    /// the sessions this target's live panes hold when they changed; `None`
+    /// when there is nothing to hand over. Which machines have Memory is the
+    /// runtime's to decide (`Runtime::take_memory_handoff`).
+    pub(crate) fn take_memory_handoff(&mut self) -> Option<MemoryHandoff> {
+        let live: std::collections::BTreeSet<MemorySession> = self
+            .panes
+            .values()
+            .filter_map(|pane| match &pane.reference {
+                Some((kind, session)) if kind == "id" => {
+                    Some((pane.agent.as_str(), session.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let live_sessions = (live != self.handed_sessions).then(|| {
+            self.handed_sessions = live.clone();
+            live
+        });
+        let receipts = std::mem::take(&mut self.receipts);
+        (!receipts.is_empty() || live_sessions.is_some()).then_some(MemoryHandoff {
+            receipts,
+            live_sessions,
+        })
     }
 
     /// Takes what the reads since the last take sighted (`note_sighted`).

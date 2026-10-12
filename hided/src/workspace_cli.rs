@@ -339,6 +339,37 @@ pub fn request_links(
     })
 }
 
+/// `hide memory`: answered without a shell. An `add` asks the provider, so
+/// it has the minute B8 gives it; it writes nothing after its own deadline,
+/// and running it again adds nothing twice.
+pub fn request_memory(
+    credential: &mut Credential,
+    command: &herdr_core::memory_command::MemoryCommand,
+) -> Result<Value, String> {
+    let (action, timeout) = match command {
+        herdr_core::memory_command::MemoryCommand::Add { .. } => {
+            (true, herdr_core::memory_command::ADD_TIMEOUT)
+        }
+        herdr_core::memory_command::MemoryCommand::Show { .. }
+        | herdr_core::memory_command::MemoryCommand::Forget { .. }
+        | herdr_core::memory_command::MemoryCommand::Undo { .. }
+        | herdr_core::memory_command::MemoryCommand::Placed { .. } => (true, TIMEOUT),
+        herdr_core::memory_command::MemoryCommand::Search { .. } => (false, TIMEOUT),
+    };
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange_within(
+            path,
+            &reference,
+            json!({"type":"memory","request_id":request_id,"command":command}),
+            &request_id,
+            action,
+            timeout,
+        )
+    })
+}
+
 /// Losing the final capability claim cannot turn durable success into retry.
 pub fn request_delivery(
     credential: &mut Credential,
@@ -459,11 +490,11 @@ pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
 /// A hook's Project Memory from the core (`hide workspace memory`). A prompt
 /// whose escaping would carry the request past what the daemon reads is cut
 /// until it fits.
-pub fn request_memory(credential: &Credential, mut ask: Value) -> Result<Value, String> {
+pub fn request_memory_hook(credential: &Credential, mut ask: Value) -> Result<Value, String> {
     let path = &credential.path;
     let reference = read_reference(path)?;
     let request_id = fresh_request_id()?;
-    ask["type"] = json!("memory");
+    ask["type"] = json!("memory_hook");
     ask["request_id"] = json!(request_id);
     while ask.to_string().len() > SCOPED_REQUEST_LIMIT {
         let Some(prompt) = ask["prompt"].as_str().filter(|prompt| !prompt.is_empty()) else {

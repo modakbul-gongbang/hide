@@ -343,7 +343,7 @@ pub(super) fn report_terminal(runtime: &mut Runtime, pane: &str, state: PaneTerm
     }])
 }
 
-fn context_payload() -> SessionSnapshotPayload {
+pub(super) fn context_payload() -> SessionSnapshotPayload {
     crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [
             {"pane_id":"w1:p1", "agent":"codex", "agent_status":"working", "state_change_seq":10,

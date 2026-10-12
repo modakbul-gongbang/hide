@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Injection, InjectionOutcome, MemoryStore, RetrievalQuery};
+use crate::{Injection, InjectionKind, InjectionOutcome, MemoryStore, RetrievalQuery};
 
 /// The most of a prompt a hook sends the core to rank Memory by: its start,
 /// which names the task, and few enough bytes that the request stays one
@@ -62,14 +62,11 @@ pub enum HookOutcome {
 /// What one hook asks for.
 pub struct HookRequest<'a> {
     /// The provider id Memory keys sessions and receipts by: `claude`,
-    /// `codex` or `opencode`.
+    /// `codex`, `opencode`, `pi` or `omp`.
     pub runtime_id: &'a str,
     pub event: HookEvent,
     pub session_id: &'a str,
     pub prompt: Option<&'a str>,
-    /// Where in the Project the agent works, in the Project's own root
-    /// ([`path_context`]); ranks matching items higher.
-    pub path_context: Option<&'a str>,
 }
 
 /// The Memory context for one hook, with its receipt, or none.
@@ -86,21 +83,6 @@ impl HookContext {
             context: None,
             outcome,
         }
-    }
-}
-
-/// `cwd` spelled inside the Project's main root: a linked worktree's
-/// checkout-relative path maps into the root every checkout of the Project
-/// shares. `cwd` and the Project's roots are each spelled as the machine
-/// holding the checkout canonicalizes them, which may not be this one, so
-/// the mapping compares names and never asks this machine's filesystem.
-pub fn path_context(project: &hide_project::ProjectIdentity, cwd: &str) -> String {
-    let checkout = project.checkout_root.to_string_lossy();
-    match cwd.strip_prefix(checkout.as_ref()) {
-        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
-            format!("{}{rest}", project.root.to_string_lossy())
-        }
-        _ => cwd.to_owned(),
     }
 }
 
@@ -133,34 +115,17 @@ where
     let query = match request.event {
         HookEvent::SessionStart => RetrievalQuery::session_start(&project.id),
         HookEvent::UserPromptSubmit => {
-            let mut text = request.prompt.unwrap_or_default().to_owned();
-            if let Ok(topics) =
-                store.recent_session_topics(&project.id, request.runtime_id, request.session_id)
-            {
-                for topic in topics {
-                    text.push('\n');
-                    text.push_str(&topic);
-                }
-            }
-            let mut excluded = match store.session_start_receipt_ids(
+            let excluded = match store.session_given_ids(
                 &project.id,
                 request.runtime_id,
                 request.session_id,
             ) {
                 Ok(Some(items)) => items,
-                // Only the receipt records what SessionStart actually
-                // delivered. If the first prompt races receipt projection,
-                // omitting Memory for that prompt is the only read-only
-                // outcome that cannot repeat or falsely exclude an item.
+                // A new session while the Project's receipts are full: nothing
+                // could record what it is given, so it gets none (B26).
                 Ok(None) | Err(_) => return base(),
             };
-            excluded.sort_unstable();
-            excluded.dedup();
-            let query = RetrievalQuery::prompt(&project.id, text, excluded);
-            match request.path_context {
-                Some(path) => query.with_path_context(path),
-                None => query,
-            }
+            RetrievalQuery::prompt(&project.id, request.prompt.unwrap_or_default(), excluded)
         }
     };
     if expired() {
@@ -172,32 +137,28 @@ where
         }
         return base();
     };
-    let item_key = items_key(&injection);
-    let Ok(receipt_auth) = store.receipt_auth_tag(
-        &project.id,
-        request.runtime_id,
-        request.session_id,
-        request.event.name(),
-        &item_key,
-    ) else {
-        return base();
+    // The index is not a delivery and leaves no receipt; only cards given in
+    // full are recorded, so a session's prompts do not repeat them (B12).
+    let receipt_auth = match injection.kind {
+        InjectionKind::Index => None,
+        InjectionKind::Bodies => match store.receipt_auth_tag(
+            &project.id,
+            request.runtime_id,
+            request.session_id,
+            request.event.name(),
+            &injection.item_key(),
+        ) {
+            Ok(tag) => Some(tag),
+            Err(_) => return base(),
+        },
     };
-    render(request.event, injection, &receipt_auth, &expired)
-}
-
-fn items_key(injection: &Injection) -> String {
-    injection
-        .items
-        .iter()
-        .map(|(id, revision, _)| format!("{id}@{revision}"))
-        .collect::<Vec<_>>()
-        .join(",")
+    render(request.event, injection, receipt_auth.as_deref(), &expired)
 }
 
 fn render(
     event: HookEvent,
     injection: Injection,
-    receipt_auth: &str,
+    receipt_auth: Option<&str>,
     expired: &impl Fn() -> bool,
 ) -> HookContext {
     if expired() {
@@ -212,25 +173,18 @@ fn render(
         InjectionOutcome::Deadline => HookOutcome::Deadline,
         InjectionOutcome::Unavailable | InjectionOutcome::Stale => HookOutcome::Unavailable,
     };
-    let receipt = format!(
-        "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" auth=\"{}\" />\n",
-        event.name(),
-        injection.items.len(),
-        items_key(&injection),
-        receipt_auth,
-    );
-    let context = match injection.context() {
-        Some(mut context) => {
-            context.push_str(&receipt);
-            context
-        }
-        None if event == HookEvent::SessionStart
-            && injection.outcome == InjectionOutcome::Empty =>
-        {
-            receipt
-        }
-        None => return HookContext::without(outcome),
+    let Some(mut context) = injection.context() else {
+        return HookContext::without(outcome);
     };
+    if let Some(auth) = receipt_auth {
+        context.push_str(&format!(
+            "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" auth=\"{}\" />\n",
+            event.name(),
+            injection.items.len(),
+            injection.item_key(),
+            auth,
+        ));
+    }
     HookContext {
         context: Some(context),
         outcome,
@@ -240,7 +194,7 @@ fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, SessionSourceRecord};
+    use crate::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
@@ -261,74 +215,58 @@ mod tests {
         (elapsed, expired)
     }
 
-    /// A store at `root` holding the enabled Project at `checkout`.
-    fn enabled_store(root: &Path, checkout: &Path) -> (PathBuf, hide_project::ProjectIdentity) {
+    fn frozen() -> impl Fn() -> bool + Clone + Send + 'static {
+        invocation_clock().1
+    }
+
+    fn rule(text: &str, salience: f64) -> Candidate {
+        Candidate {
+            text: text.into(),
+            title: String::new(),
+            aliases: Vec::new(),
+            kind: CandidateKind::Rule,
+            confidence: 0.9,
+            salience,
+            source_offsets: vec![1],
+            human_offsets: vec![1],
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
+            relation: CandidateRelation::New,
+        }
+    }
+
+    /// A store at `root` holding the enabled Project at `checkout`, with
+    /// `cards`.
+    fn enabled_store(
+        root: &Path,
+        checkout: &Path,
+        cards: &[Candidate],
+    ) -> (PathBuf, hide_project::ProjectIdentity) {
+        fs::create_dir_all(checkout).unwrap();
         let project = hide_project::resolve(checkout, NODE).unwrap();
         let path = crate::database_path(root);
-        let store = MemoryStore::open(&path).unwrap();
+        let mut store = MemoryStore::open(&path).unwrap();
         store
             .ensure_project(&project.id, &project.root, NODE)
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
-        (path, project)
-    }
-
-    fn rule(
-        project: &str,
-        id: &str,
-        text: &str,
-        salience: f64,
-        offset: u64,
-    ) -> (AnalysisBatch, Candidate) {
-        (
-            AnalysisBatch {
-                id: format!("{id}-batch"),
-                project_id: project.to_owned(),
-                provider: "codex".into(),
-                analysis_provider: "codex".into(),
-                session_id: "source-session".into(),
-                content_hash: format!("{id}-hash"),
-                created_at_unix_ms: offset,
-            },
-            Candidate {
-                text: text.into(),
-                kind: CandidateKind::Rule,
-                confidence: 0.9,
-                salience,
-                source_offsets: vec![offset],
-                direct_human_source: true,
-                relation: CandidateRelation::New,
-            },
-        )
-    }
-
-    fn add_rule(path: &Path, project: &str, id: &str, text: &str, salience: f64, offset: u64) {
-        let (batch, candidate) = rule(project, id, text, salience, offset);
-        MemoryStore::open(path)
-            .unwrap()
-            .apply_candidates(&batch, &[candidate])
-            .unwrap();
-    }
-
-    fn record_start(path: &Path, project: &str, session: &str, items: Vec<(String, u64, String)>) {
-        MemoryStore::open(path)
-            .unwrap()
-            .record_injection(
-                project,
-                "codex",
-                session,
-                None,
-                &Injection {
-                    outcome: if items.is_empty() {
-                        InjectionOutcome::Empty
-                    } else {
-                        InjectionOutcome::Provided
+        if !cards.is_empty() {
+            store
+                .apply_candidates(
+                    &AnalysisBatch {
+                        id: "fixture-batch".into(),
+                        project_id: project.id.clone(),
+                        provider: "codex".into(),
+                        analysis_provider: "codex".into(),
+                        session_id: "source-session".into(),
+                        content_hash: "fixture-hash".into(),
+                        created_at_unix_ms: 1,
                     },
-                    token_count: items.len() * 6,
-                    items,
-                },
-            )
-            .unwrap();
+                    cards,
+                )
+                .unwrap();
+        }
+        (path, project)
     }
 
     fn ask<'a>(event: HookEvent, session: &'a str, prompt: Option<&'a str>) -> HookRequest<'a> {
@@ -337,79 +275,56 @@ mod tests {
             event,
             session_id: session,
             prompt,
-            path_context: None,
         }
     }
 
-    fn frozen() -> impl Fn() -> bool + Clone + Send + 'static {
-        invocation_clock().1
-    }
-
     #[test]
-    fn project_path_terms_rank_matches_but_never_create_a_prompt_match() {
+    fn a_prompt_sharing_no_word_or_alias_gets_no_memory() {
+        // B12
         let temp = tempfile::tempdir().unwrap();
-        let checkout = temp.path().join("project-memory");
-        fs::create_dir_all(&checkout).unwrap();
-        let (path, project) = enabled_store(temp.path(), &checkout);
-        record_start(&path, &project.id, "unrelated-session", Vec::new());
-        add_rule(
-            &path,
-            &project.id,
-            "path-query",
-            "Project Memory provider work uses a bounded queue",
-            0.9,
-            1,
+        let (path, project) = enabled_store(
+            temp.path(),
+            &temp.path().join("project-memory"),
+            &[rule(
+                "Project Memory provider work uses a bounded queue",
+                0.9,
+            )],
         );
+        let prompt = |text| {
+            context_for(
+                &path,
+                &project,
+                ask(HookEvent::UserPromptSubmit, "unrelated-session", Some(text)),
+                frozen(),
+            )
+        };
 
-        let cwd = checkout.canonicalize().unwrap();
-        let path_context = path_context(&project, &cwd.to_string_lossy());
-        let result = context_for(
-            &path,
-            &project,
-            HookRequest {
-                path_context: Some(&path_context),
-                ..ask(
-                    HookEvent::UserPromptSubmit,
-                    "unrelated-session",
-                    Some("zz--no-match-unrelated-query"),
-                )
-            },
-            frozen(),
-        );
-
+        let result = prompt("오늘 점심 메뉴 추천해줘");
         assert_eq!(result.outcome, HookOutcome::Empty);
         assert!(result.context.is_none());
+        let result = prompt("the provider queue is stuck");
+        assert_eq!(result.outcome, HookOutcome::Provided { count: 1 });
     }
 
     #[test]
-    fn prompt_lookup_omits_only_items_from_the_actual_session_start_receipt() {
+    fn a_prompt_omits_cards_the_session_was_already_given_in_full() {
+        // B12: a card given at an earlier prompt is not given again.
         let temp = tempfile::tempdir().unwrap();
-        let checkout = temp.path().join("project");
-        fs::create_dir_all(&checkout).unwrap();
-        let (path, project) = enabled_store(temp.path(), &checkout);
-        for index in 0..6 {
-            add_rule(
-                &path,
+        let cards = (0..6)
+            .map(|index| rule(&format!("Rule {index} about durable hooks"), 0.9))
+            .collect::<Vec<_>>();
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &cards);
+        MemoryStore::open(&path)
+            .unwrap()
+            .record_receipt(
                 &project.id,
-                &format!("b{index}"),
-                &format!("Rule {index} about durable hooks"),
-                1.0 - index as f64 / 10.0,
-                index,
-            );
-        }
-        let first = MemoryStore::open(&path)
-            .unwrap()
-            .list_memories(&project.id, "")
-            .unwrap()
-            .into_iter()
-            .find(|memory| memory.body.starts_with("Rule 0 "))
+                "codex",
+                "fixture-session",
+                "event:9",
+                "m1@1",
+                2,
+            )
             .unwrap();
-        record_start(
-            &path,
-            &project.id,
-            "fixture-session",
-            vec![(first.id, first.revision, first.body)],
-        );
 
         let result = context_for(
             &path,
@@ -424,52 +339,46 @@ mod tests {
 
         assert_eq!(result.outcome, HookOutcome::Provided { count: 3 });
         let context = result.context.unwrap();
+        assert!(!context.contains("Rule 0 "), "{context}");
         assert!(
-            context.contains("Rule 1"),
-            "unseen items remain eligible: {context}"
+            context.contains("m2@1"),
+            "the receipt names cards by number: {context}"
         );
-        assert!(!context.contains("Rule 0"));
     }
 
     #[test]
-    fn an_immediate_first_prompt_omits_memory_until_the_exact_receipt_is_projected() {
+    fn session_start_gives_the_index_without_a_receipt_and_the_first_prompt_gets_memory() {
+        // B10, B13: the index is not a delivery, so it records nothing and
+        // the first prompt does not wait for it.
         let temp = tempfile::tempdir().unwrap();
-        let checkout = temp.path().join("project");
-        fs::create_dir_all(&checkout).unwrap();
-        let (path, project) = enabled_store(temp.path(), &checkout);
-        for index in 0..8 {
-            add_rule(
-                &path,
-                &project.id,
-                &format!("race-b{index}"),
-                &format!("Race rule {index} about durable hooks"),
-                1.0 - index as f64 / 10.0,
-                index,
-            );
-        }
+        let mut cards = (0..22)
+            .map(|index| {
+                rule(
+                    &format!("Race rule {index} about durable hooks"),
+                    1.0 - f64::from(index) / 100.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        cards.push(Candidate {
+            kind: CandidateKind::Fact,
+            ..rule("A fact about durable hooks", 1.0)
+        });
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &cards);
         let session = "immediate-session";
+
         let start = context_for(
             &path,
             &project,
             ask(HookEvent::SessionStart, session, None),
             frozen(),
         );
-        assert_eq!(start.outcome, HookOutcome::Provided { count: 5 });
+        assert_eq!(start.outcome, HookOutcome::Provided { count: 20 });
         let start = start.context.unwrap();
-        assert_eq!(
-            (0..8)
-                .filter(|index| start.contains(&format!("Race rule {index} ")))
-                .count(),
-            5
-        );
-        add_rule(
-            &path,
-            &project.id,
-            "race-new",
-            "New higher-ranked durable hook rule",
-            1.0,
-            100,
-        );
+        assert!(start.contains("hide memory show"));
+        assert!(start.contains("m1 Race rule 0 about durable hooks"));
+        assert!(!start.contains("A fact about"));
+        assert!(!start.contains("Race rule 21 "));
+        assert!(!start.contains("hide-memory-receipt"));
 
         let prompt = context_for(
             &path,
@@ -477,17 +386,12 @@ mod tests {
             ask(HookEvent::UserPromptSubmit, session, Some("durable hooks")),
             frozen(),
         );
-
-        assert_eq!(prompt.outcome, HookOutcome::Unavailable);
-        assert!(prompt.context.is_none());
-        assert!(
-            !temp.path().join("project-memory-receipts").exists(),
-            "a read-only answer creates no receipt sidecar",
-        );
+        assert_eq!(prompt.outcome, HookOutcome::Provided { count: 3 });
+        assert!(prompt.context.unwrap().contains("hide-memory-receipt"));
     }
 
     #[test]
-    fn a_linked_worktree_cwd_keeps_its_checkout_relative_path_relevance() {
+    fn a_linked_worktree_checkout_reaches_its_main_checkouts_memory() {
         let temp = tempfile::tempdir().unwrap();
         let main = temp.path().join("main");
         let linked = temp.path().join("linked");
@@ -517,54 +421,24 @@ mod tests {
             "linked",
             linked.to_str().unwrap(),
         ]);
-        let linked_cwd = linked.join("crates/memory/src");
-        fs::create_dir_all(&linked_cwd).unwrap();
 
-        // The pane's checkout names the Project; the cwd only ranks.
-        let (path, project) = enabled_store(temp.path(), &linked);
+        // The pane's checkout names the Project, whose root is the main one.
+        let (path, project) = enabled_store(
+            temp.path(),
+            &linked,
+            &[rule("Keep the local projection bounded", 0.9)],
+        );
         assert_eq!(project.checkout_root, fs::canonicalize(&linked).unwrap());
-        record_start(&path, &project.id, "linked-session", Vec::new());
-        let mut store = MemoryStore::open(&path).unwrap();
-        store
-            .upsert_session_source(&SessionSourceRecord {
-                id: "path-source".into(),
-                project_id: project.id.clone(),
-                provider: "codex".into(),
-                locator: linked.join("session.jsonl").to_string_lossy().into_owned(),
-                checkout_path: linked_cwd.to_string_lossy().into_owned(),
-                started_at_unix_ms: Some(1),
-                updated_at_unix_ms: 1,
-                unavailable_reason: None,
-            })
-            .unwrap();
-        let (mut batch, candidate) = rule(
-            &project.id,
-            "path",
-            "Keep the local projection bounded",
-            0.9,
-            1,
-        );
-        batch.session_id = "path-source".into();
-        store.apply_candidates(&batch, &[candidate]).unwrap();
-        drop(store);
+        assert_eq!(project.root, fs::canonicalize(&main).unwrap());
 
-        let cwd = fs::canonicalize(&linked_cwd).unwrap();
-        let path_context = path_context(&project, &cwd.to_string_lossy());
-        assert_eq!(
-            PathBuf::from(&path_context),
-            project.root.join("crates/memory/src")
-        );
         let result = context_for(
             &path,
             &project,
-            HookRequest {
-                path_context: Some(&path_context),
-                ..ask(
-                    HookEvent::UserPromptSubmit,
-                    "linked-session",
-                    Some("zz-no-literal-match"),
-                )
-            },
+            ask(
+                HookEvent::UserPromptSubmit,
+                "linked-session",
+                Some("projection 정리"),
+            ),
             frozen(),
         );
 
@@ -578,51 +452,22 @@ mod tests {
     }
 
     #[test]
-    fn a_cwd_maps_into_the_project_root_by_its_names_whatever_machine_spells_them() {
-        let project = |root: &str, checkout: &str| hide_project::ProjectIdentity {
-            id: "project:x".into(),
-            root: PathBuf::from(root),
-            checkout_root: PathBuf::from(checkout),
-            device_id: NODE.into(),
-            kind: hide_project::ProjectKind::Git,
-        };
-        let linked = project("/repo/main", "/repo/linked");
-        assert_eq!(
-            path_context(&linked, "/repo/linked/src/a"),
-            "/repo/main/src/a"
-        );
-        assert_eq!(path_context(&linked, "/repo/linked"), "/repo/main");
-        assert_eq!(
-            path_context(&linked, "/repo/linked-other/src"),
-            "/repo/linked-other/src"
-        );
-        assert_eq!(path_context(&linked, "/elsewhere"), "/elsewhere");
-        // A Windows node's spelling, read on a core that is not Windows.
-        let windows = project(r"\\?\C:\repo\main", r"\\?\C:\repo\linked");
-        assert_eq!(
-            path_context(&windows, r"\\?\C:\repo\linked\src"),
-            r"\\?\C:\repo\main\src"
-        );
-    }
-
-    #[test]
-    fn an_empty_session_start_carries_its_receipt_without_a_zero_item_message() {
+    fn an_empty_session_start_adds_nothing() {
+        // B10: no card for the index, no index.
         let result = render(
             HookEvent::SessionStart,
             Injection {
                 outcome: InjectionOutcome::Empty,
+                kind: InjectionKind::Index,
                 items: Vec::new(),
                 token_count: 0,
             },
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            None,
             &frozen(),
         );
 
         assert_eq!(result.outcome, HookOutcome::Empty);
-        assert_eq!(
-            result.context.unwrap(),
-            "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" />\n"
-        );
+        assert_eq!(result.context, None);
     }
 
     #[test]
@@ -650,27 +495,31 @@ mod tests {
     #[test]
     fn a_render_at_the_deadline_carries_neither_the_capsule_nor_its_receipt() {
         let temp = tempfile::tempdir().unwrap();
-        let checkout = temp.path().join("project");
-        fs::create_dir_all(&checkout).unwrap();
-        let (path, project) = enabled_store(temp.path(), &checkout);
         let body = "Keep the invocation deadline through rendering";
-        add_rule(&path, &project.id, "render-expiry", body, 0.9, 1);
+        let (path, project) = enabled_store(
+            temp.path(),
+            &temp.path().join("project"),
+            &[rule(body, 0.9)],
+        );
 
         let (elapsed, expired) = invocation_clock();
         let reader = MemoryStore::open_hook_read_only_with_expiry(&path, expired.clone()).unwrap();
         elapsed.fetch_add(99, Ordering::SeqCst);
         let injection = reader
-            .retrieve_with_expiry(&RetrievalQuery::session_start(&project.id), &expired)
+            .retrieve_with_expiry(
+                &RetrievalQuery::prompt(&project.id, "invocation deadline", Vec::new()),
+                &expired,
+            )
             .unwrap();
         assert_eq!(injection.outcome, InjectionOutcome::Provided);
-        assert_eq!(injection.items[0].2, body);
-        let item_key = items_key(&injection);
+        assert_eq!(injection.items[0].text, body);
+        let item_key = injection.item_key();
         let auth = reader
             .receipt_auth_tag(
                 &project.id,
                 "codex",
                 "render-session",
-                "SessionStart",
+                "UserPromptSubmit",
                 &item_key,
             )
             .unwrap();
@@ -680,7 +529,7 @@ mod tests {
                     &project.id,
                     "codex",
                     "render-session",
-                    "SessionStart",
+                    "UserPromptSubmit",
                     &item_key,
                     &auth
                 )
@@ -688,7 +537,12 @@ mod tests {
         );
         elapsed.fetch_add(1, Ordering::SeqCst);
 
-        let result = render(HookEvent::SessionStart, injection, &auth, &expired);
+        let result = render(
+            HookEvent::UserPromptSubmit,
+            injection,
+            Some(&auth),
+            &expired,
+        );
 
         assert_eq!(result.outcome, HookOutcome::Deadline);
         assert_eq!(result.context, None);
@@ -725,9 +579,7 @@ mod tests {
     #[test]
     fn a_locked_store_answers_unavailable_without_waiting_for_the_writer() {
         let temp = tempfile::tempdir().unwrap();
-        let checkout = temp.path().join("project");
-        fs::create_dir_all(&checkout).unwrap();
-        let (path, project) = enabled_store(temp.path(), &checkout);
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &[]);
 
         let lock = rusqlite::Connection::open(&path).unwrap();
         lock.pragma_update(None, "journal_mode", "DELETE").unwrap();

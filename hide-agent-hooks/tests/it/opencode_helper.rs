@@ -26,11 +26,11 @@ case "$1 $2" in
   "workspace bootstrap") echo '{"ok":true}' ;;
   "workspace factory-question-guard") echo '{"type":"workspace_result","ok":true,"result":{"deny":true}}' ;;
   "workspace memory")
-    cat > "${HOME%/*}/memory-prompt"
+    cat > "${HOME%/*}/memory-prompt-$4"
     if [ -f "${HOME%/*}/memory-off" ]; then
       echo '{"type":"workspace_result","ok":true,"result":{"context":null,"outcome":"disabled"}}'
     else
-      printf '%s\n' '{"type":"workspace_result","ok":true,"result":{"context":"MEMORY-FOR-THIS-SESSION\n","outcome":"provided","count":1}}'
+      printf '%s\n' "{\"type\":\"workspace_result\",\"ok\":true,\"result\":{\"context\":\"MEMORY-$4\\n\",\"outcome\":\"provided\",\"count\":1}}"
     fi ;;
   *) exit 1 ;;
 esac
@@ -123,9 +123,10 @@ fn a_prompt_takes_the_panes_letters_for_this_session_and_confirms_nothing() {
         true,
     );
     assert_eq!(answer["letters"], json!(["letter-1"]));
+    // The first prompt carries the index and the cards its words match.
     assert_eq!(
         answer["context"],
-        json!("MEMORY-FOR-THIS-SESSION\nLETTER-FOR-THIS-PANE")
+        json!("MEMORY-SessionStart\nMEMORY-UserPromptSubmit\nLETTER-FOR-THIS-PANE")
     );
     // Memory and the letters are asked at once.
     let mut calls = machine.calls();
@@ -133,11 +134,9 @@ fn a_prompt_takes_the_panes_letters_for_this_session_and_confirms_nothing() {
     assert_eq!(
         calls,
         [
-            "inbox --hook --session ses_root".to_owned(),
-            format!(
-                "workspace memory --event SessionStart --runtime opencode --session ses_root --cwd {}",
-                machine.home.display()
-            ),
+            "inbox --hook --session ses_root",
+            "workspace memory --event SessionStart --runtime opencode --session ses_root",
+            "workspace memory --event UserPromptSubmit --runtime opencode --session ses_root",
         ]
     );
 }
@@ -273,10 +272,10 @@ fn start_answers_hides_session_guidance() {
 }
 
 /// Pi's and omp's extension asks the core for Memory through `hide`: the
-/// session-start capsule while the extension still wants one, the prompt
-/// capsule with the prompt on stdin after it, for the host's own session id,
+/// session-start index while the extension still wants one and then the
+/// prompt's cards, with the prompt on stdin, for the host's own session id,
 /// and nothing for an id that would read as an option; the letters ride
-/// either way, and only a capsule actually given is the session start.
+/// either way, and only an index the core answered is the session start.
 #[test]
 fn pi_and_omp_prompts_ask_the_core_for_memory_and_still_carry_letters() {
     let machine = Machine::new();
@@ -307,33 +306,43 @@ fn pi_and_omp_prompts_ask_the_core_for_memory_and_still_carry_letters() {
         let answer = asked(true);
         assert_eq!(answer["memory_start"], json!(true), "{agent}");
         assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
-        let context = answer["context"].as_str().unwrap();
-        assert!(
-            context.starts_with("MEMORY-FOR-THIS-SESSION\n"),
-            "{context}"
-        );
-        assert!(context.contains("LETTER-FOR-THIS-PANE"), "{context}");
         assert_eq!(
-            memory_calls().last().unwrap(),
-            &format!(
-                "workspace memory --event SessionStart --runtime {agent} --session {id} --cwd {}",
-                project.display()
-            )
+            answer["context"],
+            json!("MEMORY-SessionStart\nMEMORY-UserPromptSubmit\nLETTER-FOR-THIS-PANE"),
+            "{agent}"
+        );
+        assert_eq!(
+            memory_calls()[memory_calls().len() - 2..],
+            [
+                format!("workspace memory --event SessionStart --runtime {agent} --session {id}"),
+                format!(
+                    "workspace memory --event UserPromptSubmit --runtime {agent} --session {id}"
+                ),
+            ]
         );
 
+        let before = memory_calls().len();
         let answer = asked(false);
         assert_eq!(answer["memory_start"], json!(false), "{agent}");
         assert_eq!(
-            memory_calls().last().unwrap(),
-            &format!(
-                "workspace memory --event UserPromptSubmit --runtime {agent} --session {id} --cwd {}",
-                project.display()
+            memory_calls()[before..],
+            [format!(
+                "workspace memory --event UserPromptSubmit --runtime {agent} --session {id}"
+            )]
+        );
+        let prompt = |event: &str| {
+            std::fs::read_to_string(
+                machine
+                    .home
+                    .parent()
+                    .unwrap()
+                    .join(format!("memory-prompt-{event}")),
             )
-        );
-        assert_eq!(
-            std::fs::read_to_string(machine.home.parent().unwrap().join("memory-prompt")).unwrap(),
-            "Fix it"
-        );
+            .unwrap()
+        };
+        // The index is asked with no prompt; the prompt's cards with it.
+        assert_eq!(prompt("SessionStart"), "");
+        assert_eq!(prompt("UserPromptSubmit"), "Fix it");
 
         // An id that would read as an option is no session: no Memory, the
         // letters still ride.
@@ -350,7 +359,7 @@ fn pi_and_omp_prompts_ask_the_core_for_memory_and_still_carry_letters() {
         assert_eq!(memory_calls().len(), before, "{agent}");
     }
 
-    // With Memory off no capsule is given, so the extension asks again.
+    // With Memory off no index is answered, so the extension asks again.
     std::fs::write(machine.home.parent().unwrap().join("memory-off"), "").unwrap();
     let answer = machine.run_as(
         "pi",

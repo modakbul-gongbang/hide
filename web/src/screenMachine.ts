@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import type { MoveMachines, MoveView } from "./coreMove";
+import { hostBridge } from "./host";
 import { localDeviceId, type Device, type SnapshotRest } from "./snapshot";
 
 /** The longest node id a hash may name. */
@@ -41,14 +42,28 @@ export function windowDeviceId(devices: readonly Device[] | undefined): string {
 }
 
 /**
+ * The catalog key that names a machine as its system does: This Mac on
+ * macOS, This PC on Windows, This computer on Linux. `platform` is the
+ * device row's (`macos aarch64`, `windows x86_64`); with none, the system the
+ * shell runs on, which is this window's machine.
+ */
+export function thisMachineKey(platform: string | null | undefined): "common.thisMac" | "common.thisPc" | "common.thisComputer" {
+  const system = platform ?? hostBridge()?.platform ?? (typeof navigator === "undefined" ? "" : navigator.platform);
+  if (/^(mac|darwin)/i.test(system)) return "common.thisMac";
+  if (/^win/i.test(system)) return "common.thisPc";
+  return "common.thisComputer";
+}
+
+/**
  * What this window calls a machine (PRD core-host-node-move B2, N1): its own
- * machine is This Mac wherever the core runs; the core's machine, seen from
- * a node, goes by the name that machine gives itself; any other device by
- * the name it was registered under.
+ * machine is This Mac, This PC or This computer, as its system names itself,
+ * wherever the core runs; the core's machine, seen from a node, goes by the
+ * name that machine gives itself; any other device by the name it was
+ * registered under.
  */
 export function machineName(devices: readonly Device[] | undefined, deviceId: string, t: TFunction<"translation">): string {
-  if (deviceId === windowDeviceId(devices)) return t("common.thisMac");
   const device = devices?.find((row) => row.id === deviceId);
+  if (deviceId === windowDeviceId(devices)) return t(thisMachineKey(device?.host?.platform));
   if (!device) return deviceId;
   return device.kind !== "remote" ? (device.machine_name ?? device.id) : device.label;
 }
@@ -90,13 +105,14 @@ export function coreShared(devices: readonly Device[] | undefined): boolean {
 
 /**
  * The machines a move names, as this window calls them: toward a device,
- * from this Mac to that device; back, from the core's machine to this Mac.
+ * from this machine to that device; back, from the core's machine to this
+ * one.
  * A window the move holds before it drew the core, a reload during a long
  * wait, has no device rows, so it names the other machine by the alias the
  * move reaches it by.
  */
 export function moveMachines(devices: readonly Device[] | undefined, view: Pick<MoveView, "direction" | "device" | "alias">, t: TFunction<"translation">): MoveMachines {
-  const here = t("common.thisMac");
+  const here = t(thisMachineKey(null));
   const drawn = (devices ?? []).length > 0;
   if (view.direction === "back") return { from: drawn || !view.alias ? coreMachineName(devices, t) : view.alias, to: here };
   if (!view.device) return { from: here, to: here };

@@ -22,6 +22,7 @@ import {
   type ListState,
   type ProviderFilter,
 } from "./sessions";
+import { cardName } from "./memoryList";
 import type { SessionSearchHit, ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -100,6 +101,7 @@ export function ProjectSessions({ workspace, actions, target = null, onTarget }:
     onTarget?.();
   }, [target, live, named, actions, project, onTarget]);
   const openPr = useCallback((number: number) => actions.openPullRequestRow(project.id, number), [actions, project]);
+  const openCard = useCallback((number: number) => actions.openMemoryCard(project.deviceId, project.id, number), [actions, project]);
   const clearFilters = useCallback(() => { setProvider("all"); setQuery(""); }, []);
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
 
@@ -144,7 +146,7 @@ export function ProjectSessions({ workspace, actions, target = null, onTarget }:
         />
       </section>
       <section aria-label={t("sessions.session")} className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
-        <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} onPr={openPr} />
+        <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} onPr={openPr} onCard={openCard} />
       </section>
     </section>
   );
@@ -466,6 +468,7 @@ function SessionDetail({
   workspace,
   onRetry,
   onPr,
+  onCard,
 }: {
   jump: Jump | null;
   state: DetailState;
@@ -475,6 +478,8 @@ function SessionDetail({
   workspace: Workspace;
   onRetry: () => void;
   onPr: (number: number) => void;
+  /** A Memory card number under a turn (B33). */
+  onCard: (number: number) => void;
 }) {
   const { t } = useInterfaceTranslation();
   const body = useRef<HTMLOListElement>(null);
@@ -542,7 +547,7 @@ function SessionDetail({
           data-session-turns={turns.length}
         >
           {turns.map((turn, index) => (
-            <Turn key={index} index={index} matched={jump?.session === state.detail.session_id && jump.offset !== null && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? t("common.agent")} />
+            <Turn key={index} index={index} matched={jump?.session === state.detail.session_id && jump.offset !== null && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? t("common.agent")} onCard={onCard} />
           ))}
         </ol>
       )}
@@ -582,7 +587,7 @@ function DetailHeader({ detail, row, workspace, onPr, reading = false }: { detai
   );
 }
 
-function Turn({ turn, index, provider, matched }: { turn: ArchiveEvent; index: number; provider: string; matched: boolean }) {
+function Turn({ turn, index, provider, matched, onCard }: { turn: ArchiveEvent; index: number; provider: string; matched: boolean; onCard: (number: number) => void }) {
   const { t, i18n } = useInterfaceTranslation();
   const person = turn.role === "user";
   const interrupted = turn.kind === "interrupted";
@@ -594,6 +599,24 @@ function Turn({ turn, index, provider, matched }: { turn: ArchiveEvent; index: n
         {time ? <span>{time}</span> : null}
       </span>
       <p className={`whitespace-pre-wrap break-words break-keep text-body ${interrupted ? "italic text-muted-foreground" : "text-foreground"}`}>{turn.text}</p>
+      <CardLine label={t("memory.received")} numbers={turn.memory_received} onCard={onCard} kind="received" />
+      <CardLine label={t("memory.learned")} numbers={turn.memory_learned} onCard={onCard} kind="learned" />
     </li>
+  );
+}
+
+/** A quiet line naming the Memory cards a turn received or taught (B33); a number opens the card in the Memory tab. */
+function CardLine({ label, numbers, onCard, kind }: { label: string; numbers: number[] | undefined; onCard: (number: number) => void; kind: "received" | "learned" }) {
+  const { t } = useInterfaceTranslation();
+  if (!numbers?.length) return null;
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-xs text-micro text-muted-foreground" data-memory-cards-line={kind}>
+      <span>{label}</span>
+      {numbers.map((number) => (
+        <button key={number} type="button" aria-label={t("memory.openCard", { card: cardName(number) })} className="font-mono underline-offset-4 hover:text-foreground hover:underline" onClick={() => onCard(number)}>
+          {cardName(number)}
+        </button>
+      ))}
+    </span>
   );
 }

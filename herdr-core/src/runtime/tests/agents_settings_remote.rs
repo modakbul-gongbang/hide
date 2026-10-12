@@ -2291,12 +2291,7 @@ fn a_running_memory_analysis_stops_when_hide_ai_turns_off_or_its_agents_change()
     assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
     assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": "codex"}))));
 
-    let running = |runtime: &mut Runtime| {
-        let cancel = hide_ai::CancelToken::new();
-        runtime.memory_cancel = Some(cancel.clone());
-        runtime.memory_analysis_settings = runtime.ai_settings.clone();
-        cancel
-    };
+    let running = |runtime: &mut Runtime| runtime.pretend_memory_pass();
     let stopped_by = |payload: serde_json::Value, runtime: &mut Runtime| {
         let cancel = running(runtime);
         assert!(runtime.dispatch_json(&ai_event(payload)));

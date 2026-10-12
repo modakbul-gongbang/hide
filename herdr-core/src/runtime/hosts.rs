@@ -897,6 +897,29 @@ impl Runtime {
         }
     }
 
+    /// The machines whose Projects have Memory now, each with the link that
+    /// reads its files: this machine's and each node that dials in and is
+    /// linked; and the nodes that dial in but whose link is down.
+    pub(crate) fn memory_nodes(
+        &self,
+    ) -> (
+        Vec<(crate::node::NodeId, Arc<dyn NodeLink>)>,
+        Vec<crate::node::NodeId>,
+    ) {
+        let mut nodes = vec![(self.node.clone(), self.own_node())];
+        let mut unreached = Vec::new();
+        for registration in &self.snapshot.ui_state.device_registrations {
+            if registration.origin != crate::model::LinkOrigin::Inbound {
+                continue;
+            }
+            match self.linked_node(&registration.id) {
+                Ok(linked) => nodes.push(linked),
+                Err(_) => unreached.extend(crate::node::NodeId::parse(&registration.id).ok()),
+            }
+        }
+        (nodes, unreached)
+    }
+
     /// What a hook's Memory read for a pane in `context` is answered from
     /// (`crate::memory_hook`), on the node of the pane's checkout.
     pub(crate) fn memory_scope(

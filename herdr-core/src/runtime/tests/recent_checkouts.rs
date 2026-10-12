@@ -107,7 +107,7 @@ fn a_record_carries_the_names_a_row_is_drawn_from() {
             checkout_id: "c-alpha".to_owned(),
             project_name: "alpha".to_owned(),
             branch: "branch-alpha".to_owned(),
-            device_name: "This Mac".to_owned(),
+            device_name: crate::workspace::LOCAL_DEVICE_LABEL.to_owned(),
         }]
     );
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { coreMachineName, coreShared, machineName, moveMachines, screenNodeFromHash, windowFirst } from "./screenMachine";
 
 describe("the screen's own machine (PRD core-host-node-remote-core B13)", () => {
@@ -22,10 +22,15 @@ describe("the screen's own machine (PRD core-host-node-remote-core B13)", () => 
 describe("what this window calls each machine (PRD core-host-node-move B2, N1)", () => {
   const device = (id: string, kind: string, over: Record<string, unknown> = {}) => ({ id, kind, label: id === "core" ? "This Mac" : id, ...over }) as never;
   const devices = [device("core", "local", { machine_name: "Mac mini" }), device("mbp", "remote", { label: "MacBook Pro", dials_in: true }), device("box", "remote", { label: "build-box" })];
-  const t = ((key: string) => (key === "common.thisMac" ? "이 Mac" : key)) as never;
+  const t = ((key: string) => ({ "common.thisMac": "이 Mac", "common.thisPc": "내 PC" })[key] ?? key) as never;
+
+  beforeEach(() => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+  });
 
   afterEach(() => {
     window.location.hash = "";
+    vi.unstubAllGlobals();
   });
 
   it("names the core's own machine This Mac in a window on the core, and marks it only once a node dials in", () => {
@@ -45,5 +50,12 @@ describe("what this window calls each machine (PRD core-host-node-move B2, N1)",
     expect(windowFirst(devices).map((row) => (row as { id: string }).id)).toEqual(["mbp", "core", "box"]);
     expect(coreShared([devices[0], devices[2]] as never)).toBe(true);
     expect(moveMachines(devices, { direction: "back", device: null }, t)).toEqual({ from: "Mac mini", to: "이 Mac" });
+  });
+
+  it("names this window's machine as its own system does, whichever machine the core runs on", () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    window.location.hash = "#token=t&node=mbp";
+    expect(machineName(devices, "mbp", t)).toBe("내 PC");
+    expect(machineName(devices, "core", t)).toBe("Mac mini");
   });
 });

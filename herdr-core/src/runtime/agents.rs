@@ -826,7 +826,9 @@ impl Runtime {
 
     pub(crate) fn usage_activity(&self) -> crate::usage::UsageActivity {
         crate::usage::UsageActivity {
-            window_visible: self.usage_window_visible,
+            // Background Memory analysis reads the weekly figure with no
+            // window attached (D-10 b).
+            window_visible: self.usage_window_visible || self.memory_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
         }
     }
@@ -1771,7 +1773,7 @@ impl Runtime {
     /// which is what the probe was run with.
     pub(super) fn refresh_background_ai(&mut self) {
         let settings = self.ai_settings.clone().unwrap_or_default();
-        self.stop_memory_analysis_if_ai_moved(&settings);
+        self.memory_ai_settings_changed(&settings);
         let mut providers = if self.background_ai_providers.is_empty() {
             crate::model::BackgroundAiSnapshot::unread().providers
         } else {
@@ -1804,22 +1806,6 @@ impl Runtime {
             .collect();
         snapshot.providers = providers;
         snapshot.refusal = refusal;
-    }
-
-    /// A Memory analysis builds its router once, so it would keep asking an
-    /// agent the operator has since turned off, removed from the fallback
-    /// list or replaced. It is stopped when Hide AI is no longer active or the
-    /// agents and models it may ask changed; the stored Memory is untouched
-    /// and Retry starts a run on the new choice (B33).
-    fn stop_memory_analysis_if_ai_moved(&mut self, settings: &hide_ai::AiSettings) {
-        let (Some(cancel), Some(started)) = (&self.memory_cancel, &self.memory_analysis_settings)
-        else {
-            return;
-        };
-        let active = settings.enabled && settings.chosen;
-        if !active || !started.routes_like(settings) {
-            cancel.cancel();
-        }
     }
 
     /// What the label analyzer last found about Runs on (B41, B42): shown
@@ -1879,17 +1865,8 @@ impl Runtime {
         }
         self.hook_diagnosis = Some(diagnosis);
         self.sync_pane_lineage();
-        if self.memory_enable_after_hook_update && self.hooks_support_memory() {
-            self.memory_enable_after_hook_update = false;
-            self.apply_memory_action(crate::runtime::events::MemoryActionPayload {
-                action: "enable".to_owned(),
-                item_id: None,
-                candidate_id: None,
-                body: None,
-                batch_id: None,
-                conflict_choice: None,
-            });
-        }
+        self.enable_memory_after_hook_update();
+        self.sync_project_memory();
         true
     }
 

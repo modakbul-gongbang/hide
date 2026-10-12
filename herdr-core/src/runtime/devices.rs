@@ -303,6 +303,8 @@ impl Runtime {
         self.device_github.remove(device_id);
         self.device_github_reads
             .retain(|(device, _), _| device != device_id);
+        self.device_github_read_generation
+            .retain(|(device, _), _| device != device_id);
         self.device_github_over_limit.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)

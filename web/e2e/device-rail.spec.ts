@@ -15,7 +15,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, writeSshHost, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, screenshot, THIS_MACHINE } from "./wire";
 import { SYSTEM } from "./chords";
 import { animationsFinished } from "./wait";
 
@@ -65,7 +65,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
     // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
-    await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
+    await expect(page.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-overview]")).toHaveText(SYSTEM === "mac" ? "Overview⇧⌘O" : "OverviewAlt+Shift+O");
     await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
@@ -77,7 +77,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(railMenu).toContainText("Hide rail");
     await railMenu.locator('[data-menu-item="hide"]').click();
     await expect(rail).toHaveCount(0);
-    await expect(page.locator("[data-sidebar-device-menu]")).toContainText("This Mac");
+    await expect(page.locator("[data-sidebar-device-menu]")).toContainText(THIS_MACHINE);
     await page.reload();
     await expect(page.locator(CENTER).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("[data-device-rail]")).toHaveCount(0);
@@ -127,7 +127,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // This Mac is the selection, and the center is where it was.
     await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
-    await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
+    await expect(page.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
 
     // B3, B8: the unreachable device is dimmed with a cross, has no badge, and its name says so.
     const tile = rail.locator(`[data-rail-tile="${ALIAS}"]`);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, parseCloneUrl, projectNameProblem, projectPath, refusalText, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
@@ -10,13 +10,17 @@ const device = (id: string, label: string, kind = "remote") => ({ id, label, kin
 const registration = (path: string, device_id = "local") => ({ id: path, label: path, path, device_id, pinned: false }) as WorkspaceRegistration;
 
 describe("Add a project", () => {
-  it("lists this window's machine first as This Mac, then every registered device (PRD core-host-node-move B2)", () => {
+  it("lists this window's machine first, named for its system, then every registered device (PRD core-host-node-move B2)", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
     expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This Mac" }]);
     expect(addProjectHosts(undefined, ko)).toEqual([{ id: "", label: "이 Mac" }]);
     expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
       { id: "local", label: "This Mac" },
       { id: "mini", label: "Mini" },
     ]);
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This PC" }]);
+    vi.unstubAllGlobals();
   });
 
   it("opens on the focused device while it is listed, this Mac otherwise", () => {

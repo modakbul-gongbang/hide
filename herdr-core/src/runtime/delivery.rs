@@ -713,10 +713,35 @@ impl Runtime {
             })
     }
 
-    /// The authority the Factory host acts with: its own recipient, never a
-    /// pane's.
-    pub(crate) fn factory_authority_current(&self, caller: &str, actor: &Actor) -> bool {
-        caller == actor.pane_id && self.factory_recipient_current(actor)
+    /// The authority a code-owned caller acts with: a Factory host's own
+    /// recipient, or Hide's own identity for one of its roles; never a pane's.
+    pub(crate) fn code_owned_authority_current(&self, caller: &str, actor: &Actor) -> bool {
+        caller == actor.pane_id
+            && (self.factory_recipient_current(actor)
+                || *actor == Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, self.node.as_str()))
+    }
+
+    /// A delivery client and authority for Hide's own `role`, the origin of
+    /// the agents Hide starts for the operator (PRD project-memory-v2 D-25).
+    pub(crate) fn hide_delivery(
+        &self,
+        role: &str,
+    ) -> Result<(crate::delivery::worker::Client, Authority, Actor), String> {
+        let actor = Actor::hide(role, self.node.as_str());
+        let context = Context {
+            device_id: self.node.as_str().into(),
+            workspace_id: actor.pane_id.clone(),
+            checkout_id: actor.pane_id.clone(),
+            checkout_path: String::new(),
+        };
+        Ok((
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: actor.pane_id.clone(),
+                context,
+            },
+            actor,
+        ))
     }
 
     /// A delivery client and authority for the Factory host (D-14).
@@ -2061,16 +2086,23 @@ pub(crate) mod tests {
 
         // The Factory answers as itself; a pane cannot borrow its authority.
         let guard = runtime.lock().unwrap();
-        assert!(
-            !guard.factory_authority_current(
-                "sender",
-                &Actor::factory("f-1", crate::node::TEST_NODE)
-            )
-        );
-        assert!(guard.factory_authority_current(
+        assert!(!guard.code_owned_authority_current(
+            "sender",
+            &Actor::factory("f-1", crate::node::TEST_NODE)
+        ));
+        assert!(guard.code_owned_authority_current(
             "factory:f-1",
             &Actor::factory("f-1", crate::node::TEST_NODE)
         ));
+        // Hide's own Memory identity answers as itself, and only that role.
+        let hide = Actor::hide(crate::delivery::HIDE_MEMORY_ROLE, crate::node::TEST_NODE);
+        assert!(guard.code_owned_authority_current("hide:memory", &hide));
+        assert!(!guard.code_owned_authority_current("sender", &hide));
+        assert!(!guard.code_owned_authority_current(
+            "hide:other",
+            &Actor::hide("other", crate::node::TEST_NODE)
+        ));
+        assert!(crate::delivery::reserved_name("hide:memory"));
         let forged = Actor {
             session: Some("forged".into()),
             ..Actor::factory("f-1", crate::node::TEST_NODE)
