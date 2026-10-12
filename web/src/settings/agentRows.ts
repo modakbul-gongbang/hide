@@ -6,6 +6,7 @@
 import { AGENT_ADAPTERS, agentAdapter } from "../agentAdapters";
 import type { Device, KitAgent, KitPiece, RemoteStatus } from "../snapshot";
 import { deviceState, kitPartNeedsReinstall } from "../settings";
+import { hostBridge } from "../host";
 
 /** The supported order and trusted vendor links come from this build's contract. */
 export const SUPPORTED_AGENTS = AGENT_ADAPTERS.map((row) => row.id);
@@ -40,7 +41,35 @@ export function supportedAgents(agents: readonly KitAgent[] | undefined): KitAge
  * operator's own choice).
  */
 export function agentInstalled(agent: KitAgent): boolean {
-  return agent.availability === "available" || (agent.enabled && agent.chosen === true);
+  return agent.availability !== "not_installed" || (agent.enabled && agent.chosen === true);
+}
+
+/**
+ * An agent installed on the machine with nothing Hide can attach to on its
+ * system (the kit's `unsupported_system`): it has no switch and no install
+ * link, and says which system it is not on yet (PRD first-run-onboarding
+ * D-25, B49).
+ */
+export function agentUnsupportedHere(agent: KitAgent): boolean {
+  return agent.availability === "unsupported_system";
+}
+
+/** A system's name as people say it, from `process.platform` or a device helper's `macos aarch64`; null when unknown. */
+export function systemName(platform: string | null | undefined): string | null {
+  if (!platform) return null;
+  if (/mac|darwin/i.test(platform)) return "macOS";
+  if (/win/i.test(platform)) return "Windows";
+  if (/linux/i.test(platform)) return "Linux";
+  return null;
+}
+
+/** The system a machine runs: a device's as its helper reported it, this machine's as the window it is shown in runs on. */
+export function machineSystem(device: Pick<Device, "kind" | "host"> | null | undefined): string | null {
+  if (device?.host?.platform) return systemName(device.host.platform);
+  if (device && device.kind === "remote") return null;
+  const bridge = hostBridge();
+  if (bridge) return systemName(bridge.platform);
+  return typeof navigator === "undefined" ? null : systemName(navigator.platform || navigator.userAgent);
 }
 
 /** One machine of the switch at the top of the tab: This Mac first, then each device in the Devices order. */
@@ -87,10 +116,12 @@ export function checkFailedReason(code: string): "agents.checkReason.unreachable
 }
 
 /** The pieces of one agent that a Reinstall would repair, the failed ones first (B13, B20). */
-/** The hook piece is named by what the contract says it is: OpenCode's is a plugin, Pi's and omp's an extension. */
-export type AgentProblem = { part: "skill" | "hook" | "plugin" | "extension" | "herdr"; piece: KitPiece };
+/** An agent's piece by name; the hook piece is named by what the contract says it is: OpenCode's is a plugin, Pi's and omp's an extension. */
+export type AgentPart = "skill" | "hook" | "plugin" | "extension" | "herdr";
 
-function hookPart(agent: KitAgent): "hook" | "plugin" | "extension" {
+export type AgentProblem = { part: AgentPart; piece: KitPiece };
+
+export function hookPart(agent: KitAgent): "hook" | "plugin" | "extension" {
   const kind = agentAdapter(agent.id)?.hook_kind;
   return kind === "plugin" || kind === "extension" ? kind : "hook";
 }

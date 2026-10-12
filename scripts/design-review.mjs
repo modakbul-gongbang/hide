@@ -303,13 +303,14 @@ async function enterState(page, state, target) {
   if (state === 'children') await page.locator('[data-session-chevron], [data-pane-tree]').first().click();
   if (state === 'resolved') await page.locator('[data-session-group=resolved] [data-session-focus=group]').click();
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
-  // The Factory screen's other views, and the states a target's scene sets up from its address;
-  // `ready` names what the scene draws once that state is in place.
-  if (['board', 'graph', 'sizes', ...(target.urlStates ?? [])].includes(state)) {
+  // The Factory screen's other views, and the states a target's scene sets up from its address:
+  // `urlStates` lists states that set `state=<name>`, or maps each state to the query it sets.
+  const urlStates = Array.isArray(target.urlStates) ? Object.fromEntries(target.urlStates.map(name => [name, {state: name}])) : target.urlStates ?? {};
+  if (['board', 'graph', 'sizes'].includes(state) || Object.hasOwn(urlStates, state)) {
     const url = new URL(page.url());
-    url.searchParams.set('state', state);
+    for (const [key, value] of Object.entries(urlStates[state] ?? {state})) url.searchParams.set(key, value);
     await page.goto(url.href);
-    await page.locator(target.ready ?? target.selector).waitFor();
+    await page.locator(target.readySelector ?? target.selector).waitFor();
     await page.evaluate(() => document.fonts.ready);
   }
   // The Observer frames that show a disclosure or a menu open.
@@ -520,14 +521,14 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await page.goto(sceneUrl(origin, target, condition));
-        await page.locator(target.selector).waitFor();
+        await page.locator(target.readySelector ?? target.selector).waitFor();
         await page.waitForTimeout(200);
         if (errors.length) throw new Error(`The scene raised: ${errors.join('; ')}`);
         const measured = geometry.measure ? await geometry.measure(page) : await measure(page, geometry);
         for (const result of evaluate(manifest.rules, measured)) report.rules.push({condition: conditionName(condition), ...result});
         for (const state of new Set(['rest', ...states])) {
           await page.goto(sceneUrl(origin, target, condition));
-          await page.locator(target.selector).waitFor();
+          await page.locator(target.readySelector ?? target.selector).waitFor();
           await page.waitForTimeout(150);
           // Each state is captured at its own frame's height when the bundle has one.
           const own = manifest.frames.find(frame => frame.state === state && ['theme', 'width', 'content', 'scale'].every(key => frame[key] === condition[key]));

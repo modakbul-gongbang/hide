@@ -18,7 +18,8 @@ import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar }
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { configurePaneVisits, expectPane, expectSurface, focusSignature } from "./recent";
-import { AgentOnboardingGate } from "./AgentOnboarding";
+import { FirstRunWizard } from "./FirstRunWizard";
+import { useAgentNotifications } from "./agentNotices";
 import { SettingsGate } from "./SettingsSheet";
 import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
@@ -45,6 +46,7 @@ export function App() {
   const actions: Actions = useMemo(() => createActions((event) => dispatchRef.current(event)), []);
   useUsageWindowHint(actions);
   useFactoryNotifications(actions);
+  useAgentNotifications(actions);
 
   useEffect(() => {
     const session = connectShell({
@@ -253,7 +255,7 @@ export function App() {
         <StartPanelHost actions={actions} />
         <ShortcutSheetGate actions={actions} />
         <SettingsGate actions={actions} />
-        <AgentOnboardingGate actions={actions} />
+        <FirstRunWizard actions={actions} />
         <WorkspaceDialogs actions={actions} />
         <AddProjectDialog actions={actions} />
         <BrowserHost actions={actions} />

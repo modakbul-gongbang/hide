@@ -4,12 +4,12 @@
 // local and pull-request package does, and a downloaded copy opens only after
 // the Gatekeeper step docs/INSTALL.md gives. `developer-id` is what a
 // release's package.yml run asks for: every executable in the bundle (the
-// Electron helpers, the bundled CLIs and Herdr) is signed with the Developer
-// ID certificate under the hardened runtime, Apple notarizes the app and its
-// ticket is stapled, so a downloaded copy opens like any other app. Herdr ships with
-// only the linker's ad-hoc signature and notarization refuses an executable
-// without a Developer ID one, so hide's signature replaces it; Herdr's code is
-// not changed.
+// Electron helpers, the notification permission helper, the bundled CLIs and
+// Herdr) is signed with the Developer ID certificate under the hardened
+// runtime, Apple notarizes the app and its ticket is stapled, so a downloaded
+// copy opens like any other app. Herdr ships with only the linker's ad-hoc
+// signature and notarization refuses an executable without a Developer ID one,
+// so hide's signature replaces it; Herdr's code is not changed.
 //
 // The keys below are the whole contract, read here and nowhere else. Every
 // missing or malformed one is reported at once, before the build starts.
@@ -56,10 +56,12 @@ export function macosSigning(env) {
 /**
  * The packager's `osxSign` and `osxNotarize` options for a Developer ID
  * package. `executables` names the programs shipped flat in
- * Contents/Resources, and `entitlements` is the folder holding the two
- * entitlement files.
+ * Contents/Resources, `entitlements` is the folder holding the two
+ * entitlement files, and `helpers` maps each program placed beside the app's
+ * executable in Contents/MacOS to the code-signing identifier it is signed
+ * under.
  */
-export function developerIdOptions(signing, executables, entitlements) {
+export function developerIdOptions(signing, executables, entitlements, helpers = {}) {
   return {
     osxSign: {
       identity: signing.identity,
@@ -69,6 +71,9 @@ export function developerIdOptions(signing, executables, entitlements) {
       optionsForFile: (file) => {
         if (path.basename(path.dirname(file)) === "Resources" && executables.includes(path.basename(file))) {
           return { entitlements: path.join(entitlements, "executable.plist") };
+        }
+        if (path.basename(path.dirname(file)) === "MacOS" && Object.hasOwn(helpers, path.basename(file))) {
+          return { entitlements: path.join(entitlements, "executable.plist"), additionalArguments: ["--identifier", helpers[path.basename(file)]] };
         }
         // Electron's helpers keep the Chromium entitlements @electron/osx-sign gives each.
         if (file.includes(".app/Contents/Frameworks/")) return null;

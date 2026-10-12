@@ -2372,6 +2372,49 @@ pub enum AgentOnboarding {
     Done,
 }
 
+/// The first-run wizard's flow (PRD first-run-onboarding D-07): a progress
+/// saved under another number belongs to a flow this build does not draw.
+pub const FIRST_RUN_VERSION: u32 = 1;
+
+/// Where the first-run wizard stands (`ui_state.first_run`): the step it
+/// opens on next, saved so a quit, a reload or a failed apply reopens it there
+/// (B6). It exists only on a Mac whose kit record waited for the first-run
+/// agent choice, so an existing install never sees the wizard (D-08).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct FirstRun {
+    pub version: u32,
+    pub step: FirstRunStep,
+}
+
+/// The wizard's steps in order; `Done` once the last was finished or skipped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirstRunStep {
+    Agents,
+    Notifications,
+    Project,
+    Done,
+}
+
+impl FirstRunStep {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Agents => "agents",
+            Self::Notifications => "notifications",
+            Self::Project => "project",
+            Self::Done => "done",
+        }
+    }
+}
+
+/// A screen whose one-line introduction shows on the first visit only
+/// (`ui_state.screen_intros_seen`, PRD first-run-onboarding B43).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenIntro {
+    Factory,
+}
+
 /// The web shell's color theme (Settings > Appearance). `System` follows the
 /// operator's OS appearance live; Dark is the default so an update never
 /// brightens the screen on its own (web-design-system-reset D-14).
@@ -2975,6 +3018,18 @@ pub struct UiStateSnapshot {
     /// waits receives once per run.
     #[serde(default)]
     pub agent_onboarding_agents: Vec<String>,
+    /// The first-run wizard's progress; `None` on a Mac that was never asked.
+    #[serde(default)]
+    pub first_run: Option<FirstRun>,
+    /// Whether the desktop app shows an OS notification when a root agent
+    /// newly needs the operator or finishes (Settings > General, PRD
+    /// first-run-onboarding D-21). Off until the operator turns it on, so an
+    /// existing install starts without it (D-08).
+    #[serde(default)]
+    pub desktop_notifications: bool,
+    /// The screens whose one-line introduction was shown once (B43).
+    #[serde(default)]
+    pub screen_intros_seen: BTreeSet<ScreenIntro>,
     /// The Projects and Agents sidebar's width in CSS pixels, dragged on its
     /// right edge and kept within `SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX`
     /// (PRD sidebar-typography D-08, D-09). A store written before the drag
@@ -3464,6 +3519,9 @@ impl Default for UiStateSnapshot {
             interface_language: None,
             agent_onboarding: None,
             agent_onboarding_agents: Vec::new(),
+            first_run: None,
+            desktop_notifications: false,
+            screen_intros_seen: BTreeSet::new(),
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
@@ -5800,6 +5858,32 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "agent_onboarding", &onboarding);
         checked.insert("agent_onboarding");
+
+        let first_run = [
+            FirstRunStep::Agents,
+            FirstRunStep::Notifications,
+            FirstRunStep::Project,
+            FirstRunStep::Done,
+        ];
+        for variant in first_run {
+            match variant {
+                FirstRunStep::Agents
+                | FirstRunStep::Notifications
+                | FirstRunStep::Project
+                | FirstRunStep::Done => {}
+            }
+        }
+        assert_wire(&contract, "first_run_step", &first_run);
+        checked.insert("first_run_step");
+
+        let intros = [ScreenIntro::Factory];
+        for variant in intros {
+            match variant {
+                ScreenIntro::Factory => {}
+            }
+        }
+        assert_wire(&contract, "screen_intro", &intros);
+        checked.insert("screen_intro");
 
         let kit_availability = [
             hide_kit::Availability::Available,

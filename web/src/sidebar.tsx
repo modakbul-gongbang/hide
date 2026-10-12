@@ -178,15 +178,12 @@ export function Sidebar({ actions }: { actions: Actions }) {
           <SidebarHeader
             rail={rail}
             title={title}
-            addProject={true}
                         compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             deviceMenu={deviceMenu}
             overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
             factory={{ selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => openFactoryAt(actions, null), projects: factoryProjects, secretary }}
             searchChord={commandLabel("search") || null}
-            newWorkspaceChord={commandLabel("new_workspace") || null}
             onSearch={() => actions.openSearch()}
-            onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
           />
           {status ? (
             <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
@@ -658,11 +655,6 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
           {t("sidebar.noProjects")}
-          {hostBridge() ? (
-            <Button variant="secondary" size="sm" onClick={() => actions.openAddProject()} data-projects-empty-add="true">
-              {t("commands.new_workspace")}
-            </Button>
-          ) : null}
         </li>
       ) : null}
     </ul>
@@ -719,9 +711,22 @@ function rowKey(row: ProjectRow): string {
 const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: ProjectRow; context: ListContext }) {
   const { t } = useInterfaceTranslation();
   if (row.kind === "header") {
+    // The Projects title carries the sidebar's one Add project, shown with or
+    // without projects, where the host can pick a folder (PRD first-run-onboarding B51);
+    // with none it is the bare word, over the empty list's line.
+    const add = row.section === "recent" && hostBridge();
     return (
-      <li className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.section}>
-        {t(PROJECT_SECTION_TITLE[row.section])} · {row.count}
+      <li className={cn("flex items-center gap-xs pl-sm text-micro font-medium text-muted-foreground", add ? "pt-xs pr-xs" : "pt-sm pr-sm pb-xxs")} data-section={row.section}>
+        <span className="min-w-0 flex-1 truncate">
+          {row.section === "recent" && row.count === 0 ? t("sidebar.projects") : `${t(PROJECT_SECTION_TITLE[row.section])} · ${row.count}`}
+        </span>
+        {add ? (
+          <Hint label={t("commands.new_workspace")} shortcut={commandLabel("new_workspace") || null}>
+            <Button variant="ghost" size="icon-sm" className="size-(--size-sidebar-line)" data-sidebar-new-workspace="true" onClick={() => context.actions.openAddProject()}>
+              <PlusIcon />
+            </Button>
+          </Hint>
+        ) : null}
       </li>
     );
   }

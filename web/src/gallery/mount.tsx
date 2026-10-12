@@ -6,7 +6,7 @@ import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
-import { AgentOnboardingScene } from "./AgentOnboardingScene";
+import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
 import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
 import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
@@ -29,9 +29,9 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
       return;
     }
-    if (scene === "agent-onboarding") {
-      document.title = "hide · Agent onboarding scene";
-      root.render(<StrictMode><AgentOnboardingScene theme={params.get("theme") === "light" ? "light" : "dark"} /></StrictMode>);
+    if (scene === "onboarding") {
+      document.title = "hide · First run scene";
+      root.render(<StrictMode><OnboardingScene {...onboardingSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "search-palette") {

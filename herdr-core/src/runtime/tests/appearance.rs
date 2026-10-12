@@ -2,7 +2,7 @@ use super::*;
 
 use crate::model::ThemePreference;
 
-fn runtime_at(path: &std::path::Path) -> Runtime {
+pub(super) fn runtime_at(path: &std::path::Path) -> Runtime {
     Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,

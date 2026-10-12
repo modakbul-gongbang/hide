@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
 import { catalogFor, modelToSend, selectKind, providerLabel, PROVIDER_KINDS, type AgentKind, type AgentSelection, type ModelCatalog, type ProviderKind } from "../agentPicker";
@@ -42,6 +42,7 @@ export function AgentPicker({
   withTerminal = false,
   withModel = true,
   disabled = false,
+  kindNote,
   className,
 }: {
   actions: Actions;
@@ -52,6 +53,8 @@ export function AgentPicker({
   /** False where the chosen agent's start takes no model, so no model menu is drawn. */
   withModel?: boolean;
   disabled?: boolean;
+  /** A word about the chosen agent, drawn right after its menu (the start panel's sign-in mark). */
+  kindNote?: ReactNode;
   className?: string;
 }) {
   useCatalogObservation(actions);
@@ -65,6 +68,7 @@ export function AgentPicker({
       onModel={(model) => onChange({ kind: value.kind, model })}
       withTerminal={withTerminal}
       disabled={disabled}
+      kindNote={kindNote}
       className={className}
     />
   );
@@ -78,6 +82,7 @@ export function AgentPickerView({
   onModel,
   withTerminal = false,
   disabled = false,
+  kindNote,
   className,
 }: {
   value: AgentSelection;
@@ -87,6 +92,7 @@ export function AgentPickerView({
   onModel: (model: string | null) => void;
   withTerminal?: boolean;
   disabled?: boolean;
+  kindNote?: ReactNode;
   className?: string;
 }) {
   const { t } = useInterfaceTranslation();
@@ -106,6 +112,7 @@ export function AgentPickerView({
           ))}
         </SelectContent>
       </Select>
+      {kindNote}
       {value.kind === "terminal" || catalog === null ? null : (
         <ModelSelect kind={value.kind} catalog={catalog} disabled={disabled} model={modelToSend(value)} onChange={onModel} />
       )}

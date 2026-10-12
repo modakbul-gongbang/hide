@@ -90,7 +90,7 @@ export type HostBridge = {
   kind: "electron";
   /** The host's OS as Node names it (`process.platform`): what the OS file manager is called. */
   platform: string;
-  /** Delivers each app-menu command id; returns the unsubscribe. */
+  /** Delivers each app-menu command id, a registry command's or `SETUP_COMMAND`; returns the unsubscribe. */
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
@@ -104,12 +104,40 @@ export type HostBridge = {
   probePaths(paths: string[]): Promise<ProbedPath[]>;
   /** Hands an absolute path, in the wire spelling, to the system: its default application, a folder window, or a file manager reveal when opening would run it. */
   openPath(path: string): void;
-  /** Shows a macOS notification about one Factory item while the app runs (PRD factory-observer D-50). */
-  notify(id: string, title: string, body: string): void;
+  /**
+   * Shows a system notification about one Factory item (PRD factory-observer
+   * D-50) or agent (PRD first-run-onboarding D-10) while the app runs; a
+   * newer one with the same id replaces it. With `unlessFocused` the host
+   * drops it while a Hide window has the keyboard.
+   */
+  notify(id: string, title: string, body: string, options?: { unlessFocused?: boolean }): void;
   /** Delivers the id of a notification the operator clicked; returns the unsubscribe. */
   onNotificationOpen(listener: (id: string) => void): () => void;
+  /** Closes the shown notifications with these ids (an agent the operator has seen); at most 64. */
+  withdrawNotifications(ids: string[]): void;
+  /** Whether the system lets Hide show notifications; read on each call, at most one read at a time. */
+  notificationPermission(): Promise<NotificationPermission>;
+  /** Opens Hide's page of the system's notification settings (macOS). */
+  openNotificationSettings(): void;
   browser: BrowserBridge;
 };
+
+/**
+ * The app-menu commands the desktop host alone has, outside the shortcut
+ * registry, so neither a browser tab's palette nor Settings > Shortcuts
+ * offers them: Help > Set up Hide reopens the first-run wizard (PRD
+ * first-run-onboarding B45).
+ */
+export const SETUP_COMMAND = "setup_hide";
+
+/**
+ * The system's notification permission for Hide (`desktop/src/main/notificationPermission.ts`):
+ * `unsupported` where the system has none to read (Windows, Linux), `no_service`
+ * where it cannot show a notification at all (a Linux desktop with no
+ * notification service, PRD first-run-onboarding D-24), `unknown` where macOS
+ * has one Hide could not read.
+ */
+export type NotificationPermission = "granted" | "denied" | "not_determined" | "unknown" | "unsupported" | "no_service";
 
 declare global {
   interface Window {

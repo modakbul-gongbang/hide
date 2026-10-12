@@ -3,12 +3,12 @@
 // pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
-// macOS builds hide.app as a zip, ad-hoc signed, or signed with the Developer
-// ID certificate and notarized when HIDE_MACOS_SIGNING asks for it
-// (macos-signing.mjs). Windows x64 builds an unsigned folder as a zip and
+// macOS builds hide.app, with the notification permission helper compiled
+// into Contents/MacOS, as a zip that is either ad-hoc signed or signed with
+// the Developer ID certificate and notarized when HIDE_MACOS_SIGNING asks for
+// it (macos-signing.mjs). Windows x64 builds an unsigned folder as a zip and
 // Linux x64 an unsigned folder as a tar.gz (operator decision 2026-10-03: no
-// signing outside macOS for now). Each is
-// built on its own system, because the release binaries come from that
+// signing outside macOS for now). Each is built on its own system, because the release binaries come from that
 // system's cargo build; nothing is cross-built.
 //
 // The CLI finds `hided` beside its own file and the daemon offers its own
@@ -17,7 +17,7 @@
 // folder. A binary that is missing or cannot run stops the build here, by
 // name, before any app exists (B12); nothing is substituted.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -171,11 +171,46 @@ const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
 
+const APP_BUNDLE_ID = "me.grab.hide.desktop";
+
+/**
+ * macOS's notification permission helper (PRD first-run-onboarding D-12):
+ * one Swift file compiled for this machine's architecture, with the app's
+ * identifier embedded as its Info.plist, since macOS keys notification
+ * settings to it. A failed compile stops the package; nothing is shipped in
+ * its place.
+ */
+function buildNotificationHelper() {
+  const source = path.join(root, "native", "notification-status", "main.swift");
+  const work = path.join(out, "notification-status");
+  fs.rmSync(work, { recursive: true, force: true });
+  fs.mkdirSync(work, { recursive: true });
+  const plist = path.join(work, "Info.plist");
+  fs.writeFileSync(
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>${APP_BUNDLE_ID}</string>
+  <key>CFBundleName</key>
+  <string>hide-notification-status</string>
+</dict>
+</plist>
+`,
+  );
+  const binary = path.join(work, "hide-notification-status");
+  run("/usr/bin/xcrun", ["swiftc", "-O", source, "-target", `${system.arch}-apple-macosx11.0`, "-o", binary, "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", plist], { stdio: "inherit" });
+  return binary;
+}
+const notificationHelper = platform === "darwin" ? buildNotificationHelper() : null;
+
 const [outputDir] = await packager({
   dir: root,
   out,
   name: "hide",
-  appBundleId: "me.grab.hide.desktop",
+  appBundleId: APP_BUNDLE_ID,
   appVersion: version,
   // macOS's CFBundleVersion and Windows' file version must be dotted
   // integers; the numeric prefix is that.
@@ -191,8 +226,23 @@ const [outputDir] = await packager({
   extraResource,
   // Only the bundles and the status page ship; sources, tests and tooling do not.
   ignore: (file) => file !== "" && file !== "/package.json" && !file.startsWith("/dist"),
+  // The helper goes beside the app's executable, where the host looks for it
+  // and where macOS resolves its bundle, before the packager signs anything.
+  // It is signed under the app's identifier here, since macOS keys
+  // notification settings to it, so it is already signed when a Developer ID
+  // signature seals the bundle around it, and that signature replaces this one.
+  afterCopyExtraResources: notificationHelper
+    ? [
+        async ({ buildPath }) => {
+          const target = path.join(buildPath, "hide.app", "Contents", "MacOS", path.basename(notificationHelper));
+          fs.copyFileSync(notificationHelper, target);
+          fs.chmodSync(target, 0o755);
+          run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", APP_BUNDLE_ID, "--timestamp=none", target], { stdio: "inherit" });
+        },
+      ]
+    : [],
   ...(signing?.mode === "developer-id"
-    ? developerIdOptions(signing, shipped.map(([name]) => name), path.join(resources, "entitlements"))
+    ? developerIdOptions(signing, shipped.map(([name]) => name), path.join(resources, "entitlements"), { [path.basename(notificationHelper)]: APP_BUNDLE_ID })
     : {}),
 });
 
@@ -211,9 +261,15 @@ for (const companion of herdr.companions) {
   if (!fs.existsSync(path.join(bundledResources, name))) throw new Error(`Herdr's ${name} did not land in ${bundledResources}`);
 }
 if (platform === "darwin") {
+  const helper = path.join(bundle, "Contents", "MacOS", path.basename(notificationHelper));
+  if (!fs.statSync(helper, { throwIfNoEntry: false })?.isFile()) throw new Error(`the notification permission helper did not land at ${helper}`);
   // A Developer ID bundle was signed and notarized inside the packager.
   if (signing.mode === "adhoc") run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle], { stdio: "inherit" });
+  // Signing the bundle again must not have given the helper another identity.
+  const signed = spawnSync("/usr/bin/codesign", ["-dv", helper], { encoding: "utf8" }).stderr;
+  if (!signed.includes(`Identifier=${APP_BUNDLE_ID}\n`)) throw new Error(`the notification permission helper is not signed as ${APP_BUNDLE_ID}: ${signed.trim()}`);
+  if (signing.mode === "developer-id" && !/flags=0x[0-9a-f]+\([^)]*runtime/.test(signed)) throw new Error(`the notification permission helper is not signed under the hardened runtime: ${signed.trim()}`);
 }
 
 // Each archive holds one folder: hide.app, or the packaged directory.

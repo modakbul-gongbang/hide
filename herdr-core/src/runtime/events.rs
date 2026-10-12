@@ -1150,6 +1150,32 @@ pub(super) struct EditorTextScalePayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct AgentOnboardingApplyPayload {
     pub(super) agents: Vec<String>,
+    /// A browser tab shows only the wizard's first step, so applying it
+    /// finishes the wizard there (PRD first-run-onboarding B26).
+    #[serde(default)]
+    pub(super) finish: bool,
+}
+
+/// Leaves the wizard step named `from`; a client that still shows an earlier
+/// step moves nothing (engineering rule 11).
+#[derive(Debug, Deserialize)]
+pub(super) struct FirstRunAdvancePayload {
+    pub(super) from: crate::model::FirstRunStep,
+    /// The desktop switch the notification step leaves with: on for Continue
+    /// on a Mac that already allows Hide (B16), off for Not now (B21), absent
+    /// to leave it as it is.
+    #[serde(default)]
+    pub(super) notifications: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopNotificationsSetPayload {
+    pub(super) enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ScreenIntroSeenPayload {
+    pub(super) screen: crate::model::ScreenIntro,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1329,6 +1355,9 @@ pub(super) enum Event {
     ThemeSet(ThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
     AgentOnboardingApply(AgentOnboardingApplyPayload),
+    FirstRunAdvance(FirstRunAdvancePayload),
+    DesktopNotificationsSet(DesktopNotificationsSetPayload),
+    ScreenIntroSeen(ScreenIntroSeenPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
@@ -1551,6 +1580,11 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
+        "first_run_advance" => decode!(FirstRunAdvancePayload, FirstRunAdvance),
+        "desktop_notifications_set" => {
+            decode!(DesktopNotificationsSetPayload, DesktopNotificationsSet)
+        }
+        "screen_intro_seen" => decode!(ScreenIntroSeenPayload, ScreenIntroSeen),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
@@ -3399,7 +3433,16 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
-            Event::AgentOnboardingApply(payload) => self.apply_agent_onboarding(payload.agents),
+            Event::AgentOnboardingApply(payload) => {
+                self.apply_agent_onboarding(payload.agents, payload.finish)
+            }
+            Event::FirstRunAdvance(payload) => {
+                self.advance_first_run(payload.from, payload.notifications)
+            }
+            Event::DesktopNotificationsSet(payload) => {
+                self.set_desktop_notifications(payload.enabled)
+            }
+            Event::ScreenIntroSeen(payload) => self.mark_screen_intro_seen(payload.screen),
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
@@ -3617,6 +3660,11 @@ impl Runtime {
                     // `agent_onboarding_*` events own the first-run choice.
                     agent_onboarding: current.agent_onboarding,
                     agent_onboarding_agents: current.agent_onboarding_agents,
+                    // The wizard's own events own its progress, the
+                    // notification switch and the introductions seen.
+                    first_run: current.first_run,
+                    desktop_notifications: current.desktop_notifications,
+                    screen_intros_seen: current.screen_intros_seen,
                     // A width outside the drag's range keeps the last one; the
                     // shell never sends it, so there is nothing to show.
                     sidebar_width: match payload.sidebar_width {

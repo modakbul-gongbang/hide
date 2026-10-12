@@ -79,8 +79,8 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-palette="Search"]')).toHaveCount(0);
 
-    // B5: a browser tab has no folder picker, so the strip offers no Add project
-    // (the desktop app draws it before Search: desktop/e2e/add-project.spec.ts).
+    // B5: a browser tab has no folder picker, so the sidebar offers no Add project
+    // (the desktop app draws it on the Projects title: desktop/e2e/add-project.spec.ts).
     const add = page.locator("[data-sidebar-new-workspace]");
     await expect(add).toHaveCount(0);
     // Neither the Overview nor the chord offers it: the chord opens nothing.

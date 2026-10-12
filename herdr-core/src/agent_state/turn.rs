@@ -897,6 +897,11 @@ pub mod push {
             self.vanished.clear();
         }
 
+        /// Whether a projection has seeded it since it was made or reset.
+        pub fn seeded(&self) -> bool {
+            self.last.is_some()
+        }
+
         pub fn observe(&mut self, projection: &Projection) -> (Vec<Notice>, BTreeSet<AgentKey>) {
             self.observe_at(projection, std::time::Instant::now())
         }

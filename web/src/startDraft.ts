@@ -6,7 +6,11 @@
 // every open reads what is in front again (D-19).
 
 import { create } from "zustand";
+import type { ProviderKind } from "./agentPicker";
 import type { MessageKey } from "./i18n/catalogs";
+
+/** What an open names instead of what is in front: the first-run wizard's new project and its first agent (PRD first-run-onboarding D-15). */
+export type StartPreset = { projectId: string; kind: ProviderKind };
 
 /** Why a start did not go: the core's own sentence, shown as sent, or a catalog key the panel words in the operator's language. */
 export type StartFailure = { message: string } | { key: MessageKey };
@@ -23,6 +27,8 @@ type StartPanelState = {
   target: string | null;
   /** This open replaced Settings, which then counts as what is in front (B25). */
   overSettings: boolean;
+  /** The project and agent this open starts on; null reads what is in front and the remembered agent. */
+  preset: StartPreset | null;
   /** The id of the request whose answer the panel waits for. */
   request: string | null;
   /** Why the last start did not go, shown inside the panel. */
@@ -31,7 +37,7 @@ type StartPanelState = {
   sent: string;
   /** A start whose tab is open but whose agent has not answered yet, with its text. */
   spent: { taskId: number; text: string } | null;
-  open: (overSettings: boolean) => void;
+  open: (overSettings: boolean, preset?: StartPreset | null) => void;
   close: () => void;
   setText: (text: string) => void;
   setTarget: (key: string) => void;
@@ -50,12 +56,13 @@ export const useStartPanel = create<StartPanelState>((set) => ({
   text: "",
   target: null,
   overSettings: false,
+  preset: null,
   request: null,
   failure: null,
   sent: "",
   spent: null,
   // A reason the last start did not go stays with its text until the text changes.
-  open: (overSettings) => set({ isOpen: true, target: null, overSettings }),
+  open: (overSettings, preset = null) => set({ isOpen: true, target: null, overSettings, preset }),
   close: () => set({ isOpen: false }),
   setText: (text) => set({ text, failure: null }),
   setTarget: (target) => set({ target }),

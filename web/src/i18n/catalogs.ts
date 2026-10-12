@@ -23,6 +23,7 @@ import { coreMoveCatalogs, coreMoveEnglish } from "./resources/coreMove";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
 import { overviewCatalogs, overviewEnglish } from "./resources/overview";
 import { factoryCatalogs, factoryEnglish } from "./resources/factory";
+import { firstRunCatalogs, firstRunEnglish } from "./resources/firstRun";
 import { memoryCatalogs, memoryEnglish } from "./resources/memory";
 import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { prListCatalogs, prListEnglish } from "./resources/prList";
@@ -64,6 +65,7 @@ export const english = {
   ...linksEnglish,
   ...overviewEnglish,
   ...factoryEnglish,
+  ...firstRunEnglish,
   ...memoryEnglish,
 } as const;
 
@@ -103,6 +105,7 @@ export const catalogs = {
     ...linksCatalogs.ko,
     ...overviewCatalogs.ko,
     ...factoryCatalogs.ko,
+    ...firstRunCatalogs.ko,
     ...memoryCatalogs.ko,
   },
   "zh-CN": {
@@ -137,6 +140,7 @@ export const catalogs = {
     ...linksCatalogs["zh-CN"],
     ...overviewCatalogs["zh-CN"],
     ...factoryCatalogs["zh-CN"],
+    ...firstRunCatalogs["zh-CN"],
     ...memoryCatalogs["zh-CN"],
   },
   ja: {
@@ -171,6 +175,7 @@ export const catalogs = {
     ...linksCatalogs.ja,
     ...overviewCatalogs.ja,
     ...factoryCatalogs.ja,
+    ...firstRunCatalogs.ja,
     ...memoryCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;

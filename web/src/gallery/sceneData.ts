@@ -111,7 +111,7 @@ type CheckoutSpec = {
   exists?: boolean;
 };
 
-function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
+export function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
   const base = `${ROOT}/${spec.workspace}`;
   const path = spec.primary || spec.folder ? base : `${base}.worktrees/${spec.branch}`;
   const panes = spec.panes ?? [];
@@ -177,7 +177,7 @@ function pane(id: string) {
   };
 }
 
-function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace, "checkouts">, folds: SceneFolds): Workspace {
+export function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace, "checkouts">, folds: SceneFolds): Workspace {
   return {
     agent_scope: EMPTY_GALLERY_SCOPE,
     label: id,
