@@ -13,7 +13,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { fixtureExecutable } from "./platform-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showProjectRow } from "./wire";
 import { chord, held, label } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
@@ -70,7 +70,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const display = await displayLocator.getAttribute("data-display");
 
     // Then beta's terminal, from the sidebar.
-    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first())).click();
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
 
     // ⌥` once, held: the previous surface is the other checkout's display.
@@ -141,10 +141,10 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // then in the pane the fixture opens on, and the first candidate is
     // beta's pane, which one focus_pane brings back with its project.
     const betaPane = beta.result.root_pane.pane_id;
-    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first())).click();
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
     await page.locator(`[data-pane-view="${betaPane}"]`).click();
-    await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first())).click();
     await expect(canvas).not.toHaveAttribute("data-canvas", betaTab);
     const fixturePane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
     // The fixture's View panel stays open over the agents' right side.

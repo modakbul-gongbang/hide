@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, showTool } from "./wire";
+import { countSent, showProjectRow, showTool } from "./wire";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -26,7 +26,7 @@ test("Memory opens the front checkout's Project and shows it off until the opera
     const last = new Map<string, Record<string, unknown>>();
     countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-project]", { hasText: "memory-repo" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "memory-repo" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");
 
     // The tab names its Project; the core answers with the Project's switch,

@@ -8,19 +8,27 @@
 // page and names the version. Captured in Dark and Light.
 
 import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chooseTheme, enterWorkspace, screenshot, THIS_MACHINE } from "./wire";
+import { chooseTheme, enterWorkspace, screenshot, showProjectRow, sidebarRowsFit, THIS_MACHINE } from "./wire";
 import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
 /** One private stack with the page on it, the Projects list drawn; `check` runs with it and both are stopped after. */
-async function withShell(page: Page, label: string, check: (stack: { herdr: HerdrFixture; daemon: Daemon }) => Promise<void>): Promise<void> {
+async function withShell(
+  page: Page,
+  label: string,
+  check: (stack: { herdr: HerdrFixture; daemon: Daemon }) => Promise<void>,
+  prepare?: (herdr: HerdrFixture) => void,
+): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
+    prepare?.(herdr);
     daemon = await startHided(herdr, label);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("nav[data-sidebar]")).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
@@ -146,6 +154,49 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await expect(page.locator("[data-factory-screen]")).toBeVisible();
     await expect(center.locator("*")).toHaveCount(0);
     await expect(title.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
+  });
+});
+
+/** A folder whose name is longer than any row or path has room for at the smallest window. */
+const LONG_NAME = "빌드-서버-자동화-장비-점검-작업-폴더-for-the-weekly-release-notes";
+
+// PRD sidebar-titlebar-refresh B24.
+test("at the smallest window and the largest Interface text, long names shorten and no icon hides", async ({ page }) => {
+  await withShell(page, "sidebar-title-row-small", async () => {
+    await page.setViewportSize({ width: 720, height: 480 });
+    await page.keyboard.press(chord("settings"));
+    await page.locator('[data-settings-tab="general"]').click();
+    const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
+    await fontSize.focus();
+    await page.keyboard.press("End");
+    await expect(fontSize).toHaveAttribute("aria-valuenow", "17");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+
+    const row = await showProjectRow(page, page.locator("[data-project]").filter({ has: page.locator("[data-row-name]", { hasText: LONG_NAME }) }).locator("[data-checkout]").first());
+    await row.click();
+    const center = page.locator("[data-title-center]");
+    const project = center.locator("[data-workspace-project]");
+    await expect(project).toHaveText(LONG_NAME);
+    // The path shortens with an ellipsis, inside the row; the four icons keep their place.
+    const cut = (element: HTMLElement) => element.scrollWidth > element.clientWidth;
+    expect(await project.evaluate(cut) || await center.locator("[data-workspace-location]").evaluate(cut)).toBe(true);
+    expect(await page.locator("[data-title-row]").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const toggles = center.locator("[data-column-toggles] button");
+    await expect(toggles).toHaveCount(4);
+    const rowBox = (await page.locator("[data-title-row]").boundingBox())!;
+    for (const toggle of await toggles.all()) {
+      await expect(toggle).toBeVisible();
+      const box = (await toggle.boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(rowBox.x + rowBox.width + 0.5);
+    }
+    // The sidebar's long Korean name, the No agents fold, Search and the footer overlap nothing.
+    expect(await sidebarRowsFit(page)).toEqual([]);
+    await screenshot(page, "title-row-smallest-largest-text");
+  }, (herdr) => {
+    const folder = path.join(herdr.root, LONG_NAME);
+    fs.mkdirSync(folder);
+    herdr.run(["workspace", "create", "--cwd", folder, "--label", LONG_NAME, "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
   });
 });
 
