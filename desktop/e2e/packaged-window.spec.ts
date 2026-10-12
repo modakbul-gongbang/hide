@@ -41,15 +41,19 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     expect(fs.realpathSync.native(await app.evaluate(() => process.resourcesPath))).toBe(fs.realpathSync.native(resources));
     expect(run.daemonPid()).not.toBeNull();
     // Launch builds Electron's notification presenter on Windows, which makes the Start Menu
-    // shortcut a toast is attributed through, named from the executable's product name; the
-    // Start Menu is a known folder of the profile the app resolves, the fixture's here.
+    // shortcut a toast is attributed through, named from the executable's product name. Where it
+    // lands and whether it waits for a first notification is what this records: the shortcut after
+    // launch, and when there is none, after one test notification through the shell's bridge.
     const roaming = await app.evaluate(({ app: electron }) => electron.getPath("appData"));
     const programs = [roaming, process.env.APPDATA ?? ""].map((folder) => path.join(folder, "Microsoft", "Windows", "Start Menu", "Programs"));
-    const listing = () => programs.map((folder) => `${folder}: ${fs.existsSync(folder) ? fs.readdirSync(folder).join(", ") : "missing"}`).join("\n");
     if (process.platform === "win32") {
-      await expect.poll(() => programs.some((folder) => fs.existsSync(path.join(folder, "hide.lnk"))), { timeout: 30_000 }).toBe(true).catch((error: Error) => {
-        throw new Error(`${error.message}\n${listing()}`);
-      });
+      const shortcut = () => programs.find((folder) => fs.existsSync(path.join(folder, "hide.lnk"))) ?? null;
+      const waitShortcut = () => expect.poll(shortcut, { timeout: 30_000 }).not.toBeNull().then(shortcut, shortcut);
+      const afterLaunch = await waitShortcut();
+      const afterShow = afterLaunch ?? (await page.evaluate(() => (window as unknown as { hideHost: { notify(id: string, title: string, body: string): void } }).hideHost.notify("test", "Notifications work", "")).then(waitShortcut));
+      const listing = programs.map((folder) => `${folder}: ${fs.existsSync(folder) ? fs.readdirSync(folder).join(", ") : "missing"}`);
+      const notify = hostLog(run.env).filter((line) => String(line.event).startsWith("notify."));
+      expect({ afterLaunch, afterShow, listing, notify }).toMatchObject({ afterLaunch: expect.any(String) });
     }
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
