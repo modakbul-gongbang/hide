@@ -21,6 +21,8 @@ use super::memory::{
     MemoryReceipt, SESSION_CALL_TIMEOUT, digest, now_ms, project_identity, project_sessions,
     session_conversation, session_stat, trusted_memory_receipt,
 };
+use super::memory_evidence::{CheckoutFacts, check_evidence};
+use super::memory_verify::{check_before_suggestion, reverify_pending};
 use super::*;
 use crate::labels::worker::{MemoryHandoff, MemorySession, SightedMemoryReceipt};
 use crate::model::MemoryAnalysisState;
@@ -28,8 +30,8 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
 use hide_memory::{
-    AnalysisBatch, ApplySummary, Candidate, CursorReader, HideNativeAnalyzer, MemoryStore,
-    ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
+    AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateRelation, CursorReader,
+    HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
 use hide_node_link::sessions::ReaderFeature;
@@ -138,6 +140,15 @@ enum PassReport {
         project_id: String,
         learned: usize,
         error: Option<AiError>,
+    },
+    /// Cards of the Project were checked against the repository and some
+    /// changed state (`확인 중` came or went, a card was corrected or
+    /// forgotten): the open screen reads them again, and nothing else moves.
+    /// `answered` says the provider answered a check, which ends a failure
+    /// shown for an earlier call; a check that needed no model does not.
+    Checked {
+        project_id: String,
+        answered: bool,
     },
 }
 
@@ -372,6 +383,21 @@ impl Runtime {
         }
     }
 
+    /// The sessions some agent started as its child: a coordination record
+    /// with a `parent` (a handoff has an `origin` and is the operator's).
+    fn delegated_sessions(&self) -> HashSet<String> {
+        self.delivery_state()
+            .map(|ledger| {
+                ledger
+                    .agents
+                    .iter()
+                    .filter(|record| record.parent.is_some())
+                    .map(|record| record.session.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Starts a pass when one is due and none runs. Called from the
     /// coordinator's tick; everything the pass reads or writes happens on its
     /// worker.
@@ -407,6 +433,8 @@ impl Runtime {
             .as_ref()
             .map(|settings| crate::ai::memory_router(&own_node, settings));
         let (nodes, unreached) = self.memory_nodes();
+        let delegated = self.delegated_sessions();
+        let home = self.home_path.clone().map(|home| (self.node.clone(), home));
         let work = &mut self.memory_work;
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());
@@ -422,6 +450,8 @@ impl Runtime {
             live: work.live_sessions.values().flatten().cloned().collect(),
             closed: work.closed_sessions.clone(),
             held,
+            home,
+            delegated,
             cancel,
             failed_reads: work.failed_reads.clone(),
         };
@@ -642,12 +672,38 @@ impl Runtime {
     fn apply_memory_report(&mut self, report: PassReport) -> bool {
         let now = now_ms();
         let project_id = match &report {
-            PassReport::Analyzing { project_id } | PassReport::Analyzed { project_id, .. } => {
-                project_id.clone()
-            }
+            PassReport::Analyzing { project_id }
+            | PassReport::Analyzed { project_id, .. }
+            | PassReport::Checked { project_id, .. } => project_id.clone(),
         };
+        if let PassReport::Checked { answered, .. } = report {
+            // A check the provider answered is a provider that answers: what
+            // an earlier failure left on the Project is over.
+            let mut recovered = false;
+            if answered
+                && let Some(project) = self.memory_work.projects.get_mut(&project_id)
+                && (project.failures > 0
+                    || project.retry_at_unix_ms != 0
+                    || project.analysis == MemoryAnalysisState::AiNotReady)
+            {
+                project.failures = 0;
+                project.retry_at_unix_ms = 0;
+                if project.analysis == MemoryAnalysisState::AiNotReady {
+                    project.analysis = MemoryAnalysisState::Idle;
+                }
+                recovered = true;
+            }
+            if self.named_memory_project() == Some(project_id.as_str()) {
+                self.refresh_project_memory();
+            }
+            if recovered {
+                self.sync_project_memory();
+            }
+            return recovered;
+        }
         let before = self.memory_work.projects.get(&project_id).cloned();
         match report {
+            PassReport::Checked { .. } => return false,
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = MemoryAnalysisState::Analyzing;
@@ -788,6 +844,14 @@ struct PassInput {
     closed: BTreeSet<MemorySession>,
     /// Projects whose analysis waits for a retry time.
     held: HashSet<String>,
+    /// This machine's node and the account's home folder on it, where the
+    /// operator's own instruction files are; absent when the environment names
+    /// none. A node that dials in has its own home, which the core does not
+    /// know, so only this machine's Projects read these files.
+    home: Option<(NodeId, PathBuf)>,
+    /// Sessions another agent started: their first human message is that
+    /// agent's instruction, not the operator's (D-04).
+    delegated: HashSet<String>,
     cancel: CancelToken,
     failed_reads: FailedReads,
 }
@@ -874,11 +938,19 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         }
         // Reported whatever ended the walk, so a Project that turned
         // "analyzing" always ends it and keeps what it learned.
-        if tally.analyzing {
+        // A failure with no session analyzed (a check's call failed) is
+        // reported too: the hold and backoff throttle the next pass, which
+        // would otherwise ask again at once.
+        if tally.analyzing || tally.error.is_some() {
             report(PassReport::Analyzed {
                 project_id,
                 learned: tally.learned,
                 error: tally.error,
+            });
+        } else if tally.checked || tally.answered {
+            report(PassReport::Checked {
+                project_id,
+                answered: tally.answered,
             });
         }
     }
@@ -905,6 +977,10 @@ const ANALYSIS_FAILED: &str = "analysis.session_failed";
 #[derive(Default)]
 struct ProjectTally {
     analyzing: bool,
+    /// A card was checked against the repository and changed state.
+    checked: bool,
+    /// The provider answered a check, whatever the answer changed.
+    answered: bool,
     learned: usize,
     error: Option<AiError>,
 }
@@ -963,6 +1039,18 @@ fn walk_project(
                 ),
             }
         }
+    }
+    // What a card rests on is compared with the repository first: it needs
+    // no model, so it runs whether Hide AI is on or off (D-06).
+    let mut facts = CheckoutFacts::new(sessions_node, root);
+    match check_evidence(store, &mut facts, project_id, now_ms()) {
+        Ok(moved) => tally.checked |= moved > 0,
+        Err(message) => crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "evidence.check_failed",
+            "project_id": project_id,
+            "message": message,
+        })),
     }
     for session in sessions {
         if input.cancel.is_cancelled() {
@@ -1037,19 +1125,26 @@ fn walk_project(
             *deferred = Some(reason);
             continue;
         }
-        if !tally.analyzing {
-            tally.analyzing = true;
-            report(PassReport::Analyzing {
-                project_id: project_id.to_owned(),
-            });
-        }
-        let mut admit = |store: &MemoryStore| admit_call(store, input.weekly, true);
+        // The Project turns "analyzing" at the session's first provider call,
+        // so a session that asks nothing (too short, an agent's) never does.
+        let mut admit = |store: &MemoryStore| {
+            admit_call(store, input.weekly, true)?;
+            if !tally.analyzing {
+                tally.analyzing = true;
+                report(PassReport::Analyzing {
+                    project_id: project_id.to_owned(),
+                });
+            }
+            Ok(())
+        };
         match analyze_session(
             store,
             sessions_node,
             router,
             project_id,
+            root,
             &session,
+            input.delegated.contains(&session.id),
             &stat,
             &input.cancel,
             &mut admit,
@@ -1068,7 +1163,129 @@ fn walk_project(
             }
         }
     }
+    // The operator's own instruction files are this machine's.
+    let home = input
+        .home
+        .as_ref()
+        .filter(|(own, _)| own == node)
+        .map(|(_, home)| home.as_path());
+    maintain_cards(
+        input,
+        sessions_node,
+        home,
+        store,
+        &mut facts,
+        project_id,
+        root,
+        deferred,
+        tally,
+        outcome,
+    );
     Ok(())
+}
+
+/// Re-verifies the Project's unverified cards and checks the ones about to
+/// be suggested (D-07, D-11), after its sessions were analyzed, under the
+/// same call cap, weekly deferral and provider-failure stop. Quiet: the
+/// Project never turns "analyzing" for it (D-13).
+#[allow(clippy::too_many_arguments)] // one Project's pass input, store, evidence facts and tallies
+fn maintain_cards(
+    input: &PassInput,
+    sessions_node: &dyn NodeLink,
+    home: Option<&Path>,
+    store: &mut MemoryStore,
+    facts: &mut CheckoutFacts<'_>,
+    project_id: &str,
+    root: &str,
+    deferred: &mut Option<&'static str>,
+    tally: &mut ProjectTally,
+    outcome: &mut PassOutcome,
+) {
+    let Some(router) = input.router.as_ref() else {
+        return;
+    };
+    if deferred.is_some()
+        || input.held.contains(project_id)
+        || tally.error.is_some()
+        || input.cancel.is_cancelled()
+    {
+        return;
+    }
+    // The provider's weekly usage is read only when there is a card to ask
+    // about, as it is for a session.
+    let due = store
+        .pending_cards(project_id, now_ms(), 1)
+        .map(|cards| !cards.is_empty())
+        .unwrap_or(false)
+        || store
+            .promotion_unchecked(project_id, now_ms(), 1)
+            .map(|cards| !cards.is_empty())
+            .unwrap_or(false);
+    if !due {
+        return;
+    }
+    outcome.wants_usage = true;
+    let mut admit = |store: &MemoryStore| {
+        let calls = store
+            .analysis_calls(now_ms())
+            .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+        if calls >= hide_memory::MAINTENANCE_CALL_LIMIT {
+            return Err(AnalysisFailure::Deferred("daily_cap_for_checks"));
+        }
+        admit_call(store, input.weekly, true)
+    };
+    let reverified = reverify_pending(
+        store,
+        sessions_node,
+        facts,
+        router,
+        project_id,
+        root,
+        &input.cancel,
+        &mut admit,
+    );
+    let suggested = match reverified {
+        Ok(first) => check_before_suggestion(
+            store,
+            sessions_node,
+            facts,
+            router,
+            project_id,
+            root,
+            home,
+            &input.cancel,
+            &mut admit,
+        )
+        .map(|second| {
+            (
+                first.changed + second.changed,
+                first.answered + second.answered,
+            )
+        }),
+        Err(failure) => Err(failure),
+    };
+    match suggested {
+        Ok((changed, answered)) => {
+            tally.checked |= changed > 0;
+            tally.answered |= answered > 0;
+        }
+        Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
+        // A check held back never holds the Projects after this one: it is
+        // a call analysis would not need, and the next pass asks again.
+        Err(AnalysisFailure::Deferred(reason)) => crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "verification.deferred",
+            "project_id": project_id,
+            "reason": reason,
+        })),
+        Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => {}
+        Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "verification.failed",
+            "project_id": project_id,
+            "message": message,
+        })),
+    }
 }
 
 /// Admits one analysis call against the machine's daily cap and, for
@@ -1183,6 +1400,7 @@ fn read_receipts(
                 byte_offset: read_through(&read, stat),
                 checkpoint,
                 last_content_hash: None,
+                operator_events: 0,
                 updated_at_unix_ms: now_ms(),
             },
         )
@@ -1296,6 +1514,7 @@ fn read_database_receipts(
                 checkpoint: serde_json::to_vec(&transcript.checkpoint)
                     .map_err(|error| error.to_string())?,
                 last_content_hash: None,
+                operator_events: 0,
                 updated_at_unix_ms: if transcript.has_more {
                     0
                 } else {
@@ -1439,13 +1658,15 @@ fn record_sighted_receipts(
 /// Analyzes the session's conversation past the analysis cursor, one
 /// provider call per bounded group, and moves the cursor only when every
 /// group was written. Answers how many cards it created or replaced.
-#[allow(clippy::too_many_arguments)] // one session: its store, nodes, file and limits
+#[allow(clippy::too_many_arguments)] // one session: its store, nodes, provider, Project, delegation, file and limits
 fn analyze_session(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
     router: &AiRouter,
     project_id: &str,
+    root: &str,
     session: &ProjectSession,
+    delegated: bool,
     stat: &hide_node_link::sessions::SessionStat,
     cancel: &CancelToken,
     admit: &mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>,
@@ -1465,10 +1686,16 @@ fn analyze_session(
         .zip(&read.event_offsets)
         .filter(|(event, _)| matches!(event.kind, EventKind::Human | EventKind::Assistant))
         .map(|(event, offset)| {
+            // What another agent sent a session it started is that agent's
+            // instruction, not the operator's word (D-04).
+            let kind = match event.kind {
+                EventKind::Human if delegated => "parent_agent",
+                other => other.as_str(),
+            };
             json!({
                 "offset": offset,
                 "role": event.role,
-                "kind": event.kind.as_str(),
+                "kind": kind,
                 "at_unix_ms": event.at_unix_ms,
                 "text": event.text,
             })
@@ -1476,8 +1703,22 @@ fn analyze_session(
         .collect::<Vec<_>>();
     let checkout = session.checkout_path.to_string_lossy().into_owned();
     let mut learned = 0;
-    let mut last_hash = saved.and_then(|record| record.last_content_hash);
-    for group in event_groups(&events).map_err(local)? {
+    let (mut last_hash, earlier) = saved.map_or((None, 0), |record| {
+        (record.last_content_hash, record.operator_events)
+    });
+    let operator_events = earlier
+        + events
+            .iter()
+            .filter(|event| event["kind"] == EventKind::Human.as_str())
+            .count() as u64;
+    // A session with fewer than three operator words makes no new card; its
+    // receipts are read apart from this (D-03).
+    let groups = if operator_events < hide_memory::OPERATOR_EVENTS_MINIMUM {
+        Vec::new()
+    } else {
+        event_groups(&events).map_err(local)?
+    };
+    for group in groups {
         if cancel.is_cancelled() {
             return Err(AnalysisFailure::Cancelled);
         }
@@ -1490,6 +1731,8 @@ fn analyze_session(
                 provider,
                 session_id: &session.id,
                 checkout_path: &checkout,
+                evidence_root: root,
+                new_card_limit: Some(hide_memory::NEW_CARDS_PER_SESSION),
                 deadline: None,
             },
             &group,
@@ -1511,6 +1754,7 @@ fn analyze_session(
                 byte_offset,
                 checkpoint,
                 last_content_hash: last_hash,
+                operator_events,
                 updated_at_unix_ms: now_ms(),
             },
         )
@@ -1527,6 +1771,12 @@ pub(crate) struct BatchSource<'a> {
     pub(crate) session_id: &'a str,
     /// The checkout cited paths are checked in.
     pub(crate) checkout_path: &'a str,
+    /// The Project's own root, where a card's evidence is read now and later,
+    /// so a session in a worktree does not fingerprint a branch's files.
+    pub(crate) evidence_root: &'a str,
+    /// The most new cards the session may make in all; `None` for `hide
+    /// memory add`, which the operator asked for (D-02).
+    pub(crate) new_card_limit: Option<usize>,
     /// When the caller stops waiting: past it nothing is written (B8).
     pub(crate) deadline: Option<std::time::Instant>,
 }
@@ -1635,6 +1885,14 @@ pub(crate) fn write_cards(
         }));
     }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
+    let mut facts = CheckoutFacts::new(sessions_node, source.evidence_root);
+    let evidence = candidates
+        .iter()
+        .map(|candidate| match candidate.relation {
+            CandidateRelation::Same { .. } | CandidateRelation::Discard => Vec::new(),
+            _ => facts.gather(&candidate.text, &candidate.cited_paths),
+        })
+        .collect();
     if source
         .deadline
         .is_some_and(|deadline| std::time::Instant::now() >= deadline)
@@ -1642,7 +1900,7 @@ pub(crate) fn write_cards(
         return Err(AnalysisFailure::Cancelled);
     }
     let summary = store
-        .apply_candidates(
+        .apply_candidates_with(
             &AnalysisBatch {
                 id: batch_id.clone(),
                 project_id: source.project_id.to_owned(),
@@ -1653,6 +1911,10 @@ pub(crate) fn write_cards(
                 created_at_unix_ms: now_ms(),
             },
             &candidates,
+            &ApplyOptions {
+                new_card_limit: source.new_card_limit,
+                evidence,
+            },
         )
         .map_err(|error| match error {
             hide_memory::MemoryError::Disabled => AnalysisFailure::Disabled,
@@ -1928,6 +2190,7 @@ mod tests {
     struct Scripted {
         answers: Mutex<Vec<Value>>,
         calls: AtomicUsize,
+        /// What each request carried, oldest first.
         inputs: Mutex<Vec<String>>,
     }
 
@@ -1961,6 +2224,7 @@ mod tests {
         /// The session's records: the operator's rule, then the receipt.
         lines: Vec<Value>,
         database: PathBuf,
+        home: PathBuf,
         project_id: String,
         backend: Arc<Scripted>,
         node: Arc<dyn NodeLink>,
@@ -2034,6 +2298,12 @@ mod tests {
                 json!({"type": "user", "sessionId": SESSION, "cwd": checkout,
                     "timestamp": "2026-10-11T00:00:00Z", "origin": {"kind": "human"},
                     "message": {"role": "user", "content": "Always run tests with nextest before a merge"}}),
+                json!({"type": "user", "sessionId": SESSION, "cwd": checkout,
+                    "timestamp": "2026-10-11T00:00:00Z", "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "Keep commits small"}}),
+                json!({"type": "user", "sessionId": SESSION, "cwd": checkout,
+                    "timestamp": "2026-10-11T00:00:00Z", "origin": {"kind": "human"},
+                    "message": {"role": "user", "content": "Never force-push main"}}),
                 json!({"type": "attachment", "sessionId": SESSION, "cwd": checkout,
                     "timestamp": "2026-10-11T00:00:01Z",
                     "attachment": {"type": "hook_additional_context", "hookEvent": "UserPromptSubmit",
@@ -2045,6 +2315,7 @@ mod tests {
                 locator,
                 lines: lines.to_vec(),
                 database,
+                home,
                 project_id: identity.id,
                 backend: Arc::new(Scripted {
                     answers: Mutex::new(Vec::new()),
@@ -2100,8 +2371,22 @@ mod tests {
             closed: bool,
             weekly: WeeklyUsage,
         ) -> (Vec<&'static str>, PassOutcome) {
+            self.run(key, live, closed, weekly, &[], true)
+        }
+
+        /// A pass; `delegated` are the session ids another agent started, and
+        /// `ai` is whether Hide AI is on.
+        fn run(
+            &self,
+            key: MemorySession,
+            live: bool,
+            closed: bool,
+            weekly: WeeklyUsage,
+            delegated: &[&str],
+            ai: bool,
+        ) -> (Vec<&'static str>, PassOutcome) {
             let nodes = vec![(crate::node::test_node(), Arc::clone(&self.node))];
-            self.pass_over(key, live, closed, weekly, nodes, Vec::new())
+            self.pass_inner(key, live, closed, weekly, nodes, Vec::new(), delegated, ai)
         }
 
         /// A pass over `nodes`, with `unreached` the nodes that dial in
@@ -2115,24 +2400,43 @@ mod tests {
             nodes: Vec<super::super::hosts::LinkedNode>,
             unreached: Vec<NodeId>,
         ) -> (Vec<&'static str>, PassOutcome) {
+            self.pass_inner(key, live, closed, weekly, nodes, unreached, &[], true)
+        }
+
+        #[allow(clippy::too_many_arguments)] // one fixture pass: its key, signals, nodes and Hide AI
+        fn pass_inner(
+            &self,
+            key: MemorySession,
+            live: bool,
+            closed: bool,
+            weekly: WeeklyUsage,
+            nodes: Vec<super::super::hosts::LinkedNode>,
+            unreached: Vec<NodeId>,
+            delegated: &[&str],
+            ai: bool,
+        ) -> (Vec<&'static str>, PassOutcome) {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             let input = PassInput {
                 nodes,
                 unreached,
                 database: self.database.clone(),
-                router: Some(AiRouter::new(
-                    vec![backend],
-                    RouterConfig {
-                        priority: vec![ProviderId::CLAUDE],
-                        max_transient_attempts: 1,
-                        ..RouterConfig::default()
-                    },
-                    Arc::new(NoopLogSink),
-                )),
+                router: ai.then(|| {
+                    AiRouter::new(
+                        vec![backend],
+                        RouterConfig {
+                            priority: vec![ProviderId::CLAUDE],
+                            max_transient_attempts: 1,
+                            ..RouterConfig::default()
+                        },
+                        Arc::new(NoopLogSink),
+                    )
+                }),
                 weekly,
                 live: live.then(|| key.clone()).into_iter().collect(),
                 closed: closed.then_some(key).into_iter().collect(),
                 held: HashSet::new(),
+                home: Some((crate::node::test_node(), self.home.clone())),
+                delegated: delegated.iter().map(|id| (*id).to_owned()).collect(),
                 cancel: CancelToken::new(),
                 failed_reads: self.failed_reads.borrow().clone(),
             };
@@ -2140,6 +2444,7 @@ mod tests {
             let outcome = run_pass(&input, &mut |report| {
                 reports.push(match report {
                     PassReport::Analyzing { .. } => "analyzing",
+                    PassReport::Checked { .. } => "checked",
                     PassReport::Analyzed { error: Some(_), .. } => "failed",
                     PassReport::Analyzed { learned: 1, .. } => "learned one",
                     PassReport::Analyzed { .. } => "analyzed",
@@ -2155,6 +2460,15 @@ mod tests {
 
         fn calls(&self) -> usize {
             self.backend.calls.load(Ordering::SeqCst)
+        }
+
+        /// Lets the next walk compare every card's evidence again, as it
+        /// does once the recheck interval has passed.
+        fn age_evidence_checks(&self) {
+            rusqlite::Connection::open(&self.database)
+                .unwrap()
+                .execute("UPDATE memory_items SET evidence_checked_at_ms=NULL", [])
+                .unwrap();
         }
     }
 
@@ -2295,8 +2609,16 @@ mod tests {
             .iter()
             .map(|event| (event.memory_learned.clone(), event.memory_received.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(marks, [(vec![2], vec![]), (vec![], vec![1])]);
-        assert!(!detail.events[1].text.contains("hide-memory-receipt"));
+        assert_eq!(
+            marks,
+            [
+                (vec![2], vec![]),
+                (vec![], vec![]),
+                (vec![], vec![]),
+                (vec![], vec![1])
+            ]
+        );
+        assert!(!detail.events[3].text.contains("hide-memory-receipt"));
     }
 
     #[test]
@@ -2473,7 +2795,7 @@ mod tests {
         assert!(runtime.usage_activity().window_visible);
         assert_eq!(runtime.weekly_usage("claude", now), WeeklyUsage::Unread);
         assert_eq!(
-            runtime.weekly_usage("claude", now + USAGE_READ_WAIT_MS),
+            runtime.weekly_usage("claude", now_ms() + USAGE_READ_WAIT_MS),
             WeeklyUsage::Unknown
         );
 
@@ -2537,12 +2859,11 @@ mod tests {
             "timestamp": "2026-10-11T00:00:03Z",
             "message": {"role": "assistant",
                 "content": [{"type": "text", "text": "Nextest runs before every merge"}]}});
-        fixture.write(&[
-            fixture.lines[0].clone(),
-            screenshot,
-            reply,
-            fixture.lines[1].clone(),
-        ]);
+        // The operator's three lines keep the session above the short-session
+        // floor; the receipt is the fixture's last line.
+        let mut lines = fixture.lines[..3].to_vec();
+        lines.extend([screenshot, reply, fixture.lines[3].clone()]);
+        fixture.write(&lines);
         fixture.answer(&[]);
 
         let (reports, records) =
@@ -2593,6 +2914,7 @@ mod tests {
                         checkpoint: b"no checkpoint".to_vec(),
                         last_content_hash: None,
                         updated_at_unix_ms: 1,
+                        operator_events: 0,
                     },
                 )
                 .unwrap();
@@ -2745,5 +3067,553 @@ mod tests {
         assert_eq!(checked[0].source_times, [(1, 10)].into());
         assert_eq!(checked[1].source_times, [(2, 20)].into());
         assert_eq!(checked.len(), 2);
+    }
+
+    fn closed_pass(fixture: &Fixture, delegated: &[&str], ai: bool) -> Vec<&'static str> {
+        fixture
+            .run(
+                ("claude", SESSION.to_owned()),
+                false,
+                true,
+                WeeklyUsage::Unknown,
+                delegated,
+                ai,
+            )
+            .0
+    }
+
+    #[test]
+    fn a_session_with_fewer_than_three_operator_words_or_started_by_an_agent_makes_no_card() {
+        // B2, B4: no provider call, and the session is settled all the same.
+        let fixture = Fixture::new();
+        fixture.answer(&[]);
+        let first_line = std::fs::read_to_string(&fixture.locator)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_owned();
+        std::fs::write(&fixture.locator, format!("{first_line}\n")).unwrap();
+
+        assert!(closed_pass(&fixture, &[], true).is_empty());
+        assert_eq!(fixture.calls(), 0, "one operator word is too few");
+
+        // The same three words in a session an agent started are that
+        // agent's, not the operator's.
+        let fixture = Fixture::new();
+        fixture.answer(&[]);
+        assert!(closed_pass(&fixture, &[SESSION], true).is_empty());
+        assert_eq!(fixture.calls(), 0);
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_card_whose_cited_file_changed_waits_for_a_check_and_is_corrected_at_most_once_a_day() {
+        // B6, B8, B10, B11, D-06, D-07.
+        let fixture = Fixture::new();
+        std::fs::write(fixture.root.join("src/lib.rs"), "fn a() {}").unwrap();
+        fixture.answer(&["src/lib.rs"]);
+        assert_eq!(
+            closed_pass(&fixture, &[], true),
+            ["analyzing", "learned one"]
+        );
+        let card = || {
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .unwrap()
+        };
+        assert!(!card().verifying, "its cited file was fingerprinted");
+        assert!(
+            fixture
+                .store()
+                .detail(&fixture.project_id, &card().id)
+                .unwrap()
+                .evidence
+                .iter()
+                .any(|row| row.value == "src/lib.rs" && row.fingerprint.is_some())
+        );
+
+        // Hide AI off: the file changed, the card waits and nothing is asked.
+        std::fs::write(fixture.root.join("src/lib.rs"), "fn b() {}").unwrap();
+        let calls = fixture.calls();
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            false,
+            true,
+            WeeklyUsage::Unknown,
+            &[],
+            false,
+        );
+        assert_eq!(reports, ["checked"]);
+        assert!(card().verifying);
+        assert_eq!(fixture.calls(), calls);
+
+        // Hide AI on: the check finds the card outdated and corrects it.
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "outdated",
+            "text": "Run tests with nextest, not cargo test, before a merge.",
+            "title": "Tests run with nextest",
+            "aliases": ["nextest"],
+            "document": null,
+        }));
+        assert_eq!(closed_pass(&fixture, &[], true), ["checked"]);
+        assert_eq!(fixture.calls(), calls + 1);
+        let corrected = card();
+        assert!(!corrected.verifying);
+        assert_eq!(corrected.revision, 2);
+        assert!(corrected.body.contains("not cargo test"));
+
+        // The file changes again the same day: the card waits, unasked.
+        std::fs::write(fixture.root.join("src/lib.rs"), "fn c() {}").unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        // Inside the recheck interval the card is not compared again.
+        assert!(closed_pass(&fixture, &[], true).is_empty());
+        assert!(!card().verifying);
+        fixture.age_evidence_checks();
+        assert_eq!(closed_pass(&fixture, &[], true), ["checked"]);
+        assert_eq!(fixture.calls(), calls + 1, "one question a day");
+        assert!(card().verifying);
+    }
+
+    #[test]
+    fn a_card_from_before_evidence_is_asked_with_the_facts_its_text_names() {
+        // Review: the check is not asked blind about a migrated card.
+        let fixture = Fixture::new();
+        std::fs::create_dir_all(fixture.root.join("src")).unwrap();
+        std::fs::write(fixture.root.join("src/lib.rs"), "fn a() {}").unwrap();
+        let mut store = fixture.store();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "old".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "old".to_owned(),
+                    content_hash: "old".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "src/lib.rs holds the entry point".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Fact,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: Vec::new(),
+                    source_times: Default::default(),
+                    cited_paths: vec!["src/lib.rs".to_owned()],
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        let old = store
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&old.id, 1).unwrap();
+        drop(store);
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        let asked = inputs.last().unwrap();
+        assert!(asked.contains("src/lib.rs"), "{asked}");
+        assert!(asked.contains("\"state\":\"unchanged\""), "{asked}");
+    }
+
+    #[test]
+    fn a_card_the_model_answers_unusably_spends_its_day_and_the_next_card_is_still_checked() {
+        // Review: one bad answer must not hold the queue behind it.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "second".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Deploy with the new script".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Fact,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: Vec::new(),
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        for number in [1, 2] {
+            let card = store
+                .item_by_number(&fixture.project_id, number)
+                .unwrap()
+                .unwrap();
+            store.mark_unverified(&card.id, 1).unwrap();
+        }
+        drop(store);
+        // Answers are taken from the end: card 1 gets the unusable one.
+        {
+            let mut answers = fixture.backend.answers.lock().unwrap();
+            answers.push(json!({
+                "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+            }));
+            answers.push(json!({
+                "verdict": "outdated", "text": null, "title": null, "aliases": [], "document": null,
+            }));
+        }
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        assert_eq!(fixture.calls(), 2);
+        let card = |number| {
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, number)
+                .unwrap()
+                .unwrap()
+        };
+        assert!(card(1).verifying, "the unusable answer verified nothing");
+        assert!(!card(2).verifying, "the next card was still checked");
+    }
+
+    #[test]
+    fn a_failed_check_with_nothing_analyzed_is_reported_and_held_not_asked_again_at_once() {
+        // Review: a provider that fails a check must not be asked every pass.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&seeded.id, 1).unwrap();
+        drop(store);
+        // No scripted answer: the provider fails the call.
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["failed"]);
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert!(
+            card.verifying,
+            "the card is still due; the failure spent no day"
+        );
+    }
+
+    #[test]
+    fn an_unverified_card_the_check_finds_valid_returns_and_one_that_is_gone_is_forgotten() {
+        // B7, B9.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&seeded.id, 1).unwrap();
+        drop(store);
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+
+        // The session itself has nothing to analyze (one pass only reads).
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        let item = |fixture: &Fixture| {
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+        };
+        assert!(!item(&fixture).verifying);
+
+        // Another card that rests on nothing the node can show is unverified
+        // and the check finds it no longer applies.
+        let mut store = fixture.store();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "other".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "other".to_owned(),
+                    content_hash: "other".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Deploy with the old script".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Fact,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: Vec::new(),
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        let other = store
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&other.id, 1).unwrap();
+        drop(store);
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "gone", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        let gone = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(gone.lifecycle, MemoryLifecycle::Tombstoned);
+    }
+
+    #[test]
+    fn a_rule_the_operator_said_in_two_sessions_is_checked_before_it_is_suggested_once_per_text() {
+        // B12, B14, B15, D-10, D-11.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "another-session".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Keep the hook under 100 ms".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::Same {
+                        target_id: seeded.id.clone(),
+                    },
+                }],
+            )
+            .unwrap();
+        assert!(
+            store
+                .promotion_suggestions(&fixture.project_id, now_ms(), 10)
+                .unwrap()
+                .is_empty(),
+            "not checked yet"
+        );
+        drop(store);
+        std::fs::write(fixture.root.join("AGENTS.md"), "Keep hooks fast.\n").unwrap();
+
+        // The documents do not say it: it is proposed, and not asked again.
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "propose", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        assert_eq!(fixture.calls(), 1);
+        let suggested = fixture
+            .store()
+            .promotion_suggestions(&fixture.project_id, now_ms(), 10)
+            .unwrap();
+        assert_eq!(suggested.iter().map(|s| s.number).collect::<Vec<_>>(), [1]);
+        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        assert_eq!(fixture.calls(), 1, "checked once for this text");
+    }
+
+    #[test]
+    fn a_rule_the_operators_own_instruction_file_says_is_forgotten_with_its_undo() {
+        // B15, D-11: a global file cannot be a pointer target in the repository.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "another-session".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Keep the hook under 100 ms".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::Same {
+                        target_id: seeded.id,
+                    },
+                }],
+            )
+            .unwrap();
+        drop(store);
+        std::fs::create_dir_all(fixture.home.join(".claude")).unwrap();
+        std::fs::write(
+            fixture.home.join(".claude/CLAUDE.md"),
+            "Keep the hook under 100 ms.\n",
+        )
+        .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "in_docs", "text": null, "title": null, "aliases": [],
+            "document": "~/.claude/CLAUDE.md",
+        }));
+
+        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(card.lifecycle, MemoryLifecycle::Tombstoned);
+        assert!(
+            fixture
+                .store()
+                .promotions(&fixture.project_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_rule_a_repository_document_already_says_becomes_a_pointer_and_no_pull_request() {
+        // B15.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "another-session".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Keep the hook under 100 ms".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::Same {
+                        target_id: seeded.id,
+                    },
+                }],
+            )
+            .unwrap();
+        drop(store);
+        std::fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Keep the hook under 100 ms.\n",
+        )
+        .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "in_docs", "text": null, "title": null, "aliases": [], "document": "AGENTS.md",
+        }));
+
+        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+
+        let promotions = fixture.store().promotions(&fixture.project_id).unwrap();
+        assert_eq!(promotions.len(), 1);
+        assert_eq!(promotions[0].1.state, hide_memory::PromotionState::Merged);
+        assert_eq!(promotions[0].1.target_path.as_deref(), Some("AGENTS.md"));
+        assert_eq!(promotions[0].1.pr_number, None);
     }
 }

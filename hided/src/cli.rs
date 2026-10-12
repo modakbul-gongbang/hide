@@ -73,14 +73,14 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
-    /// `hide memory show|search|add|forget|undo|placed` (PRD project-memory-v2 D-03,
+    /// `hide memory show|search|add|forget|undo|placed|outdated` (PRD project-memory-v2 D-03,
     /// D-11).
     Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
-const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path>";
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -234,6 +234,12 @@ fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comman
             herdr_core::memory_command::parse_card(card).map(|number| MemoryCommand::Placed {
                 number,
                 path: (*path).to_owned(),
+            })
+        }
+        (Some("outdated"), [card, reason @ ..]) if !reason.is_empty() => {
+            herdr_core::memory_command::parse_card(card).map(|number| MemoryCommand::Outdated {
+                number,
+                reason: reason.join(" "),
             })
         }
         (Some("search"), [_, ..]) if !rest.trim().is_empty() => {
@@ -466,7 +472,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps for the Projects of its own machine and of a node that dials in."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps for the Projects of its own machine and of a node that dials in."
         );
         return Ok(());
     }
@@ -602,6 +608,7 @@ fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Res
         let reason = match command {
             MemoryCommand::Add { .. } => "memory_text_too_long",
             MemoryCommand::Placed { .. } => "memory_path_not_found",
+            MemoryCommand::Outdated { .. } => "memory_reason_invalid",
             _ => "invalid_request",
         };
         return workspace_refusal(reason, next_action(reason));
@@ -653,6 +660,35 @@ fn memory_text(
             if !cited.is_empty() {
                 lines.push(format!("Files: {}", cited.join(", ")));
             }
+            let evidence = result["evidence"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| {
+                            let value = text(&row["value"]);
+                            let mark = match (row["present"].as_bool(), row["fingerprint"].as_str())
+                            {
+                                (Some(false), _) => " (not found)".to_owned(),
+                                (_, Some(fingerprint)) => format!(
+                                    " ({})",
+                                    fingerprint.chars().take(15).collect::<String>()
+                                ),
+                                _ => String::new(),
+                            };
+                            format!("{} {value}{mark}", text(&row["kind"]))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !evidence.is_empty() {
+                lines.push(format!("Rests on: {}", evidence.join(", ")));
+            }
+            if result["verifying"] == true {
+                lines.push(
+                    "Not verified: a file or name this card rests on changed, so check it against the repository before relying on it."
+                        .to_owned(),
+                );
+            }
             lines.join("\n") + "\n"
         }
         MemoryCommand::Forget { .. } => {
@@ -670,6 +706,10 @@ fn memory_text(
             "{} points at {} once its pull request merges.\n",
             text(&result["card"]),
             text(&result["path"])
+        ),
+        MemoryCommand::Outdated { .. } => format!(
+            "{} is marked outdated; Hide checks it again and this attempt ends without a pull request.\n",
+            text(&result["card"])
         ),
         MemoryCommand::Search { .. } => {
             let cards = result["cards"].as_array().cloned().unwrap_or_default();
