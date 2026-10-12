@@ -56,7 +56,7 @@ export const firstRunEnglish = {
   "firstRun.settings.allowed": "Allowed",
   "firstRun.settings.blocked": "Blocked by macOS",
   "firstRun.settings.testRow": "Test notification",
-  "firstRun.settings.sentWhen": "Sent only while no Hide window is in front.",
+  "firstRun.settings.sentWhen": "Sent only while no Hide window is in front; the app icon marks agents that need you.",
   "firstRun.intro.factory": "Factory takes the GitHub issues you label and carries each to a merged pull request. Create one for a project to start.",
 } as const;
 
@@ -112,7 +112,7 @@ const ko = {
   "firstRun.settings.allowed": "허용됨",
   "firstRun.settings.blocked": "macOS가 막음",
   "firstRun.settings.testRow": "테스트 알림",
-  "firstRun.settings.sentWhen": "Hide 창이 앞에 없을 때만 보냅니다.",
+  "firstRun.settings.sentWhen": "Hide 창이 앞에 없을 때만 보내고, 나를 기다리는 에이전트가 있으면 앱 아이콘에 표시합니다.",
   "firstRun.intro.factory": "Factory는 라벨을 붙인 GitHub 이슈를 하나씩 머지된 풀 리퀘스트까지 가져갑니다. 프로젝트에 하나 만들어 시작하세요.",
 } satisfies Catalog<typeof firstRunEnglish>;
 
@@ -168,7 +168,7 @@ const zhCN = {
   "firstRun.settings.allowed": "已允许",
   "firstRun.settings.blocked": "被 macOS 阻止",
   "firstRun.settings.testRow": "测试通知",
-  "firstRun.settings.sentWhen": "仅在没有 Hide 窗口位于前台时发送。",
+  "firstRun.settings.sentWhen": "仅在没有 Hide 窗口位于前台时发送；有需要你的智能体时，应用图标会显示标记。",
   "firstRun.intro.factory": "Factory 会把你加了标签的 GitHub issue 逐个推进到已合并的拉取请求。为项目创建一个即可开始。",
 } satisfies Catalog<typeof firstRunEnglish>;
 
@@ -224,7 +224,7 @@ const ja = {
   "firstRun.settings.allowed": "許可済み",
   "firstRun.settings.blocked": "macOSがブロック中",
   "firstRun.settings.testRow": "テスト通知",
-  "firstRun.settings.sentWhen": "Hideのウィンドウが前面にないときだけ送ります。",
+  "firstRun.settings.sentWhen": "Hideのウィンドウが前面にないときだけ送り、呼んでいるエージェントがいるとアプリのアイコンに表示します。",
   "firstRun.intro.factory": "Factoryはラベルを付けたGitHubのissueを一つずつマージ済みのプルリクエストまで運びます。プロジェクトに一つ作成して始めます。",
 } satisfies Catalog<typeof firstRunEnglish>;
 

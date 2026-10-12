@@ -1192,6 +1192,48 @@ pub(crate) fn layout_apply_params(
     })
 }
 
+/// A tab whose one pane runs `command` with `env` in `cwd` (a shell started
+/// with Hide's integration), new in `workspace_id`, or in place of the tab
+/// `replace` names, which Herdr then closes.
+#[allow(clippy::too_many_arguments)] // one layout.apply request: its target, tab and pane
+pub(crate) fn launched_tab_params(
+    workspace_id: &str,
+    replace: Option<&str>,
+    label: &str,
+    focus: bool,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+    command: &[String],
+) -> Result<Value, String> {
+    params(req::LayoutApplyParams {
+        focus,
+        root: req::LayoutNode::Pane {
+            pane_id: None,
+            label: None,
+            cwd: Some(herdr_param(cwd)),
+            command: Some(command.to_vec()),
+            env: env.into_iter().collect(),
+        },
+        tab_id: replace.map(str::to_owned),
+        tab_label: Some(label.into()),
+        // Herdr takes either a tab to replace or a workspace to add to.
+        workspace_id: replace.is_none().then(|| workspace_id.into()),
+    })
+}
+
+/// The tab and the one pane `layout.apply` made for
+/// [`launched_tab_params`].
+pub(crate) fn launched_tab(value: Value) -> Result<(String, String), String> {
+    let layout = applied_layout(value)?;
+    match layout.root {
+        ClosedLayoutNode::Pane {
+            pane_id: Some(pane_id),
+            ..
+        } => Ok((layout.tab_id, pane_id)),
+        _ => Err("layout.apply answered no single pane for a launched tab".into()),
+    }
+}
+
 /// Every agent start Hide makes; a Codex with the shared daemon gets
 /// `--no-daemon` here, so no start path can leave it out (PRD
 /// overview-request-view D-20).
@@ -1208,7 +1250,7 @@ pub(crate) fn agent_start_params(
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),
-        timeout_ms: Some(120_000),
+        timeout_ms: Some(crate::agent_start::AGENT_START_DEADLINE.as_millis() as u64),
     })
 }
 
@@ -1258,13 +1300,17 @@ pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
 /// A split that creates the pane `Fork agent to the side` runs in. It does not
 /// take focus itself: the core moves the keyboard to it, unless the operator
 /// chose another view after the press (`Runtime::ingest_fork_pane`).
-pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Result<Value, String> {
+pub(crate) fn fork_split_params(
+    parent_pane_id: &str,
+    cwd: Option<&str>,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::PaneSplitParams {
         target_pane_id: Some(parent_pane_id.into()),
         direction: req::SplitDirection::Right,
         cwd: cwd.filter(|v| !v.trim().is_empty()).map(herdr_param),
         focus: false,
-        env: Default::default(),
+        env: env.into_iter().collect(),
         ratio: None,
         right_click: req::PaneRightClickTarget::Herdr,
         workspace_id: None,
@@ -1496,6 +1542,16 @@ impl PaneProcessGroup {
             }
             _ => false,
         }
+    }
+
+    /// The shell's own program name, read while it is in the foreground.
+    pub(crate) fn shell_name(&self) -> Option<&str> {
+        let shell = self.shell_pid?;
+        self.foreground_pids
+            .iter()
+            .zip(&self.foreground_names)
+            .find(|(pid, _)| **pid == shell)
+            .map(|(_, name)| name.trim_start_matches('-'))
     }
 
     /// The first foreground process that is not the pane's shell.
@@ -1741,6 +1797,20 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
         _ => Err(missing.into()),
     }
 }
+/// The value of the pane token `token` in a `pane.get` answer, `None` when
+/// the pane carries none.
+pub(crate) fn pane_token(value: Value, token: &str) -> Result<Option<String>, String> {
+    let missing = "pane.get response is missing pane";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => Ok(pane
+            .tokens
+            .into_iter()
+            .find(|(key, _)| String::from(key.clone()) == token)
+            .map(|(_, value)| value)),
+        _ => Err(missing.into()),
+    }
+}
+
 /// The terminal a `pane.get` answer runs in its pane. Herdr gives every
 /// terminal it starts a new id, a restored one included, while a pane id can
 /// be handed out again, so this is what tells a pane from a later one.
@@ -2119,12 +2189,12 @@ mod tests {
     #[test]
     fn a_fork_splits_without_focus() {
         assert_eq!(
-            fork_split_params("w1:p1", Some("/fixture")).unwrap(),
+            fork_split_params("w1:p1", Some("/fixture"), Default::default()).unwrap(),
             json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/fixture",
                 "focus": false, "right_click": "herdr"})
         );
         assert_eq!(
-            fork_split_params("w1:p1", Some("  ")).unwrap()["cwd"],
+            fork_split_params("w1:p1", Some("  "), Default::default()).unwrap()["cwd"],
             Value::Null
         );
     }

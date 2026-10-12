@@ -391,7 +391,7 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
         tabRefs(`${p}-tabs`, ['General', 'Agents', 'Hide AI', 'Devices', 'Mobile', 'Shortcuts'], 0)),
       F(`${p}-body`, 'Body', {layout: 'vertical', gap: '$--spacing-lg', width: SW, padding: '$--spacing-lg'}, [
         group(`${p}-app`, 'Appearance', [row(`${p}-lang`, 'Language', [screenSelect(`${p}-langv`, {content: 'English', width: 140})])]),
-        group(`${p}-notif`, 'Notifications', rows, on ? 'Sent only while no Hide window is in front.' : null),
+        group(`${p}-notif`, 'Notifications', rows, on ? 'Sent only while no Hide window is in front; the app icon marks agents that need you.' : null),
         group(`${p}-conn`, 'Connections', [row(`${p}-gh`, 'GitHub', [status(`${p}-ghs`, 'ok', 'Connected as you')])]),
       ]),
     ]);

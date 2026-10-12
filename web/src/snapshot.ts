@@ -62,7 +62,18 @@ export type RaisedAsk = {
   human_notice: boolean;
 };
 
+/** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
+export type HideAiTask = { kind: string; target?: string };
+
+/** Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none. */
+export type HideAi = { task?: HideAiTask };
+
+/** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
+export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
+
 export type AgentRow = {
+  /** Set by the core from the coordination record of the spawn, never from a branch name. */
+  hide_ai?: HideAi;
   resolved?: { at_unix_ms: number; source: "operator" | "automatic" } | null;
   /** Resolved within the last 24 hours, so Sessions still lists it. */
   resolved_recent?: boolean;
@@ -1477,7 +1488,13 @@ export type MemoryRow = {
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
-  | { kind: "failed"; number: number; title: string };
+  | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
+
+/**
+ * Why a failed promotion's agent never started (`memory_start_failure_code`):
+ * `detail` is the line its new pane's shell stopped at, for `shell_starting`.
+ */
+export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "other"; detail: string | null };
 
 /** The card shown in full (`memory_expand`). */
 export type MemoryCard = {
@@ -1635,6 +1652,7 @@ export type SnapshotRest = {
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    hide_ai_checkouts?: HideAiCheckout[];
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;

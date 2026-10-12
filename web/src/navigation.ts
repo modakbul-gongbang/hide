@@ -15,7 +15,8 @@ import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
 import { machineName, registeredName } from "./screenMachine";
 import { entryBox } from "./agentGraph";
-import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
+import { hideAiPlace } from "./hideAiOrigin";
+import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
@@ -124,22 +125,28 @@ export function agentPlaces(
   localWorkspaces: Workspace[] | undefined,
   remote: RemoteStatus[] | undefined,
   devices: Device[] | undefined,
+  hideAi?: ReadonlyMap<string, HideAi>,
 ): (device: string | null, paneId: string) => string | null {
-  const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [])]]);
+  const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [], hideAi)]]);
   for (const status of remote ?? []) {
-    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live)));
+    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live), hideAi));
   }
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
 
-/** Where each pane sits, as `project › branch` (Home, or the project alone for a plain folder), keyed by pane id. */
-export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
+/**
+ * Where each pane sits, as `project › branch` (Home, or the project alone for
+ * a plain folder), keyed by pane id. A pane whose agent Hide AI started names
+ * its task where the branch would stand (`project › Memory 올리기 · m72`).
+ */
+export function checkoutPlaces(workspaces: Workspace[], hideAi?: ReadonlyMap<string, HideAi>): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
     for (const [pane, value] of Object.entries(workspace.agent_scope.places)) {
       const checkout = workspace.checkouts.find((c) => c.id === value.checkout_id);
       if (!checkout) throw new Error(`Missing place checkout: ${value.checkout_id}`);
-      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
+      const started = hideAi?.get(pane);
+      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : started ? hideAiPlace(translate, workspace.label, started) : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
     }
   }
   return places;

@@ -119,6 +119,13 @@ export type HostBridge = {
   notificationPermission(): Promise<NotificationPermission>;
   /** Opens Hide's page of the system's notification settings (macOS). */
   openNotificationSettings(): void;
+  /**
+   * Hands the host how many root agents need the operator, for the app icon
+   * (the Dock badge, the Windows taskbar overlay); zero clears it. Reported
+   * once the page holds a live snapshot, which is also when the host hands
+   * over a notification click that started the app, and then on each change.
+   */
+  reportBadge(count: number): void;
   browser: BrowserBridge;
 };
 

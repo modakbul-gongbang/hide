@@ -36,10 +36,18 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     // hided beside it; with no UI folder named, that daemon serves the shell it embeds.
     run.env.HIDE_CLI_PATH = path.join(resources, fixtureExecutable("hide"));
     delete run.env.HIDED_UI_DIR;
+    // Every Windows profile has its Start Menu; Electron finds it with SHGetKnownFolderPath, which
+    // fails for a missing folder, so the fixture's private profile needs one as a real profile has.
+    const startMenu = process.platform === "win32" ? path.join(run.env.APPDATA!, "Microsoft", "Windows", "Start Menu", "Programs") : null;
+    if (startMenu) fs.mkdirSync(startMenu, { recursive: true });
     ({ app } = await launch(run.env, { executablePath: file }));
     const page = await shellPage(app);
     expect(fs.realpathSync.native(await app.evaluate(() => process.resourcesPath))).toBe(fs.realpathSync.native(resources));
     expect(run.daemonPid()).not.toBeNull();
+    // Launch builds Electron's notification presenter on Windows, which makes the Start Menu
+    // shortcut a toast is attributed through, named from the executable's product name, before
+    // any notification shows.
+    if (startMenu) await expect.poll(() => fs.existsSync(path.join(startMenu, "hide.lnk")), { timeout: 30_000 }).toBe(true);
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
     await screenshot(page, "packaged-window");

@@ -1,4 +1,5 @@
 use super::{AgentRecord, Command, Mutation, SpawnRecord, resolve_actor, view};
+use crate::agent_start::ShellStart;
 use crate::delivery::{
     Actor,
     worker::{Authority, Client, Effect},
@@ -449,6 +450,7 @@ fn spawn(
         branch,
         path,
         args,
+        task,
     } = &command
     else {
         return Err("invalid_spawn".into());
@@ -461,6 +463,9 @@ fn spawn(
         || args.len() > 128
         || args.iter().map(String::len).sum::<usize>() > 8192
         || args.iter().any(|arg| arg.contains('\0'))
+        || task.as_ref().is_some_and(|task| {
+            !super::key(&task.kind) || task.target.as_deref().is_some_and(|t| !super::key(t))
+        })
     {
         return Err("invalid_spawn".into());
     }
@@ -621,6 +626,9 @@ fn spawn(
     let (spawn_id, on_device) = (reserved.id.clone(), reserved.machine.is_some());
     let placed = (|| -> Result<Value, String> {
         if reserved.pane.is_none() {
+            // How the pane's shell says it has finished starting, recorded
+            // with the pane so every later start in it waits the same way.
+            let shell;
             // Reconcile a worktree whose creation reply was interrupted. The
             // existing local/device connector and checkout owner are shared with
             // the product's worktree/start path; no spawn-specific SSH exists.
@@ -653,37 +661,50 @@ fn spawn(
                 let snapshot =
                     crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
                 let label = format!("hide:{}", reserved.id);
-                let existing_pane = snapshot
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                // A tab under the spawn's label is one this spawn opened, with
+                // the launch when there is one; a workspace under it holds
+                // Herdr's own first tab, which was never replaced.
+                let labelled_tab = snapshot
                     .tabs
                     .iter()
                     .find(|tab| tab.label == label)
                     .and_then(|tab| snapshot.panes.iter().find(|pane| pane.tab_id == tab.tab_id))
-                    .or_else(|| {
-                        snapshot
-                            .workspaces
-                            .iter()
-                            .find(|workspace| workspace.label == label)
-                            .and_then(|workspace| {
-                                snapshot
-                                    .panes
-                                    .iter()
-                                    .find(|pane| pane.workspace_id == workspace.workspace_id)
-                            })
-                    })
-                    .map(|pane| pane.pane_id.clone());
+                    .map(|pane| (pane.pane_id.clone(), true));
+                let existing_pane = labelled_tab.or_else(|| {
+                    snapshot
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.label == label)
+                        .and_then(|workspace| {
+                            snapshot
+                                .panes
+                                .iter()
+                                .find(|pane| pane.workspace_id == workspace.workspace_id)
+                        })
+                        .map(|pane| (pane.pane_id.clone(), false))
+                });
                 let pane = match existing_pane {
-                    Some(pane) => pane,
+                    Some((pane, launched)) => {
+                        shell = ShellStart::of_tab(launched, launch.as_ref());
+                        pane
+                    }
                     None => {
-                        crate::live::open_owner_tab(
+                        let tab = crate::live::open_owner_tab(
                             connector.as_ref(),
                             &owner,
                             &existing,
                             &label,
                             false,
-                            Default::default(),
+                            launch
+                                .as_ref()
+                                .map(|launch| launch.env.clone())
+                                .unwrap_or_default(),
+                            launch.as_ref().map(|launch| launch.command.as_slice()),
                         )
-                        .map_err(|error| format!("{error:?}"))?
-                        .pane_id
+                        .map_err(|error| format!("{error:?}"))?;
+                        shell = ShellStart::of_tab(tab.launched, launch.as_ref());
+                        tab.pane_id
                     }
                 };
                 (existing, pane)
@@ -701,7 +722,26 @@ fn spawn(
                 )
                 .map_err(|error| format!("{error}"))?;
                 let created = crate::wire::created_worktree(result)?;
-                (created.path, created.pane_id)
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                let tab = crate::live::replace_tab(
+                    connector.as_ref(),
+                    crate::live::OwnedTab {
+                        workspace_id: created.workspace_id,
+                        tab_id: created.tab_id,
+                        pane_id: created.pane_id,
+                        launched: false,
+                    },
+                    &created.path,
+                    &format!("hide:{}", reserved.id),
+                    false,
+                    launch
+                        .as_ref()
+                        .map(|launch| launch.env.clone())
+                        .unwrap_or_default(),
+                    launch.as_ref().map(|launch| launch.command.as_slice()),
+                );
+                shell = ShellStart::of_tab(tab.launched, launch.as_ref());
+                (created.path, tab.pane_id)
             };
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
@@ -715,12 +755,15 @@ fn spawn(
                     path: Some(checkout),
                     pane: Some(pane),
                     terminal: Some(terminal),
+                    shell: shell.program().map(str::to_owned),
                     child: None,
                 },
             )?)
             .map_err(|_| "spawn_unavailable")?;
         }
-        let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
+        let pane = reserved.pane.clone().ok_or("spawn_unavailable")?;
+        let pane = pane.as_str();
+        let shell = ShellStart::launched(reserved.shell.clone());
         let observed = agents(connector.as_ref())?;
         let live = observed
             .iter()
@@ -731,18 +774,32 @@ fn spawn(
             if reserved.child.is_some() {
                 return Err("child_identity_changed".into());
             }
-            // This spawn already had its start typed here, and Herdr still
-            // holds the name with no agent while the shell is back at its
-            // prompt: the start ended without the agent. Asking the same
-            // intent again answers that, rather than typing the start again
-            // each time; a new attempt closes this pane and starts afresh.
-            if observed.iter().any(|agent| {
-                agent.pane_id == pane
-                    && agent.name.as_deref() == Some(name)
-                    && agent.agent.is_none()
-            }) && shell_alone(connector.as_ref(), pane) == Ok(true)
-            {
-                return Err("agent_not_started".into());
+            if reserved.typed > 0 {
+                // A start of this spawn was typed here already. While Herdr
+                // holds its name with no agent (`launch_pending`), it gives
+                // that name to whatever agent shows in this terminal and
+                // refuses another start here, so nothing is typed while the
+                // agent may still be starting: asking again later answers it.
+                let held = observed.iter().any(|agent| {
+                    agent.pane_id == pane
+                        && agent.name.as_deref() == Some(name)
+                        && agent.agent.is_none()
+                });
+                if held && !name_released(connector.as_ref(), name) {
+                    return Err("native_identity_unavailable".into());
+                }
+                // Herdr gave that start up. Only a shell back at rest, with
+                // nothing of its own in the foreground, takes the start again,
+                // and only once: a start typed into a question at startup is
+                // typed again at the prompt that followed, and a second one
+                // that ends the same way is the answer.
+                if reserved.typed >= 2 || shell_alone(connector.as_ref(), pane) != Ok(true) {
+                    return Err("agent_not_started".into());
+                }
+                crate::diagnostic!(json!({
+                    "component": "spawn", "kind": "start.resent", "spawn": reserved.id,
+                    "pane_id": pane,
+                }));
             }
             close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
             crate::live::start_agent(
@@ -750,11 +807,21 @@ fn spawn(
                 node.as_deref(),
                 &reserved.id,
                 pane,
+                shell,
                 name,
                 kind,
                 args.clone(),
                 codex_daemon,
             )?;
+            reserved = serde_json::from_value(mutate(
+                client,
+                authority,
+                actor,
+                Mutation::Typed {
+                    id: reserved.id.clone(),
+                },
+            )?)
+            .map_err(|_| "spawn_unavailable")?;
         }
         let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
         let mut child = record(
@@ -809,6 +876,20 @@ fn spawn(
             reason
         }
     })
+}
+
+/// Whether Herdr has let go of `name`. Herdr holds the name of a start whose
+/// agent never showed until that start's own deadline, and settles a passed
+/// deadline only when the name is read, which this `agent.get` is.
+fn name_released(connector: &dyn ApiConnector, name: &str) -> bool {
+    crate::wire::agent_target_params(name)
+        .map_err(hide_herdr_client::ApiError::Transport)
+        .and_then(|params| {
+            request_with_connector(connector, "agent.get", params, Duration::from_secs(2))
+        })
+        .is_err_and(|error| {
+            matches!(error, hide_herdr_client::ApiError::Remote { code, .. } if code == "agent_not_found")
+        })
 }
 
 /// Whether `pane`'s shell alone holds its terminal: no program it started
@@ -1184,6 +1265,7 @@ mod tests {
                         branch: "factory/801".into(),
                         path: None,
                         args: Vec::new(),
+                        task: None,
                     },
                 },
                 1,
@@ -1198,6 +1280,7 @@ mod tests {
                         path: Some("/fixture.worktrees/801".into()),
                         pane: Some(pane.into()),
                         terminal: terminal.map(Into::into),
+                        shell: None,
                         child: None,
                     },
                     1,
@@ -1425,6 +1508,7 @@ mod tests {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                task: None,
             };
             let spawn = super::super::apply(
                 &mut state,
@@ -1447,6 +1531,7 @@ mod tests {
                     path: Some("/fixture/topic".into()),
                     pane: Some("recipient".into()),
                     terminal: None,
+                    shell: None,
                     child: None,
                 },
                 now,

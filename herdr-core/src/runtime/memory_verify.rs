@@ -488,6 +488,7 @@ fn point_at(
             target_path: Some(document.to_owned()),
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
+            failure: None,
         },
     )
 }

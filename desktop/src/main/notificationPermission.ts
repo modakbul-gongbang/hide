@@ -52,6 +52,8 @@ export function parsePermission(stdout: string): NotificationPermission | { unre
 export class NotificationPermissionReader {
   private readonly runner = new ChildRunner();
   private inFlight: Promise<NotificationPermission> | null = null;
+  /** The last notification shown on Linux failed, so no notification service answers (`showFailed`). */
+  private serviceMissing = false;
 
   constructor(
     private readonly platform: NodeJS.Platform,
@@ -62,9 +64,29 @@ export class NotificationPermissionReader {
     private readonly notificationsSupported: () => boolean,
   ) {}
 
+  /**
+   * A notification failed to show (Electron's `failed`). On Linux,
+   * `Notification.isSupported()` says only that libnotify loaded, so a
+   * desktop with no notification service answers true and every show fails
+   * (`shell/browser/notifications/linux/libnotify_notification.cc`); a
+   * failure there reads as `no_service` until a notification shows again
+   * (`showSucceeded`), since every later one is still tried. Elsewhere a
+   * failure is the system declining one notification (Windows' own settings
+   * or Focus, a macOS refusal the helper reads), not a missing service, and
+   * only the caller's log records it.
+   */
+  showFailed(): void {
+    if (this.platform === "linux") this.serviceMissing = true;
+  }
+
+  /** A notification showed: a notification service answers after all (a daemon that started late). */
+  showSucceeded(): void {
+    this.serviceMissing = false;
+  }
+
   read(): Promise<NotificationPermission> {
     // Outside macOS there is no permission to read, only whether a notification service answers (D-24).
-    if (this.platform !== "darwin") return Promise.resolve(this.notificationsSupported() ? "unsupported" : "no_service");
+    if (this.platform !== "darwin") return Promise.resolve(this.notificationsSupported() && !this.serviceMissing ? "unsupported" : "no_service");
     this.inFlight ??= this.run().finally(() => {
       this.inFlight = null;
     });

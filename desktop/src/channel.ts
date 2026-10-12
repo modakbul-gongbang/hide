@@ -37,6 +37,13 @@ export const NOTIFY_WITHDRAW_CHANNEL = "hide:notify-withdraw";
 export const NOTIFY_PERMISSION_CHANNEL = "hide:notify-permission";
 export const NOTIFY_SETTINGS_CHANNEL = "hide:notify-settings";
 
+/**
+ * The app icon's badge: how many root agents need the operator, which the
+ * shell reports once it holds a live snapshot and again only when the number
+ * changes (renderer -> main).
+ */
+export const NOTIFY_BADGE_CHANNEL = "hide:notify-badge";
+
 /** Add a project's Browse folder: the native folder picker, answered with the chosen folder or null (invoke). */
 export const PICK_FOLDER_CHANNEL = "hide:pick-folder";
 

@@ -2032,6 +2032,7 @@ fn branch_migration_receipt_preserves_core_focus() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
     assert_eq!(
@@ -2096,6 +2097,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
             purpose_error: Some("injected purpose mirror failure".to_owned()),
             unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
 
@@ -3139,11 +3141,16 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         }),
     ));
     let operation = runtime.snapshot().task_operation.clone().unwrap();
     assert_eq!(operation.phase, "ready");
     assert_eq!(operation.agent_phase.as_deref(), Some("starting"));
+    // The pane was made with the shell integration, so its start waits for
+    // the first prompt's mark.
     assert_eq!(
         runtime.pending_task_agent_start(id),
         Some(live::PendingAgentStart {
@@ -3154,6 +3161,9 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             kind: "claude".to_owned(),
             prompt: None,
             args: Vec::new(),
+            shell: crate::agent_start::ShellStart::Integrated {
+                program: "zsh".into(),
+            },
         })
     );
     // An acknowledgement while the agent is still starting keeps the slot.

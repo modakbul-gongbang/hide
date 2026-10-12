@@ -60,5 +60,6 @@
   "memory_card_kind": ["rule", "decision", "lesson", "fact"],
   "memory_analysis_state": ["idle", "analyzing", "ai_not_ready"],
   "memory_promotion_state": ["running", "pr_open", "merged", "failed", "unconfirmed"],
+  "memory_start_failure_code": ["shell_starting", "agent_not_started", "other"],
   "memory_action": ["enable", "disable", "delete", "forget", "undo", "promote", "dismiss"]
 }

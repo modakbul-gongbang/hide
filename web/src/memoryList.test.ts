@@ -14,7 +14,7 @@ const project = (overrides: Partial<ProjectMemory>): ProjectMemory => ({
 
 describe("the Memory tab's card list", () => {
   it("draws a question's card once, in 물어볼 것, and a search's answer in its own order", () => {
-    const asked = project({ questions: [{ kind: "failed", number: 2, title: "card 2" }] });
+    const asked = project({ questions: [{ kind: "failed", number: 2, title: "card 2", start_failure: null }] });
     expect(memoryCards(asked).map((card) => card.number)).toEqual([1, 3, 4, 5, 6, 7]);
     const searched = project({ search: { query: "x", numbers: [6, 2, 9] } });
     expect(memoryCards(searched).map((card) => card.number)).toEqual([6, 2]);

@@ -1474,6 +1474,7 @@
                 "repository_unavailable",
                 "agent_not_installed",
                 "intent_conflict",
+                "shell_starting",
                 "agent_not_started"
             ],
             "repeats_at_most": null,
@@ -1779,7 +1780,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:2a707fc42f87ed42d8b1caf94072b2a18940ccacea4f57f3bd850bf752e89443",
+    "digest": "sha256:516e93f66c3f40732f0ee00e1e933f7cc579d5db58fdd023ac847d6744b45b93",
     "envelopes": {
         "agent": {
             "answer": "value",

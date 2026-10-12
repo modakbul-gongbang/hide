@@ -2575,6 +2575,45 @@ impl Runtime {
         }
     }
 
+    /// Marks the rows Hide itself started. The ledger is the only source of
+    /// that fact, so it is laid here with the other ledger facts, and never
+    /// from a branch or worktree name (PRD hide-ai-origin-mark D-07). A row
+    /// matches while its registration is live and its session is the one the
+    /// registration holds, so a later agent in a reused pane is not marked.
+    /// A device's pane is registered under the id the core names it by
+    /// (`remote:<device>:pane:<pane>`), so one comparison serves both.
+    fn lay_hide_ai(&self, agents: &mut [SidebarAgentSnapshot]) {
+        for agent in agents {
+            agent.hide_ai = self
+                .hide_started
+                .agents
+                .iter()
+                .find(|started| {
+                    started.pane_id == agent.pane_id
+                        && started.session.is_some()
+                        && started.session == agent.lineage_session
+                })
+                .map(|started| crate::model::HideAiSnapshot {
+                    task: started.task.clone(),
+                });
+        }
+    }
+
+    /// The checkouts Hide made for the agents it started. A spawn's machine
+    /// is the id of the device the shell names its Projects by (this node's
+    /// own id for a local one), so it is the checkout's device as it stands.
+    fn hide_ai_checkouts(&self) -> Vec<crate::model::HideAiCheckoutSnapshot> {
+        self.hide_started
+            .checkouts
+            .iter()
+            .map(|started| crate::model::HideAiCheckoutSnapshot {
+                device_id: started.machine.clone(),
+                path: started.path.clone(),
+                task: started.task.clone(),
+            })
+            .collect()
+    }
+
     pub(super) fn refresh_agent_lineage(&mut self) -> bool {
         let before_local = self.snapshot.navigator.agents.clone();
         let before_remote = self
@@ -2646,6 +2685,7 @@ impl Runtime {
         }
         self.unresolved_machine_lineage = unresolved;
         self.lay_reply_waits(&mut agents);
+        self.lay_hide_ai(&mut agents);
         crate::agent_state::apply_lineage(
             &mut agents,
             &workspaces,
@@ -2699,6 +2739,9 @@ impl Runtime {
                     .map(|session| &session.agents)
                     != before.as_ref()
             });
+        let hide_ai_checkouts = self.hide_ai_checkouts();
+        let changed = changed | (self.snapshot.navigator.hide_ai_checkouts != hide_ai_checkouts);
+        self.snapshot.navigator.hide_ai_checkouts = hide_ai_checkouts;
         // Machine identity, remote arrival and local arrival all publish the
         // same ownership transition, including normal tab placement.
         let changed = changed | self.sync_pane_lineage();

@@ -1058,6 +1058,9 @@ pub(crate) struct DeviceGithubRead {
 pub struct Runtime {
     snapshot: Snapshot,
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    /// What the ledger says Hide itself started, derived again only when a
+    /// ledger change moves it (PRD hide-ai-origin-mark D-01).
+    hide_started: crate::coordination::started::HideStarted,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
@@ -1550,6 +1553,9 @@ pub struct Runtime {
     /// id. Kept off the snapshot: an issue body or a request has no business
     /// on the wire after the surface that sent it.
     task_agent_launch: Option<TaskAgentLaunch>,
+    /// How the pane a task created says its shell has finished starting,
+    /// by task id, for that task's agent start.
+    task_pane_shell: Option<(u64, crate::agent_start::ShellStart)>,
     /// Each device's Home link sync: the set last sent and whether it runs.
     home_links: HashMap<String, home::HomeLinkState>,
     /// The catalog and root index most recently accepted from the sync
@@ -1914,6 +1920,10 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            hide_started: delivery_ledger
+                .as_ref()
+                .map(|ledger| crate::coordination::started::hide_started(ledger))
+                .unwrap_or_default(),
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
@@ -2109,6 +2119,7 @@ impl Runtime {
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
+            task_pane_shell: None,
             home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_paths,

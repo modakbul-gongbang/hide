@@ -163,6 +163,7 @@ fn a_created_worktrees_first_tab_joins_its_row_while_its_pane_reports_the_birth_
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
+            shell: crate::agent_start::ShellStart::Plain,
         })
     ));
     runtime.ingest_session(Ok(payload));

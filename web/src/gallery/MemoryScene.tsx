@@ -9,7 +9,7 @@ import type { MemoryRow, ProjectMemory, SnapshotRest } from "../snapshot";
 import { useShellStore } from "../store";
 import { Tools } from "../Tools";
 
-export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "remote", "promote", "failed", "forgotten", "verifying"] as const;
+export const MEMORY_SCENE_STATES = ["workspace", "off", "ai_not_ready", "analyzing", "empty", "remote", "promote", "failed", "start_failed", "forgotten", "verifying"] as const;
 export type MemorySceneState = (typeof MEMORY_SCENE_STATES)[number];
 export type MemorySceneLanguage = "en" | "ko" | "zh-CN" | "ja";
 export type MemorySceneParams = { theme: "light" | "dark"; state: MemorySceneState; width: number; language: MemorySceneLanguage };
@@ -67,7 +67,8 @@ function project(state: MemorySceneState): ProjectMemory {
     case "empty": return { ...base, rows: [] };
     case "remote": return { ...base, unavailable: { reason: "remote_device", device_name: "mini" }, rows: [] };
     case "promote": return { ...base, rows: ROWS.slice(1, 4) };
-    case "failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title }] };
+    case "failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: null }] };
+    case "start_failed": return { ...base, rows: [ROWS[3]!], questions: [{ kind: "failed", number: 8, title: ROWS[3]!.title, start_failure: { code: "shell_starting", detail: "[oh-my-zsh] Would you like to update? [Y/n]" } }] };
     case "verifying": return { ...base, rows: [{ ...ROWS[0]!, verifying: true }, ROWS[5]!, { ...ROWS[6]!, verifying: true }] };
     case "forgotten": return { ...base, rows: ROWS.filter((card) => card.number !== 9), forgotten: 9 };
   }

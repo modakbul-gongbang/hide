@@ -530,9 +530,31 @@ pub struct NavigatorSnapshot {
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+    /// The checkouts Hide AI started an agent in, by device and path. A list
+    /// beside the checkouts, not a field on them, because a checkout row is
+    /// rebuilt from Git and Herdr at several places and would lose a value
+    /// laid on it; the shell joins it by `(device_id, path)`.
+    pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
+}
+
+/// Hide AI started this agent, read from the coordination ledger's record of
+/// the spawn and never from a branch name. `task` is what it was started for.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HideAiSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
+}
+
+/// A checkout Hide AI made for an agent it started.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HideAiCheckoutSnapshot {
+    pub device_id: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::coordination::SpawnTask>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -1207,6 +1229,11 @@ pub struct SidebarAgentSnapshot {
     /// read, so it does not make `row_facts` present.
     #[serde(skip_serializing)]
     pub(crate) reply_wait: bool,
+    /// Hide AI started this agent (PRD hide-ai-origin-mark D-01). Set by the
+    /// runtime from the coordination ledger, so a session read never makes
+    /// it; absent from the wire for every other agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hide_ai: Option<HideAiSnapshot>,
     /// The request view's part of the row: the verb and since when, the
     /// request and reply lines, the pull requests (`request_view.rs`).
     /// Absent until the core has built it.
@@ -2660,8 +2687,61 @@ pub enum MemoryQuestionSnapshot {
         human_session_count: usize,
         pulled_session_count: usize,
     },
-    /// The agent ended without a pull request: "PR 없이 끝남", try again.
-    Failed { number: u64, title: String },
+    /// The attempt ended with no pull request, try again: "PR 없이 끝남", or,
+    /// when its agent never started, why.
+    Failed {
+        number: u64,
+        title: String,
+        start_failure: Option<MemoryStartFailure>,
+    },
+}
+
+/// Why a failed promotion's agent never started, as its spawn answered.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryStartFailure {
+    pub code: MemoryStartFailureCode,
+    /// The last line the new pane's shell showed for `shell_starting`, at
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters; the other
+    /// answers' words are the diagnostic log's (`promotion.start_failed`).
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStartFailureCode {
+    /// The new pane's shell stopped in its startup files (a question).
+    ShellStarting,
+    /// The agent's start ended at the shell without the agent, twice.
+    AgentNotStarted,
+    /// Any other answer: the device, the lock, Herdr's refusal.
+    Other,
+}
+
+impl MemoryStartFailure {
+    pub const DETAIL_CHARS: usize = 160;
+
+    /// The failure a promotion keeps (`hide_memory::Promotion::failure`), a
+    /// spawn's refusal code with its detail after a unit separator.
+    pub fn of(failure: &str) -> Self {
+        let short = |text: &str| {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.chars().take(Self::DETAIL_CHARS).collect())
+        };
+        match crate::coordination::split_refusal(failure) {
+            (crate::agent_start::SHELL_STARTING, detail) => Self {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: detail.and_then(short),
+            },
+            (code, _) => Self {
+                code: if code == "agent_not_started" {
+                    MemoryStartFailureCode::AgentNotStarted
+                } else {
+                    MemoryStartFailureCode::Other
+                },
+                detail: None,
+            },
+        }
+    }
 }
 
 /// What a card is; the same words the extraction and `hide memory show`
@@ -4893,6 +4973,7 @@ impl Snapshot {
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
+                hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
             },
@@ -5384,6 +5465,55 @@ mod interface_language_tests {
 }
 
 #[cfg(test)]
+mod memory_start_failure_tests {
+    use super::{MemoryStartFailure, MemoryStartFailureCode};
+
+    /// The failed card shows why its agent never started: the question its
+    /// shell stopped at, and never more than that one line.
+    #[test]
+    fn a_start_failure_carries_its_code_and_at_most_the_question_line() {
+        let question = crate::coordination::refusal(
+            crate::agent_start::SHELL_STARTING,
+            "[oh-my-zsh] Would you like to update? [Y/n]",
+        );
+        assert_eq!(
+            MemoryStartFailure::of(&question),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: Some("[oh-my-zsh] Would you like to update? [Y/n]".to_owned()),
+            }
+        );
+        let long =
+            crate::coordination::refusal(crate::agent_start::SHELL_STARTING, &"y".repeat(400));
+        assert_eq!(
+            MemoryStartFailure::of(&long)
+                .detail
+                .map(|line| line.chars().count()),
+            Some(MemoryStartFailure::DETAIL_CHARS)
+        );
+        assert_eq!(
+            MemoryStartFailure::of(crate::agent_start::SHELL_STARTING).detail,
+            None,
+            "a screen that could not be read"
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_started"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::AgentNotStarted,
+                detail: None,
+            }
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_installed"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::Other,
+                detail: None,
+            }
+        );
+    }
+}
+
+#[cfg(test)]
 mod pull_request_state_tests {
     use super::PullRequestSnapshot;
 
@@ -5813,6 +5943,21 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "memory_promotion_state", &promotion_states);
         checked.insert("memory_promotion_state");
+
+        let start_failures = [
+            MemoryStartFailureCode::ShellStarting,
+            MemoryStartFailureCode::AgentNotStarted,
+            MemoryStartFailureCode::Other,
+        ];
+        for variant in start_failures {
+            match variant {
+                MemoryStartFailureCode::ShellStarting
+                | MemoryStartFailureCode::AgentNotStarted
+                | MemoryStartFailureCode::Other => {}
+            }
+        }
+        assert_wire(&contract, "memory_start_failure_code", &start_failures);
+        checked.insert("memory_start_failure_code");
 
         let actions = [
             MemoryAction::Enable,
