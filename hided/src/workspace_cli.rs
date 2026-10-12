@@ -309,6 +309,12 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     if bytes.len() > 4096 {
         return Err("invalid_reference".to_owned());
     }
+    // References are written without a flush, so a power loss can leave one
+    // empty: it holds no credential, and reads as gone so a named reference
+    // renews rather than failing every command.
+    if bytes.is_empty() {
+        return Err("credential_expired".to_owned());
+    }
     let reference: Reference =
         serde_json::from_slice(&bytes).map_err(|_| "invalid_reference".to_owned())?;
     if reference.token.len() != 64 || !reference.token.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -980,6 +986,17 @@ mod tests {
         permissions.set_mode(0o644);
         fs::set_permissions(&path, permissions).unwrap();
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_reference_reads_as_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("reference.json");
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(read_reference(&path), Err(reason) if reason == "credential_expired"));
     }
 
     /// What a node writes up its link, one line at a time.
