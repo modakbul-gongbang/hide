@@ -31,6 +31,8 @@ use crate::node_access::{NodeLink, read_bytes};
 #[derive(Default)]
 pub(super) struct Checked {
     pub(super) changed: usize,
+    /// Calls the provider answered, usably or not.
+    pub(super) answered: usize,
 }
 
 type Admit<'a> = &'a mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>;
@@ -125,7 +127,7 @@ pub(super) fn reverify_pending(
             card.evidence = facts.gather(&card.body, &card.cited_paths);
         }
         let answers = facts.facts(&card.evidence);
-        let words = query_words(&[&card.title, &card.body]);
+        let words = query_words(&[&card.title, &card.body, &card.aliases.join(" ")]);
         let files = excerpts(
             &cited_files(&card.evidence)
                 .into_iter()
@@ -155,11 +157,13 @@ pub(super) fn reverify_pending(
         let verdict = match verdict {
             Ok(verdict) => verdict,
             Err(AiError::InvalidOutput(_)) => {
+                checked.answered += 1;
                 spend_unusable(store, &card.item_id, project_id, card.number)?;
                 continue;
             }
             Err(error) => return Err(provider_failure(error)),
         };
+        checked.answered += 1;
         // The day is spent by an answer, not by a call: a provider that
         // failed leaves the card due for the next pass.
         if !store
@@ -363,7 +367,7 @@ pub(super) fn check_before_suggestion(
             .detail(project_id, &item.id)
             .map_err(|error| local(error.to_string()))?;
         let answers = facts.facts(&detail.evidence);
-        let words = query_words(&[&item.title, &item.body]);
+        let words = query_words(&[&item.title, &item.body, &item.aliases.join(" ")]);
         admit(store)?;
         let request = promote_check_request(
             digest(&[
@@ -392,11 +396,13 @@ pub(super) fn check_before_suggestion(
         let verdict = match verdict {
             Ok(verdict) => verdict,
             Err(AiError::InvalidOutput(_)) => {
+                checked.answered += 1;
                 spend_unusable(store, &item.id, project_id, item.number)?;
                 continue;
             }
             Err(error) => return Err(provider_failure(error)),
         };
+        checked.answered += 1;
         // The day's one answer about the card, so a card the check keeps
         // correcting costs one call a day (B10).
         if !store

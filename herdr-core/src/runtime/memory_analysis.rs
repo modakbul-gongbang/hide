@@ -144,8 +144,11 @@ enum PassReport {
     /// Cards of the Project were checked against the repository and some
     /// changed state (`확인 중` came or went, a card was corrected or
     /// forgotten): the open screen reads them again, and nothing else moves.
+    /// `answered` says the provider answered a check, which ends a failure
+    /// shown for an earlier call; a check that needed no model does not.
     Checked {
         project_id: String,
+        answered: bool,
     },
 }
 
@@ -671,13 +674,14 @@ impl Runtime {
         let project_id = match &report {
             PassReport::Analyzing { project_id }
             | PassReport::Analyzed { project_id, .. }
-            | PassReport::Checked { project_id } => project_id.clone(),
+            | PassReport::Checked { project_id, .. } => project_id.clone(),
         };
-        if matches!(report, PassReport::Checked { .. }) {
-            // A check that answered is a provider that answers: what an
-            // earlier failure left on the Project is over.
+        if let PassReport::Checked { answered, .. } = report {
+            // A check the provider answered is a provider that answers: what
+            // an earlier failure left on the Project is over.
             let mut recovered = false;
-            if let Some(project) = self.memory_work.projects.get_mut(&project_id)
+            if answered
+                && let Some(project) = self.memory_work.projects.get_mut(&project_id)
                 && (project.failures > 0
                     || project.retry_at_unix_ms != 0
                     || project.analysis == MemoryAnalysisState::AiNotReady)
@@ -695,7 +699,7 @@ impl Runtime {
             if recovered {
                 self.sync_project_memory();
             }
-            return false;
+            return recovered;
         }
         let before = self.memory_work.projects.get(&project_id).cloned();
         match report {
@@ -943,8 +947,11 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
                 learned: tally.learned,
                 error: tally.error,
             });
-        } else if tally.checked {
-            report(PassReport::Checked { project_id });
+        } else if tally.checked || tally.answered {
+            report(PassReport::Checked {
+                project_id,
+                answered: tally.answered,
+            });
         }
     }
     if walked_all {
@@ -972,6 +979,8 @@ struct ProjectTally {
     analyzing: bool,
     /// A card was checked against the repository and changed state.
     checked: bool,
+    /// The provider answered a check, whatever the answer changed.
+    answered: bool,
     learned: usize,
     error: Option<AiError>,
 }
@@ -1247,11 +1256,19 @@ fn maintain_cards(
             &input.cancel,
             &mut admit,
         )
-        .map(|second| first.changed + second.changed),
+        .map(|second| {
+            (
+                first.changed + second.changed,
+                first.answered + second.answered,
+            )
+        }),
         Err(failure) => Err(failure),
     };
     match suggested {
-        Ok(changed) => tally.checked |= changed > 0,
+        Ok((changed, answered)) => {
+            tally.checked |= changed > 0;
+            tally.answered |= answered > 0;
+        }
         Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
         // A check held back never holds the Projects after this one: it is
         // a call analysis would not need, and the next pass asks again.
