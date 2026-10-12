@@ -2197,7 +2197,7 @@ On Windows x64 and Linux x64 the same script ships the same files, `.exe` on Win
 A packaged daemon installs the CLI and the configured Claude Code/Codex hooks and publishes their kit report to This machine; the one-release retirement row reports its outcome on every platform.
 A packaged CLI resolves its actual executable path before this check and may replace another build's daemon; a standalone copy cannot acquire that authority through a link that merely looks packaged.
 The package smoke uses an isolated home with state beneath that HOME authority to check installation, new-shell command resolution and hooks, then a complete second package fixture whose daemon has an executable overlay to change its SHA-256, proving replacement and refreshed paths without compiling twice.
-Signing with a real identity, notarization, auto-update, installers, a tray item, global shortcuts, Dock badges, a pet, file drops into a pane and the usage display are not part of this host yet (issue 184).
+Auto-update, installers, a tray item, global shortcuts, Dock badges, a pet, file drops into a pane and the usage display are not part of this host yet (issue 184).
 
 ### The shortcut registry
 
