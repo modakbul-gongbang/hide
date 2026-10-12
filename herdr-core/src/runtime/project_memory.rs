@@ -115,11 +115,11 @@ impl Runtime {
         if context != *expected {
             return Err("caller_context_changed".into());
         }
+        // The pane's agent on the caller's own machine: a node's pane is
+        // found among that node's agents, never this machine's.
         let reader = match crate::workspace_control::Caller::parse(caller) {
             crate::workspace_control::Caller::Pane(pane) => self
-                .snapshot
-                .navigator
-                .agents
+                .machine_agents(device)
                 .iter()
                 .find(|agent| agent.pane_id == pane)
                 .and_then(|agent| {

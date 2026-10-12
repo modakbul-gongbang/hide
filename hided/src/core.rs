@@ -523,8 +523,9 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped browser route source".to_owned())
     }
 
-    /// The Projects a `hide links` read may answer from, as the core knows
-    /// them now; the read itself runs on the caller's blocking task.
+    /// What a hook's Memory read for the pane in `context` is answered from,
+    /// as the core knows it now; the node call and the store read run on the
+    /// caller's blocking task.
     pub fn memory_scope(
         &self,
         context: &Context,
@@ -539,6 +540,8 @@ impl CoreHandle {
         rx.recv().map_err(|_| "core_unavailable")?
     }
 
+    /// The Projects a `hide links` read may answer from, as the core knows
+    /// them now; the read itself runs on the caller's blocking task.
     pub fn links_scope(&self, context: &Context) -> Option<herdr_core::links::query::Scope> {
         let (reply, rx) = mpsc::channel();
         self.commands

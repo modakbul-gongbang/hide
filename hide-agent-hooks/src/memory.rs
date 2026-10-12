@@ -14,8 +14,10 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// How long a hook waits for Memory, from when it starts asking: inside the
-/// 2 s every hook has, and never past the letter pull it runs beside.
+/// How long a hook waits for Memory, counted from the hook process's start,
+/// so reading its input comes out of it (a plugin helper counts from its ask,
+/// within its own deadline): inside the 2 s every hook has, and never past
+/// the letter pull it runs beside.
 pub const MEMORY_BUDGET: Duration = Duration::from_millis(1_250);
 
 #[derive(Debug, Clone, Eq, PartialEq)]

@@ -170,8 +170,24 @@ impl Runtime {
     /// Takes what the label reads of `device`'s panes found for Memory:
     /// receipts to record off the lock, and the sessions its live panes hold
     /// now. A session that left the set had its pane closed or replaced, and
-    /// the next pass, started at once, analyzes it (B2).
+    /// the next pass, started at once, analyzes it (B2). A machine with no
+    /// Memory, a device the core dials, hands nothing over; a node that dials
+    /// in keeps its sessions while its link is down, for the pass after it
+    /// is back.
     pub(crate) fn take_memory_handoff(&mut self, device: &str, handoff: MemoryHandoff) {
+        if let Err(reason @ ("dialed_device" | "unregistered")) = self.linked_node(device) {
+            // Its sessions are the designed absence; receipts there are not.
+            if !handoff.receipts.is_empty() {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "receipts.no_memory",
+                    "device": device,
+                    "reason": reason,
+                    "dropped": handoff.receipts.len(),
+                }));
+            }
+            return;
+        }
         if let Some(live) = handoff.live_sessions {
             let work = &mut self.memory_work;
             let held = work.live_sessions.remove(device).unwrap_or_default();

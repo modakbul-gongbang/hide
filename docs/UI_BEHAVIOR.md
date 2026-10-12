@@ -493,7 +493,8 @@ The core opens one Project's Memory per daemon; the Tools column, whatever tool 
 Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI runs on with its logo; with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
 While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says existing cards are still used.
-A Project on a connected device shows one line that Memory is kept for this Mac's sessions and names the device; nothing else is drawn.
+A Project on an SSH device, one Hide connects to, shows one line that Memory is not kept for SSH devices' sessions and names the device; nothing else is drawn.
+A Project on a computer that connects to Hide on its own has Memory as this machine's Projects do (PRD core-host-node-move B14).
 `물어볼 것` appears, and the tab's name carries a dot, only while the Project has a card to suggest for the repository's documents or a promotion that ended without a pull request.
 A suggestion shows its reasons (`사람 말 3번 · 14일 동안 세션 9개에서 꺼냄`) with `올리기` and `안 올림`; a failed one shows `PR 없이 끝남` with `다시 시도`; at most three suggestions are open, and a card answered `안 올림` is not suggested again until its text changes.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
