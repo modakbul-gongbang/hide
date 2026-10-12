@@ -68,7 +68,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const named = useUiStore((s) => (s.screen?.kind === "main" ? s.screen.deviceId : undefined));
   // A device removed since the screen named it leaves the one in front.
   const deviceId = named !== undefined && rest?.navigator?.devices?.some((device) => device.id === named) ? named : frontDeviceId(rest);
-  const deviceName = rest?.navigator?.devices?.find((device) => device.id === deviceId)?.label ?? deviceId;
+  const deviceName = machineName(rest?.navigator?.devices, deviceId, t);
   const sections = useMemo(() => mainSections(rest, agents, deviceId), [rest, agents, deviceId]);
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);

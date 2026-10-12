@@ -9,7 +9,7 @@ import { latestDraft } from "../editor/draft";
 import { useInterfaceTranslation } from "../i18n/client";
 import { deviceConnected, frontDeviceId } from "../devices";
 import type { MoveView } from "../coreMove";
-import { coreMachineName, isCoreMachine, machineName, windowDeviceId, windowFirst } from "../screenMachine";
+import { coreMachineName, isCoreMachine, machineName, registeredName, windowDeviceId, windowFirst } from "../screenMachine";
 import { deviceRemovalLines, draftExported, kitRemovalLine, unstoredDeviceDrafts } from "../settings";
 import type { Device } from "../snapshot";
 import { useShellStore } from "../store";
@@ -175,12 +175,12 @@ export function DevicesTab({ actions }: { actions: Actions }) {
         <Dialog open onOpenChange={(next) => { if (!next) setAllowing(null); }}>
           <DialogContent data-device-host-allow-confirm={allowing.id}>
             <DialogHeader>
-              <DialogTitle>{t("devices.installTitle", { name: allowing.label })}</DialogTitle>
+              <DialogTitle>{t("devices.installTitle", { name: registeredName(allowing) })}</DialogTitle>
             </DialogHeader>
             <DialogBody className="space-y-sm">
               {allowing.host?.state === "identity_changed" ? (
                 <p className="text-body text-warning">
-                  {t("devices.identityChangedDescription", { alias: allowing.ssh_alias ?? allowing.label })}
+                  {t("devices.identityChangedDescription", { alias: allowing.ssh_alias ?? registeredName(allowing) })}
                 </p>
               ) : null}
               <KitTerms helperRoot={allowing.host?.helper_root ?? localRoot} cliDir={allowing.host?.cli_dir ?? localCliDir} />
@@ -205,8 +205,8 @@ export function DevicesTab({ actions }: { actions: Actions }) {
         <AlertDialog open onOpenChange={(next) => { if (!next) setRevoking(null); }}>
           <AlertDialogContent data-device-host-revoke-confirm={revoking.id}>
             <AlertDialogHeader>
-              <AlertDialogTitle>{t("devices.revokeTitle", { name: revoking.label })}</AlertDialogTitle>
-              <AlertDialogDescription>{t("devices.revokeDescription", { alias: revoking.ssh_alias ?? revoking.label })}</AlertDialogDescription>
+              <AlertDialogTitle>{t("devices.revokeTitle", { name: registeredName(revoking) })}</AlertDialogTitle>
+              <AlertDialogDescription>{t("devices.revokeDescription", { alias: revoking.ssh_alias ?? registeredName(revoking) })}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{t("devices.keepAllowed")}</AlertDialogCancel>
@@ -227,8 +227,8 @@ export function DevicesTab({ actions }: { actions: Actions }) {
         <AlertDialog open onOpenChange={(next) => { if (!next && !removalBusy) setRemoving(null); }}>
           <AlertDialogContent data-device-remove-confirm={removing.id}>
             <AlertDialogHeader>
-              <AlertDialogTitle>{t("devices.removeTitle", { name: removing.label })}</AlertDialogTitle>
-              <AlertDialogDescription>{t("devices.removeDescription", { alias: removing.ssh_alias ?? removing.label })}</AlertDialogDescription>
+              <AlertDialogTitle>{t("devices.removeTitle", { name: registeredName(removing) })}</AlertDialogTitle>
+              <AlertDialogDescription>{t("devices.removeDescription", { alias: removing.ssh_alias ?? registeredName(removing) })}</AlertDialogDescription>
             </AlertDialogHeader>
             <p className="text-body text-subtle-foreground" data-device-remove-kit={removing.id}>
               {kitRemovalLine(removing, t)}
@@ -266,7 +266,7 @@ export function DevicesTab({ actions }: { actions: Actions }) {
                     .finally(() => setRemovalBusy(false));
                 }}
               >
-                {removalBusy ? t("devices.storingDrafts") : t("devices.removeNamed", { name: removing.label })}
+                {removalBusy ? t("devices.storingDrafts") : t("devices.removeNamed", { name: registeredName(removing) })}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

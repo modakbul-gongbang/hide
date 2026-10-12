@@ -2527,7 +2527,7 @@ impl Runtime {
                 if payload.device_id == self.node.as_str() {
                     self.set_error(
                         "device.local_remove_denied",
-                        format!("{} cannot be removed", crate::workspace::LOCAL_DEVICE_LABEL),
+                        "The core's own machine cannot be removed".to_owned(),
                         false,
                     );
                     return true;

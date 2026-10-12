@@ -7,7 +7,7 @@ import path from "node:path";
 import { chord } from "./chords";
 import { animationsFinished } from "./wait";
 
-/** What the core names its own machine on the system the fixture runs on (`LOCAL_DEVICE_LABEL` in `herdr-core/src/workspace.rs`). */
+/** What the English shell names the core's own machine on the system the fixture runs on (`systemMachineKey` in `web/src/screenMachine.ts`). */
 export const THIS_MACHINE = process.platform === "darwin" ? "This Mac" : process.platform === "win32" ? "This PC" : "This computer";
 
 /**

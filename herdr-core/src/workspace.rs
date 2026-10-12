@@ -23,25 +23,15 @@ use crate::model::{
 use crate::node::NodeId;
 use crate::node_access::{NodeLink, call_as};
 
-/// The name the core's own machine goes by on screen: what its system calls
-/// it, as macOS ("This Mac") and Windows ("This PC") do, and a plain "This
-/// computer" on Linux, which has no one name for it.
-pub(crate) const LOCAL_DEVICE_LABEL: &str = if cfg!(target_os = "macos") {
-    "This Mac"
-} else if cfg!(windows) {
-    "This PC"
-} else {
-    "This computer"
-};
-
 /// The row for the machine the core runs on. Its id is the node id; its
-/// `kind` stays `local`, the role "the core's own machine", not a name, and
-/// `machine_name` is what that machine calls itself.
+/// `kind` stays `local`, the role "the core's own machine", not a name; it
+/// has no `label`, since each shell names it as its system does from
+/// `host.platform`; and `machine_name` is what that machine calls itself.
 pub fn local_device(node: &NodeId, machine_name: Option<&str>) -> DeviceSnapshot {
     DeviceSnapshot {
         agent_scope: Default::default(),
         id: node.to_string(),
-        label: LOCAL_DEVICE_LABEL.to_owned(),
+        label: None,
         kind: "local".to_owned(),
         state: "ready".to_owned(),
         message: None,
@@ -82,7 +72,7 @@ pub fn devices(
             result.push(DeviceSnapshot {
                 agent_scope: Default::default(),
                 id: registration.id.clone(),
-                label: registration.label.clone(),
+                label: Some(registration.label.clone()),
                 kind: "remote".to_owned(),
                 state: "unavailable".to_owned(),
                 message: None,

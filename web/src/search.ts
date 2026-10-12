@@ -167,10 +167,10 @@ export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
   // A snapshot that names no device is the core's own node alone, by the id it has before the snapshot names it.
   const listed = rest.navigator?.devices;
-  const devices = listed?.length ? windowFirst(listed) : [{ id: localDeviceId(rest), label: translate(thisMachineKey(null)), kind: "local" } as Device];
+  const devices = listed?.length ? windowFirst(listed) : [{ id: localDeviceId(rest), label: null, kind: "local" } as Device];
   const own = windowDeviceId(listed);
   for (const device of devices) {
-    const named = { name: machineName(listed, device.id, translate), own: device.id === own };
+    const named = { name: listed?.length ? machineName(listed, device.id, translate) : translate(thisMachineKey(null)), own: device.id === own };
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];
       rows.push({ agentScope: rest.navigator?.devices?.find((d) => d.id === device.id)?.agent_scope ?? rest.navigator?.agent_scope, device, ...named, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all, local: true });
@@ -277,7 +277,7 @@ export function recentEntries(rest: SnapshotRest | null, shown: ReadonlySet<stri
         group: RECENT_GROUP,
         deviceId: record.device_id,
         checkoutId: record.checkout_id,
-        chip: record.device_id === front ? undefined : { label: record.device_name, local: scope.device.kind !== "remote" },
+        chip: deviceChip(scope, front),
         dimmed: true,
       });
       continue;

@@ -15,10 +15,10 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 #[test]
 fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
     // Incoming main PR 749 screen: Build before Spec, then Docs; no local
-    // delegation chip, and distinct device IDs retain equal-label context.
+    // delegation chip, and a chip toward the core's own machine carries no
+    // label, which the shell names in its language.
     let mut runtime = runtime();
     let local_id = runtime.snapshot.navigator.devices[0].id.clone();
-    runtime.snapshot.navigator.devices[0].label = "mini".into();
     let mut agents = rows();
     agents[0].identity_label = "Lead".into();
     agents[1].pane_id = "spec".into();
@@ -103,7 +103,7 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
 
     let mut remote_device = crate::workspace::local_device(&crate::node::test_node(), None);
     remote_device.id = "other-device".into();
-    remote_device.label = "mini".into();
+    remote_device.label = Some("mini".into());
     remote_device.kind = "remote".into();
     runtime.snapshot.navigator.devices.push(remote_device);
     let mut remote_project = project("remote-docs", &["remote:other-device:pane:p1"]);
