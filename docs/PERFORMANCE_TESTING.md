@@ -212,6 +212,8 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `HIDE_DESKTOP_USER_DATA_DIR` | A run-owned Electron user-data directory for the desktop app |
 
 `desktop/e2e/fixture.ts` builds exactly this environment and refuses to launch unless `HOME`, `HIDE_STATE_DIR`, `HIDE_DESKTOP_USER_DATA_DIR`, and `HERDR_SOCKET_PATH` all resolve under the run's own temporary directory; `web/e2e/herdr-fixture.ts` does the same for the private Herdr server and clears the inherited `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`/`HERDR_ENV` identifiers.
+The state directory must also be private (`0700` on Unix): the delivery ledger refuses an existing directory readable by another account, and timing hooks against a daemon logging `ledger.load_failed` measures a failed letter pull rather than working delivery.
+`scripts/web-shell-measure/isolated-env.sh` establishes that permission before starting the daemon.
 Follow that same pattern for an ad hoc fixture: forward `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and the resolved socket to every child Herdr process, so the server it starts and the core that reads it stay inside the same routing boundary.
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
