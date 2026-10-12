@@ -15,6 +15,7 @@ mod opencode_helper;
 mod opencode_plugin;
 mod pi_extension;
 mod programs;
+mod session_start_probes;
 mod spawn_guard;
 #[path = "../../../hide-platform/tests/it/stand_ins.rs"]
 mod stand_ins;

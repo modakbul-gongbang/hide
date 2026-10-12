@@ -435,12 +435,23 @@ fn run_hook(arguments: &[String], started: Instant) {
     let memory = |runtime| {
         memory_output_before_deadline(runtime, event, &home, memory_deadline, payload.as_ref())
     };
-    let (memory_output, intake) = std::thread::scope(|scope| {
+    let (memory_output, intake, workspace) = std::thread::scope(|scope| {
         let asking = memory_runtime.map(|runtime| {
             std::thread::Builder::new()
                 .name("hide-hook-memory".to_owned())
                 .spawn_scoped(scope, move || memory(runtime))
                 .map_err(|_| runtime)
+        });
+        // SessionStart's Workspace probe is asked beside Memory, not after
+        // it: neither answer depends on the other, and each `hide` it runs
+        // keeps its own deadline. The probe is not gated on a pane id: hided
+        // binds a caller outside any pane (a Codex shared daemon, a plain
+        // terminal) to the registered checkout holding its cwd, and refuses
+        // everything else itself.
+        let probing = (event == HookEvent::SessionStart).then(|| {
+            std::thread::Builder::new()
+                .name("hide-hook-workspace".to_owned())
+                .spawn_scoped(scope, workspace_context::live_context)
         });
         let intake = if pulls {
             match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
@@ -463,16 +474,20 @@ fn run_hook(arguments: &[String], started: Instant) {
             Some(Err(runtime)) => memory(runtime),
             None => None,
         };
-        (memory_output, intake)
+        let workspace = match probing {
+            // A probe that panicked has printed why and leaves the session
+            // without the guidance, as a probe that failed does.
+            Some(Ok(probe)) => probe.join().ok().flatten(),
+            // No thread to ask on: the probe runs after Memory, as it did
+            // before it had one.
+            Some(Err(_)) => workspace_context::live_context(),
+            None => None,
+        };
+        (memory_output, intake, workspace)
     });
     let mut output =
         memory_output.or_else(|| runtime.and_then(|runtime| hook_stdout(runtime, event)));
-    // The probe is not gated on a pane id: hided binds a caller outside any
-    // pane (a Codex shared daemon, a plain terminal) to the registered
-    // checkout holding its cwd, and refuses everything else itself.
-    if event == HookEvent::SessionStart
-        && let Some(context) = workspace_context::live_context()
-    {
+    if let Some(context) = workspace {
         output = output.map(|value| {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
