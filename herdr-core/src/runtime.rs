@@ -27,11 +27,14 @@ mod inbound;
 mod issues;
 mod kit;
 pub(crate) mod links;
-mod memory;
+pub(crate) mod memory;
+pub(crate) mod memory_analysis;
+mod memory_promotion;
 mod op_timing;
 mod operations;
 mod pane_prediction;
 mod pane_reopen;
+pub(crate) mod project_memory;
 mod project_sessions;
 mod projects;
 mod pull_requests;
@@ -1369,7 +1372,6 @@ pub struct Runtime {
     editor_documents: HashMap<String, Edited<EditorDocumentSnapshot>>,
     archive_documents: HashMap<String, ArchiveDetailSnapshot>,
     session_catalog_rows: Vec<SessionRowSnapshot>,
-    memory_catalog_rows: Vec<crate::model::MemoryRowSnapshot>,
     memory_sessions_load_in_flight: bool,
     memory_sessions_load_pending: bool,
     memory_sessions_load_generation: u64,
@@ -1380,23 +1382,11 @@ pub struct Runtime {
     search_generation: u64,
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
-    memory_operation_in_flight: bool,
-    memory_operation_generation: u64,
-    memory_operation_checkout_path: Option<String>,
-    memory_pending_action: Option<(String, events::MemoryActionPayload)>,
-    memory_cancel: Option<hide_ai::CancelToken>,
-    /// The Hide AI settings the running analysis built its router from; it
-    /// is stopped when they stop describing who may be asked.
-    memory_analysis_settings: Option<hide_ai::AiSettings>,
-    /// True only after the operator approves hook updates while enabling
-    /// Memory. A diagnosis can finish that intent, but cannot create it.
-    memory_enable_after_hook_update: bool,
-    memory_poll_in_flight: bool,
-    memory_next_poll_unix_ms: u64,
-    /// Memory receipts the label reads found, waiting for the one thread that
-    /// checks and records them (`runtime/memory.rs`, `record_memory_receipts`).
-    memory_receipts_pending: Vec<crate::labels::worker::SightedMemoryReceipt>,
-    memory_receipts_in_flight: bool,
+    /// Project Memory's background pass, receipts and analysis state
+    /// (`runtime/memory_analysis.rs`).
+    memory_work: memory_analysis::MemoryWork,
+    /// The named Project's Memory reads and action (`runtime/project_memory.rs`).
+    project_memory: project_memory::ProjectMemoryWork,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
@@ -1708,7 +1698,7 @@ pub struct Runtime {
 }
 
 #[derive(Clone)]
-struct RuntimeWorkerContext {
+pub(crate) struct RuntimeWorkerContext {
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
@@ -2009,7 +1999,6 @@ impl Runtime {
             editor_documents: HashMap::new(),
             archive_documents: HashMap::new(),
             session_catalog_rows: Vec::new(),
-            memory_catalog_rows: Vec::new(),
             memory_sessions_load_in_flight: false,
             memory_sessions_load_pending: false,
             memory_sessions_load_generation: 0,
@@ -2018,17 +2007,8 @@ impl Runtime {
             search_client: None,
             search_generation: 0,
             links_work: links::LinksWork::default(),
-            memory_operation_in_flight: false,
-            memory_operation_generation: 0,
-            memory_operation_checkout_path: None,
-            memory_pending_action: None,
-            memory_cancel: None,
-            memory_analysis_settings: None,
-            memory_enable_after_hook_update: false,
-            memory_poll_in_flight: false,
-            memory_next_poll_unix_ms: 0,
-            memory_receipts_pending: Vec::new(),
-            memory_receipts_in_flight: false,
+            memory_work: Default::default(),
+            project_memory: Default::default(),
             editor_tab_history: Vec::new(),
             worker_context: None,
             pending_session_resolutions: BTreeMap::new(),
@@ -2714,9 +2694,7 @@ fn unix_milliseconds() -> u64 {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        if let Some(cancel) = self.memory_cancel.take() {
-            cancel.cancel();
-        }
+        self.cancel_memory_pass();
     }
 }
 

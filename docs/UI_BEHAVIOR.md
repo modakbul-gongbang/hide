@@ -482,7 +482,28 @@ A session that cannot be opened shows the same reason in the detail place with R
 A session the link record joined to pull requests carries a chip for each on its row and on the open session's head, `#317 만듦` for one it made and `#317` for one it worked on, which opens the PRs tab with that pull request's panel (PRD link-graph B36); a session with none has no chip, and a chip that arrives while the record fills just appears.
 A link panel's `대화 보기` or parent line opens this tab at that session and scrolls once to the line's request; scrolling afterwards is the operator's.
 When another window names another Project, this one says so and offers `Show this project's sessions`, which names this Project again only when chosen, so two windows never take it from each other.
-The web shell has no Project Memory entry point, disabled control, or placeholder until the Memory stage (PRD S8); Memory currently has no UI in any shell and works only through the `UserPromptSubmit`/`SessionStart` hooks (see [PERFORMANCE_TESTING.md: Project Memory cost contract](PERFORMANCE_TESTING.md#project-memory-cost-contract)).
+Under a request whose prompt a hook gave Memory cards there is one quiet line, `Memory m5 m12`, and under the turn Memory learned a card from, `배움 m17`; a card number opens that Project in one of its checkouts with the Memory tab showing the card in full (PRD project-memory-v2 B33).
+
+## Project Memory: the Memory tab
+
+Web owner: `web/src/MemoryTab.tsx`, `web/src/memoryList.ts`; core owner: `herdr-core/src/runtime/project_memory.rs`, `herdr-core/src/runtime/memory_promotion.rs`.
+Memory is the Tools column's fourth tab, after Sessions, Explorer and History, and shows the Project of the checkout in front (PRD project-memory-v2 D-17, B19-B32).
+The core opens one Project's Memory per daemon; the Tools column, whatever tool it holds, names its Project when it shows, when the front Project changes and when its window comes forward after another window named another Project, so the tab's dot is current, and the tab reads until the core answers for its own.
+Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI runs on with its logo; with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
+Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
+While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says existing cards are still used.
+A Project on a connected device shows one line that Memory is kept for this Mac's sessions and names the device; nothing else is drawn.
+`물어볼 것` appears, and the tab's name carries a dot, only while the Project has a card to suggest for the repository's documents or a promotion that ended without a pull request.
+A suggestion shows its reasons (`사람 말 3번 · 14일 동안 세션 9개에서 꺼냄`) with `올리기` and `안 올림`; a failed one shows `PR 없이 끝남` with `다시 시도`; at most three suggestions are open, and a card answered `안 올림` is not suggested again until its text changes.
+`카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
+The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
+A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
+When the agent is gone and GitHub cannot say whether its pull request came (gh missing or logged out, or GitHub not answering), the line reads `PR 확인 못 함 · <reason>` with no spinner and nothing to press, since restoring GitHub settles it; it is not asked about in `물어볼 것`.
+A card on its way into the repository is never folded under `그 외 N`, and a card opened from a conversation clears a search that leaves it out.
+A card opens in place: `N분 전에 바뀜 · 이전 내용` when a text replaced another (the earlier text with `되돌리기`), its body, its cited files, its sources with their runtime, time and whether they are the operator's words, and `지우기`.
+A forgotten card leaves `mN 지움 · 되돌리기` at the bottom of the tab until it is undone or another card is forgotten.
+The `⋯` beside `카드 N` holds `데이터 삭제`, which asks first, naming the Project and the number of cards, because it cannot be undone.
+An empty Project says no cards yet and when sessions are analyzed.
 
 ## Terminal image attachment boundary
 
@@ -1082,7 +1103,7 @@ Search continues to index the complete project tree; choosing a folded result br
 
 ### Tools and Overview
 
-Tools contains Sessions, Explorer and History; its project task list is described in [Sessions: the task list](#sessions-the-task-list).
+Tools contains Sessions, Explorer, History and Memory; its project task list is described in [Sessions: the task list](#sessions-the-task-list).
 The toolbar's Overview button opens the existing shared modal, with Agents, Issues, PRs and Conversation history for a project.
 The All projects page has Agents, Tasks and Projects.
 Saved Requests entries open Agents, and the previous conversation-history identity stays separate from the new Sessions tool and Memory.
@@ -1387,6 +1408,7 @@ Web owner: `web/src/components/device-rail.tsx`, `web/src/devices.ts`, the rail 
 This section supersedes PRD home-device-rail rows D-10, D-11, D-27, B3, B4 and B12 (quick device-rail-badges): the Inbox, the rail that came and went with the first remote device, the Needs You-only badge and the footer device button no longer exist.
 Quick device-rail-slack then narrowed the rail to `--size-rail` (48), ran it the sidebar's full height, took the names off the tiles and left Working to the session rows.
 
+This Mac is this document's name for the machine the core runs on; the screen names it as its system does, This Mac on macOS, This PC on Windows and This computer on Linux (the core's `local_device` label, and `thisMachineKey` in `web/src/devices.ts` where the shell words it itself).
 The rail is always shown, even when This Mac is the only device: the sidebar's full-height left column, with the device title and single sidebar list to its right, holding This Mac, each registered device in the core's order, and a `+` (`기기 추가`, a dashed tile) directly under the last device tile.
 The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
 Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.

@@ -52,6 +52,13 @@ enum Command {
         command: hide_factory::Command,
         reply: Sender<Result<herdr_core::factory::PreparedFactory, String>>,
     },
+    MemoryPrepare {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        command: herdr_core::memory_command::MemoryCommand,
+        reply: Sender<Result<herdr_core::memory_command::PreparedMemory, String>>,
+    },
     SetFileRoots {
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
         reply: Sender<Result<(), String>>,
@@ -203,6 +210,28 @@ impl CoreHandle {
         result
             .recv()
             .map_err(|_| "factory_unavailable".to_owned())?
+    }
+
+    /// Checks a `hide memory` caller on the owner thread; the command runs
+    /// on the caller's blocking task.
+    pub fn prepare_memory(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        command: herdr_core::memory_command::MemoryCommand,
+    ) -> Result<herdr_core::memory_command::PreparedMemory, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::MemoryPrepare {
+                device_id: device.to_owned(),
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                command,
+                reply,
+            })
+            .map_err(|_| "memory_unavailable".to_owned())?;
+        result.recv().map_err(|_| "memory_unavailable".to_owned())?
     }
 
     #[allow(clippy::too_many_arguments)] // carry the authenticated pane facts and caller-owned deadline unchanged
@@ -684,6 +713,15 @@ fn owner_loop(
             }
             Command::DeliveryHuman { reply } => {
                 let _ = reply.send(core.prepare_delivery_human());
+            }
+            Command::MemoryPrepare {
+                device_id,
+                pane_id,
+                expected,
+                command,
+                reply,
+            } => {
+                let _ = reply.send(core.prepare_memory(&device_id, &pane_id, &expected, command));
             }
             Command::FactoryPrepare {
                 device_id,

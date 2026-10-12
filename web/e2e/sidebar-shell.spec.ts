@@ -10,7 +10,7 @@
 import { expect, test } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chooseTheme, screenshot } from "./wire";
+import { chooseTheme, screenshot, THIS_MACHINE } from "./wire";
 import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
@@ -39,7 +39,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const main = page.locator("[data-main-screen]");
     await expect(main).toBeVisible();
     await expect(main.locator("h1")).toContainText("Home");
-    await expect(main.locator("[data-main-device-name]")).toHaveText("This Mac");
+    await expect(main.locator("[data-main-device-name]")).toHaveText(THIS_MACHINE);
     await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     await expect(overview).not.toHaveAttribute("aria-current", "page");
     // The row is the Projects list's own, under the tab strip.

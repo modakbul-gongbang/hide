@@ -9,6 +9,7 @@ import { scopeOccurrences, scopeRows, type AgentScope } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { TreeRow } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
+import { thisMachineKey } from "./devices";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
@@ -95,7 +96,7 @@ export function allAgents(remote: RemoteStatus[] | undefined, localAgents: Agent
   return (scope?.listed ?? []).map((entry) => {
     const agent = entry.remote ? remote?.find((r) => r.target_id === entry.device_id)?.session?.agents[entry.index] : localAgents[entry.index];
     if (!agent || agent.pane_id !== entry.pane_id) throw new Error(`Missing listed agent: ${entry.pane_id}`);
-    const label = entry.device_label ?? translate("common.thisMac");
+    const label = entry.device_label ?? translate(thisMachineKey(null));
     return { agent: { ...agent, device_id: entry.device_id, device_label: label }, device: entry.remote ? label : null };
   });
 }

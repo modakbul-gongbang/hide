@@ -281,6 +281,9 @@ A letter to it is never pasted into a composer and never rings a doorbell: the e
 The human-notice claim skips a letter whose recipient is code-owned.
 A watch observed by a Factory warns after that Factory's stall window (`stall_minutes`, 30 by default) rather than 20, and the engine acts on the first warning.
 
+Hide itself is a second code-owned identity, `hide:<role>` of kind `hide`, today only `hide:memory`: the origin of the agent a Memory card's promotion starts ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory)).
+It is registered on its first spawn, sends nothing and receives nothing, and a pane or agent name that starts with `hide:` is refused at registration like `factory:`.
+
 ## Agent registration and spawning
 
 `hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.

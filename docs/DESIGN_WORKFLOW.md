@@ -34,6 +34,7 @@ Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, see
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
 `/gallery?scene=onboarding` is the shell's real `Sidebar` and Home behind the real first-run wizard, start panel or Settings sheet over a synthetic This Mac with the seven agents and a stand-in desktop host (`web/src/gallery/OnboardingScene.tsx`), with the content `Screen / Onboarding` draws.
 Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`) and `content` (`reference`, or `long` for the Korean copy); the root carries `data-scene-ready` once the presses a state needs have landed.
+`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `forgotten`), the states the Memory screen's design draws.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 Onboarding is `Screen / Onboarding`, built by `onboardingBoards` in `scripts/pen-screens-onboarding.mjs`.

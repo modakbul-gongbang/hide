@@ -206,7 +206,7 @@ fn display_kind(kind: EditorTabKind) -> Option<DisplayKind> {
     match kind {
         EditorTabKind::File => Some(DisplayKind::File),
         EditorTabKind::Diff => Some(DisplayKind::Diff),
-        EditorTabKind::Session | EditorTabKind::Memory => None,
+        EditorTabKind::Session => None,
     }
 }
 

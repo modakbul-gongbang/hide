@@ -51,6 +51,38 @@ pub struct LabelTranscriptRequest {
     pub turns: Option<TurnTracker>,
 }
 
+/// The most Memory receipts one read reports; Hide writes at most one a prompt.
+const RECEIPTS_PER_READ: usize = 64;
+/// A receipt line names item ids, revisions and a 64-character tag; a longer
+/// line is not one Hide wrote.
+const RECEIPT_LINE_LIMIT_BYTES: usize = 4 * 1024;
+const RECEIPT_MARKER: &str = "<hide-memory-receipt ";
+
+/// Adds each receipt line of `text`, the content of the message at `offset`,
+/// to `receipts`; false when a line was too long or the read's receipts were
+/// full, and that line was left out.
+pub(crate) fn note_receipts(
+    receipts: &mut Vec<MemoryReceiptPart>,
+    text: &str,
+    offset: u64,
+) -> bool {
+    let mut kept = true;
+    for line in text.lines().map(str::trim) {
+        if !line.starts_with(RECEIPT_MARKER) {
+            continue;
+        }
+        if line.len() > RECEIPT_LINE_LIMIT_BYTES || receipts.len() >= RECEIPTS_PER_READ {
+            kept = false;
+            continue;
+        }
+        receipts.push(MemoryReceiptPart {
+            offset,
+            text: line.to_owned(),
+        });
+    }
+    kept
+}
+
 /// One receipt line and the message it was stored in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryReceiptPart {
@@ -124,11 +156,11 @@ pub struct LabelTranscript {
     /// covered (PRD overview-request-view D-31).
     #[serde(default)]
     pub pr_sightings: Vec<crate::PrSighting>,
-    /// Hide's Project Memory receipts the session stored in a part only Hide's
-    /// own plugin writes (OpenCode's synthetic prompt part); the core checks
-    /// each one's tag before it records the injection (PRD opencode-plugin
-    /// D-12). Claude Code's, Codex's, Pi's and omp's receipts are read by
-    /// Memory's own pass over their session files.
+    /// Hide's Project Memory receipts the session stored in context only its
+    /// runtime injects: a hook's context for Claude Code, Codex, Pi and omp,
+    /// and the synthetic prompt part Hide's plugin writes for OpenCode. The
+    /// core checks each one's tag before it records the delivery (PRD
+    /// project-memory-v2 D-16).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
@@ -224,12 +256,23 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         return Err("label_session_read_changed".to_owned());
     }
     let mut events = Vec::with_capacity(parsed.events.len());
+    let mut memory_receipts = Vec::new();
+    let mut skipped_receipts = 0;
     for (event, offset) in parsed.events.iter().zip(&parsed.event_offsets) {
         let kind = match event.kind {
             EventKind::Human => LabelEventKind::Human,
             EventKind::Assistant => LabelEventKind::Assistant,
             EventKind::Interrupted => LabelEventKind::Interrupted,
-            EventKind::Injected => continue,
+            // Only context the runtime injected can carry a hook's receipt;
+            // the operator's words quoting one never count.
+            EventKind::Injected => {
+                if event.is_provider_injected()
+                    && !note_receipts(&mut memory_receipts, &event.text, *offset)
+                {
+                    skipped_receipts += 1;
+                }
+                continue;
+            }
         };
         events.push(LabelEvent {
             kind,
@@ -308,11 +351,15 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
                 (subagents_left_out > 0)
                     .then(|| (SUBAGENT_FILES_CAPPED.to_owned(), subagents_left_out)),
             )
+            .chain(
+                (skipped_receipts > 0)
+                    .then(|| ("memory_receipt_capacity".to_owned(), skipped_receipts)),
+            )
             .collect(),
         title,
         custom_title: parsed.custom_title.clone(),
         pr_sightings,
-        memory_receipts: Vec::new(),
+        memory_receipts,
         subagents,
         turns,
     })

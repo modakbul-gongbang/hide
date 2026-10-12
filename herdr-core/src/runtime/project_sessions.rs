@@ -2,13 +2,12 @@
 //! history and the one session read beside it, for the web shell's Project
 //! Sessions screen.
 //!
-//! The right panel's Sessions follow the focused checkout and share
-//! their reads with Project Memory (`memory.rs`): a refresh there cancels
-//! another checkout's analysis, writes Memory counts and schedules a due
-//! poll. A named Project is kept out of all of that. It reuses the same pure
-//! readers (`load_sessions`, `load_session_detail`) and the same fence - a
+//! The right panel's Sessions follow the focused checkout. A named Project
+//! is kept apart from them: it reuses the same pure readers
+//! (`load_sessions`, `load_session_detail`) and the same fence - a
 //! generation per read, one read in flight and at most one waiting - but
-//! nothing here reads the focus, and nothing here touches Memory state.
+//! nothing here reads the focus. Project Memory is its own section
+//! (`project_memory.rs`), opened by its own event.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -101,6 +100,7 @@ impl Runtime {
             Err(reason) => {
                 self.project_sessions_work.path = None;
                 self.project_sessions_work.list_waiting = false;
+                self.project_sessions_work.project_id = None;
                 if let Some(sessions) = self.snapshot.project_sessions.as_mut() {
                     sessions.unavailable_reason = Some(reason);
                     sessions.loading = false;
