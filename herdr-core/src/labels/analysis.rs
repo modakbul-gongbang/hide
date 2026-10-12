@@ -173,11 +173,27 @@ static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
 });
 static HOME_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     // Account names are private; the remaining folders and file name identify
-    // a delegated task. A home can end at its account or start a file URI;
-    // a path component cannot start another home prefix. Spaces in a Windows
-    // account are bounded by its following path separator.
+    // a delegated task. Quoted homes can contain account spaces or end at
+    // the closing quote. An unquoted Windows account with spaces must end
+    // at a separator without trailing whitespace or invalid name characters,
+    // so a bare home cannot consume prose through a later path's separator.
+    // A path component cannot start another home prefix.
     Regex::new(
-        r#"(?P<boundary>(?:^|[^\w./\\~])(?i:file://)?)(?P<home>(?:/Users|/home)/[^/\\\s'"`]+/?|(?i:[a-z]:[\\/]Users[\\/])(?:[^\\/\r\n'"`]+[\\/]|[^\\/\s'"`]+))"#,
+        r#"(?x)
+        (?P<quoted_boundary>['"`](?i:file:///?)?)
+        (?P<quoted_home>(?:(?:/Users|/home)/|(?i:[a-z]:[\\/]Users[\\/]))[^/\\\r\n'"`]+)
+        (?P<quoted_end>[/\\'"`])
+        |
+        (?P<boundary>(?:^|[^\w./\\~])(?i:file:///?)?)
+        (?P<home>
+            (?:/Users|/home)/[^/\\\s'"`]+/?
+            |
+            (?i:[a-z]:[\\/]Users[\\/])
+            (?:
+                [^\\/\s'"`<>:*?|](?:[^\\/\x00-\x1f'"`<>:*?|]*[^\\/\s'"`<>:*?|])?[\\/]
+                |[^\\/\s'"`]+
+            )
+        )"#,
     )
     .expect("valid home prefix expression")
 });
@@ -438,6 +454,15 @@ fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
     let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {
+        if let Some(boundary) = captures.name("quoted_boundary") {
+            let ending = &captures["quoted_end"];
+            let ending = if matches!(ending, "/" | "\\") {
+                "/"
+            } else {
+                ending
+            };
+            return format!("{}~{ending}", boundary.as_str());
+        }
         let boundary = &captures["boundary"];
         let home = &captures["home"];
         if home.ends_with(['/', '\\']) {
@@ -662,6 +687,7 @@ mod tests {
             "brief.md",
         ]
         .join("\\");
+        let spaced_windows_home = ["d:", "users", "Example Account"].join("\\");
         let mut failures = Vec::new();
         for (request, expected_request) in [
             (
@@ -684,6 +710,7 @@ mod tests {
                 spaced_windows_path.as_str(),
                 r"~/worktrees/fix-search\brief.md",
             ),
+            (spaced_windows_home.as_str(), "~"),
             (
                 "/Users/example/한글 폴더/example/brief.md",
                 "~/한글 폴더/example/brief.md",
@@ -709,9 +736,29 @@ mod tests {
                 ("cwd=C:/Users/example", "cwd=~"),
                 (concat!("홈은 /home/alice", "."), "홈은 ~."),
                 (concat!(r"홈은 C:\Users\example", "."), "홈은 ~."),
+                (
+                    concat!(r"Compare C:\Users\example", ", /home/alice/report.md"),
+                    "Compare ~, ~/report.md",
+                ),
+                (
+                    concat!(r"Compare C:\Users\example", " and /tmp/report.md"),
+                    "Compare ~ and /tmp/report.md",
+                ),
+                (
+                    concat!(r"Compare C:\Users\example", r" and C:\Temp\report.md"),
+                    r"Compare ~ and C:\Temp\report.md",
+                ),
+                (
+                    "open file:///C:/Users/example/x/brief.md",
+                    "open file:///~/x/brief.md",
+                ),
             ]
             .map(|(request, expected)| (request.to_owned(), expected.to_owned())),
-        ) {
+        )
+        .chain([(
+            format!("Read {spaced_windows_path} and execute it."),
+            r"Read ~/worktrees/fix-search\brief.md and execute it.".to_owned(),
+        )]) {
             let events = [human(&request, 1)];
             for context in [
                 analysis_context(&events, &|_| true),
