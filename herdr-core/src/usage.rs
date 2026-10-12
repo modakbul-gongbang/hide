@@ -9,16 +9,16 @@
 //! read of the keychain was denied on every rebuild, because an ad hoc
 //! signed dev build has a new code identity each time.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_ai::CancelToken;
 use hide_node_link::protocol::Call;
-use hide_node_link::usage::{CodexWeeklyUsage, CredentialsAnswer, UsageError, UsageText};
+use hide_node_link::usage::{LimitFetch, LimitSource, UsageError};
 use serde_json::{Value, json};
 
-use crate::node_access::{NodeLink, call_as, call_as_with_progress};
+use crate::node_access::{NodeLink, call_as_with_progress};
 
 use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
 use crate::reader::BackgroundRead;
@@ -27,7 +27,7 @@ use crate::zoneinfo::{Zone, civil_from_days, days_from_civil, days_in_month};
 pub use hide_node_link::usage::WEEKLY_WINDOW_MINUTES;
 
 /// How long a node read of a file may take.
-const NODE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The node ends `claude -p /usage` itself well before this.
 const CLAUDE_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -36,7 +36,7 @@ const INITIAL_DELAY: Duration = Duration::from_secs(1);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const POPOVER_REFRESH_AGE: Duration = Duration::from_secs(60);
 const STALE_LIMIT_MS: u64 = 15 * 60 * 1_000;
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The name the row shows when the CLI is not on `PATH`.
 const CLAUDE_BINARY: &str = hide_agent_adapter::AgentId::ClaudeCode
     .adapter()
@@ -46,7 +46,7 @@ const CLAUDE_BINARY: &str = hide_agent_adapter::AgentId::ClaudeCode
 /// minutes, and the read takes seconds), not the same date a year ahead, so
 /// the row reads as expired until the next read.
 const RESET_HORIZON_SECONDS: i64 = 8 * 86_400;
-const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+
 const RETRY_BACKOFF: [Duration; 3] = [
     Duration::from_secs(5 * 60),
     Duration::from_secs(10 * 60),
@@ -356,29 +356,14 @@ fn claude_background_read(
 ) -> BackgroundRead<ClaudeUsageRequest, ClaudeUsageAnswer> {
     BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
         let checked_at_unix_ms = unix_milliseconds();
-        let outcome = match cwd.as_ref() {
-            Some(cwd) => {
-                let call = Call::ClaudeUsageText {
-                    cwd: cwd.to_string_lossy().into_owned(),
-                };
-                let text = call_as_with_progress::<UsageText, Value>(
-                    node.as_ref(),
-                    call,
-                    CLAUDE_READ_TIMEOUT,
-                    |_| !cancel.is_cancelled(),
-                );
-                match text {
-                    Ok(UsageText::Text { text }) => {
-                        parse_claude_usage_text(&text, unix_seconds(), checked_at_unix_ms)
-                    }
-                    Ok(UsageText::Failed { error }) => Err(FetchFailure::from_usage_error(error)),
-                    Err(_) => Err(FetchFailure::from_usage_error(UsageError::Failed(
-                        "usage_node_unavailable".to_owned(),
-                    ))),
-                }
-            }
-            None => Err(FetchFailure::schema("state_dir")),
-        };
+        let outcome = fetch_limit(
+            LimitSource::ClaudeUsageText,
+            cwd.as_ref(),
+            node.as_ref(),
+            &cancel,
+        )
+        .and_then(|read| read.result.map_err(FetchFailure::from_node))
+        .and_then(|text| parse_claude_usage_text(&text, unix_seconds(), checked_at_unix_ms));
         ClaudeUsageAnswer {
             checked_at_unix_ms,
             outcome,
@@ -393,71 +378,54 @@ fn codex_background_read(
     codex_home: Option<PathBuf>,
     node: Arc<dyn NodeLink>,
 ) -> BackgroundRead<CodexUsageRequest, CodexUsageAnswer> {
-    let http = UreqUsageClient::new();
     BackgroundRead::on_change(Duration::ZERO, move |_: &CodexUsageRequest| {
         let checked_at_unix_ms = unix_milliseconds();
-        let outcome = codex_credentials(codex_home.as_deref(), node.as_ref())
-            .map_err(FetchFailure::authentication)
-            .and_then(|credentials| {
-                let authorization = format!("Bearer {}", credentials.access_token);
-                http.get(
-                    CODEX_USAGE_URL,
-                    &[
-                        ("Authorization", authorization.as_str()),
-                        ("User-Agent", "codex-cli"),
-                        ("OpenAI-Beta", "codex-1"),
-                        ("originator", "Codex Desktop"),
-                        ("ChatGPT-Account-Id", credentials.account_id.as_str()),
-                    ],
-                )
-            })
-            .and_then(HttpResponse::success_body)
+        let answer = fetch_limit(
+            LimitSource::CodexUsage,
+            codex_home.as_ref(),
+            node.as_ref(),
+            &CancelToken::new(),
+        );
+        let fallback = answer
+            .as_ref()
+            .ok()
+            .and_then(|read| read.fallback.as_ref())
+            .and_then(|read| {
+                parse_codex_usage(&read.body, read.source_at_unix_ms)
+                    .ok()
+                    .map(|success| SessionFallback {
+                        value: success.main,
+                        source_at_unix_ms: read.source_at_unix_ms,
+                    })
+            });
+        let outcome = answer
+            .and_then(|read| read.result.map_err(FetchFailure::from_node))
             .and_then(|body| parse_codex_usage(&body, checked_at_unix_ms));
-        let fallback = outcome.is_err().then(|| {
-            codex_session_fallback(codex_home.as_deref(), node.as_ref(), checked_at_unix_ms)
-        });
         CodexUsageAnswer {
             checked_at_unix_ms,
             outcome,
-            fallback: fallback.flatten(),
+            fallback,
         }
     })
 }
 
-/// The Codex login, from the node that holds it.
-fn codex_credentials(
-    codex_home: Option<&Path>,
+fn fetch_limit(
+    source: LimitSource,
+    root: Option<&PathBuf>,
     node: &dyn NodeLink,
-) -> Result<hide_node_link::usage::CodexCredentials, &'static str> {
-    let codex_home = codex_home.ok_or("credential_path")?;
-    let call = Call::CodexCredentials {
-        codex_home: codex_home.to_string_lossy().into_owned(),
-    };
-    match call_as(node, call, NODE_READ_TIMEOUT) {
-        Ok(CredentialsAnswer::Found { credentials }) => Ok(credentials),
-        Ok(CredentialsAnswer::Refused { refusal }) => Err(refusal.code()),
-        Err(_) => Err("credentials_unreadable"),
-    }
-}
-
-/// The local session files' weekly reading, from the node that holds them.
-fn codex_session_fallback(
-    codex_home: Option<&Path>,
-    node: &dyn NodeLink,
-    checked_at: u64,
-) -> Option<SessionFallback> {
-    let call = Call::CodexSessionUsage {
-        codex_home: codex_home?.to_string_lossy().into_owned(),
-    };
-    let read: Option<CodexWeeklyUsage> = call_as(node, call, NODE_READ_TIMEOUT).unwrap_or_default();
-    read.map(|usage| SessionFallback {
-        value: UsageValue {
-            label: "Codex".to_owned(),
-            used_percent: usage.used_percent,
-            resets_at_unix_seconds: usage.resets_at_unix_seconds,
+    cancel: &CancelToken,
+) -> Result<LimitFetch, FetchFailure> {
+    let root = root.ok_or_else(|| FetchFailure::schema("source_path"))?;
+    call_as_with_progress(
+        node,
+        Call::UsageLimitFetch {
+            source,
+            root: root.to_string_lossy().into_owned(),
         },
-        source_at_unix_ms: usage.source_at_unix_ms.unwrap_or(checked_at),
-    })
+        CLAUDE_READ_TIMEOUT,
+        |_: Value| !cancel.is_cancelled(),
+    )
+    .map_err(|_| FetchFailure::of(FailureDisposition::Offline, "usage_node_unavailable"))
 }
 
 fn provider_due(
@@ -669,6 +637,21 @@ struct FetchFailure {
 }
 
 impl FetchFailure {
+    fn from_node(failure: hide_node_link::usage::LimitFailure) -> Self {
+        use hide_node_link::usage::FailureDisposition as NodeFailure;
+        Self {
+            disposition: match failure.disposition {
+                NodeFailure::Offline => FailureDisposition::Offline,
+                NodeFailure::Authentication => FailureDisposition::Authentication,
+                NodeFailure::Schema => FailureDisposition::Schema,
+                NodeFailure::NotInstalled => FailureDisposition::NotInstalled,
+            },
+            kind: failure.kind,
+            status: failure.status,
+            retry_after: failure.retry_after.as_deref().and_then(parse_retry_after),
+        }
+    }
+
     fn of(disposition: FailureDisposition, kind: impl Into<String>) -> Self {
         Self {
             disposition,
@@ -715,68 +698,6 @@ impl FetchFailure {
             status: Some(status),
             retry_after,
         }
-    }
-}
-
-struct HttpResponse {
-    status: u16,
-    retry_after: Option<Duration>,
-    body: String,
-}
-
-impl HttpResponse {
-    fn success_body(self) -> Result<String, FetchFailure> {
-        if (200..300).contains(&self.status) {
-            Ok(self.body)
-        } else {
-            Err(FetchFailure::http(self.status, self.retry_after))
-        }
-    }
-}
-
-struct UreqUsageClient {
-    agent: ureq::Agent,
-}
-
-impl UreqUsageClient {
-    fn new() -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .http_status_as_error(false)
-            .build();
-        Self {
-            agent: config.into(),
-        }
-    }
-
-    fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<HttpResponse, FetchFailure> {
-        let mut request = self.agent.get(url);
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        let mut response = request
-            .call()
-            .map_err(|_| FetchFailure::of(FailureDisposition::Offline, "transport"))?;
-        let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(parse_retry_after);
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|_| FetchFailure {
-                disposition: FailureDisposition::Offline,
-                kind: "body_read".to_owned(),
-                status: Some(status),
-                retry_after,
-            })?;
-        Ok(HttpResponse {
-            status,
-            retry_after,
-            body,
-        })
     }
 }
 

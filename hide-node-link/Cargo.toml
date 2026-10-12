@@ -15,6 +15,7 @@ publish = false
 # between machines.
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-ai = { path = "../hide-ai" }
 hide-herdr-client = { path = "../hide-herdr-client" }

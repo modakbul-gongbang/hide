@@ -266,8 +266,12 @@ Consumption remains unbuilt in layers 1 and 2.
 The sidebar footer's Weekly Usage chips and popover ([UI_BEHAVIOR.md: Weekly usage](UI_BEHAVIOR.md#weekly-usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.
 It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a model request through `hide-ai`.
 
-For Claude Code, the core's own node runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` (`hide-host/src/usage.rs`, the `claude_usage_text` call, which reports once a second so the reader's cancel ends the child) and the core parses the `result` text the CLI prints.
-The Codex row's `auth.json` read and its session-file fallback run on the same node (`codex_credentials`, `codex_session_usage`); the core keeps the schedule, the endpoint request and the rows.
+For Claude Code, the core's own node runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` (`hide-host/src/usage.rs`, the `UsageLimitFetch` call, which reports once a second so the reader's cancel ends the child) and the core parses the `result` text the CLI prints.
+The core asks its own node for `UsageLimitFetch { source, root }`; a device refuses this call.
+Codex's `auth.json` read, HTTPS request and session-file fallback all run on that node; the core keeps the schedule, parsing and rows.
+The credential type is private to `hide-host` and cannot be serialized.
+The node bounds credential reads at 64 KiB and HTTP bodies at 256 KiB, returns only numeric window fields from Codex, and reads at most 2 MiB from each candidate session tail.
+The transport timeout is ten seconds; HTTP errors carry only a fixed diagnostic code, status and bounded Retry-After header.
 `/usage` is a local command: the CLI authenticates against its own keychain item, makes no model turn (`duration_api_ms` 0, cost 0), and with `--no-session-persistence` leaves nothing under `~/.claude/projects/`, in `claude --resume`, or in Hide's Agent Conversation list.
 Hide holds no Claude token at any point and never opens the keychain itself; the earlier direct keychain read is gone because an ad hoc signed dev build has a new code identity on every rebuild, so macOS revoked "always allow" and the row fell to a three-second timeout.
 The child receives exactly the variables `hide_platform::process::LOGIN_CHILD_VARIABLES` names (`hide_ai::USAGE_ENVIRONMENT`): `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` on macOS and Linux, and `PATH`, `PATHEXT`, `SystemRoot`, `USERPROFILE`, `USERNAME`, `TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`, `ComSpec`, `windir`, `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramData`, `HOMEDRIVE`, `HOMEPATH` and `CLAUDE_CODE_GIT_BASH_PATH` on Windows, where Node reads its home from `USERPROFILE` and does not start without `SystemRoot`, and the Claude CLI needs Git Bash, which it finds through `CLAUDE_CODE_GIT_BASH_PATH` or `ProgramFiles`.
@@ -297,7 +301,7 @@ Claude failures are classified, never shown as a zero:
 The child runs on a `BackgroundRead` worker, so the coordinator thread that applies every Herdr pane event never waits on it; one child runs at a time, and dropping the reader cancels a child still running at shutdown.
 The failure event carries the provider and the failure kind only; no terminal text, token, or account identifier is logged or placed in a snapshot.
 
-For Codex, the core reads `auth.json` under `CODEX_HOME` or `~/.codex`; an invalid explicit `CODEX_HOME` disables that read instead of falling back to `HOME`.
+For Codex, the core's own node reads `auth.json` under `CODEX_HOME` or `~/.codex`; an invalid explicit `CODEX_HOME` disables that read instead of falling back to `HOME`.
 The access token exists only long enough to build the HTTPS authorization header, and Hide never refreshes, persists, logs, or includes it in a snapshot.
 The Codex usage endpoint is called outside `Mutex<Runtime>`; a 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
 An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.

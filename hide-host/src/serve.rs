@@ -1044,15 +1044,9 @@ pub fn handle_with_progress(
             env.ai.release(instance);
             to_value(())
         }
-        Call::CodexCredentials { codex_home } => {
-            to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))
-        }
-        Call::CodexSessionUsage { codex_home } => {
-            to_value(crate::usage::codex_session_usage(&absolute(&codex_home)?))
-        }
-        Call::ClaudeUsageText { cwd } => {
-            let cwd = absolute(&cwd)?;
-            to_value(crate::usage::claude_usage_text(&cwd, &mut || {
+        Call::UsageLimitFetch { source, root } => {
+            let root = absolute(&root)?;
+            to_value(crate::usage::fetch(source, &root, &mut || {
                 progress(Value::Null)
             }))
         }

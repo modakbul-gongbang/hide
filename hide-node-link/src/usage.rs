@@ -1,95 +1,58 @@
-//! What a node answers for the toolbar's Weekly Usage rows: the Codex login
-//! it holds, the weekly window its newest Codex session recorded, and the
-//! text `claude -p /usage` printed. The core schedules the reads, asks the
-//! network and words the rows.
-
-use serde::{Deserialize, Serialize};
-
+//! One bounded subscription read on the core's own node. No credential
+//! type crosses this boundary; devices refuse the call.
+pub use hide_agent_adapter::usage::LimitSource;
 pub use hide_ai::UsageError;
-
-/// The weekly window, in the minutes Codex names its windows with.
+use serde::{Deserialize, Serialize};
 pub const WEEKLY_WINDOW_MINUTES: u64 = 10_080;
 
-/// The token and account `auth.json` holds. The core asks only its own node,
-/// which shares its process; a node across a link answers to the login that
-/// reached it (PRD D-13). `Debug` leaves the token out, so a logged value
-/// never carries it.
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CodexCredentials {
-    pub access_token: String,
-    pub account_id: String,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LimitFetch {
+    pub result: Result<String, LimitFailure>,
+    pub fallback: Option<SessionLimits>,
 }
 
-impl std::fmt::Debug for CodexCredentials {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("CodexCredentials")
-            .field("access_token", &"<redacted>")
-            .field("account_id", &self.account_id)
-            .finish()
-    }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionLimits {
+    /// Only rate-limit fields, never the conversation or account.
+    pub body: String,
+    pub source_at_unix_ms: u64,
 }
 
-/// Why no credentials were read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CredentialsRefusal {
-    /// No `auth.json`, or not JSON.
-    Missing,
-    /// JSON without a token and an account.
+pub enum FailureDisposition {
+    Offline,
+    Authentication,
     Schema,
+    NotInstalled,
 }
 
-impl CredentialsRefusal {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::Missing => "credentials_missing",
-            Self::Schema => "credentials_schema",
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LimitFailure {
+    pub disposition: FailureDisposition,
+    /// A fixed diagnostic code, never provider text.
+    pub kind: String,
+    pub status: Option<u16>,
+    /// A bounded HTTP header; interpreted by the core's retry scheduler.
+    pub retry_after: Option<String>,
+}
+impl LimitFailure {
+    pub fn new(disposition: FailureDisposition, kind: &str) -> Self {
+        Self {
+            disposition,
+            kind: kind.into(),
+            status: None,
+            retry_after: None,
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "answer", rename_all = "snake_case")]
-pub enum CredentialsAnswer {
-    Found { credentials: CodexCredentials },
-    Refused { refusal: CredentialsRefusal },
-}
-
-/// The weekly window the newest Codex session recorded.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CodexWeeklyUsage {
-    pub used_percent: f64,
-    pub resets_at_unix_seconds: u64,
-    /// When the session recorded it, if the line says.
-    pub source_at_unix_ms: Option<u64>,
-}
-
-/// What `claude -p /usage` printed, or why it printed nothing usable.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "answer", rename_all = "snake_case")]
-pub enum UsageText {
-    Text { text: String },
-    Failed { error: UsageError },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_leaves_the_token_out() {
-        let credentials = CodexCredentials {
-            access_token: "secret-token".to_owned(),
-            account_id: "account".to_owned(),
+    pub fn cli(error: UsageError) -> Self {
+        let (disposition, kind) = match error {
+            UsageError::NotInstalled => (FailureDisposition::NotInstalled, "not_installed"),
+            UsageError::Timeout => (FailureDisposition::Offline, "timeout"),
+            UsageError::Cancelled => (FailureDisposition::Offline, "cancelled"),
+            UsageError::Failed(_) => (FailureDisposition::Offline, "cli_failed"),
+            UsageError::NoResultFrame => (FailureDisposition::Schema, "no_result_frame"),
         };
-        let shown = format!(
-            "{credentials:?} {:?}",
-            CredentialsAnswer::Found {
-                credentials: credentials.clone()
-            }
-        );
-        assert!(!shown.contains("secret-token"), "{shown}");
-        assert!(shown.contains("account"));
+        Self::new(disposition, kind)
     }
 }
