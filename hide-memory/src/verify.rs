@@ -22,7 +22,8 @@ pub const VERIFY_FEATURE: &str = "project_memory_verify";
 pub const PROMOTE_CHECK_FEATURE: &str = "project_memory_promote_check";
 pub const VERIFY_SCHEMA_VERSION: &str = "hide-project-memory-verify-v1";
 
-/// The most bytes of one cited file a verification reads.
+/// The most bytes of one cited file a verification shows: the file whole when
+/// it fits, else the sections that share words with the card ([`relevant_excerpt`]).
 pub const FILE_EXCERPT_BYTES: usize = 8 * 1024;
 /// The most cited files one verification reads.
 pub const FILE_EXCERPT_LIMIT: usize = 5;
@@ -92,6 +93,118 @@ impl Display for VerifyError {
 }
 
 impl std::error::Error for VerifyError {}
+
+/// How much of a file is read to choose an excerpt from; a longer file is
+/// read to this bound and its tail is never offered.
+pub const EXCERPT_SOURCE_BYTES: usize = 96 * 1024;
+
+/// What an excerpt shows where it leaves a stretch of the file out.
+const EXCERPT_GAP: &str = "\n[...]\n";
+
+/// The words of a card a file's sections are matched against: lowercase
+/// runs of letters and digits of three characters or more, each once.
+pub fn query_words(texts: &[&str]) -> Vec<String> {
+    let mut words = Vec::new();
+    for text in texts {
+        for word in text
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|word| word.chars().count() >= 3)
+        {
+            let word = word.to_lowercase();
+            if !words.contains(&word) {
+                words.push(word);
+            }
+        }
+    }
+    words
+}
+
+fn cut_to(text: &str, bytes: usize) -> &str {
+    let mut end = bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// `text` cut to `limit` bytes for a prompt about a card. A file that fits is
+/// given whole. A longer one is given as the sections (a heading and what
+/// follows it) that share most words with the card, in the file's order, so a
+/// rule far down a long instruction file is seen; with no section sharing a
+/// word, as the beginning of the file. `source_truncated` says the text is
+/// itself a prefix of the file.
+pub fn relevant_excerpt(
+    path: &str,
+    text: &str,
+    source_truncated: bool,
+    words: &[String],
+    limit: usize,
+) -> Excerpt {
+    if text.len() <= limit {
+        return Excerpt {
+            path: path.to_owned(),
+            text: text.to_owned(),
+            truncated: source_truncated,
+        };
+    }
+    let mut starts = vec![0];
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if offset > 0 && line.starts_with('#') {
+            starts.push(offset);
+        }
+        offset += line.len();
+    }
+    let sections = starts
+        .iter()
+        .enumerate()
+        .map(|(index, start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(text.len());
+            &text[*start..end]
+        })
+        .collect::<Vec<_>>();
+    let scores = sections
+        .iter()
+        .map(|section| {
+            let lowered = section.to_lowercase();
+            words
+                .iter()
+                .filter(|word| lowered.contains(word.as_str()))
+                .count()
+        })
+        .collect::<Vec<_>>();
+    if scores.iter().all(|score| *score == 0) {
+        return Excerpt {
+            path: path.to_owned(),
+            text: cut_to(text, limit).to_owned(),
+            truncated: true,
+        };
+    }
+    let mut order = (0..sections.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| (std::cmp::Reverse(scores[*index]), *index));
+    let mut chosen = vec![None::<&str>; sections.len()];
+    let mut left = limit;
+    for index in order {
+        if scores[index] == 0 || left <= EXCERPT_GAP.len() {
+            break;
+        }
+        let section = sections[index];
+        let room = left - EXCERPT_GAP.len();
+        let section = cut_to(section, room);
+        left -= section.len() + EXCERPT_GAP.len();
+        chosen[index] = Some(section);
+    }
+    let text = chosen
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(EXCERPT_GAP);
+    Excerpt {
+        path: path.to_owned(),
+        text,
+        truncated: true,
+    }
+}
 
 /// A file's text as the node gave it, cut to a bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -483,6 +596,34 @@ mod tests {
         assert!(request.input.len() <= ANALYSIS_INPUT_LIMIT_BYTES);
         assert!(request.input.contains("\"a\""));
         assert!(!request.input.contains("\"c\""));
+    }
+
+    #[test]
+    fn a_long_file_is_cut_to_the_sections_that_share_words_with_the_card() {
+        let mut file = String::from("# Intro\n");
+        file.push_str(&"filler line about nothing\n".repeat(400));
+        file.push_str("## Git Commits\nCommit your own work before the turn ends.\n");
+        file.push_str("## Style\n");
+        file.push_str(&"more filler\n".repeat(400));
+        let words = query_words(&["Commit before the turn ends"]);
+        let excerpt = relevant_excerpt("~/AGENTS.md", &file, false, &words, 2_000);
+        assert!(excerpt.text.len() <= 2_000);
+        assert!(
+            excerpt
+                .text
+                .contains("Commit your own work before the turn ends")
+        );
+        assert!(excerpt.truncated);
+        // No shared word: the beginning of the file, as before.
+        let none = relevant_excerpt("~/AGENTS.md", &file, false, &query_words(&["zzzz"]), 2_000);
+        assert!(none.text.starts_with("# Intro"));
+        assert_eq!(none.text.len(), 2_000);
+        // A file that fits is given whole.
+        let whole = relevant_excerpt("a.md", "# A\nshort\n", false, &words, 2_000);
+        assert_eq!(
+            (whole.text.as_str(), whole.truncated),
+            ("# A\nshort\n", false)
+        );
     }
 
     #[test]

@@ -3476,6 +3476,14 @@ fn undo_item(
              AND revision=(SELECT current_revision FROM memory_items WHERE id=?1)",
             params![item_id, now_ms()],
         )?;
+        // What the card rested on moved, which is why it was checked; the
+        // old rows would unverify it again at the next walk, so the card
+        // rests on nothing stored until it is written or checked again.
+        transaction.execute(
+            "DELETE FROM memory_evidence WHERE item_id=?1 \
+             AND revision=(SELECT current_revision FROM memory_items WHERE id=?1)",
+            [item_id],
+        )?;
     }
     Ok(true)
 }
@@ -4725,7 +4733,13 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             )
             .unwrap();
         let card = store.item_by_number(&project, 1).unwrap().unwrap();
-        assert!(store.confirm_card(&card.id, 1, None, &[], 10).unwrap());
+        let rows = vec![evidence(
+            EvidenceKind::File,
+            "docs/delivery.md",
+            Some("sha256:1"),
+            true,
+        )];
+        assert!(store.confirm_card(&card.id, 1, None, &rows, 10).unwrap());
         // Another text since it was read: the verdict is not applied.
         assert!(!store.forget_checked(&project, &card.id, 2).unwrap());
         assert!(store.forget_checked(&project, &card.id, 1).unwrap());
@@ -4741,6 +4755,18 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let back = store.item_by_number(&project, 1).unwrap().unwrap();
         assert_eq!(back.lifecycle, MemoryLifecycle::Active);
         assert!(!back.verifying, "the verdict is not asked for again");
+        assert!(
+            store
+                .detail(&project, &card.id)
+                .unwrap()
+                .evidence
+                .is_empty(),
+            "the old fingerprints would unverify it at the next walk"
+        );
+        assert_eq!(
+            store.cards_to_check(&project, i64::MAX as u64, 10).unwrap(),
+            []
+        );
     }
 
     #[test]

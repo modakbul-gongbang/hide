@@ -674,8 +674,26 @@ impl Runtime {
             | PassReport::Checked { project_id } => project_id.clone(),
         };
         if matches!(report, PassReport::Checked { .. }) {
+            // A check that answered is a provider that answers: what an
+            // earlier failure left on the Project is over.
+            let mut recovered = false;
+            if let Some(project) = self.memory_work.projects.get_mut(&project_id)
+                && (project.failures > 0
+                    || project.retry_at_unix_ms != 0
+                    || project.analysis == MemoryAnalysisState::AiNotReady)
+            {
+                project.failures = 0;
+                project.retry_at_unix_ms = 0;
+                if project.analysis == MemoryAnalysisState::AiNotReady {
+                    project.analysis = MemoryAnalysisState::Idle;
+                }
+                recovered = true;
+            }
             if self.named_memory_project() == Some(project_id.as_str()) {
                 self.refresh_project_memory();
+            }
+            if recovered {
+                self.sync_project_memory();
             }
             return false;
         }
@@ -3205,6 +3223,76 @@ mod tests {
         let asked = inputs.last().unwrap();
         assert!(asked.contains("src/lib.rs"), "{asked}");
         assert!(asked.contains("\"state\":\"unchanged\""), "{asked}");
+    }
+
+    #[test]
+    fn a_card_the_model_answers_unusably_spends_its_day_and_the_next_card_is_still_checked() {
+        // Review: one bad answer must not hold the queue behind it.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "second".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "second".to_owned(),
+                    content_hash: "second".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "Deploy with the new script".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Fact,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: Vec::new(),
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        for number in [1, 2] {
+            let card = store
+                .item_by_number(&fixture.project_id, number)
+                .unwrap()
+                .unwrap();
+            store.mark_unverified(&card.id, 1).unwrap();
+        }
+        drop(store);
+        // Answers are taken from the end: card 1 gets the unusable one.
+        {
+            let mut answers = fixture.backend.answers.lock().unwrap();
+            answers.push(json!({
+                "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+            }));
+            answers.push(json!({
+                "verdict": "outdated", "text": null, "title": null, "aliases": [], "document": null,
+            }));
+        }
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        assert_eq!(fixture.calls(), 2);
+        let card = |number| {
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, number)
+                .unwrap()
+                .unwrap()
+        };
+        assert!(card(1).verifying, "the unusable answer verified nothing");
+        assert!(!card(2).verifying, "the next card was still checked");
     }
 
     #[test]

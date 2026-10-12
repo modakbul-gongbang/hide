@@ -31,10 +31,11 @@ pub use store::{
     parse_card_name, repository_path,
 };
 pub use verify::{
-    Correction, DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, Excerpt, FILE_EXCERPT_BYTES,
-    FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, PROMOTE_CHECK_FEATURE, PromoteCheck,
-    PromoteCheckCard, VERIFY_FEATURE, Verification, VerifyError, cited_files, parse_promote_check,
-    parse_verification, pointer_target, promote_check_request, verify_request,
+    Correction, DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt,
+    FILE_EXCERPT_BYTES, FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT,
+    PROMOTE_CHECK_FEATURE, PromoteCheck, PromoteCheckCard, VERIFY_FEATURE, Verification,
+    VerifyError, cited_files, parse_promote_check, parse_verification, pointer_target,
+    promote_check_request, query_words, relevant_excerpt, verify_request,
 };
 
 /// The Memory store's file name inside a state folder.

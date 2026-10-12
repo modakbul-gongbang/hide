@@ -14,11 +14,11 @@ use std::path::Path;
 
 use hide_ai::{AiError, AiRouter, CancelToken};
 use hide_memory::{
-    DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, Excerpt, FILE_EXCERPT_BYTES, GLOBAL_EXCERPT_BYTES,
-    GLOBAL_LIMIT, MemoryStore, PROMOTION_CHECKS_PER_PASS, PendingCard, PromoteCheck,
-    PromoteCheckCard, Promotion, PromotionState, REVERIFY_PER_PASS, Verification, cited_files,
-    parse_promote_check, parse_verification, pointer_target, promote_check_request, verify_request,
-    written_names,
+    DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt, FILE_EXCERPT_BYTES,
+    GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, MemoryStore, PROMOTION_CHECKS_PER_PASS, PendingCard,
+    PromoteCheck, PromoteCheckCard, Promotion, PromotionState, REVERIFY_PER_PASS, Verification,
+    cited_files, parse_promote_check, parse_verification, pointer_target, promote_check_request,
+    query_words, relevant_excerpt, verify_request, written_names,
 };
 use serde_json::json;
 
@@ -42,15 +42,53 @@ fn provider_failure(error: AiError) -> AnalysisFailure {
     }
 }
 
-/// Reads at most `limit` bytes of a checkout's file through the node.
-fn excerpt(node: &dyn NodeLink, root: &str, relative: &str, limit: usize) -> Option<Excerpt> {
-    let range = read_bytes(node, root, relative, 0, limit as u64).ok()?;
+/// A file as the node gave it, up to [`EXCERPT_SOURCE_BYTES`], before an
+/// excerpt for one card is chosen from it.
+struct Source {
+    path: String,
+    text: String,
+    truncated: bool,
+}
+
+/// An answer that arrived but cannot be used (not the schema, a correction
+/// with no text, a document never shown): the card's day is spent, so a card
+/// the model keeps answering badly does not hold the queue behind it or
+/// back the Project off at every pass. Nothing of the answer is logged.
+fn spend_unusable(
+    store: &mut MemoryStore,
+    item_id: &str,
+    project_id: &str,
+    number: u64,
+) -> Result<(), AnalysisFailure> {
+    store
+        .begin_verification(item_id, now_ms())
+        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "verification.unusable",
+        "project_id": project_id,
+        "card": number,
+    }));
+    Ok(())
+}
+
+/// Reads a checkout's file through the node.
+fn source(node: &dyn NodeLink, root: &str, relative: &str) -> Option<Source> {
+    let range = read_bytes(node, root, relative, 0, EXCERPT_SOURCE_BYTES as u64).ok()?;
     let bytes = range.bytes().ok()?;
-    Some(Excerpt {
+    Some(Source {
         path: relative.to_owned(),
         text: String::from_utf8_lossy(&bytes).into_owned(),
         truncated: range.total > bytes.len() as u64,
     })
+}
+
+/// The part of each source about the card, each cut to `limit`.
+fn excerpts(sources: &[Source], words: &[String], limit: usize) -> Vec<Excerpt> {
+    sources
+        .iter()
+        .map(|source| relevant_excerpt(&source.path, &source.text, source.truncated, words, limit))
+        .collect()
 }
 
 /// Asks about the Project's unverified cards one by one, at most
@@ -87,10 +125,15 @@ pub(super) fn reverify_pending(
             card.evidence = facts.gather(&card.body, &card.cited_paths);
         }
         let answers = facts.facts(&card.evidence);
-        let files = cited_files(&card.evidence)
-            .into_iter()
-            .filter_map(|path| excerpt(node, root, &path, FILE_EXCERPT_BYTES))
-            .collect::<Vec<_>>();
+        let words = query_words(&[&card.title, &card.body]);
+        let files = excerpts(
+            &cited_files(&card.evidence)
+                .into_iter()
+                .filter_map(|path| source(node, root, &path))
+                .collect::<Vec<_>>(),
+            &words,
+            FILE_EXCERPT_BYTES,
+        );
         let request = verify_request(
             digest(&[
                 "memory-verify",
@@ -105,10 +148,18 @@ pub(super) fn reverify_pending(
             &files,
         )
         .map_err(|error| local(error.to_string()))?;
-        let answer = router.execute(&request, cancel).map_err(provider_failure)?;
-        let verdict = parse_verification(&answer.value).map_err(|error| {
-            AnalysisFailure::Provider(AiError::InvalidOutput(error.to_string()))
-        })?;
+        let verdict = router.execute(&request, cancel).and_then(|answer| {
+            parse_verification(&answer.value)
+                .map_err(|error| AiError::InvalidOutput(error.to_string()))
+        });
+        let verdict = match verdict {
+            Ok(verdict) => verdict,
+            Err(AiError::InvalidOutput(_)) => {
+                spend_unusable(store, &card.item_id, project_id, card.number)?;
+                continue;
+            }
+            Err(error) => return Err(provider_failure(error)),
+        };
         // The day is spent by an answer, not by a call: a provider that
         // failed leaves the card due for the next pass.
         if !store
@@ -203,14 +254,10 @@ fn revise(
 /// The documents agents read at the start of work here: `AGENTS.md`,
 /// `CLAUDE.md` when it says something else, then the repository documents
 /// they point to, at most [`DOCUMENT_LIMIT`] and each cut to a bound.
-fn repository_documents(
-    node: &dyn NodeLink,
-    facts: &CheckoutFacts<'_>,
-    root: &str,
-) -> Vec<Excerpt> {
-    let mut documents: Vec<Excerpt> = Vec::new();
+fn repository_sources(node: &dyn NodeLink, facts: &CheckoutFacts<'_>, root: &str) -> Vec<Source> {
+    let mut documents: Vec<Source> = Vec::new();
     for name in ["AGENTS.md", "CLAUDE.md"] {
-        if let Some(found) = excerpt(node, root, name, DOCUMENT_EXCERPT_BYTES)
+        if let Some(found) = source(node, root, name)
             && !documents.iter().any(|known| known.text == found.text)
         {
             documents.push(found);
@@ -227,7 +274,7 @@ fn repository_documents(
         if documents.len() >= DOCUMENT_LIMIT {
             break;
         }
-        if let Some(found) = excerpt(node, root, &path, DOCUMENT_EXCERPT_BYTES)
+        if let Some(found) = source(node, root, &path)
             && !documents.iter().any(|known| known.path == found.path)
         {
             documents.push(found);
@@ -241,11 +288,11 @@ fn repository_documents(
 /// repository, through the node of the account this core runs as. A file that
 /// is not there is skipped, and one with the text of a file already read (a
 /// link to it) is not read twice.
-fn global_documents(node: &dyn NodeLink, home: Option<&Path>) -> Vec<Excerpt> {
+fn global_sources(node: &dyn NodeLink, home: Option<&Path>) -> Vec<Source> {
     let Some(home) = home else {
         return Vec::new();
     };
-    let mut documents: Vec<Excerpt> = Vec::new();
+    let mut documents: Vec<Source> = Vec::new();
     for (folder, name) in [
         (".claude", "CLAUDE.md"),
         (".codex", "AGENTS.md"),
@@ -255,7 +302,7 @@ fn global_documents(node: &dyn NodeLink, home: Option<&Path>) -> Vec<Excerpt> {
             break;
         }
         let root = home.join(folder).to_string_lossy().into_owned();
-        let Some(mut found) = excerpt(node, &root, name, GLOBAL_EXCERPT_BYTES) else {
+        let Some(mut found) = source(node, &root, name) else {
             continue;
         };
         if documents.iter().any(|known| known.text == found.text) {
@@ -295,8 +342,8 @@ pub(super) fn check_before_suggestion(
     if due.is_empty() {
         return Ok(checked);
     }
-    let repository = repository_documents(node, facts, root);
-    let global = global_documents(node, home);
+    let repository = repository_sources(node, facts, root);
+    let global = global_sources(node, home);
     let known = repository
         .iter()
         .chain(&global)
@@ -316,6 +363,7 @@ pub(super) fn check_before_suggestion(
             .detail(project_id, &item.id)
             .map_err(|error| local(error.to_string()))?;
         let answers = facts.facts(&detail.evidence);
+        let words = query_words(&[&item.title, &item.body]);
         admit(store)?;
         let request = promote_check_request(
             digest(&[
@@ -333,14 +381,22 @@ pub(super) fn check_before_suggestion(
                 evidence: &detail.evidence,
                 facts: &answers,
             },
-            &repository,
-            &global,
+            &excerpts(&repository, &words, DOCUMENT_EXCERPT_BYTES),
+            &excerpts(&global, &words, GLOBAL_EXCERPT_BYTES),
         )
         .map_err(|error| local(error.to_string()))?;
-        let answer = router.execute(&request, cancel).map_err(provider_failure)?;
-        let verdict = parse_promote_check(&answer.value, &known).map_err(|error| {
-            AnalysisFailure::Provider(AiError::InvalidOutput(error.to_string()))
-        })?;
+        let verdict = router.execute(&request, cancel).and_then(|answer| {
+            parse_promote_check(&answer.value, &known)
+                .map_err(|error| AiError::InvalidOutput(error.to_string()))
+        });
+        let verdict = match verdict {
+            Ok(verdict) => verdict,
+            Err(AiError::InvalidOutput(_)) => {
+                spend_unusable(store, &item.id, project_id, item.number)?;
+                continue;
+            }
+            Err(error) => return Err(provider_failure(error)),
+        };
         // The day's one answer about the card, so a card the check keeps
         // correcting costs one call a day (B10).
         if !store
