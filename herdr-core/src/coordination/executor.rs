@@ -1,4 +1,5 @@
 use super::{AgentRecord, Command, Mutation, SpawnRecord, resolve_actor, view};
+use crate::agent_start::ShellStart;
 use crate::delivery::{
     Actor,
     worker::{Authority, Client, Effect},
@@ -7,7 +8,6 @@ use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
-use crate::agent_start::ShellStart;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -883,7 +883,14 @@ fn integrated_pane(
     (env, integration): (BTreeMap<String, String>, ShellStart),
 ) -> (String, ShellStart) {
     if tab.with_env || integration == ShellStart::Plain {
-        return (tab.pane_id, if tab.with_env { integration } else { ShellStart::Plain });
+        return (
+            tab.pane_id,
+            if tab.with_env {
+                integration
+            } else {
+                ShellStart::Plain
+            },
+        );
     }
     let label = format!("hide:{spawn}");
     match crate::live::create_tab_in(connector, &tab.workspace_id, cwd, &label, false, env) {

@@ -3850,7 +3850,10 @@ mod tests {
             delivery_next_action("shell_starting"),
         );
         assert_eq!(code, "shell_starting");
-        assert!(next.ends_with("[oh-my-zsh] Would you like to update? [Y/n]"), "{next}");
+        assert!(
+            next.ends_with("[oh-my-zsh] Would you like to update? [Y/n]"),
+            "{next}"
+        );
         for code in [
             "spawn_busy",
             "machine_not_permitted",

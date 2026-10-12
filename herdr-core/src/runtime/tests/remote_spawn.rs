@@ -77,51 +77,56 @@ fn device_herdr(
     shows: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
 ) -> FakeHerdr {
-    FakeHerdr::start_with_errors("remote-spawn", move |method, _| Ok(match method {
-        "worktree.list" => json!({"type": "worktree_list", "source": {
+    FakeHerdr::start_with_errors("remote-spawn", move |method, _| {
+        Ok(match method {
+            "worktree.list" => json!({"type": "worktree_list", "source": {
             "repo_key": "/srv/repo/.git", "repo_name": "repo",
             "repo_root": "/srv/repo", "source_checkout_path": "/srv/repo",
             "source_workspace_id": "w1"}, "worktrees": []}),
-        "worktree.create" => json!({
-            "type": "worktree_created",
-            "workspace": {"workspace_id": "w2", "label": "repo", "number": 2, "focused": false,
-                "pane_count": 1, "tab_count": 1, "active_tab_id": "w2:t1", "agent_status": "idle"},
-            "tab": {"workspace_id": "w2", "tab_id": "w2:t1", "label": "hide", "number": 1,
-                "focused": false, "pane_count": 1, "agent_status": "idle"},
-            "root_pane": {"workspace_id": "w2", "tab_id": "w2:t1", "pane_id": "w2:p1",
-                "terminal_id": "device-terminal", "cwd": WORKTREE, "focused": false,
-                "agent_status": "idle", "revision": 0},
-            "worktree": {"branch": "topic", "is_bare": false, "is_detached": false,
-                "is_linked_worktree": true, "is_prunable": false, "label": "repo",
-                "open_workspace_id": "w2", "path": WORKTREE}
-        }),
-        "pane.get" => json!({"type": "pane_info", "pane": {"workspace_id": "w2",
+            "worktree.create" => json!({
+                "type": "worktree_created",
+                "workspace": {"workspace_id": "w2", "label": "repo", "number": 2, "focused": false,
+                    "pane_count": 1, "tab_count": 1, "active_tab_id": "w2:t1", "agent_status": "idle"},
+                "tab": {"workspace_id": "w2", "tab_id": "w2:t1", "label": "hide", "number": 1,
+                    "focused": false, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"workspace_id": "w2", "tab_id": "w2:t1", "pane_id": "w2:p1",
+                    "terminal_id": "device-terminal", "cwd": WORKTREE, "focused": false,
+                    "agent_status": "idle", "revision": 0},
+                "worktree": {"branch": "topic", "is_bare": false, "is_detached": false,
+                    "is_linked_worktree": true, "is_prunable": false, "label": "repo",
+                    "open_workspace_id": "w2", "path": WORKTREE}
+            }),
+            "pane.get" => json!({"type": "pane_info", "pane": {"workspace_id": "w2",
             "tab_id": "w2:t1", "pane_id": "w2:p1", "terminal_id": "device-terminal",
             "focused": false, "agent_status": "idle", "revision": 0}}),
-        "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+            "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
             "pane_id": "w2:p1", "shell_pid": 4100, "foreground_process_group_id": 4100,
             "foreground_processes": [{"pid": 4100, "name": "zsh"}]}}),
-        "agent.start" => {
-            started.store(true, Ordering::SeqCst);
-            held.store(true, Ordering::SeqCst);
-            json!({"type": "agent_started", "argv": [], "agent": agent_row(false, true)})
-        }
-        "agent.list" => {
-            let shows = shows.load(Ordering::SeqCst);
-            json!({"type": "agent_list", "agents":
+            "agent.start" => {
+                started.store(true, Ordering::SeqCst);
+                held.store(true, Ordering::SeqCst);
+                json!({"type": "agent_started", "argv": [], "agent": agent_row(false, true)})
+            }
+            "agent.list" => {
+                let shows = shows.load(Ordering::SeqCst);
+                json!({"type": "agent_list", "agents":
                 if started.load(Ordering::SeqCst) && (shows || held.load(Ordering::SeqCst)) {
                     vec![agent_row(identified.load(Ordering::SeqCst), shows)]
                 } else {
                     Vec::new()
                 }})
-        }
-        "agent.get" if !held.load(Ordering::SeqCst) => {
-            return Err(("agent_not_found".into(), "agent target worker not found".into()));
-        }
-        "agent.get" => json!({"type": "agent_info", "agent": agent_row(false, false)}),
-        "pane.report_metadata" => json!({"type": "ok"}),
-        other => panic!("unexpected {other}"),
-    }))
+            }
+            "agent.get" if !held.load(Ordering::SeqCst) => {
+                return Err((
+                    "agent_not_found".into(),
+                    "agent target worker not found".into(),
+                ));
+            }
+            "agent.get" => json!({"type": "agent_info", "agent": agent_row(false, false)}),
+            "pane.report_metadata" => json!({"type": "ok"}),
+            other => panic!("unexpected {other}"),
+        })
+    })
 }
 
 struct Spawner {
@@ -505,7 +510,10 @@ fn the_same_intent_types_its_start_once_more_only_after_herdr_lets_the_name_go()
     spawner.shows.store(false, Ordering::SeqCst);
     let ask = || spawner.spawn(Some("here"), Some(DEVICE), "unseen");
     let starts = || count(&spawner.herdr.methods(), "agent.start");
-    assert_eq!(ask().expect_err("never showed"), "native_identity_unavailable");
+    assert_eq!(
+        ask().expect_err("never showed"),
+        "native_identity_unavailable"
+    );
     assert_eq!(starts(), 1);
     // Herdr still holds the name: the agent may yet show, and nothing is
     // typed over it.

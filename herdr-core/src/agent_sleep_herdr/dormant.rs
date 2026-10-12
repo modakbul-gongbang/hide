@@ -386,9 +386,7 @@ fn start_dormant(
         },
         Err(StartError::NotStarted(_))
         | Err(StartError::ShellStarting(_))
-        | Err(StartError::Herdr(ApiError::Remote { .. })) => {
-            DormantStartOutcome::NotStarted
-        }
+        | Err(StartError::Herdr(ApiError::Remote { .. })) => DormantStartOutcome::NotStarted,
         Err(StartError::Herdr(_)) => {
             crate::diagnostic!(serde_json::json!({
                 "component": "agent_sleep", "kind": "agent_sleep.resume_unconfirmed",

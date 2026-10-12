@@ -1270,9 +1270,9 @@ fn launch_agent(
             )),
         },
         Err(StartError::NotStarted(message)) => Launch::Failed(message),
-        Err(StartError::ShellStarting(screen)) => {
-            Launch::Failed(crate::agent_start::shell_starting_message(screen.as_deref()))
-        }
+        Err(StartError::ShellStarting(screen)) => Launch::Failed(
+            crate::agent_start::shell_starting_message(screen.as_deref()),
+        ),
         Err(StartError::Herdr(ApiError::Remote { code, message })) => {
             Launch::Refused { code, message }
         }
