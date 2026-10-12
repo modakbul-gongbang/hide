@@ -562,6 +562,21 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     );
     project.device_id = "mini".into();
     project.remote_target_id = Some("mini".into());
+    // A device the core dials keeps no Memory, connected or not (PRD
+    // core-host-node-move Q20); only a node that dials in has it.
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: "mini".into(),
+            label: "mini".into(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "mini-host".into(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".into(),
         state: "connected".into(),

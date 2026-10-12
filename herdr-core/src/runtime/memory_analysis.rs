@@ -1966,10 +1966,25 @@ mod tests {
             closed: bool,
             weekly: WeeklyUsage,
         ) -> (Vec<&'static str>, PassOutcome) {
+            let nodes = vec![(crate::node::test_node(), Arc::clone(&self.node))];
+            self.pass_over(key, live, closed, weekly, nodes, Vec::new())
+        }
+
+        /// A pass over `nodes`, with `unreached` the nodes that dial in
+        /// whose link is down.
+        fn pass_over(
+            &self,
+            key: MemorySession,
+            live: bool,
+            closed: bool,
+            weekly: WeeklyUsage,
+            nodes: Vec<super::super::hosts::LinkedNode>,
+            unreached: Vec<NodeId>,
+        ) -> (Vec<&'static str>, PassOutcome) {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             let input = PassInput {
-                nodes: vec![(crate::node::test_node(), Arc::clone(&self.node))],
-                unreached: Vec::new(),
+                nodes,
+                unreached,
                 database: self.database.clone(),
                 router: Some(AiRouter::new(
                     vec![backend],
@@ -2062,6 +2077,51 @@ mod tests {
         drop(file);
         assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 1);
+    }
+
+    /// PRD core-host-node-move B14: the Projects of a node that dials in
+    /// are walked through its link like this machine's, and while its link
+    /// is down a closed session of its stays queued for the next pass.
+    #[test]
+    fn a_linked_node_s_closed_session_is_analyzed_through_its_link_and_waits_while_it_is_down() {
+        let fixture = Fixture::new();
+        let core = NodeId::parse("core-node").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let core_link: Arc<dyn NodeLink> =
+            Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
+        let key = ("claude", SESSION.to_owned());
+
+        let (reports, outcome) = fixture.pass_over(
+            key.clone(),
+            false,
+            true,
+            WeeklyUsage::Unknown,
+            vec![(core.clone(), Arc::clone(&core_link))],
+            vec![crate::node::test_node()],
+        );
+        assert!(reports.is_empty());
+        assert_eq!(fixture.calls(), 0);
+        assert!(outcome.settled.is_empty(), "the session waits for its node");
+
+        fixture.answer(&[]);
+        let (reports, _) = fixture.pass_over(
+            key,
+            false,
+            true,
+            WeeklyUsage::Unknown,
+            vec![
+                (core, core_link),
+                (crate::node::test_node(), Arc::clone(&fixture.node)),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(reports, ["analyzing", "learned one"]);
+        let learned = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .expect("the node's session taught a card");
+        assert_eq!(learned.title, "Tests run with nextest");
     }
 
     #[test]

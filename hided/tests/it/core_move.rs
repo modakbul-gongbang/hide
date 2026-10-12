@@ -2843,7 +2843,6 @@ fn seed_through_events(fixture: &Fixture) -> Result<()> {
             "project_checkouts_fold",
             json!({"workspace_id": target_project, "expanded": false}),
         ),
-        ("sessions_set_mode", json!({"mode": "memory"})),
         ("workspace_view", json!({"views": true})),
         (
             "ui_state_update",
@@ -3108,17 +3107,6 @@ fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
         // A tab or pane id as this machine's Herdr names it, whichever core
         // qualifies it.
         let unqualified = |value: &Value| -> Value { unqualify(value, machine, own) };
-        let mut modes = serde_json::Map::new();
-        for (id, mode) in core["sessions_mode_by_project"]
-            .as_object()
-            .into_iter()
-            .flatten()
-        {
-            let (at, path) = place(id)?;
-            if at == machine {
-                modes.insert(path, mode.clone());
-            }
-        }
         let workspace_views: Vec<Value> = views["workspaces"]
             .as_array()
             .into_iter()
@@ -3152,7 +3140,6 @@ fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
                 "session_folds": ids("session_open_folds")?,
                 "collapsed_projects": ids("collapsed_workspace_ids")?,
                 "collapsed_sessions": ids("session_collapsed_checkout_ids")?,
-                "sessions_modes": modes,
                 "issue_sources": by_path("project_issue_sources"),
                 "base_branches": by_path("project_base_branches"),
                 "expanded_paths": own_or_device("expanded_paths"),
