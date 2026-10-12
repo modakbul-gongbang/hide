@@ -4,6 +4,7 @@
 //! lifecycle, query-dependent retrieval, token budgets, and the read-only hook
 //! projection.
 
+mod budget;
 mod engine;
 mod evidence;
 pub mod hook;
@@ -12,6 +13,7 @@ mod redaction;
 mod store;
 mod verify;
 
+pub use budget::{MemoryCallDeferral, MemoryCallKind};
 pub use engine::{
     AliasBackfill, AnalysisOutput, HideNativeAnalyzer, HideNativeOutputError,
     SYSTEM_PROMPT_LIMIT_BYTES,
@@ -99,8 +101,8 @@ pub const REVERIFY_INTERVAL_MS: u64 = 86_400_000;
 /// Cards one pass verifies again, and cards one pass checks before a
 /// suggestion (D-11): each is one provider call under the daily cap.
 pub const REVERIFY_PER_PASS: usize = 4;
-/// Checks of existing cards (a re-verification or a check before a
-/// suggestion) are made only while the day's calls are under this, so a
-/// store full of cards to check cannot use the cap analysis shares with them.
+/// The bounded share of the day's calls for existing-card checks. Pending
+/// re-verifications reserve their remaining share from background analysis;
+/// without pending cards, analysis may use the whole remaining total.
 pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
 pub const PROMOTION_CHECKS_PER_PASS: usize = 3;
