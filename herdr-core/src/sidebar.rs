@@ -927,6 +927,7 @@ mod tests {
             ..Default::default()
         };
         let workspace = |checkout| WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1040,6 +1041,7 @@ mod tests {
             ..Default::default()
         };
         let mut workspaces = vec![WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),

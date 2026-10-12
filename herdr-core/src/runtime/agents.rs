@@ -1115,13 +1115,83 @@ impl Runtime {
         )
     }
 
+    /// A sleeping project the operator opened stays open only until one of
+    /// its agents wakes or starts; the next time it falls asleep it starts
+    /// folded again (PRD sidebar-titlebar-refresh D-19). A key whose project
+    /// is not listed now is kept, as a reconnect can publish no rows for a
+    /// moment. Returns whether a key left, after asking for the save.
+    fn forget_woken_asleep_folds(&mut self) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .session_open_folds
+            .iter()
+            .any(|key| key.starts_with("asleep/"))
+        {
+            return false;
+        }
+        let by_pane = self.agent_rows_by_pane();
+        let woken: HashSet<String> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .filter(|workspace| {
+                let (presence, _) = crate::project_context::agent_presence(
+                    workspace,
+                    &by_pane,
+                    &self.snapshot.navigator.sleeping_sessions,
+                    &[],
+                );
+                presence.asleep.is_none()
+            })
+            .map(|workspace| crate::project_context::asleep_fold_key(&workspace.id))
+            .collect();
+        drop(by_pane);
+        let folds = &mut self.snapshot.ui_state.session_open_folds;
+        let before = folds.len();
+        folds.retain(|key| !woken.contains(key));
+        if folds.len() == before {
+            return false;
+        }
+        self.persist_ui_state();
+        true
+    }
+
+    /// Every agent row the core lists, here and on each device session, by pane.
+    fn agent_rows_by_pane(&self) -> HashMap<&str, &SidebarAgentSnapshot> {
+        self.snapshot
+            .navigator
+            .agents
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.agents),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect()
+    }
+
     /// Recomputes the two inactive folds from current core facts. No row is
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
         // A bootstrap or reconnect can temporarily publish no catalog rows.
         // Like recent checkouts, remembered folds leave only on explicit removal.
-        let mut changed = crate::project_context::refresh_inactive_groups(
+        let mut changed = self.forget_woken_asleep_folds();
+        changed |= crate::project_context::refresh_inactive_groups(
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
@@ -1147,17 +1217,20 @@ impl Runtime {
                     let before = (
                         workspace.session_folds.clone(),
                         workspace.inactive_checkouts.clone(),
+                        workspace.agent_presence.clone(),
                     );
                     crate::project_context::refresh_device_folds(
                         workspace,
                         &agents,
+                        &self.snapshot.navigator.sleeping_sessions,
                         &self.snapshot.ui_state,
                         focused.as_deref(),
                         node,
                         now,
                     );
                     changed |= workspace.session_folds != before.0
-                        || workspace.inactive_checkouts != before.1;
+                        || workspace.inactive_checkouts != before.1
+                        || workspace.agent_presence != before.2;
                 }
             }
         }

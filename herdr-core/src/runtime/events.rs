@@ -1678,6 +1678,43 @@ impl Runtime {
 
     /// Opens or folds one agent's children in the sidebar tree, or in
     /// Sessions, whose folds are kept apart (PRD D-25).
+    /// A sleeping project's fold is its own: opening it holds it open until
+    /// an agent wakes, and the project's ordinary fold stays as the operator
+    /// set it (PRD sidebar-titlebar-refresh D-19). `None` when the project is
+    /// not asleep, so the caller folds it the ordinary way; otherwise whether
+    /// the fold moved. `expanded` absent flips it.
+    fn fold_asleep_project(&mut self, workspace_id: &str, expanded: Option<bool>) -> Option<bool> {
+        let asleep = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| workspace.agent_presence.asleep.clone())?;
+        let expanded = expanded.unwrap_or(!asleep.expanded);
+        if expanded == asleep.expanded {
+            return Some(false);
+        }
+        let key = crate::project_context::asleep_fold_key(workspace_id);
+        let keys = &mut self.snapshot.ui_state.session_open_folds;
+        keys.retain(|open| open != &key);
+        if expanded {
+            keys.push(key);
+            keys.sort();
+        }
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        Some(true)
+    }
+
     fn toggle_agent_tree(&mut self, pane_id: String, sessions: bool) -> bool {
         let exists = self
             .snapshot
@@ -2126,7 +2163,11 @@ impl Runtime {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
                 }
-                if let Some(expanded) = payload.project_expanded {
+                if let Some(expanded) = payload.project_expanded
+                    && self
+                        .fold_asleep_project(&payload.workspace_id, Some(expanded))
+                        .is_none()
+                {
                     let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                     ids.retain(|id| id != &payload.workspace_id);
                     if !expanded {
@@ -2311,6 +2352,11 @@ impl Runtime {
                 true
             }
             Event::ProjectCheckoutsFold(payload) => {
+                if let Some(changed) =
+                    self.fold_asleep_project(&payload.workspace_id, payload.expanded)
+                {
+                    return changed;
+                }
                 let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                 let was_expanded = !ids.contains(&payload.workspace_id);
                 let expanded = payload.expanded.unwrap_or(!was_expanded);

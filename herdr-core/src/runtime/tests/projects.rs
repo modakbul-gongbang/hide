@@ -3849,3 +3849,99 @@ fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
         "workspace.primary_remote_read_only",
     );
 }
+
+/// PRD sidebar-titlebar-refresh B2, B5 (D-19). Opening a sleeping project
+/// holds it open until an agent wakes, without touching the project's own
+/// fold; once it wakes the key is forgotten, so the next sleep starts folded.
+/// The No agents fold opens through the shared fold event and its own key.
+#[test]
+fn a_sleeping_project_stays_open_until_it_wakes() {
+    let mut runtime = runtime();
+    let path = "/tmp/hide-runtime-asleep";
+    runtime.snapshot.navigator.workspaces = vec![
+        workspace(
+            "workspace-asleep",
+            "Asleep",
+            path,
+            vec![CheckoutSnapshot {
+                id: "asleep".to_owned(),
+                workspace_id: "workspace-asleep".to_owned(),
+                path: path.to_owned(),
+                is_primary: true,
+                exists: true,
+                ..CheckoutSnapshot::default()
+            }],
+        ),
+        workspace(
+            "workspace-empty",
+            "Empty",
+            "/tmp/hide-runtime-empty",
+            vec![CheckoutSnapshot {
+                id: "empty".to_owned(),
+                workspace_id: "workspace-empty".to_owned(),
+                path: "/tmp/hide-runtime-empty".to_owned(),
+                is_primary: true,
+                exists: true,
+                ..CheckoutSnapshot::default()
+            }],
+        ),
+    ];
+    let sleeper = crate::agent_sleep::SleepingSessionSnapshot {
+        sleep_id: crate::agent_sleep::SleepId::new().unwrap(),
+        node_id: crate::node::TEST_NODE.to_owned(),
+        checkout_path: path.to_owned(),
+        kind: "claude".to_owned(),
+        identity_label: "asleep".to_owned(),
+        phase: crate::agent_sleep::DormantPhase::Sleeping,
+        since_unix_ms: 4_000,
+        reason: None,
+        group: "idle",
+        wake_available: true,
+        checking: false,
+    };
+    runtime.snapshot.navigator.sleeping_sessions = vec![sleeper.clone()];
+    runtime.refresh_inactive_groups();
+    let asleep = |runtime: &Runtime| {
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_presence
+            .asleep
+            .clone()
+    };
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(false));
+
+    let open = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "project_checkouts_fold",
+        "payload": { "workspace_id": "workspace-asleep", "expanded": true }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&open));
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(true));
+    assert!(runtime.snapshot.ui_state.collapsed_workspace_ids.is_empty());
+    assert!(
+        !runtime.dispatch_json(&open),
+        "the same intent lands on the same state"
+    );
+
+    // It wakes: the open key leaves, and the next sleep starts folded.
+    runtime.snapshot.navigator.sleeping_sessions.clear();
+    runtime.refresh_inactive_groups();
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
+    runtime.snapshot.navigator.sleeping_sessions = vec![sleeper];
+    runtime.refresh_inactive_groups();
+    assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(false));
+
+    let no_agents = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "session_fold_toggle",
+        "payload": { "key": format!("no_agents/{}", crate::node::TEST_NODE) }
+    }))
+    .unwrap();
+    assert_eq!(
+        runtime.snapshot.navigator.no_agent_projects[0].project_ids,
+        ["workspace-empty"]
+    );
+    assert!(!runtime.snapshot.navigator.no_agent_projects[0].expanded);
+    assert!(runtime.dispatch_json(&no_agents));
+    assert!(runtime.snapshot.navigator.no_agent_projects[0].expanded);
+}

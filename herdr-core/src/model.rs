@@ -529,6 +529,12 @@ pub struct NavigatorSnapshot {
     /// list. `workspaces` remains the one authoritative row collection so
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
+    /// Each device's projects with no agent row and no sleeping
+    /// conversation, folded after its active projects and before its
+    /// Inactive fold (PRD sidebar-titlebar-refresh D-01). Pinned projects,
+    /// the project in front and Inactive projects are never here; the open
+    /// state is the `no_agents/<device>` key of `session_open_folds`.
+    pub no_agent_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     /// The checkouts Hide AI started an agent in, by device and path. A list
     /// beside the checkouts, not a field on them, because a checkout row is
@@ -1325,6 +1331,11 @@ pub struct WorkspaceSnapshot {
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
     pub session_folds: SessionCheckoutFolds,
+    /// What the project's agents are doing, which the sidebar row draws as
+    /// its name's weight and its sleeping fold (PRD sidebar-titlebar-refresh
+    /// D-02, D-03, D-20).
+    #[serde(default)]
+    pub agent_presence: ProjectAgentPresenceSnapshot,
     /// What `Remove project…` would close, counted by the core so the
     /// confirmation names the same panes the close will send to Herdr
     /// (D-10). Both are zero for a project Herdr has no pane in, which is
@@ -1340,6 +1351,28 @@ pub struct WorkspaceSnapshot {
     /// The disk cleanup review or run of this project, while there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
+}
+
+/// What a project's agents are doing, decided by the core so the shell only
+/// draws it (`project_context::agent_presence`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAgentPresenceSnapshot {
+    /// An awake agent here shows ▲ ! ? ● ◐ or ✓; resting, sleeping or no
+    /// agents leave it false.
+    pub working: bool,
+    /// Present while the project has a sleeping agent and no awake one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asleep: Option<ProjectAsleepSnapshot>,
+}
+
+/// A project whose every agent sleeps: it starts folded each time it falls
+/// asleep, and stays open once the operator opens it until an agent wakes
+/// (the `asleep/<project>` key of `session_open_folds`, D-19).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAsleepSnapshot {
+    /// When the most recent of its agents fell asleep, in Unix milliseconds.
+    pub since_unix_ms: u64,
+    pub expanded: bool,
 }
 
 /// A Git project's allocated disk: every worktree and the shared Git
@@ -4972,6 +5005,7 @@ impl Snapshot {
                 )],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
+                no_agent_projects: Vec::new(),
                 agents: Vec::new(),
                 hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
