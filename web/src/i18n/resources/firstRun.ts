@@ -1,7 +1,7 @@
 import type { Catalog, Catalogs } from "../schema";
 
 // The first-run wizard, the agent notifications, the empty Home, Settings >
-// General's Notifications group and the one-time screen introductions (PRD
+// Notifications' desktop group and the one-time screen introductions (PRD
 // first-run-onboarding); the English and Korean words are the approved
 // prototype's.
 export const firstRunEnglish = {
