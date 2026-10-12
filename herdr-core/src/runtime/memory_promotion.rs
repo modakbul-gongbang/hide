@@ -84,9 +84,11 @@ pub(super) struct PromotionStart {
     kind: String,
     /// Its remembered model's arguments.
     args: Vec<String>,
-    /// This Mac's Herdr and node, which release a failed attempt's worktree.
+    /// The Herdr and node of the machine that holds the Project, which
+    /// release a failed attempt's worktree; none when that machine cannot be
+    /// reached now, and the worktree then stays for the next attempt.
     connector: Option<Arc<dyn hide_herdr_client::ApiConnector>>,
-    node: Arc<dyn crate::node_access::NodeLink>,
+    node: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 /// The tracker's single flight and its schedule.
@@ -149,7 +151,7 @@ impl Runtime {
     /// Project's folder on `node` and the agent the operator last started
     /// (D-25). A core whose move has not committed starts no agent.
     pub(super) fn promotion_start(
-        &self,
+        &mut self,
         node: &crate::node::NodeId,
         repo: &str,
     ) -> Result<PromotionStart, String> {
@@ -178,8 +180,8 @@ impl Runtime {
             machine: (*node != self.node).then(|| node.as_str().to_owned()),
             kind,
             args,
-            connector: self.delivery_connector(self.node.as_str()),
-            node: self.own_node(),
+            connector: self.delivery_connector(node.as_str()),
+            node: self.node_link(node.as_str()).ok(),
         })
     }
 
@@ -692,6 +694,7 @@ fn track_promotions(
             let spawn = |start: &PromotionStart| spawn_agent(&key.0, key.1, &promotion, start);
             match adopt_agent(store, &key, &promotion, start, spawn) {
                 Adoption::Again(start) => outcome.unseen.push((key, start)),
+                Adoption::Dropped => {}
                 Adoption::Recorded => {
                     outcome.moved_projects.insert(key.0.clone());
                 }
@@ -728,6 +731,10 @@ enum Adoption<S> {
     /// The spawn answered that its agent did not start: the attempt failed
     /// with that answer, and its start comes back to release what it made.
     NotStarted(S, String),
+    /// The spawn failed for another reason, which says nothing of whether
+    /// the agent started: it is not asked for again, and the attempt is
+    /// judged by what Herdr and GitHub show.
+    Dropped,
 }
 
 /// Asks an unseen agent's spawn again; records the agent when it shows, and
@@ -747,8 +754,27 @@ fn adopt_agent<S>(
         Ok(_) => Adoption::Again(start),
         // Not seen yet, or another spawn held the lock: ask again next check.
         Err(reason) if reason == UNSEEN || reason == BUSY => Adoption::Again(start),
-        Err(reason) => Adoption::NotStarted(start, reason),
+        Err(reason) if never_started(&reason) => Adoption::NotStarted(start, reason),
+        Err(reason) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotion.agent_not_adopted",
+                "project_id": project_id,
+                "card": hide_memory::card_name(*number),
+                "reason": crate::coordination::split_refusal(&reason).0,
+            }));
+            Adoption::Dropped
+        }
     }
+}
+
+/// Whether a spawn's refusal says its agent never started: its shell never
+/// finished starting, or the start it typed never showed an agent.
+fn never_started(reason: &str) -> bool {
+    matches!(
+        crate::coordination::split_refusal(reason).0,
+        crate::agent_start::SHELL_STARTING | "agent_not_started"
+    )
 }
 
 /// Fails `promotion`, a running attempt whose agent never started, with the
@@ -766,9 +792,11 @@ fn fail_start(
         "kind": "promotion.start_failed",
         "project_id": project_id,
         "card": hide_memory::card_name(number),
-        "reason": reason,
+        // The screen line is the operator's terminal output: kept with the
+        // attempt for its card, never in the log.
+        "reason": crate::coordination::split_refusal(reason).0,
     }));
-    store
+    let moved = store
         .fail_promotion_start(
             project_id,
             number,
@@ -777,15 +805,26 @@ fn fail_start(
             super::memory::now_ms(),
         )
         .map_err(|error| error.to_string())?;
-    if let (Some(connector), Some(branch)) = (start.connector.as_deref(), &promotion.branch) {
-        release_attempt(
-            connector,
-            start.node.as_ref(),
-            &start.repo,
-            branch,
-            project_id,
-            number,
-        );
+    // A tracker move in between stands, and what it moved to is its own.
+    if !moved {
+        return Ok(());
+    }
+    match (
+        start.connector.as_deref(),
+        start.node.as_deref(),
+        &promotion.branch,
+    ) {
+        (Some(connector), Some(node), Some(branch)) => {
+            release_attempt(connector, node, &start.repo, branch, project_id, number)
+        }
+        _ => crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "promotion.worktree_released",
+            "project_id": project_id,
+            "card": hide_memory::card_name(number),
+            "outcome": "kept",
+            "reason": "the machine that holds the Project cannot be reached",
+        })),
     }
     Ok(())
 }
@@ -835,10 +874,9 @@ fn release_attempt(
         )
         .map_err(|error| error.to_string())
     };
-    let released = (|| -> Result<&'static str, String> {
-        let Some(path) = worktree_path(connector, repo, branch)? else {
-            return Ok("gone");
-        };
+    // Whether the branch holds no commit of its own and its worktree
+    // nothing uncommitted.
+    let empty = |path: &str| -> Result<bool, String> {
         let own = git(
             repo,
             GitCommand::CountCommits {
@@ -846,10 +884,33 @@ fn release_attempt(
                 head: branch.to_owned(),
             },
         )?;
-        if own.trim() != "0" || !git(&path, GitCommand::Status)?.trim().is_empty() {
+        Ok(own.trim() == "0" && git(path, GitCommand::Status)?.trim().is_empty())
+    };
+    let released = (|| -> Result<&'static str, String> {
+        let Some(path) = worktree_path(connector, repo, branch)? else {
+            return Ok("gone");
+        };
+        // The branch checked out in the Project's own folder is the
+        // operator's, never an attempt's worktree.
+        if path.trim_end_matches('/') == repo.trim_end_matches('/') || !empty(&path)? {
             return Ok("kept");
         }
         let panes = panes_in(connector, &path)?;
+        // An agent there, or a start whose name Herdr still holds, may yet
+        // do the attempt's work: nothing of it is closed.
+        let agents = hide_herdr_client::request_with_connector(
+            connector,
+            "agent.list",
+            crate::wire::empty_params(),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|error| error.to_string())
+        .and_then(|listed| {
+            crate::wire::agents_response(listed).map_err(|_| "agent.list is malformed".into())
+        })?;
+        if agents.iter().any(|agent| panes.contains(&agent.pane_id)) {
+            return Ok("kept");
+        }
         crate::live::close_checkout_panes(
             connector,
             node,
@@ -858,6 +919,11 @@ fn release_attempt(
             crate::live::ProcessWait::for_folder_removal(true),
             crate::live::CONFIRM_TIMEOUT,
         )?;
+        // What ran in the panes until they closed may have committed or
+        // written there: that work stays.
+        if !empty(&path)? {
+            return Ok("kept");
+        }
         crate::node_access::call_as::<()>(
             node,
             Call::Factory {
@@ -1607,12 +1673,26 @@ mod tests {
         );
 
         let refused = adopt_agent(&mut store, &key, &promotion, (), |_| {
-            Err("agent_not_startable".into())
+            Err("agent_not_started".into())
         });
         assert_eq!(
             refused,
-            Adoption::NotStarted((), "agent_not_startable".to_owned()),
-            "a terminal answer gives the start up with its reason"
+            Adoption::NotStarted((), "agent_not_started".to_owned()),
+            "an agent that never started gives the start up with its reason"
+        );
+        let question =
+            crate::coordination::refusal(crate::agent_start::SHELL_STARTING, "Update? [Y/n]");
+        assert!(matches!(
+            adopt_agent(&mut store, &key, &promotion, (), |_| Err(question.clone())),
+            Adoption::NotStarted((), _)
+        ));
+        // A failure that says nothing of the agent releases nothing: the
+        // agent it typed may be running.
+        assert_eq!(
+            adopt_agent(&mut store, &key, &promotion, (), |_| {
+                Err("spawn_unavailable".into())
+            }),
+            Adoption::Dropped
         );
     }
 
@@ -1646,17 +1726,17 @@ mod tests {
         // A node's Project's agent starts on that node, never here (PRD
         // core-host-node-move B14).
         assert_eq!(start().machine, None);
+        assert!(start().node.is_some(), "this Mac's node releases its own");
         let elsewhere = crate::node::NodeId::parse("node-elsewhere").unwrap();
-        assert_eq!(
-            runtime
-                .lock()
-                .unwrap()
-                .promotion_start(&elsewhere, "/checkouts/fixture")
-                .unwrap()
-                .machine
-                .as_deref(),
-            Some("node-elsewhere")
-        );
+        let remote = runtime
+            .lock()
+            .unwrap()
+            .promotion_start(&elsewhere, "/checkouts/fixture")
+            .unwrap();
+        assert_eq!(remote.machine.as_deref(), Some("node-elsewhere"));
+        // A failed attempt there is released by that node or not at all,
+        // never by this Mac's Herdr reading the other machine's folder.
+        assert!(remote.connector.is_none() && remote.node.is_none());
 
         let mut store = MemoryStore::open(&root.path().join("memory.sqlite3")).unwrap();
         store
@@ -1756,8 +1836,13 @@ mod tests {
     struct Repository {
         worktrees: std::collections::BTreeMap<String, String>,
         panes: Vec<(String, String)>,
+        /// The panes Herdr shows an agent, or a held start's name, in.
+        agents: Vec<String>,
         commits: u32,
         changed: bool,
+        /// The commits the branch holds once its panes closed: what ran
+        /// there committed on its way out.
+        committed_on_close: Option<u32>,
     }
 
     type Shared = Arc<std::sync::Mutex<Repository>>;
@@ -1781,10 +1866,18 @@ mod tests {
                         "pane_id": pane, "workspace_id": "w2", "tab_id": "w2:t1",
                         "terminal_id": "t", "focused": false, "agent_status": "idle",
                         "revision": 1, "cwd": cwd})).collect::<Vec<_>>()}}),
+                "agent.list" => json!({"type": "agent_list", "agents":
+                    repository.agents.iter().map(|pane| json!({"pane_id": pane,
+                        "workspace_id": "w2", "tab_id": "w2:t1", "terminal_id": "t",
+                        "revision": 1, "focused": false, "agent_status": "idle",
+                        "name": "m7"})).collect::<Vec<_>>()}),
                 "pane.close" => {
                     repository
                         .panes
                         .retain(|(pane, _)| *pane != params["pane_id"]);
+                    if let Some(commits) = repository.committed_on_close {
+                        repository.commits = commits;
+                    }
                     json!({"type": "ok"})
                 }
                 other => panic!("unexpected {other}"),
@@ -1916,6 +2009,52 @@ mod tests {
                 first,
                 "{commits} commits, changed {changed}"
             );
+        }
+    }
+
+    /// What may still be the attempt's work is never discarded: an agent or
+    /// a held start in its worktree, a commit made while its panes closed,
+    /// and the Project's own folder holding the branch.
+    #[test]
+    fn a_failed_attempt_whose_work_may_still_come_keeps_its_worktree() {
+        let first = branch(7, 1);
+        let cases: [(&str, fn(&mut Repository)); 3] = [
+            ("an agent in its pane", |repository| {
+                repository.agents.push("w2:p1".into())
+            }),
+            ("a commit while its panes closed", |repository| {
+                repository.committed_on_close = Some(1)
+            }),
+            ("the branch in the Project's folder", |repository| {
+                repository.worktrees.insert(branch(7, 1), "/r".into());
+                repository.panes = vec![("w1:p1".into(), "/r".into())];
+            }),
+        ];
+        for (case, setup) in cases {
+            let repository: Shared = Arc::default();
+            {
+                let mut repository = repository.lock().unwrap();
+                repository
+                    .worktrees
+                    .insert(first.clone(), "/r.worktrees/first".into());
+                repository
+                    .panes
+                    .push(("w2:p1".into(), "/r.worktrees/first".into()));
+                setup(&mut repository);
+            }
+            let herdr = herdr(&repository);
+            release_attempt(
+                &herdr.connector(),
+                &Machine(Arc::clone(&repository)),
+                "/r",
+                &first,
+                "p",
+                7,
+            );
+            assert_eq!(repository.lock().unwrap().worktrees.len(), 1, "{case}");
+            if case != "a commit while its panes closed" {
+                assert!(!repository.lock().unwrap().panes.is_empty(), "{case}");
+            }
         }
     }
 

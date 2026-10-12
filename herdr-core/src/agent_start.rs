@@ -132,6 +132,15 @@ impl ShellStart {
     }
 }
 
+/// Characters that change how text around them reads without showing
+/// themselves: zero-width ones, bidirectional overrides and isolates.
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+    )
+}
+
 /// A shell's program name as a pane's process list shows it: the last part
 /// of its path, without a login shell's leading `-` or Windows' `.exe`,
 /// lower case.
@@ -490,12 +499,16 @@ impl Shell<'_> {
             .rev()
             .map(str::trim)
             .find(|line| !line.is_empty())?;
-        Some(
-            line.chars()
-                .filter(|c| !c.is_control())
-                .take(SCREEN_LINE_CHARS)
-                .collect(),
-        )
+        // The line is the operator's terminal output, shown on a card, kept
+        // with the attempt and told to the agent that asked: a credential a
+        // startup file printed is removed, and so is what reorders or hides
+        // text.
+        let line: String = line
+            .chars()
+            .filter(|c| !c.is_control() && !is_format_char(*c))
+            .take(SCREEN_LINE_CHARS)
+            .collect();
+        Some(hide_memory::redact(&line).text)
     }
 
     /// Whether Herdr lets go of the start's name once asked about it.
@@ -1103,6 +1116,28 @@ mod tests {
             );
             assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
         }
+    }
+
+    /// The question line is the operator's terminal output: a credential a
+    /// startup file printed, and characters that hide or reorder text, never
+    /// leave the pane with it.
+    #[test]
+    fn a_question_line_carries_no_credential_and_no_hidden_characters() {
+        let herdr = FakeHerdr::start("agent-start-secret", move |method, _| match method {
+            "pane.process_info" => process_info(SHELL, &[SHELL]),
+            "pane.get" => pane_with(json!({})),
+            "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
+                "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
+                "format": "text", "revision": 1, "truncated": false,
+                "text": "export api_key=abcd1234efgh5678\u{202E}\u{200B} Continue? [y/N]\n"}}),
+            other => panic!("unexpected {other}"),
+        });
+        let Err(StartError::ShellStarting(Some(line))) =
+            start_integrated(&herdr, Duration::from_millis(300))
+        else {
+            panic!("an unmarked shell is not a start");
+        };
+        assert_eq!(line, "export [REDACTED] Continue? [y/N]");
     }
 
     /// A startup file that replaces the launched shell with another one
