@@ -173,6 +173,7 @@ pub(crate) fn shell_starting_message(screen: Option<&str>) -> String {
 /// `node` is the node that runs the pane, asked how its shell's terminal
 /// takes input when the start line could be cut; none when that node cannot
 /// be reached, which only a start with such a line minds.
+#[allow(clippy::too_many_arguments)] // one start: its pane, how its shell says it is ready, and its effect admission
 pub(crate) fn start_at_shell_checked(
     connector: &dyn ApiConnector,
     node: Option<&dyn NodeLink>,
@@ -202,6 +203,7 @@ pub(crate) fn start_at_shell_checked(
 /// start again until Herdr has released the name, within [`NAME_RELEASE_WAIT`].
 /// `check` is the action proof [`start_at_shell_checked`] repeats before every
 /// attempt.
+#[allow(clippy::too_many_arguments)] // one start: its pane, how its shell says it is ready, and its effect admission
 pub(crate) fn start_at_shell_reusing_name(
     connector: &dyn ApiConnector,
     node: Option<&dyn NodeLink>,
