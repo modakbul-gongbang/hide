@@ -146,7 +146,7 @@ function sessionSearchPage(base: TaskDetail, now: number): TaskDetail {
     report: { result: "세션 1만 개에서 검색 결과가 0.4초 안에 보입니다", changed: ["코드는 앞 보고와 같습니다. 1만 개 기록을 만드는 측정 스크립트를 더했습니다"], verified: ["세션 1만 개, 검색어 20개: 중간값 0.18초, 가장 느린 것 0.41초 · 색인 240 MB"], unverified: ["한국어 검색어의 조사 처리"] },
     activity: [
       entry(at(9, 1), { kind: "intake", label: true, criteria: 6, assumptions: 1 }),
-      entry(at(9, 14), { kind: "recovery", action: "remove_finished_worktrees", outcome: "improved", removed: ["/work/herdr-ide.worktrees/t-386", "/work/herdr-ide.worktrees/t-391"], freed: 6.2 * 1024 ** 3 }),
+      entry(at(9, 14), { kind: "recovery", action: "remove_finished_worktrees", outcome: "improved", removed: ["/work/hide.worktrees/t-386", "/work/hide.worktrees/t-391"], freed: 6.2 * 1024 ** 3 }),
       entry(at(9, 15), { kind: "started", resumed: false }),
       entry(at(11, 8), { kind: "report", report: { result: "세션 검색이 SQLite 전문 색인으로 답합니다", changed: ["세션을 읽을 때 색인을 갱신하고, 검색은 색인에만 묻습니다. ⌘K 검색도 같은 색인을 씁니다"], verified: ["cargo 테스트, web e2e 검색 spec"], unverified: ["세션 1만 개 기록에서의 검색 시간"] } }),
       entry(at(11, 8), { kind: "pull_request", number: 559, url: "https://example.invalid/pull/559" }),
@@ -323,7 +323,7 @@ export type FactorySceneFixture = {
 };
 
 /**
- * The Observer set (PRD factory-observer): herdr-ide answers with 함께 and
+ * The Observer set (PRD factory-observer): hide answers with 함께 and
  * sasu, paused, with 맡김; 내 차례 holds the requests Factory AI left to the
  * person, the stops it diagnosed or could not, and its notices, as the
  * `fx-obs-*` frames of `Screen / Factory` draw them.
@@ -346,15 +346,15 @@ function observerScene(base: FactorySceneFixture, now: number, variant: Observer
   const sasu: FactoryView = { ...sasu0, paused: true, observer_mode: "autonomous", observer_today: 100, workers: workers.slice(0, 1) };
   const item = (patch: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" | "factory" | "task" | "display_id" | "title" | "project" | "text">, ago: number) => inboxItem(patch, now, ago);
   const answers: InboxItem[] = [
-    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t436.task, display_id: t436.display_id, title: t436.title, project: "herdr-ide", question: "q-436", text: "빈 열에 무엇을 보일까요?", suggestion: "아무것도 보이지 않기", choices: ["\"없음\" 한 단어", "열마다 다른 안내"], result_code: "wake_worker", decision_kind: "C", observer_reason: "작업자는 첫 안을 추천합니다." }, 6 * MINUTE),
-    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t437.task, display_id: t437.display_id, title: t437.title, project: "herdr-ide", question: "q-437", text: `카드가 틀림: 완료 조건이 ${issue(412)}와 겹칩니다`, suggestion: `AI 제안: ${issue(412)}에 합치기`, choices: ["그대로 진행"], result_code: "wake_worker", decision_kind: "E" }, 30 * MINUTE),
+    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t436.task, display_id: t436.display_id, title: t436.title, project: "hide", question: "q-436", text: "빈 열에 무엇을 보일까요?", suggestion: "아무것도 보이지 않기", choices: ["\"없음\" 한 단어", "열마다 다른 안내"], result_code: "wake_worker", decision_kind: "C", observer_reason: "작업자는 첫 안을 추천합니다." }, 6 * MINUTE),
+    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t437.task, display_id: t437.display_id, title: t437.title, project: "hide", question: "q-437", text: `카드가 틀림: 완료 조건이 ${issue(412)}와 겹칩니다`, suggestion: `AI 제안: ${issue(412)}에 합치기`, choices: ["그대로 진행"], result_code: "wake_worker", decision_kind: "E" }, 30 * MINUTE),
     item({ group: "answer", kind: "default", factory: sasu.id, task: taskId(88), display_id: issue(88), title: "gate 결과 요약 보기", project: "sasu", question: "q-88", text: "gate 요약을 PR 댓글로도 올릴까요?", suggestion: "올리지 않기", choices: ["PR 댓글로 올리기"], default_action: "올리지 않기", deadline: now + 5 * HOUR, result_code: "wake_worker", decision_kind: "D", observer_reason: "밖에 글을 씁니다." }, 20 * MINUTE),
   ];
   const merge = base.summary.inbox.filter((row) => row.group === "merge").map((row) => ({ ...row, gates: ["risk_path" as const] }));
   const stops: InboxItem[] = [
-    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t435.task, display_id: t435.display_id, title: t435.title, project: "herdr-ide", text: "멈춤: 보고 없음", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "no_report", observer_reason: "테스트 실행을 기다리다 멈춘 것으로 보입니다" }, 9 * MINUTE),
-    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t433.task, display_id: t433.display_id, title: t433.title, project: "herdr-ide", text: "멈춤: 작업자 사라짐", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "worker_gone" }, 18 * MINUTE),
-    item({ group: "stopped", kind: "paused", factory: herdr.id, task: t434.task, display_id: t434.display_id, title: t434.title, project: "herdr-ide", text: "일시정지: 작업자 pane을 닫음", suggestion: "resume", choices: ["cancel"], result_code: "resume_worker" }, 25 * MINUTE),
+    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t435.task, display_id: t435.display_id, title: t435.title, project: "hide", text: "멈춤: 보고 없음", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "no_report", observer_reason: "테스트 실행을 기다리다 멈춘 것으로 보입니다" }, 9 * MINUTE),
+    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t433.task, display_id: t433.display_id, title: t433.title, project: "hide", text: "멈춤: 작업자 사라짐", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "worker_gone" }, 18 * MINUTE),
+    item({ group: "stopped", kind: "paused", factory: herdr.id, task: t434.task, display_id: t434.display_id, title: t434.title, project: "hide", text: "일시정지: 작업자 pane을 닫음", suggestion: "resume", choices: ["cancel"], result_code: "resume_worker" }, 25 * MINUTE),
   ];
   const inbox = [...answers, ...merge, ...stops].map((row, rank) => ({ ...row, rank }));
   const summary = counted([herdr, sasu], inbox);
@@ -426,10 +426,10 @@ export type ObserverVariant = "direct" | "auto";
  * cards at the three sizes; `aiOff` turns Hide AI off.
  */
 export const OBSERVER_STATES: Record<string, { tab: FactoryTab; factory?: string; task?: string; variant?: ObserverVariant; aiOff?: true; cards?: true }> = {
-  "obs-set": { tab: "settings", factory: "f-herdr-ide" },
-  "obs-direct": { tab: "settings", factory: "f-herdr-ide", variant: "direct" },
-  "obs-auto": { tab: "settings", factory: "f-herdr-ide", variant: "auto" },
-  "obs-off": { tab: "settings", factory: "f-herdr-ide", aiOff: true },
+  "obs-set": { tab: "settings", factory: "f-hide" },
+  "obs-direct": { tab: "settings", factory: "f-hide", variant: "direct" },
+  "obs-auto": { tab: "settings", factory: "f-hide", variant: "auto" },
+  "obs-off": { tab: "settings", factory: "f-hide", aiOff: true },
   "obs-all": { tab: "settings" },
   "obs-pick": { tab: "line", task: taskId(431) },
   "obs-cards": { tab: "line", cards: true },
@@ -441,9 +441,9 @@ export const OBSERVER_STATES: Record<string, { tab: FactoryTab; factory?: string
  * of item at once.
  */
 export const LOOP_STATES: Record<string, { factory: string; task?: string; decisions?: true }> = {
-  line: { factory: "f-herdr-ide" },
-  task: { factory: "f-herdr-ide", task: taskId(398) },
-  decisions: { factory: "f-herdr-ide", decisions: true },
+  line: { factory: "f-hide" },
+  task: { factory: "f-hide", task: taskId(398) },
+  decisions: { factory: "f-hide", decisions: true },
 };
 
 /** The scene's summary, the Task pages it can open and the settings it answers with. */
@@ -478,15 +478,15 @@ function decisionsScene(base: FactorySceneFixture, now: number): FactorySceneFix
   const item = (patch: ItemFields, ago: number) => inboxItem(patch, now, ago);
   const herdrItems = base.summary.inbox.filter((row) => row.factory === herdr.id);
   const added: InboxItem[] = [
-    item({ group: "stopped", kind: "action", factory: herdr.id, task: t438.task, display_id: t438.display_id, title: t438.title, project: "herdr-ide", question: "q-438", text: "Hide AI가 꺼져 있어 접수 리뷰를 하지 못했습니다. 켜서 카드를 검토할지, 이슈 그대로 시작할지 골라 주세요.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], evidence: ["disabled"], result_code: "drafting" }, 20 * MINUTE),
-    item({ group: "todo", kind: "hold", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "starts", env_hold: "disk_floor", resolve: "hold:start-disk_floor", result_code: "resolve", evidence: ["여유 3.1GB · 기준 5GB"], attempts: [
+    item({ group: "stopped", kind: "action", factory: herdr.id, task: t438.task, display_id: t438.display_id, title: t438.title, project: "hide", question: "q-438", text: "Hide AI가 꺼져 있어 접수 리뷰를 하지 못했습니다. 켜서 카드를 검토할지, 이슈 그대로 시작할지 골라 주세요.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], evidence: ["disabled"], result_code: "drafting" }, 20 * MINUTE),
+    item({ group: "todo", kind: "hold", factory: herdr.id, task: null, display_id: null, title: "", project: "hide", text: "", holding: "starts", env_hold: "disk_floor", resolve: "hold:start-disk_floor", result_code: "resolve", evidence: ["여유 3.1GB · 기준 5GB"], attempts: [
       { at: clock(now, 10, 40), action: "remove_finished_worktrees", outcome: "partial" },
       { at: clock(now, 11, 10), action: "sleep_wake_worker", outcome: "unchanged" },
       { at: clock(now, 12, 10), action: "remove_finished_worktrees", outcome: "unchanged" },
       { at: clock(now, 13, 10), action: "sleep_wake_worker", outcome: "unchanged" },
     ] }, 3 * HOUR),
-    item({ group: "todo", kind: "command", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: `이전 시작이 남긴 터미널이 ${issue(412)} 작업자 이름을 쥐고 있어 작업자를 띄울 수 없습니다. 그 터미널을 닫아 주세요`, holding: "starts", command: "herdr pane close w4:p2", impact: `누르면 ${issue(412)} 작업자를 다시 띄웁니다`, resolve: "C1", result_code: "resolve", evidence: ["같은 worktree의 터미널 하나가 작업자 이름을 쥐고 있음 · 보드에는 이 Task의 작업자 창이 없음"] }, 15 * MINUTE),
-    item({ group: "todo", kind: "github", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "github", command: "gh auth login", resolve: "github", result_code: "resolve", unblocks: [issue(398)], evidence: ["CI 결과 읽기"] }, 9 * MINUTE),
+    item({ group: "todo", kind: "command", factory: herdr.id, task: null, display_id: null, title: "", project: "hide", text: `이전 시작이 남긴 터미널이 ${issue(412)} 작업자 이름을 쥐고 있어 작업자를 띄울 수 없습니다. 그 터미널을 닫아 주세요`, holding: "starts", command: "herdr pane close w4:p2", impact: `누르면 ${issue(412)} 작업자를 다시 띄웁니다`, resolve: "C1", result_code: "resolve", evidence: ["같은 worktree의 터미널 하나가 작업자 이름을 쥐고 있음 · 보드에는 이 Task의 작업자 창이 없음"] }, 15 * MINUTE),
+    item({ group: "todo", kind: "github", factory: herdr.id, task: null, display_id: null, title: "", project: "hide", text: "", holding: "github", command: "gh auth login", resolve: "github", result_code: "resolve", unblocks: [issue(398)], evidence: ["CI 결과 읽기"] }, 9 * MINUTE),
   ];
   const inbox = [...herdrItems, ...added, ...base.summary.inbox.filter((row) => row.factory !== herdr.id)].map((row, rank) => ({ ...row, rank }));
   return { ...base, summary: counted([herdr, sasu], inbox) };
@@ -515,9 +515,9 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
   ];
   const reduced = dependencies.filter(([from, to]) => !(from === A && to === C));
   const herdr = view({
-    id: "f-herdr-ide",
-    project: "/work/herdr-ide",
-    name: "herdr-ide",
+    id: "f-hide",
+    project: "/work/hide",
+    name: "hide",
     source: "github",
     verification: "ci",
     cards: herdrCards,
@@ -540,7 +540,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
         task: blocked.task,
         display_id: blocked.display_id,
         title: blocked.title,
-        project: "herdr-ide",
+        project: "hide",
         question: "q-blocking",
         text: long ? `${LONG_TITLE}?` : "Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?",
         suggestion: "WS snapshot에 합치기",
@@ -565,7 +565,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
         task: taskId(405),
         display_id: issue(405),
         title: "hide-ai 호출 상한 조정",
-        project: "herdr-ide",
+        project: "hide",
         text: "",
         holding: "merge",
         suggestion: "merge",
@@ -585,7 +585,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
         task: taskId(417),
         display_id: issue(417),
         title: "디스크 정리 표 다시 그리기",
-        project: "herdr-ide",
+        project: "hide",
         question: "q-417",
         text: `web-e2e가 세 번 연속 실패해 ${issue(417)}이 멈췄습니다. 어떻게 할까요?`,
         holding: "progress",
@@ -679,7 +679,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
       stop_code: found.state === "stopped" ? "verify_failed" : null,
       merge_sha: null,
       worker_name: found.worker_pane ? `${found.task}-worker` : null,
-      worktree: found.worker_pane ? `/work/herdr-ide.worktrees/${found.task}` : null,
+      worktree: found.worker_pane ? `/work/hide.worktrees/${found.task}` : null,
       branch: running ? "412-board-sort" : null,
       worker: null,
       diagnosis: null,

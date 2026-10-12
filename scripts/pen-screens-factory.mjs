@@ -47,36 +47,36 @@ const TONE = {
 // bar (0 대기, 1 작업, 2 검증, 3 머지, 4 all done, B14); `mark` is the worker pane's
 // status mark and word from the shipped agent catalog; `ai` is that pane's label line.
 const TASKS = {
-  t7: {id: 'T-7', project: 'herdr-ide', title: '알림 설정 화면 정리', state: 'drafting', lane: 'before', stage: 0, age: '5분', summary: '알림 켜고 끄기를 설정 한 화면에 모은다'},
-  t431: {id: '#431', project: 'herdr-ide', title: '문서 깨진 링크 정리', state: 'waiting', lane: 'before', stage: 0, age: '1시간', summary: 'docs 안의 깨진 상대 링크 23개를 고친다'},
-  t421: {id: '#421', project: 'herdr-ide', title: 'Task 상세 화면', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: 'Task 상세 응답을 받아 오른쪽 패널에 그린다',
+  t7: {id: 'T-7', project: 'hide', title: '알림 설정 화면 정리', state: 'drafting', lane: 'before', stage: 0, age: '5분', summary: '알림 켜고 끄기를 설정 한 화면에 모은다'},
+  t431: {id: '#431', project: 'hide', title: '문서 깨진 링크 정리', state: 'waiting', lane: 'before', stage: 0, age: '1시간', summary: 'docs 안의 깨진 상대 링크 23개를 고친다'},
+  t421: {id: '#421', project: 'hide', title: 'Task 상세 화면', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: 'Task 상세 응답을 받아 오른쪽 패널에 그린다',
     problem: {glyph: 'lock', text: '#420 기다림', tone: MUT}},
-  t422: {id: '#422', project: 'herdr-ide', title: '보드에서 Task 상세 패널 열기', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: '보드 카드를 누르면 상세 패널이 열린다',
+  t422: {id: '#422', project: 'hide', title: '보드에서 Task 상세 패널 열기', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: '보드 카드를 누르면 상세 패널이 열린다',
     problem: {glyph: 'lock', text: '#421 기다림', tone: MUT}},
-  t412: {id: '#412', project: 'herdr-ide', title: 'Issues 보드에 정렬 추가', state: 'running', lane: 'moving', stage: 1, pr: '563', agent: 'claude', age: '12분',
+  t412: {id: '#412', project: 'hide', title: 'Issues 보드에 정렬 추가', state: 'running', lane: 'moving', stage: 1, pr: '563', agent: 'claude', age: '12분',
     summary: '최근 수정순 · 번호순 · 만든 순으로 보드 카드를 정렬한다', problem: {glyph: 'triangle-alert', text: '검증 실패 1/3', tone: WARN},
     mark: ['●', '작업 중', WORK], ai: 'web-e2e 정렬 fixture를 고치고 다시 검증하는 중'},
-  t415: {id: '#415', project: 'herdr-ide', title: '보드 정렬 상태 기억', state: 'running', lane: 'moving', stage: 1, agent: 'codex', kids: [2, 1], age: '8분',
+  t415: {id: '#415', project: 'hide', title: '보드 정렬 상태 기억', state: 'running', lane: 'moving', stage: 1, agent: 'codex', kids: [2, 1], age: '8분',
     summary: '고른 정렬을 ui_state에 남겨 다시 열어도 그대로 둔다', mark: ['○', '하위 대기', WORK], ai: '저장은 끝, 하위 둘이 복원과 테스트를 쓰는 중'},
-  t398: {id: '#398', project: 'herdr-ide', title: 'Sessions 검색 속도 개선', state: 'verifying', lane: 'moving', stage: 2, pr: '559', agent: 'claude', age: '4분',
+  t398: {id: '#398', project: 'hide', title: 'Sessions 검색 속도 개선', state: 'verifying', lane: 'moving', stage: 2, pr: '559', agent: 'claude', age: '4분',
     summary: '세션 검색을 색인으로 바꿔 1초 안에 답한다', mark: ['○', '대기', MUT], ai: '색인을 붙이고 CI 결과를 기다리는 중'},
-  t420: {id: '#420', project: 'herdr-ide', title: 'Task 상세 API 응답 형식', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '3일',
+  t420: {id: '#420', project: 'hide', title: 'Task 상세 API 응답 형식', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '3일',
     summary: 'Task 상세를 웹에 보낼 응답 모양을 정한다',
     ask: {question: 'Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?', choices: ['WS snapshot에 합치기', 'REST 엔드포인트']},
     mark: ['?', '질문', WARN], ai: '두 방식의 snapshot 크기를 재고 답을 기다림'},
-  t405: {id: '#405', project: 'herdr-ide', title: 'hide-ai 호출 상한 조정', state: 'merge_waiting', lane: 'stuck', wait: 'me', stage: 3, pr: '561', agent: 'claude', age: '1시간',
+  t405: {id: '#405', project: 'hide', title: 'hide-ai 호출 상한 조정', state: 'merge_waiting', lane: 'stuck', wait: 'me', stage: 3, pr: '561', agent: 'claude', age: '1시간',
     summary: 'hide-ai가 분당 부르는 횟수 상한을 설정으로 뺀다', problem: {glyph: 'lock', text: 'manual 머지', tone: WARN}, action: ['머지', 'PR 보기'],
     mark: ['○', '대기', MUT], ai: '상한 설정과 테스트를 올리고 머지를 기다림'},
-  t417: {id: '#417', project: 'herdr-ide', title: '디스크 정리 표 다시 그리기', state: 'stopped', lane: 'stuck', wait: 'me', stage: 2, pr: '560', agent: 'claude', age: '40분',
+  t417: {id: '#417', project: 'hide', title: '디스크 정리 표 다시 그리기', state: 'stopped', lane: 'stuck', wait: 'me', stage: 2, pr: '560', agent: 'claude', age: '40분',
     summary: '디스크 정리 표를 크기순으로 다시 그린다', problem: {glyph: 'circle-alert', text: '검증 3회 실패', tone: CRIT}, action: ['다시 시작', '기록 보기'],
     mark: ['○', '대기', MUT], ai: 'web-e2e 세 번째 실패 뒤 멈춤'},
-  t426: {id: '#426', project: 'herdr-ide', title: '단축키 도움말 시트', state: 'resting', lane: 'stuck', wait: 'other', stage: 1, age: '50분',
+  t426: {id: '#426', project: 'hide', title: '단축키 도움말 시트', state: 'resting', lane: 'stuck', wait: 'other', stage: 1, age: '50분',
     summary: '⌘/로 여는 단축키 목록 시트를 만든다', problem: {glyph: 'circle-pause', text: '쉬는 중 · 14:00 재개', tone: MUT}},
-  t430: {id: '#430', project: 'herdr-ide', title: 'flaky: pane-focus 테스트', state: 'outside', lane: 'stuck', wait: 'other', stage: 3, age: '2시간',
+  t430: {id: '#430', project: 'hide', title: 'flaky: pane-focus 테스트', state: 'outside', lane: 'stuck', wait: 'other', stage: 3, age: '2시간',
     summary: 'pane-focus e2e가 가끔 실패하는 원인을 찾는다', problem: {glyph: 'git-pull-request', text: '#566이 이 이슈를 닫는 중', tone: MUT}},
-  t409: {id: '#409', project: 'herdr-ide', title: 'Task 목록 정렬 키 문서화', state: 'done', lane: 'done', stage: 4, pr: '557', merged: true, age: '5시간', today: true,
+  t409: {id: '#409', project: 'hide', title: 'Task 목록 정렬 키 문서화', state: 'done', lane: 'done', stage: 4, pr: '557', merged: true, age: '5시간', today: true,
     summary: '정렬 키 세 개를 docs/factory.md에 적는다'},
-  t410: {id: '#410', project: 'herdr-ide', title: '정렬 API: tasks.rs에 updated_at', state: 'done', lane: 'done', stage: 4, pr: '558', merged: true, age: '2시간', today: true,
+  t410: {id: '#410', project: 'hide', title: '정렬 API: tasks.rs에 updated_at', state: 'done', lane: 'done', stage: 4, pr: '558', merged: true, age: '2시간', today: true,
     summary: 'tasks.rs가 updated_at으로 정렬할 수 있게 한다'},
   s91: {id: '#91', project: 'sasu', title: 'implement 단계 로그 정리', state: 'waiting', lane: 'before', stage: 0, age: '2시간', summary: 'implement 로그를 단계별로 묶는다'},
   s88: {id: '#88', project: 'sasu', title: 'gate 결과 요약 보기', state: 'running', lane: 'moving', stage: 1, agent: 'codex', age: '20분', summary: 'gate 결과를 한 줄씩 요약해 보인다',
@@ -84,7 +84,7 @@ const TASKS = {
   s86: {id: '#86', project: 'sasu', title: 'verify 리포트 한 줄 요약', state: 'done', lane: 'done', stage: 4, pr: '84', merged: true, age: '50분', today: true, summary: 'verify 리포트 맨 위에 한 줄 요약을 둔다'},
 };
 // The board's lanes by movement (D-06) with their width weights (D-08: 시작 전 and
-// 완료 narrow), shown for the herdr-ide filter in the engine's order inside a lane.
+// 완료 narrow), shown for the hide filter in the engine's order inside a lane.
 const LANES = [['before', '시작 전', 0.8], ['moving', '진행 중', 1.2], ['stuck', '멈춤', 1.4], ['done', '완료', 0.7]];
 const BOARD = {
   before: ['t7', 't431', 't421', 't422'],
@@ -143,9 +143,9 @@ const NEED_COMMAND = {kind: 'todo', glyph: 'square-terminal', key: 't412', sente
 const NEED_LOGIN = {kind: 'todo', glyph: 'key-round', sentence: 'GitHub에 다시 로그인하세요', stopped: '#398 CI 결과 읽기 · #405 머지', cue: '9분',
   command: 'gh auth login', button: '다시 확인', buttonGlyph: 'refresh-cw', result: '로그인이 통과하면 멈춘 일을 이어서 합니다',
   evidence: {summary: 'gh가 로그인을 다시 요구함 · 막힌 동작 2개는 기다리는 중'}};
-// What 결정 필요 holds in the example data: the herdr-ide items the 라인 draws, and one sasu question.
+// What 결정 필요 holds in the example data: the hide items the 라인 draws, and one sasu question.
 const NEEDS = [
-  {project: 'herdr-ide', ...NEED_QUESTION}, {project: 'herdr-ide', ...NEED_MERGE}, {project: 'herdr-ide', ...NEED_STOP},
+  {project: 'hide', ...NEED_QUESTION}, {project: 'hide', ...NEED_MERGE}, {project: 'hide', ...NEED_STOP},
   {project: 'sasu', kind: 'question', key: 's88'},
 ];
 const needCount = project => NEEDS.filter(need => !project || need.project === project).length;
@@ -159,27 +159,27 @@ const GRAPH_UNRELATED = ['t7', 't431', 't405', 't417', 't398', 't426', 't430', '
 const GRAPH_SASU = ['s91', 's88', 's86'];
 
 // -- Observer (PRD factory-observer) ---------------------------------------------------------
-// Two Factories: herdr-ide runs in 보조 and sasu in 자율 (D-03, D-18). These Tasks appear only
+// Two Factories: hide runs in 보조 and sasu in 자율 (D-03, D-18). These Tasks appear only
 // on the Observer frames, so the board, graph and 내 차례 counts above stay as they were.
 const OBS_TASKS = {
-  t433: {id: '#433', project: 'herdr-ide', title: '설정 검색 결과 강조', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '18분',
+  t433: {id: '#433', project: 'hide', title: '설정 검색 결과 강조', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '18분',
     summary: '설정 검색에서 맞은 글자를 굵게 보인다', problem: {glyph: 'circle-alert', text: '작업자 사라짐 · 다시 띄웠지만 또 사라짐', tone: CRIT}, action: ['다시 시작', '기록 보기']},
-  t434: {id: '#434', project: 'herdr-ide', title: '빈 Factory 안내 문구', state: 'paused', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '25분',
+  t434: {id: '#434', project: 'hide', title: '빈 Factory 안내 문구', state: 'paused', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '25분',
     summary: 'Task가 없을 때 넣는 방법을 한 줄로 안내한다', problem: {glyph: 'circle-pause', text: '일시정지 · Hide에서 작업자 창을 닫음', tone: MUT}, action: ['다시 시작', '기록 보기']},
-  t435: {id: '#435', project: 'herdr-ide', title: 'Sessions 칩 정렬', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '9분',
+  t435: {id: '#435', project: 'hide', title: 'Sessions 칩 정렬', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '9분',
     summary: 'Sessions 칩을 최근 활동순으로 놓는다', problem: {glyph: 'circle-alert', text: '보고 없음 · 깨웠지만 답 없음', tone: CRIT}, action: ['다시 시작', '기록 보기'],
     diagnosis: '테스트 실행을 기다리다 멈춘 것으로 보입니다'},
-  t436: {id: '#436', project: 'herdr-ide', title: '보드 빈 열 문구', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '6분',
+  t436: {id: '#436', project: 'hide', title: '보드 빈 열 문구', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '6분',
     summary: '빈 열에 보일 한 줄 문구를 정한다',
     ask: {question: '빈 열에 무엇을 보일까요?', choices: ['아무것도 보이지 않기', '"없음" 한 단어', '열마다 다른 안내']}, mark: ['?', '질문', WARN], ai: '세 안을 화면에 그려 두고 답을 기다림'},
-  t437: {id: '#437', project: 'herdr-ide', title: '정렬 상태 기억', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '30분',
+  t437: {id: '#437', project: 'hide', title: '정렬 상태 기억', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '30분',
     summary: '고른 정렬을 다시 열어도 그대로 둔다',
     ask: {question: '카드가 틀림: 완료 조건이 #412와 겹칩니다', choices: ['AI 제안: #412에 합치기', '그대로 진행']}, mark: ['?', '질문', WARN], ai: '두 Task의 완료 조건을 비교하고 답을 기다림'},
 };
 const taskOf = key => TASKS[key] ?? OBS_TASKS[key];
-// The Factories: herdr-ide runs with 함께 and sasu, paused, with 맡김.
+// The Factories: hide runs with 함께 and sasu, paused, with 맡김.
 const OBS_FACTORIES = [
-  {project: 'herdr-ide', mode: 1, worker: '작업자 후보 3', paused: false},
+  {project: 'hide', mode: 1, worker: '작업자 후보 3', paused: false},
   {project: 'sasu', mode: 2, worker: '작업자 후보 1', paused: true},
 ];
 // The worker candidates: an agent, model and effort with a line the operator writes; the
@@ -285,7 +285,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         frame(`${id}-tab${i}`, label, {layout: 'horizontal', alignItems: 'center', height: 22, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-xs', ...(i === 0 ? {fill: '$--secondary'} : {})}, [text(`${id}-tab${i}-t`, label, {size: '$--text-body', weight: '500', fill: i === 0 ? FG : SUB})]))),
       frame(`${id}-g2`, 'Gap', {width: 1, height: 4}, []),
       placeRow(`${id}-home`, 'house', 'Home', [cap(`${id}-homen`, '3', MUT, {mono: true})], false),
-      placeRow(`${id}-p1`, 'folder-git-2', 'herdr-ide', [cap(`${id}-p1n`, '9', MUT, {mono: true}), icon(`${id}-p1c`, 'chevron-down', {size: 12, fill: MUT})], false),
+      placeRow(`${id}-p1`, 'folder-git-2', 'hide', [cap(`${id}-p1n`, '9', MUT, {mono: true}), icon(`${id}-p1c`, 'chevron-down', {size: 12, fill: MUT})], false),
       checkoutRow(`${id}-c0`, 'house', 'main', null, ''),
       checkoutRow(`${id}-c1`, 'git-branch', '412-board-sort', 'work', '2m'),
       checkoutRow(`${id}-c2`, 'git-branch', '415-sort-memory', 'work', '1m'),
@@ -472,7 +472,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
   function boardMain(id) {
-    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 1, count: needCount('herdr-ide'), scope: 'herdr-ide'}), boardBody(`${id}-board`)]);
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 1, count: needCount('hide'), scope: 'hide'}), boardBody(`${id}-board`)]);
   }
 
   // -- 같은 카드, 세 크기 ------------------------------------------------------------------------------
@@ -525,7 +525,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     const sasuY = unrelatedY + 2 * (NODE_H + rowGap) + 18;
     return frame(id, '그래프', {layout: 'none', width: MAIN, height: 'fill_container', clip: true}, [
       {...cap(`${id}-legend`, '노드를 누르면 그 Task 페이지가 열립니다 · 왼쪽 Task가 먼저 끝나야 합니다'), x: x0, y: 4},
-      {...text(`${id}-herdr`, 'herdr-ide', {size: '$--text-subhead', weight: '600'}), x: x0, y: 26},
+      {...text(`${id}-herdr`, 'hide', {size: '$--text-subhead', weight: '600'}), x: x0, y: 26},
       ...edges, ...nodes,
       {...rule(`${id}-rule`, MAIN - 2 * x0), x: x0, y: layered + 16},
       {...cap(`${id}-ut`, '관계 없는 Task', SUB, {weight: '500'}), x: x0, y: layered + 24},
@@ -555,7 +555,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ], {gap: '$--spacing-xxs', ...(disabled ? {opacity: DISABLED} : {})});
   }
   function githubLines(id) {
-    const lines = [['계정', 'octo-example'], ['저장소', 'example/herdr-ide'], ['읽기', 'factory 라벨이 붙은 issue와 PR 상태'], ['쓰기', 'factory 라벨 만들기']];
+    const lines = [['계정', 'octo-example'], ['저장소', 'example/hide'], ['읽기', 'factory 라벨이 붙은 issue와 PR 상태'], ['쓰기', 'factory 라벨 만들기']];
     return col(id, lines.map(([k, v], i) => row(`${id}-${i}`, [cap(`${id}-${i}-k`, k, MUT, {width: 40}), body(`${id}-${i}-v`, v, {mono: i < 2, fill: FG})], {gap: '$--spacing-md', alignItems: 'start'})), {gap: '$--spacing-xs'});
   }
   function commandLines(id) {
@@ -564,7 +564,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   // state: detecting (the engine is probing), ci (the detected required checks), commands (verify commands, each a checkbox), none (nothing detected, auto unavailable).
   function createDialog(id, state) {
     const body = [];
-    body.push(step(`${id}-sp`, '프로젝트', [screenSelect(`${id}-sel`, {content: 'herdr-ide', width: DIALOG_W - 2 * 16})]));
+    body.push(step(`${id}-sp`, '프로젝트', [screenSelect(`${id}-sel`, {content: 'hide', width: DIALOG_W - 2 * 16})]));
     if (state === 'detecting') {
       body.push(step(`${id}-sv`, '검증', [row(`${id}-dt`, [icon(`${id}-dg`, 'loader-circle', {size: 12, fill: MUT}), cap(`${id}-dtt`, '필수 체크와 verify 명령을 찾는 중')], {gap: '$--spacing-xs'})]));
     } else {
@@ -582,7 +582,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         : [screenRadioItem(`${id}-m0`, 'auto', true), screenRadioItem(`${id}-m1`, 'manual', false)]));
       body.push(step(`${id}-sg`, 'GitHub에서 하는 일', [githubLines(`${id}-gh`)]));
     }
-    const create = screenButton(`${id}-create`, state === 'detecting' ? 'Factory 만들기' : 'herdr-ide Factory 만들기');
+    const create = screenButton(`${id}-create`, state === 'detecting' ? 'Factory 만들기' : 'hide Factory 만들기');
     return screenDialogSurface(id, {
       width: DIALOG_W, title: 'Factory 만들기', body,
       actions: [screenButton(`${id}-cancel`, '취소', {variant: 'ghost'}), state === 'detecting' ? {...create, opacity: DISABLED} : create],
@@ -763,7 +763,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       ]),
     ]);
   }
-  function settingsMain(id, {project = 'herdr-ide', ...opts} = {}) {
+  function settingsMain(id, {project = 'hide', ...opts} = {}) {
     const all = project === null;
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [
       header(`${id}-hd`, all ? {active: 3} : {active: 3, count: needCount(project), scope: project, pause: 'off'}),
@@ -816,7 +816,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
           screenButton(`${id}-cancel`, '취소', {variant: 'ghost', height: controlSm}),
         ], {gap: '$--spacing-md', width: 'fill_container'}),
         body(`${id}-state`, '작업자 자리를 기다림', {fill: SUB}),
-        row(`${id}-meta`, [taskRef(`${id}-ref`, task.id), cap(`${id}-meta-t`, 'herdr-ide · 431-doc-links')], {gap: '$--spacing-xs', width: 'fill_container'}),
+        row(`${id}-meta`, [taskRef(`${id}-ref`, task.id), cap(`${id}-meta-t`, 'hide · 431-doc-links')], {gap: '$--spacing-xs', width: 'fill_container'}),
       ], {gap: 6, width: 'fill_container'}),
       trackWide(`${id}-track`, 1, MUT, {0: [['ai', '가정 1']]}, 720),
       col(`${id}-pick`, [
@@ -990,9 +990,9 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const loopBody = (id, children) => col(id, children, {gap: '$--spacing-sm', width: MAIN, padding: ['$--spacing-sm', GUTTER, '$--spacing-lg', GUTTER], name: '라인'});
 
   function loopLineMain(id) {
-    const items = NEEDS.filter(need => need.project === 'herdr-ide');
+    const items = NEEDS.filter(need => need.project === 'hide');
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical', clip: true}, [
-      header(`${id}-hd`, {active: 0, count: items.length, scope: 'herdr-ide', pause: 'off'}),
+      header(`${id}-hd`, {active: 0, count: items.length, scope: 'hide', pause: 'off'}),
       loopBody(`${id}-content`, [
         needHead(`${id}-nh`, items.length),
         ...items.map((need, i) => needItem(`${id}-n${i}`, need)),
@@ -1011,7 +1011,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       headMark(`${id}-mk2`, 'clock-3', 'GitHub 마지막으로 읽음 13:40', MUT, {dim: true}),
     ];
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical', clip: true}, [
-      header(`${id}-hd`, {active: 0, count: NEEDS_ALL.length, scope: 'herdr-ide', pause: 'off', marks}),
+      header(`${id}-hd`, {active: 0, count: NEEDS_ALL.length, scope: 'hide', pause: 'off', marks}),
       loopBody(`${id}-content`, [
         needHead(`${id}-nh`, NEEDS_ALL.length),
         ...NEEDS_ALL.map((need, i) => needItem(`${id}-n${i}`, need, {open: i === 0 || need === NEED_DISK})),
@@ -1022,7 +1022,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
   function loopEmptyMain(id) {
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [
-      header(`${id}-hd`, {active: 0, count: 0, scope: 'herdr-ide', pause: 'off'}),
+      header(`${id}-hd`, {active: 0, count: 0, scope: 'hide', pause: 'off'}),
       row(`${id}-e`, [
         icon(`${id}-e-g`, 'tag', {size: 14, fill: MUT}), body(`${id}-e-t`, '라벨을 붙인 이슈가 여기에 줄로 나타납니다', {fill: SUB}),
         frame(`${id}-e-l`, 'Label', {layout: 'horizontal', alignItems: 'center', height: 20, padding: [0, '$--spacing-sm'], cornerRadius: 10, stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [cap(`${id}-e-lt`, 'factory', SUB, {mono: true})]),
@@ -1037,7 +1037,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       bar(`${sid}-n`, [420, 360, 300][i]), spacer(`${sid}-s`), bar(`${sid}-a`, 48, 8),
     ]);
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [
-      header(`${id}-hd`, {active: 0, count: 0, scope: 'herdr-ide', pause: 'off', read: null}),
+      header(`${id}-hd`, {active: 0, count: 0, scope: 'hide', pause: 'off', read: null}),
       loopBody(`${id}-content`, [lineTable(`${id}-tb`, [0, 1, 2].map(i => skeleton(`${id}-sk${i}`, i)))]),
     ]);
   }
@@ -1206,25 +1206,25 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
 
   const id = name => `fx-${name}-${s}`;
-  // The sidebar when herdr-ide's 결정 필요 holds `count` items instead of the example data's.
-  const sideNeeds = count => sideFactories('herdr-ide').map(f => (f.project === 'herdr-ide' ? {...f, count} : f));
-  const board = windowFrame(id('board'), '보드', boardMain(id('board')), {height: BOARD_H, count: needCount('herdr-ide')});
+  // The sidebar when hide's 결정 필요 holds `count` items instead of the example data's.
+  const sideNeeds = count => sideFactories('hide').map(f => (f.project === 'hide' ? {...f, count} : f));
+  const board = windowFrame(id('board'), '보드', boardMain(id('board')), {height: BOARD_H, count: needCount('hide')});
   const sizes = sizesBody(id('sizes'));
   const graph = windowFrame(id('graph'), '그래프', graphMain(id('graph')));
   const none = windowFrame(id('none'), 'Factory 없음', noFactoryMain(id('none')), {height: 360, count: 0, secretary: false});
-  const loopLine = windowFrame(id('loop-line'), '라인', loopLineMain(id('loop-line')), {height: LOOP_LINE_H, count: needCount(), factories: sideFactories('herdr-ide')});
+  const loopLine = windowFrame(id('loop-line'), '라인', loopLineMain(id('loop-line')), {height: LOOP_LINE_H, count: needCount(), factories: sideFactories('hide')});
   const loopDecisions = windowFrame(id('loop-decisions'), '결정 필요 · 모든 종류', loopDecisionsMain(id('loop-decisions')), {height: LOOP_DECISIONS_H, count: NEEDS_ALL.length + needCount('sasu'), factories: sideNeeds(NEEDS_ALL.length)});
-  const loopTask = windowFrame(id('loop-task'), 'Task 페이지', loopTaskMain(id('loop-task')), {height: LOOP_TASK_H, count: needCount(), factories: sideFactories('herdr-ide')});
+  const loopTask = windowFrame(id('loop-task'), 'Task 페이지', loopTaskMain(id('loop-task')), {height: LOOP_TASK_H, count: needCount(), factories: sideFactories('hide')});
   const loopEmpty = windowFrame(id('loop-empty'), '라인 · Task 없음', loopEmptyMain(id('loop-empty')), {height: 300, count: needCount('sasu'), factories: sideNeeds(0)});
   const loopReading = windowFrame(id('loop-reading'), '라인 · 처음 읽는 중', loopReadingMain(id('loop-reading')), {height: 370, count: needCount('sasu'), factories: sideNeeds(0)});
-  const loopReadFail = windowFrame(id('loop-readfail'), 'Task 페이지 · 읽기 실패', loopReadFailMain(id('loop-readfail')), {height: 260, count: needCount(), factories: sideFactories('herdr-ide')});
-  const obsSettings = windowFrame(id('obs-set'), '설정 · herdr-ide', settingsMain(id('obs-set')), {height: 1160, count: needCount(), factories: sideFactories('herdr-ide')});
+  const loopReadFail = windowFrame(id('loop-readfail'), 'Task 페이지 · 읽기 실패', loopReadFailMain(id('loop-readfail')), {height: 260, count: needCount(), factories: sideFactories('hide')});
+  const obsSettings = windowFrame(id('obs-set'), '설정 · hide', settingsMain(id('obs-set')), {height: 1160, count: needCount(), factories: sideFactories('hide')});
   const obsCards = obsCardsBody(id('obs-cards'));
-  const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 1100, count: needCount(), factories: sideFactories('herdr-ide')});
+  const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 1100, count: needCount(), factories: sideFactories('hide')});
   const obsAll = windowFrame(id('obs-all'), '설정 · 모든 프로젝트', settingsMain(id('obs-all'), {project: null}), {height: 640, count: needCount(), factories: sideFactories(null)});
-  const obsDirect = windowFrame(id('obs-direct'), '설정 · 직접 · 고급 설정', settingsMain(id('obs-direct'), {mode: 0, workers: WORKERS.slice(0, 1), advanced: true}), {height: 2290, count: needCount(), factories: sideFactories('herdr-ide')});
-  const obsAuto = windowFrame(id('obs-auto'), '설정 · 맡김 · 후보 다섯', settingsMain(id('obs-auto'), {mode: 2, workers: WORKERS_FULL, used: 100}), {height: 1340, count: needCount(), factories: sideFactories('herdr-ide')});
-  const obsPick = windowFrame(id('obs-pick'), 'Task 페이지 · 작업자 고르기', obsPickMain(id('obs-pick')), {count: needCount(), factories: sideFactories('herdr-ide')});
+  const obsDirect = windowFrame(id('obs-direct'), '설정 · 직접 · 고급 설정', settingsMain(id('obs-direct'), {mode: 0, workers: WORKERS.slice(0, 1), advanced: true}), {height: 2290, count: needCount(), factories: sideFactories('hide')});
+  const obsAuto = windowFrame(id('obs-auto'), '설정 · 맡김 · 후보 다섯', settingsMain(id('obs-auto'), {mode: 2, workers: WORKERS_FULL, used: 100}), {height: 1340, count: needCount(), factories: sideFactories('hide')});
+  const obsPick = windowFrame(id('obs-pick'), 'Task 페이지 · 작업자 고르기', obsPickMain(id('obs-pick')), {count: needCount(), factories: sideFactories('hide')});
 
   return [
     col(id('frames'), [

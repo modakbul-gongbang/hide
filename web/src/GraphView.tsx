@@ -603,7 +603,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
 
 /**
  * A delegation into or from another project (issue 718): `→ sasu 2` on the
- * parent's row, `← herdr-ide` on the child's, with the other end's device when
+ * parent's row, `← hide` on the child's, with the other end's device when
  * it is not this row's. The tooltip and the accessible name name the agents
  * at the other end, and the click goes to the box that holds them.
  */

@@ -80,7 +80,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         caption(`${id}-tab-sessions`,'세션','$--foreground',{weight:'600'}),caption(`${id}-tab-explorer`,'Explorer'),caption(`${id}-tab-history`,'History'),
       ]),
       frame(`${id}-scope`,'Project and checkout scope',{width:'fill_container',layout:'horizontal',gap:8,padding:[8,12],alignItems:'center'},[
-        caption(`${id}-project`,'herdr-ide','$--foreground',{weight:'600',width:'fill_container'}),
+        caption(`${id}-project`,'hide','$--foreground',{weight:'600',width:'fill_container'}),
         screenBadge(`${id}-all`,'모든 체크아웃'),screenBadge(`${id}-front`,'main만',{variant:'outline'}),
       ]),
       group('needs','Needs You',[

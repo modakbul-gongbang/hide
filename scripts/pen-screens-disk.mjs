@@ -178,7 +178,7 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
       frame(`en-${kind}-title-${s}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
         text(`en-${kind}-c1-${s}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
         text(`en-${kind}-c2-${s}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`en-${kind}-c3-${s}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
+        text(`en-${kind}-c3-${s}`, 'hide', {size: '$--text-headline', weight: '600'}),
       ]),
       frame(`en-${kind}-facts-${s}`, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts),
       ...(kind === 'low' ? [] : [frame(`en-${kind}-tipwrap-${s}`, 'Tooltip anchor', {padding: [0, 0, 0, 96]}, [breakdown(`en-${kind}-tip-${s}`, size, partial)])]),

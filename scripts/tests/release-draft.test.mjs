@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { createGitHubClient, prepareDraft } from "../release-draft.mjs";
+import { createGitHubClient, prepareDraft, publishDraft } from "../release-draft.mjs";
 
 const tag = "v1.2.3";
 const sha = "1".repeat(40);
@@ -29,7 +29,7 @@ async function fixture(t, options = {}) {
   const state = {
     release: options.release ? structuredClone(options.release) : null,
     assets: options.assets ? structuredClone(options.assets) : [],
-    requests: [], writes: [], assetGets: 0,
+    requests: [], writes: [], assetGets: 0, publications: [],
   };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://fixture.invalid");
@@ -54,6 +54,11 @@ async function fixture(t, options = {}) {
       if ("target_commitish" in payload) return answer(403, { message: "Resource not accessible by integration" });
       state.release = { ...payload, id: 7 };
       return answer(201, state.release);
+    }
+    if (route === "/releases/7" && req.method === "PATCH") {
+      state.publications.push(JSON.parse(bytes));
+      state.release = { ...state.release, draft: false };
+      return answer(200, { ...state.release, ...options.publishAnswer });
     }
     if (route === "/releases/7" && req.method === "GET") {
       if (options.publishBeforeRead) state.release.draft = false;
@@ -81,7 +86,7 @@ async function fixture(t, options = {}) {
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://127.0.0.1:${server.address().port}`;
   const client = createGitHubClient({ repository: "example/project", writeToken: "fixture-write", fetchImpl: (url, opts) => fetch(`${base}${new URL(url).pathname}${new URL(url).search}`, opts) });
-  return { state, directory, files, run: () => prepareDraft({ tag, sha, directory, client }) };
+  return { state, directory, files, run: () => prepareDraft({ tag, sha, directory, client }), publish: () => publishDraft({ tag, sha, directory, client }) };
 }
 
 const draft = () => ({ id: 7, tag_name: tag, body: marker, draft: true, prerelease: false });
@@ -155,4 +160,32 @@ test("moved tag, wrong release ID and incomplete local package fail; annotated t
   assert.deepEqual(local.state.requests, []);
   const annotated = await fixture(t, { annotated: true });
   assert.equal((await annotated.run()).assets, 6);
+});
+
+test("a complete verified draft is published once, as the latest, after its last read", async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.publish(), { id: 7, tag, assets: 6 });
+  assert.deepEqual(f.state.publications, [{ draft: false, make_latest: "true" }]);
+  assert.deepEqual(f.state.writes.at(-1), { method: "PATCH", route: "/releases/7" });
+  assert.equal(f.state.writes.filter((r) => r.method === "PATCH").length, 1);
+  assert.equal(f.state.release.draft, false);
+});
+
+test("a moved tag, an incomplete package or differing remote bytes publish nothing", async (t) => {
+  const moved = await fixture(t, { tagSha: "2".repeat(40) });
+  await assert.rejects(moved.publish());
+  assert.deepEqual(moved.state.publications, []);
+  const local = await fixture(t);
+  await fs.unlink(path.join(local.directory, names[1]));
+  await assert.rejects(local.publish());
+  assert.deepEqual(local.state.requests, []);
+  const differing = await fixture(t, { release: draft(), assets: [{ name: names[0], size: 1, state: "uploaded", digest: digest(Buffer.from("x")) }] });
+  await assert.rejects(differing.publish());
+  assert.deepEqual(differing.state.publications, []);
+});
+
+test("an answer that is not the verified release, published, fails the run", async (t) => {
+  const f = await fixture(t, { publishAnswer: { draft: true } });
+  await assert.rejects(f.publish(), /not the verified release, published/);
+  assert.equal(f.state.publications.length, 1);
 });

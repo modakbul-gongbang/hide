@@ -10919,7 +10919,7 @@
             "jb7mF": {
               "enabled": true,
               "width": "fill_container",
-              "content": "herdr-ide · main"
+              "content": "hide · main"
             }
           }
         },
@@ -13661,7 +13661,7 @@
               "name": "Row / Narrow",
               "descendants": {
                 "JkPyX": {
-                  "content": "herdr-ide-sidebar-rea…"
+                  "content": "hide-sidebar-rea…"
                 },
                 "project-question": {
                   "enabled": true
@@ -16219,7 +16219,7 @@
                   "textGrowth": "fixed-width-height",
                   "width": "fill_container(0)",
                   "height": 16,
-                  "content": "herdr-ide › main",
+                  "content": "hide › main",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal"
@@ -36203,11 +36203,11 @@
                         {
                           "type": "text",
                           "id": "pr-card-path",
-                          "name": "~/projects/herdr-ide.worktre",
+                          "name": "~/projects/hide.worktre",
                           "fill": "$--muted-foreground",
                           "textGrowth": "fixed-width",
                           "width": 276,
-                          "content": "~/projects/herdr-ide.worktrees/electron-shortcut-bindings",
+                          "content": "~/projects/hide.worktrees/electron-shortcut-bindings",
                           "fontFamily": "$--font-mono",
                           "fontSize": "$--text-caption",
                           "fontWeight": "normal"
@@ -36305,7 +36305,7 @@
                   "content": "3h ago"
                 },
                 "pr-card-path": {
-                  "content": "~/projects/herdr-ide.worktrees/agent-sleep"
+                  "content": "~/projects/hide.worktrees/agent-sleep"
                 }
               }
             }
@@ -36372,7 +36372,7 @@
                   "content": "25m ago"
                 },
                 "pr-card-path": {
-                  "content": "~/projects/herdr-ide.worktrees/task-agents-views"
+                  "content": "~/projects/hide.worktrees/task-agents-views"
                 }
               }
             }
@@ -36432,7 +36432,7 @@
                   "content": "2d ago"
                 },
                 "pr-card-path": {
-                  "content": "~/projects/herdr-ide.worktrees/web-scope-navigation"
+                  "content": "~/projects/hide.worktrees/web-scope-navigation"
                 }
               }
             }
@@ -36490,7 +36490,7 @@
                   "content": "5h ago"
                 },
                 "pr-card-path": {
-                  "content": "~/projects/herdr-ide.worktrees/design-workspace-ux"
+                  "content": "~/projects/hide.worktrees/design-workspace-ux"
                 }
               }
             }
@@ -36548,7 +36548,7 @@
                   "enabled": false
                 },
                 "pr-card-path": {
-                  "content": "~/projects/herdr-ide.worktrees/legacy-shell"
+                  "content": "~/projects/hide.worktrees/legacy-shell"
                 }
               }
             }
@@ -38961,7 +38961,7 @@
                       "icon": "arrow-left"
                     },
                     "agb-row2-cross-p": {
-                      "content": "herdr-ide"
+                      "content": "hide"
                     },
                     "agb-row2-cross-n": {
                       "enabled": false,
@@ -40216,7 +40216,7 @@
                       "icon": "arrow-left"
                     },
                     "agb-row2-cross-p": {
-                      "content": "herdr-ide"
+                      "content": "hide"
                     },
                     "agb-row2-cross-n": {
                       "enabled": false,

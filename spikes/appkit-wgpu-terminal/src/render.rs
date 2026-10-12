@@ -87,7 +87,7 @@ impl Renderer {
             ));
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Herdr IDE native spike device"),
+            label: Some("Hide native spike device"),
             ..wgpu::DeviceDescriptor::default()
         }))
         .context("stage=wgpu.device target=Metal retryable=false")?;
@@ -120,7 +120,7 @@ impl Renderer {
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shape.wgsl"));
         let shape_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Herdr IDE native spike shape pipeline"),
+            label: Some("Hide native spike shape pipeline"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -297,7 +297,7 @@ impl Renderer {
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Herdr IDE native spike UI rectangles"),
+                label: Some("Hide native spike UI rectangles"),
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
@@ -309,7 +309,7 @@ impl Renderer {
         set_text(
             &mut self.navigator_text,
             &mut self.font_system,
-            "HERDR IDE\n\nWORKSPACES\n● local\n  native-spike\n\nAGENTS\n  terminal / PTY\n\nWORKTREES\n  rust-native",
+            "HIDE\n\nWORKSPACES\n● local\n  native-spike\n\nAGENTS\n  terminal / PTY\n\nWORKTREES\n  rust-native",
             navigator_width - 28.0,
             height - 28.0,
         );
@@ -490,11 +490,11 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Herdr IDE native spike frame"),
+                label: Some("Hide native spike frame"),
             });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Herdr IDE native spike render pass"),
+                label: Some("Hide native spike render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,

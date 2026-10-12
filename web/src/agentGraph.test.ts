@@ -387,7 +387,7 @@ describe("All projects", () => {
 });
 
 describe("across projects (issue 718)", () => {
-  const ide = () => workspace([checkout("ide-main", { primary: true, tabs: [["lead", "helper"]] })], "herdr-ide");
+  const ide = () => workspace([checkout("ide-main", { primary: true, tabs: [["lead", "helper"]] })], "hide");
   const sasu = () => workspace([checkout("sasu-main", { primary: true, tabs: [["s1"]] }), checkout("sasu-wt", { tabs: [["s2"]] })], "sasu");
   const docs = () => workspace([checkout("docs-main", { primary: true, tabs: [["d1"]] })], "docs");
   const agents = () => [agent("lead", { ...WORKING, identity_label: "Lead" }), child("helper", "lead"), child("s1", "lead", { ...WORKING, identity_label: "Spec" }), child("s2", "lead", { ...WORKING, identity_label: "Build" }), child("d1", "lead", { identity_label: "Docs" })];
@@ -402,7 +402,7 @@ describe("across projects (issue 718)", () => {
       ["out", "sasu", ["Build", "Spec"], "sasu-wt", null],
       ["out", "docs", ["Docs"], "docs-main", null],
     ]);
-    expect(row(board, "s1").cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box])).toEqual([["in", "herdr-ide", ["Lead"], "ide-main"]]);
+    expect(row(board, "s1").cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box])).toEqual([["in", "hide", ["Lead"], "ide-main"]]);
     // The projects stand in the order of their most urgent agent, not the order the snapshot lists them.
     expect(row(graph(projects().reverse(), { scope: "all" }), "lead").cross.map((chip) => chip.project.id)).toEqual(["sasu", "docs"]);
     // A delegation inside the project keeps its indent and has no chip.
@@ -421,7 +421,7 @@ describe("across projects (issue 718)", () => {
   it("pairs ends across devices by the pane id the core names per device, and names the other end's device", () => {
     const remote = workspace([checkout("remote:mini:checkout:1", { primary: true, tabs: [["remote:mini:pane:p1"]] })], "remote:mini:sasu");
     remote.device_id = "mini";
-    const local = workspace([checkout("local-main", { primary: true, tabs: [["p1", "p2"]] })], "herdr-ide");
+    const local = workspace([checkout("local-main", { primary: true, tabs: [["p1", "p2"]] })], "hide");
     const localAgents = [agent("p1", { ...WORKING, identity_label: "Local lead" }), agent("p2", WORKING)];
     const remoteAgents = [child("remote:mini:pane:p1", "p1", { ...WORKING, identity_label: "Remote child" })];
     const all: BoardProject[] = [
@@ -430,7 +430,7 @@ describe("across projects (issue 718)", () => {
     ];
     const board = graph(all, { scope: "all" });
     expect(row(board, "p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["out", "remote:mini:sasu", "mini"]]);
-    expect(row(board, "remote:mini:pane:p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", "herdr-ide", THIS_DEVICE]]);
+    expect(row(board, "remote:mini:pane:p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", "hide", THIS_DEVICE]]);
     expect(row(board, "p2").cross).toEqual([]);
   });
 
@@ -455,7 +455,7 @@ describe("across projects (issue 718)", () => {
 
   it("selects a box on All projects only in the section that draws it", () => {
     const board = graph(projects(), { scope: "all", selectedBox: "sasu-wt" });
-    expect(Object.fromEntries(board.sections.map((section) => [section.project.id, section.selected]))).toEqual({ "herdr-ide": null, sasu: "sasu-wt", docs: null });
+    expect(Object.fromEntries(board.sections.map((section) => [section.project.id, section.selected]))).toEqual({ "hide": null, sasu: "sasu-wt", docs: null });
   });
 
   it("names the fold line that holds a box, so a chip can open it", () => {
