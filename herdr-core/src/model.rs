@@ -2619,9 +2619,9 @@ pub enum MemoryQuestionSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryStartFailure {
     pub code: MemoryStartFailureCode,
-    /// The last line the new pane's shell showed for `shell_starting`, or the
-    /// answer's own words for `other`; at most
-    /// [`MemoryStartFailure::DETAIL_CHARS`] characters.
+    /// The last line the new pane's shell showed for `shell_starting`, at
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters; the other
+    /// answers' words are the diagnostic log's (`promotion.start_failed`).
     pub detail: Option<String>,
 }
 
@@ -2651,13 +2651,13 @@ impl MemoryStartFailure {
                 code: MemoryStartFailureCode::ShellStarting,
                 detail: detail.and_then(short),
             },
-            ("agent_not_started", _) => Self {
-                code: MemoryStartFailureCode::AgentNotStarted,
+            (code, _) => Self {
+                code: if code == "agent_not_started" {
+                    MemoryStartFailureCode::AgentNotStarted
+                } else {
+                    MemoryStartFailureCode::Other
+                },
                 detail: None,
-            },
-            (other, _) => Self {
-                code: MemoryStartFailureCode::Other,
-                detail: short(other),
             },
         }
     }
@@ -5400,7 +5400,7 @@ mod memory_start_failure_tests {
             MemoryStartFailure::of("agent_not_installed"),
             MemoryStartFailure {
                 code: MemoryStartFailureCode::Other,
-                detail: Some("agent_not_installed".to_owned()),
+                detail: None,
             }
         );
     }
