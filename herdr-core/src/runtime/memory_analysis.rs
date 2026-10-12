@@ -665,6 +665,24 @@ impl Runtime {
                 state,
                 card,
             } => {
+                // An empty queue can release an earlier budget hold. It does
+                // not create idle work or erase a provider's failure state.
+                if state == MemoryAnalysisState::Idle
+                    && card.is_none()
+                    && !self
+                        .memory_work
+                        .projects
+                        .get(&project_id)
+                        .is_some_and(|work| {
+                            matches!(
+                                work.analysis,
+                                MemoryAnalysisState::Checking
+                                    | MemoryAnalysisState::CheckBudgetExhausted
+                            )
+                        })
+                {
+                    return false;
+                }
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = state;
                 project.checking_card = card;
@@ -1214,6 +1232,11 @@ fn maintain_cards(
         }
     };
     if !due {
+        report(PassReport::CheckState {
+            project_id: project_id.to_owned(),
+            state: MemoryAnalysisState::Idle,
+            card: None,
+        });
         return;
     }
     outcome.wants_usage = true;
@@ -2994,6 +3017,19 @@ mod tests {
                 .unwrap()
                 .verifying
         );
+        // The last attempt's per-card cooldown outlives a UTC reset. With
+        // no check due, the earlier daily hold must stop saying "today".
+        fixture
+            .store()
+            .begin_verification(&card.id, now_ms())
+            .unwrap();
+        fixture.check_states.borrow_mut().clear();
+        fixture.pass(true, false, WeeklyUsage::Unknown);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [(MemoryAnalysisState::Idle, None)]
+        );
+        assert_eq!(fixture.calls(), 0);
     }
 
     #[test]
