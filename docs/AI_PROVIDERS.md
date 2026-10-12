@@ -253,6 +253,14 @@ The queue's terms are one request in flight, intake reviews before every other j
 Each request has a 180 second deadline and a schema version, and the router keeps its default caps.
 Because the routers are independent, they share the account's usage and the machine's CPU but not a queue; label latency has to be measured with a Factory running under load before the two are called independent.
 
+## Usage capability declarations
+
+`hide-agent-adapter/src/usage.rs` declares all nine usage cells for every adapter: four limit scopes, tokens, cost, model breakdown, session attribution and project attribution.
+Every unsupported cell names its reason and the condition that would change it; `NotBuilt { layer }` is refused by the contract test once that layer ships.
+`UsageDeclaration::cells()` destructures every field exhaustively and is the source of `contracts/usage-coverage.json`; `export_usage_coverage` regenerates that contract, while `export_web_contract` includes the same declaration in the shell's adapter catalog.
+The independent `hide-agent-adapter/tests/fixtures/support.json` matrix pins the expected support for all seven agents.
+Consumption remains unbuilt in layers 1 and 2.
+
 ## Weekly usage display
 
 The sidebar footer's Weekly Usage chips and popover ([UI_BEHAVIOR.md: Weekly usage](UI_BEHAVIOR.md#weekly-usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.

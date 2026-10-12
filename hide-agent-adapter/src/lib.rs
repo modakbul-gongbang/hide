@@ -5,6 +5,7 @@
 //! and static rows: no allocation, lock, normalization buffer or cache.
 
 mod declarations;
+pub mod usage;
 pub use declarations::ADAPTERS;
 mod web;
 pub use web::{HookKind, WebAdapter, web_contract};
@@ -436,6 +437,7 @@ pub struct AgentAdapter {
     pub start: Option<LaunchDialect>,
     pub find: Option<FindDialect>,
     pub usage: Option<UsageDialect>,
+    pub usage_declaration: usage::UsageDeclaration,
     pub doc_url: &'static str,
     pub install_url: &'static str,
     pub logo_id: &'static str,

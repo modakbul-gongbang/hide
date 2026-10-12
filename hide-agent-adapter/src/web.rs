@@ -2,6 +2,7 @@
 
 #[derive(serde::Serialize)]
 pub struct WebAdapter {
+    pub usage: super::usage::UsageDeclaration,
     pub id: &'static str,
     pub aliases: &'static [&'static str],
     pub label: &'static str,
@@ -31,6 +32,7 @@ pub enum HookKind {
 
 pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
     super::ADAPTERS.iter().map(|row| WebAdapter {
+        usage: row.usage_declaration,
         id: row.id,
         aliases: row.aliases,
         label: row.label,
