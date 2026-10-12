@@ -183,6 +183,57 @@ The guard sees only this app, so a spec that could reach another program (a brow
 A spec that needs the key window or native input (a page holding the keyboard, a pinch, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself, a browser page through `focusPage` once the host shows that page, which gives the page the keyboard only after the window's `focus` event says macOS made it the key window; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.
 The suite runs the focus tests after every other one (`desktop/playwright.config.ts` puts them in a project that depends on the rest): a focus test brings its app forward and quits it, and on a machine with no other app in front, a CI runner, macOS then activates the next app that opens, which failed every background test after the first focus test.
 
+## Developer ID signing
+
+A release's macOS app is signed with the team's Developer ID Application certificate and notarized with an App Store Connect team API key.
+Both belong to the Apple Developer Program membership of the team that owns the certificate.
+The account holder keeps the private key, the `.p12` export and the `.p8` key outside the repository, with a backup; the five `release` environment secrets that carry them to CI are listed in [CONTRIBUTING.md](../CONTRIBUTING.md#releases).
+`package.yml`'s macOS job imports the `.p12` into a keychain of its own, requires exactly one `Developer ID Application` identity in it, writes the `.p8` to a temporary file, and deletes both when the job ends.
+
+### What expires
+
+- The membership renews every year.
+  If it lapses, Apple stops notarizing, so a release fails at the macOS package; apps already released keep installing and opening.
+- The certificate is valid for about five years; `security find-certificate -c "Developer ID Application" -p | openssl x509 -noout -enddate` on the account holder's Mac prints when it ends.
+  An app signed while the certificate was valid keeps opening after it expires; only new builds need the new one.
+- The API key does not expire; it ends when it is revoked in App Store Connect.
+
+Never revoke a certificate that signed a release unless its private key leaked: Apple then refuses every app signed with it, including copies already installed.
+Let a replaced certificate expire instead; Apple lets a team create up to five Developer ID Application certificates.
+
+### Replacing the certificate
+
+Do this before the certificate expires, or at once if its private key may have leaked.
+
+1. `openssl req -new -newkey rsa:2048 -nodes -keyout developer-id.key -out developer-id.csr -subj "/emailAddress=<account email>/CN=<team name>/C=<country>"` makes a new private key and its signing request.
+2. In Certificates, Identifiers & Profiles, with the team selected, create a Developer ID Application certificate on the G2 Sub-CA from `developer-id.csr`, and download it as `developer-id.cer`; download the Developer ID G2 intermediate, `DeveloperIDG2CA.cer`, from Apple's certificate authority page.
+3. Convert both to PEM with `openssl x509 -inform DER -in <name>.cer -out <name>.pem`, then bundle the key with them under a new password: `openssl pkcs12 -export -inkey developer-id.key -in developer-id.pem -certfile DeveloperIDG2CA.pem -name "Developer ID Application: <team name> (<team id>)" -out developer-id.p12`.
+4. From the checkout, `base64 -i developer-id.p12 | gh secret set MACOS_DEVELOPER_ID_P12 --env release`, then `gh secret set MACOS_DEVELOPER_ID_P12_PASSWORD --env release` and paste the password at its prompt, so it never reaches shell history.
+5. Import the `.p12` into a keychain on the search list and prove the pair with [a local Developer ID build](#a-local-developer-id-build) before the next tag.
+6. Back up the new key, `.p12` and password with the old ones.
+
+### Replacing the notary key
+
+1. In App Store Connect, Users and Access, Integrations, App Store Connect API, Team Keys, generate a key with the Developer role and download its `.p8`; Apple offers that download once.
+2. `gh secret set APPLE_NOTARY_KEY_P8 --env release < AuthKey_<key id>.p8`, then the key ID into `APPLE_NOTARY_KEY_ID`; the issuer ID on the same page goes into `APPLE_NOTARY_ISSUER_ID` and changes only with the team.
+3. Revoke the old key once a local Developer ID build has notarized with the new one.
+
+### A local Developer ID build
+
+On a Mac whose keychain holds the certificate with its private key, `security find-identity -v -p codesigning` lists the identity's full name, and this builds, signs and notarizes the release app:
+
+```sh
+HIDE_VERSION=<version> HIDE_MACOS_SIGNING=developer-id \
+HIDE_SIGN_IDENTITY="Developer ID Application: <team name> (<team id>)" \
+HIDE_NOTARY_KEY_PATH=<absolute path to the .p8> HIDE_NOTARY_KEY_ID=<key id> HIDE_NOTARY_ISSUER=<issuer id> \
+pnpm --dir desktop package
+```
+
+`desktop/scripts/macos-signing.mjs` refuses before the build when a value is missing or malformed, the identity is in no keychain on the search list, or `notarytool` is not installed.
+Apple usually answers within minutes; the run leaves no archive unless Apple accepts the app and Gatekeeper accepts the app expanded from the archive as notarized.
+`xcrun notarytool history` lists past submissions and `xcrun notarytool log <submission id>` says why one was refused, each with `--key`, `--key-id` and `--issuer` given the same three values.
+The command installs nothing; [The Installed App Is The Operator's](../AGENTS.md#the-installed-app-is-the-operators) governs replacing `/Applications/hide.app` with what it built.
+
 ## Release asset gate
 
 The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
