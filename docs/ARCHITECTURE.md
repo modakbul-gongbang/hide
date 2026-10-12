@@ -755,6 +755,11 @@ It answers through hided's own core without a renderer, scoped by default to the
 
 ## Historical usage accounting
 
+`Call::UsageFiles` lists native candidates and `Call::UsageRead` returns one bounded, content-free usage step through the node boundary.
+Both require the live link's independently advertised `ReaderFeature::Usage`; the node repeats that check before dispatch.
+This optional reader adds no protocol-version requirement: an older peer grants no usage reader and is refused before a call is sent.
+Cursor grants none, and protocol 24's frozen reader facts remain unchanged.
+
 `usage_ledger::store` owns `usage.sqlite3`, named by `hide_kit::layout::usage_store` under the core state directory.
 Normalized usage events contain native call identity, model, time, session, working folder, provider, tokens and recorded cost, with no conversation fields.
 An ingestion transaction adds a new call and its daily `(native node, agent, local day, model)` totals together with the file checkpoint; repeated calls add nothing, and changed completed calls keep the first accounting value and report a count-only conflict.

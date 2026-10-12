@@ -1178,6 +1178,26 @@ pub fn handle_with_progress(
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
         }
+        Call::UsageFiles {
+            agent,
+            since_unix_ms,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let candidates = hide_session::usage::list(Path::new(&home), agent, since_unix_ms)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(candidates)
+        }
+        Call::UsageRead {
+            agent,
+            path,
+            checkpoint,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let step =
+                hide_session::usage::read(Path::new(&home), agent, Path::new(&path), checkpoint)
+                    .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(step)
+        }
         Call::SessionIndexRead {
             agent: hide_session::Agent::OpenCode,
             path,

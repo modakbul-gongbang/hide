@@ -522,6 +522,20 @@ pub enum Call {
     LinkRead {
         requests: Vec<hide_session::links::ReadRequest>,
     },
+    /// Content-free usage candidates from this node's native agent roots.
+    /// Requires the independently advertised `Usage` reader feature.
+    UsageFiles {
+        agent: hide_session::Agent,
+        since_unix_ms: u64,
+    },
+    /// One bounded usage step; the core owns the durable checkpoint and
+    /// ledger. This never returns conversation records.
+    UsageRead {
+        agent: hide_session::Agent,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::usage::Checkpoint>,
+    },
     /// One bounded read of a session file for the core's search index, on
     /// from what the index saved (`hide_session::search_read::read_step`);
     /// the answer is a `hide_session::search::IndexStep`.
@@ -761,6 +775,8 @@ impl Call {
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }
+            | Self::UsageFiles { .. }
+            | Self::UsageRead { .. }
             | Self::SessionIndexRead { .. }
             | Self::SessionStamps { .. }
             | Self::ProjectSessions { .. }
