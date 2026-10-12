@@ -793,7 +793,10 @@ async fn connect_with_limit(
             let request = "ws://node/ws"
                 .into_client_request()
                 .map_err(|_| "hide_unavailable".to_owned())?;
-            (request, Box::pin(node_stream(&socket)?))
+            (
+                request,
+                Box::pin(node_stream(&socket, Some(&reference.token))?),
+            )
         }
     };
     let config = response_limit.map(|limit| {
@@ -819,14 +822,15 @@ fn node_socket(wire: &str) -> Option<PathBuf> {
 /// async stream. The node's local stream blocks, so two threads move its
 /// bytes through an in-memory pipe; each ends when its side does, and the
 /// first to end closes the node's stream, which ends the other.
-fn node_stream(socket: &Path) -> Result<tokio::io::DuplexStream, String> {
+fn node_stream(socket: &Path, token: Option<&str>) -> Result<tokio::io::DuplexStream, String> {
     let stream = LocalStream::connect(socket).map_err(|_| UNREACHABLE.to_owned())?;
     let _ = stream.set_write_timeout(Some(TIMEOUT));
     stream
         .set_read_timeout(None)
         .map_err(|_| "hide_unavailable".to_owned())?;
     let mut writer = stream.duplicate();
-    writeln!(writer, "{}", json!({"stream": true})).map_err(|_| UNREACHABLE.to_owned())?;
+    writeln!(writer, "{}", json!({"stream": true, "token": token}))
+        .map_err(|_| UNREACHABLE.to_owned())?;
     let (ours, theirs) = tokio::io::duplex(hide_node_link::panes::MAX_CHUNK);
     let (mut outgoing, mut incoming) = tokio::io::split(theirs);
     let runtime = tokio::runtime::Handle::current();
@@ -1093,7 +1097,7 @@ mod tests {
                 .unwrap();
             let socket = node_socket(&started.socket).unwrap();
             runtime.block_on(async {
-                let mut stream = node_stream(&socket).unwrap();
+                let mut stream = node_stream(&socket, None).unwrap();
                 stream.write_all(b"ping").await.unwrap();
                 let opened = next_event(&lines);
                 assert_eq!(opened["event"], "stream_open");

@@ -99,7 +99,7 @@ pub enum NodeEvent {
 }
 
 /// Who opened a stream, as the node proved it when the stream opened: the
-/// process holding a one-shot credential the node issued for `pane_id`,
+/// process using a credential the node issued for `pane_id`,
 /// descended from that pane's shell, whose identity the node read from its
 /// Herdr then. The core checks the stream's command against it rather than
 /// asking [`crate::protocol::Call::PaneInspect`], and only for a credential

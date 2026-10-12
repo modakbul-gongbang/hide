@@ -177,6 +177,7 @@ impl NodePanes {
             node: node.clone(),
             link: link.clone(),
             caller,
+            received: std::time::Instant::now(),
         });
         self.runtime
             .spawn(serve_stream(state, node, link, stream, attested, receiver));

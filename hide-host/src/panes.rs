@@ -367,7 +367,7 @@ impl Panes {
         })();
         match first {
             Ok(request) if request.get("stream") == Some(&Value::Bool(true)) => {
-                self.serve_stream(stream, output)
+                self.serve_stream(stream, request.get("token").and_then(Value::as_str), output)
             }
             Ok(request) => self.serve_bootstrap(stream, request, output),
             Err(reason) => {
@@ -530,7 +530,7 @@ impl Panes {
         }
     }
 
-    fn serve_stream(&self, stream: LocalStream, output: &Mutex<impl Write>) {
+    fn serve_stream(&self, stream: LocalStream, token: Option<&str>, output: &Mutex<impl Write>) {
         if stream.set_read_timeout(None).is_err() {
             return;
         }
@@ -556,7 +556,7 @@ impl Panes {
                 },
             );
         }
-        let caller = self.stream_caller(&stream);
+        let caller = self.stream_caller(&stream, token);
         let mut reader = stream;
         if write_event(output, &NodeEvent::StreamOpen { stream: id, caller }).is_ok() {
             let mut buffer = vec![0_u8; MAX_CHUNK];
@@ -579,18 +579,28 @@ impl Panes {
     }
 
     /// What the node proves about the process that opened a stream: the
-    /// holder of a one-shot credential issued here for a pane, still
+    /// holder of a credential issued here for a pane, still
     /// descended from that pane's shell as its Herdr answers now, the same
     /// checks a bootstrap makes. `None` when the peer holds no such
     /// credential or the pane no longer answers for it; the core then asks
     /// `Call::PaneInspect` for the stream's command, as it always did.
-    fn stream_caller(&self, stream: &LocalStream) -> Option<StreamCaller> {
+    fn stream_caller(&self, stream: &LocalStream, token: Option<&str>) -> Option<StreamCaller> {
         let started = self.started.get()?;
         let peer = i32::try_from(stream.peer_pid().ok()?).ok()?;
         let holder = (peer, pane_peer::process_start(peer)?);
         let pane_id = lock(&self.issued)
             .values()
-            .find(|reference| reference.holder == Some(holder))?
+            .find(|reference| match token {
+                // The token only selects a reference this node issued. It
+                // never replaces the kernel peer and current pane proof.
+                Some(token) => {
+                    reference.token == token
+                        && reference.holder.is_none_or(|issued| issued == holder)
+                }
+                // Existing clients send no token; their one-shot holder
+                // remains enough to select their own reference.
+                None => reference.holder == Some(holder),
+            })?
             .pane_id
             .clone()?;
         let identity = pane_peer::inspect(&started.herdr_socket, &pane_id).ok()?;

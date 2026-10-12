@@ -1257,8 +1257,8 @@ impl hide_node::ssh::PaneEvents for IssuingEvents {
 /// A stream opens naming its caller when the caller holds a one-shot
 /// credential the device's node issued for a pane, with that pane's
 /// identity as the node reads it then, so the core need not ask the node
-/// again; a caller holding only a lasting credential opens a stream that
-/// names no one, and the core asks as before.
+/// again. A lasting credential names its token in the local prelude, but
+/// the node still proves the peer against the pane it issued that token for.
 #[test]
 fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
     use std::io::Write;
@@ -1268,9 +1268,9 @@ fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
     let sockets = pane_sockets(&device.state);
     assert_eq!(sockets.len(), 1, "{sockets:?}");
     let socket = &sockets[0];
-    let open = |count: usize| {
+    let open = |count: usize, token: Option<&str>| {
         let mut stream = UnixStream::connect(socket).unwrap();
-        writeln!(stream, "{}", json!({"stream": true})).unwrap();
+        writeln!(stream, "{}", json!({"stream": true, "token": token})).unwrap();
         let heard = events.0.heard_until(|heard| {
             heard
                 .iter()
@@ -1291,7 +1291,11 @@ fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
     };
 
     assert_eq!(ask(socket, PROVED_PANE, 'a', false)["ok"], true);
-    assert_eq!(open(1), None);
+    assert_eq!(open(1, None), None);
+    assert_eq!(open(2, Some("unknown")), None);
+    let persistent = open(3, Some(TOKEN)).expect("a persistent reference proves its peer too");
+    assert_eq!(persistent.pane_id, PROVED_PANE);
+    assert_eq!(persistent.identity.shell_pid, std::process::id() as i32);
 
     let issued = ask(socket, PROVED_PANE, 'b', true);
     assert_eq!(issued["ok"], true, "{issued}");
@@ -1311,7 +1315,7 @@ fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
         })
         .expect("the one-shot proof");
     assert_eq!(
-        open(2),
+        open(4, None),
         Some(hide_node_link::panes::StreamCaller {
             pane_id: PROVED_PANE.to_owned(),
             identity: proved,

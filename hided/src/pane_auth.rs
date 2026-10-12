@@ -137,6 +137,9 @@ pub struct StreamAttestation {
     pub node: String,
     pub link: RemoteHost,
     pub caller: StreamCaller,
+    /// Receipt on this core's clock. A delayed handshake or executor job
+    /// must not reuse the stream-open proof past a normal inspection budget.
+    pub received: Instant,
 }
 
 /// The identity of a device credential's pane that a command is checked
@@ -153,6 +156,7 @@ fn remote_identity(
     if let Some(attested) = attested.filter(|attested| {
         cap.vouched_by(&attested.node, &attested.link)
             && attested.caller.pane_id == remote.source_pane_id
+            && attested.received.elapsed() < PANE_INSPECT_TIMEOUT
     }) {
         return Ok(attested.caller.identity.clone());
     }
@@ -1200,6 +1204,7 @@ mod tests {
                     pane_id: pane_id.to_owned(),
                     identity: identity.clone(),
                 },
+                received: Instant::now(),
             }
         };
         let guard_deadline = || Instant::now() + Duration::from_secs(10);
@@ -1209,6 +1214,17 @@ mod tests {
 
         let token = issue();
         let same = stream("node-a", &link, "w1:p1", &proved);
+        let persistent = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap()
+            .0;
+        assert_eq!(
+            registry
+                .validate(&persistent, None, &core, Some(&same))
+                .err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 0, "a persistent reference uses the same proof");
         assert_eq!(
             registry.validate(&token, None, &core, Some(&same)).err(),
             past_the_pane
@@ -1225,6 +1241,13 @@ mod tests {
             ..proved.clone()
         };
         let changed = stream("node-a", &link, "w1:p1", &restarted);
+        assert_eq!(
+            registry
+                .validate(&persistent, None, &core, Some(&changed))
+                .err(),
+            Some("pane_changed")
+        );
+        assert!(registry.get(&persistent).is_none());
         assert_eq!(
             registry
                 .validate_question_guard(&token, None, &core, Some(&changed), guard_deadline())
@@ -1259,6 +1282,15 @@ mod tests {
             past_the_pane
         );
         assert_eq!(asked(), 4);
+        let delayed = StreamAttestation {
+            received: Instant::now() - PANE_INSPECT_TIMEOUT,
+            ..same
+        };
+        assert_eq!(
+            registry.validate(&token, None, &core, Some(&delayed)).err(),
+            past_the_pane
+        );
+        assert_eq!(asked(), 5, "a delayed stream must re-read its pane");
         core.shutdown();
         next.close("fixture finished");
         link.close("fixture finished");
