@@ -332,6 +332,8 @@ It opens agent files and the OpenCode database read-only, does not invoke an age
 Candidates are confined to the selected agent's native root, including Claude subagent files and Codex archived sessions; Cursor is unsupported.
 Discovery reports its 10,000-candidate cap and unreadable entries.
 One read returns at most 1 MiB of source data, a bounded checkpoint, normalized events and skip counts; a checkpoint never contains a partial JSON line or conversation content.
+JSONL parsing yields after 20 ms and caps the event batch; the read budget includes the prefix and consumed-tail hashes that fence a rewritten checkpoint.
+File identity, truncation, parser version and a same-size rewrite also trigger a rescan, whose events still pass the ledger's first-value deduplication.
 The executable contracts are `hide-session/tests/it/usage.rs` and the scrubbed Grok fixture under `hide-session/tests/fixtures/usage/`.
 
 Input, output, cache read and cache write are disjoint components.

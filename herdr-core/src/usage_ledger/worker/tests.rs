@@ -1,0 +1,175 @@
+use super::*;
+use hide_node_link::{LinkAnswer, LinkError, sessions::ReaderFeatures};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+struct OwnNode {
+    env: hide_host::serve::Env,
+    features: ReaderFeatures,
+    calls: AtomicUsize,
+    fail_read: AtomicBool,
+}
+
+impl OwnNode {
+    fn new(home: &std::path::Path) -> Self {
+        Self {
+            env: hide_host::serve::Env::standalone(Some(home.to_owned())),
+            features: ReaderFeatures::implemented(),
+            calls: AtomicUsize::new(0),
+            fail_read: AtomicBool::new(false),
+        }
+    }
+}
+
+impl NodeLink for OwnNode {
+    fn reader_features(&self) -> Option<&ReaderFeatures> {
+        Some(&self.features)
+    }
+    fn call(&self, call: Call, _: Duration) -> Result<LinkAnswer, LinkError> {
+        assert!(matches!(
+            call,
+            Call::UsageFiles { .. } | Call::UsageRead { .. }
+        ));
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if matches!(call, Call::UsageRead { .. }) && self.fail_read.load(Ordering::SeqCst) {
+            return Err(LinkError::Unknown(
+                "private path and body never reach diagnostics".into(),
+            ));
+        }
+        hide_host::serve::handle_in(call, &self.env)
+            .map(LinkAnswer::Parsed)
+            .map_err(LinkError::Refused)
+    }
+}
+
+fn fixture(home: &std::path::Path, id: &str) -> PathBuf {
+    let folder = home.join(hide_session::CLAUDE_SESSIONS);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join(format!("{id}.jsonl"));
+    let line = serde_json::json!({"type":"assistant", "sessionId":"fixture", "requestId":id, "timestamp":jiff::Timestamp::now().to_string(), "message":{"id":id,"model":"fixture-model","content":[{"text":"PRIVATE_BODY_SENTINEL"}],"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":900,"cache_creation_input_tokens":30}}});
+    std::fs::write(&path, format!("{line}\n")).unwrap();
+    path
+}
+
+fn finish(engine: &mut Engine, node: &OwnNode) -> Report {
+    for _ in 0..300 {
+        engine.step(
+            node,
+            Activity {
+                visible: true,
+                open: true,
+            },
+        );
+        if engine.agents.iter().all(|work| !work.progress.reading) {
+            return engine.report();
+        }
+    }
+    panic!("fixture backfill did not complete");
+}
+
+#[test]
+fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
+    let home = tempfile::tempdir().unwrap();
+    let source = fixture(home.path(), "first");
+    let path = home.path().join("ledger.sqlite3");
+    let node = OwnNode::new(home.path());
+    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    let report = finish(&mut first, &node);
+    assert_eq!(report.daily.len(), 1);
+    assert_eq!(report.daily[0].totals.new_tokens().unwrap(), 60);
+    assert_eq!(report.daily[0].totals.tokens.cache_read, 900);
+    assert!(
+        !serde_json::to_string(report.daily.as_ref())
+            .unwrap()
+            .contains("PRIVATE_BODY_SENTINEL")
+    );
+    drop(first);
+
+    let copy = source.with_file_name("copied.jsonl");
+    std::fs::copy(&source, &copy).unwrap();
+    std::fs::remove_file(&source).unwrap();
+    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    for _ in 0..100 {
+        restarted.step(
+            &node,
+            Activity {
+                visible: true,
+                open: true,
+            },
+        );
+    }
+    assert_eq!(restarted.report().daily, report.daily);
+    assert!(
+        restarted
+            .store
+            .checkpoint("physical-device", Agent::Claude, source.to_str().unwrap())
+            .unwrap()
+            .is_none(),
+        "gone files release cursor capacity while their totals remain"
+    );
+    std::fs::remove_file(copy).unwrap();
+    drop(restarted);
+    assert_eq!(
+        Engine::open(&path, "physical-device".into())
+            .unwrap()
+            .report()
+            .daily,
+        report.daily
+    );
+}
+
+#[test]
+fn usage_worker_refusal_keeps_backfill_open_and_recovers_from_durable_progress() {
+    let home = tempfile::tempdir().unwrap();
+    fixture(home.path(), "first");
+    let path = home.path().join("ledger.sqlite3");
+    let node = OwnNode::new(home.path());
+    node.fail_read.store(true, Ordering::SeqCst);
+    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    for _ in 0..100 {
+        first.step(
+            &node,
+            Activity {
+                visible: true,
+                open: false,
+            },
+        );
+    }
+    let failed = first.report();
+    let claude = failed
+        .progress
+        .iter()
+        .find(|row| row.agent == Agent::Claude)
+        .unwrap();
+    assert!(claude.reading);
+    assert_eq!(claude.failure, Some("usage_read_failed"));
+    assert!(failed.daily.is_empty());
+    drop(first);
+    node.fail_read.store(false, Ordering::SeqCst);
+    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    assert_eq!(finish(&mut restarted, &node).daily[0].totals.calls, 1);
+}
+
+#[test]
+fn usage_worker_sleeps_without_windows_and_joins_when_its_owner_ends() {
+    let home = tempfile::tempdir().unwrap();
+    fixture(home.path(), "first");
+    let node = Arc::new(OwnNode::new(home.path()));
+    let (sent, received) = std::sync::mpsc::channel();
+    let worker = Worker::spawn(
+        home.path().join("ledger.sqlite3"),
+        "physical-device".into(),
+        node.clone(),
+        move |report| {
+            sent.send(report).unwrap();
+        },
+    )
+    .unwrap();
+    received.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(node.calls.load(Ordering::SeqCst), 0);
+    drop(worker);
+    assert!(matches!(
+        received.recv_timeout(Duration::from_secs(2)),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    ));
+    assert_eq!(node.calls.load(Ordering::SeqCst), 0);
+}

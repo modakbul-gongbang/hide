@@ -2,6 +2,7 @@
 //! readers return normalized calls and never open this store.
 
 pub mod store;
+pub mod worker;
 
 pub const DAY_MS: u64 = 86_400_000;
 pub const EVENT_DAYS: u64 = 45;

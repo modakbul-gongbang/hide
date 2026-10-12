@@ -125,7 +125,7 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
-        hide_platform::fs::private::open_or_create_file(path)
+        hide_platform::fs::private::open_own_file(path, true)
             .map_err(|_| "usage_store_unavailable")?;
         let connection = Connection::open(path).map_err(failed)?;
         connection
@@ -193,6 +193,55 @@ impl Store {
             .map_err(failed)?;
         row.map(|(stamp, checkpoint)| Ok((decode(&stamp)?, decode(&checkpoint)?)))
             .transpose()
+    }
+
+    /// Deleted native files need no cursor; their totals and dedup receipts
+    /// remain. A capped or incomplete listing must never call this method.
+    pub fn retire_cursors(
+        &mut self,
+        device: &str,
+        agent: Agent,
+        live: &[Candidate],
+    ) -> Result<(), &'static str> {
+        if live.len() > hide_session::usage::CANDIDATE_LIMIT {
+            return Err("usage_candidate_capacity");
+        }
+        self.budget();
+        let live: std::collections::HashSet<_> = live
+            .iter()
+            .map(|candidate| candidate.path.as_path())
+            .collect();
+        let tx = self.connection.transaction().map_err(failed)?;
+        let paths = {
+            let mut query = tx
+                .prepare("SELECT path FROM cursors WHERE device=?1 AND agent=?2 LIMIT ?3")
+                .map_err(failed)?;
+            query
+                .query_map(
+                    params![
+                        device,
+                        agent.as_str(),
+                        hide_session::usage::CANDIDATE_LIMIT + 1
+                    ],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(failed)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(failed)?
+        };
+        if paths.len() > hide_session::usage::CANDIDATE_LIMIT {
+            return Err("usage_candidate_capacity");
+        }
+        for path in paths {
+            if !live.contains(Path::new(&path)) {
+                tx.execute(
+                    "DELETE FROM cursors WHERE device=?1 AND agent=?2 AND path=?3",
+                    params![device, agent.as_str(), path],
+                )
+                .map_err(failed)?;
+            }
+        }
+        tx.commit().map_err(failed)
     }
 
     /// The checkpoint advances in the same commit as the dedup receipt and

@@ -106,6 +106,12 @@ struct Witness {
     digest: String,
 }
 
+impl Checkpoint {
+    pub fn is_current(&self) -> bool {
+        self.parser_version == PARSER_VERSION
+    }
+}
+
 fn witness(file: &mut fs::File, offset: u64) -> Result<(Witness, u64), Refusal> {
     let metadata = file.metadata().map_err(|_| Refusal::Unreadable)?;
     let modified_ns = metadata

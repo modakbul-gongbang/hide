@@ -760,6 +760,12 @@ Both require the live link's independently advertised `ReaderFeature::Usage`; th
 This optional reader adds no protocol-version requirement: an older peer grants no usage reader and is refused before a call is sent.
 Cursor grants none, and protocol 24's frozen reader facts remain unchanged.
 
+The usage worker owns one writer and reads only its supplied own-node link, alternating agents so a large history cannot starve another.
+Each turn performs one bounded read and transaction, then rests for 20 ms; native JSONL parsing itself yields at 20 ms and never exceeds one MiB including its checkpoint witnesses.
+Two replaceable visibility flags control its work: without a window it rests; candidate discovery runs every 30 seconds, or 3 while usage is open, and changed reports publish every 30 or 5 seconds respectively.
+Its owner signals the condition variable and joins it on shutdown, including startup failure and an idle wait.
+Complete uncapped listings retire deleted file checkpoints without deleting their totals or recent dedup authority.
+
 `usage_ledger::store` owns `usage.sqlite3`, named by `hide_kit::layout::usage_store` under the core state directory.
 Normalized usage events contain native call identity, model, time, session, working folder, provider, tokens and recorded cost, with no conversation fields.
 An ingestion transaction adds a new call and its daily `(native node, agent, local day, model)` totals together with the file checkpoint; repeated calls add nothing, and changed completed calls keep the first accounting value and report a count-only conflict.
