@@ -155,6 +155,9 @@ enum PassReport {
 /// What a whole pass tells the runtime when it ends.
 #[derive(Debug, Default, PartialEq)]
 struct PassOutcome {
+    /// Only holds confirmed by this pass survive its end, including passes
+    /// with no router while the usage limit pauses every agent.
+    check_budget_exhausted: BTreeSet<String>,
     /// Closed sessions with nothing left to analyze, or no longer in any
     /// Memory-enabled Project.
     settled: BTreeSet<MemorySession>,
@@ -496,11 +499,13 @@ impl Runtime {
             work.usage_wanted_until_unix_ms = now_ms().saturating_add(USAGE_WANTED_MS);
         }
         let mut changed = false;
-        for project in work.projects.values_mut() {
+        for (project_id, project) in &mut work.projects {
             if matches!(
                 project.analysis,
                 MemoryAnalysisState::Analyzing | MemoryAnalysisState::Checking
-            ) {
+            ) || (project.analysis == MemoryAnalysisState::CheckBudgetExhausted
+                && !outcome.check_budget_exhausted.contains(project_id))
+            {
                 project.analysis = MemoryAnalysisState::Idle;
                 project.checking_card = None;
                 changed = true;
@@ -942,6 +947,9 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
             .waiting
             .or_else(|| deferred.and_then(visible_deferral))
         {
+            if state == MemoryAnalysisState::CheckBudgetExhausted {
+                outcome.check_budget_exhausted.insert(project_id.clone());
+            }
             report(PassReport::CheckState {
                 project_id,
                 state,
@@ -1211,17 +1219,7 @@ fn maintain_cards(
     }
     // The usage reader runs for a pass only when there is a card to ask
     // about, as it does for a session.
-    let due = store
-        .pending_cards(project_id, now_ms(), 1)
-        .and_then(|cards| {
-            if !cards.is_empty() {
-                Ok(true)
-            } else {
-                store
-                    .promotion_unchecked(project_id, now_ms(), 1)
-                    .map(|cards| !cards.is_empty())
-            }
-        });
+    let due = store.due_checks(Some(project_id), now_ms(), 1);
     let due = match due {
         Ok(due) => due,
         Err(error) => {
@@ -1231,7 +1229,7 @@ fn maintain_cards(
             return;
         }
     };
-    if !due {
+    if due == 0 {
         report(PassReport::CheckState {
             project_id: project_id.to_owned(),
             state: MemoryAnalysisState::Idle,
@@ -1240,9 +1238,7 @@ fn maintain_cards(
         return;
     }
     outcome.wants_usage = true;
-    let mut admit = |store: &MemoryStore| {
-        admit_budget(store, hide_memory::MemoryCallKind::Check)
-    };
+    let mut admit = |store: &MemoryStore| admit_budget(store, hide_memory::MemoryCallKind::Check);
     let mut progress = |card: Option<u64>| {
         if card.is_none() {
             report(PassReport::Checked {
@@ -2759,7 +2755,12 @@ mod tests {
         fixture.answer(&[]);
         let store = fixture.store();
         for _ in 0..hide_memory::DAILY_ANALYSIS_CALL_LIMIT {
-            store.count_analysis_call(now_ms()).unwrap();
+            assert_eq!(
+                store
+                    .admit_memory_call(now_ms(), hide_memory::MemoryCallKind::Analysis)
+                    .unwrap(),
+                None
+            );
         }
         drop(store);
         assert!(
@@ -3024,10 +3025,41 @@ mod tests {
             .begin_verification(&card.id, now_ms())
             .unwrap();
         fixture.check_states.borrow_mut().clear();
-        fixture.pass(true, false, WeeklyUsage::Unknown);
+        fixture.pass(true, false);
         assert_eq!(
             *fixture.check_states.borrow(),
             [(MemoryAnalysisState::Idle, None)]
+        );
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    #[test]
+    fn a_utc_reset_during_a_usage_pause_releases_the_previous_check_budget_hold() {
+        let fixture = Fixture::new();
+        let yesterday = now_ms() / 86_400_000 - 1;
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,1000,500)",
+                [yesterday],
+            )
+            .unwrap();
+        assert_eq!(fixture.store().analysis_calls(now_ms()).unwrap(), 0);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.memory_work.projects.insert(
+            fixture.project_id.clone(),
+            ProjectMemoryWork {
+                analysis: MemoryAnalysisState::CheckBudgetExhausted,
+                ..ProjectMemoryWork::default()
+            },
+        );
+        // A weekly usage pause makes the pass carry no router, just as
+        // start_memory_pass does while every agent is past the limit.
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], false);
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::Idle
         );
         assert_eq!(fixture.calls(), 0);
     }

@@ -1167,19 +1167,6 @@ impl MemoryStore {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Counts one analysis call against the machine's day and returns the
-    /// day's count after it (D-10 a). Days older than a week are dropped.
-    pub fn count_analysis_call(&self, now_unix_ms: u64) -> Result<u64, MemoryError> {
-        if let Some(reason) =
-            self.admit_memory_call(now_unix_ms, crate::MemoryCallKind::Analysis)?
-        {
-            return Err(MemoryError::InvalidState(format!(
-                "memory_call_budget:{reason:?}"
-            )));
-        }
-        self.analysis_calls(now_unix_ms)
-    }
-
     /// Atomically admits and counts one call. A refusal spends nothing.
     /// All Projects share the total and check share; only enabled, consented
     /// cards due now reserve calls, so unavailable work cannot strand them.
@@ -1201,17 +1188,9 @@ impl MemoryStore {
             .optional()?
             .unwrap_or((0, 0));
         let pending = if kind == crate::MemoryCallKind::Analysis {
-            transaction.query_row(
-                "SELECT COUNT(*) FROM (SELECT 1 FROM memory_items i \
-                 JOIN projects p ON p.id=i.project_id \
-                 JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-                 WHERE p.enabled=1 AND p.disclosure_version=?1 AND i.lifecycle='active' \
-                 AND r.verified_at_ms IS NULL \
-                 AND NOT EXISTS(SELECT 1 FROM card_promotions c WHERE c.item_id=i.id AND c.state='merged') \
-                 AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?2) LIMIT ?3)",
-                params![MEMORY_DISCLOSURE_VERSION, now_unix_ms.saturating_sub(crate::REVERIFY_INTERVAL_MS), crate::MAINTENANCE_CALL_LIMIT],
-                |row| row.get(0),
-            )?
+            // The same connection is inside the immediate transaction, so
+            // the pass's due predicate and this reservation see one policy.
+            self.due_checks(None, now_unix_ms, crate::MAINTENANCE_CALL_LIMIT as usize)?
         } else {
             0
         };
@@ -1241,6 +1220,35 @@ impl MemoryStore {
             )
             .optional()?
             .unwrap_or(0))
+    }
+
+    /// Counts checks that may ask now, for one Project or all enabled and
+    /// consented Projects. Both pass scheduling and call reservation use
+    /// this predicate: re-verification and the check before a promotion.
+    pub fn due_checks(
+        &self,
+        project_id: Option<&str>,
+        now_unix_ms: u64,
+        limit: usize,
+    ) -> Result<u64, MemoryError> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM memory_items i \
+             JOIN projects p ON p.id=i.project_id \
+             JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+             LEFT JOIN card_promotions c ON c.item_id=i.id \
+             WHERE p.enabled=1 AND p.disclosure_version=?1 AND (?2 IS NULL OR i.project_id=?2) \
+             AND i.lifecycle='active' AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?3) \
+             AND ((r.verified_at_ms IS NULL AND (c.item_id IS NULL OR c.state!='merged')) \
+               OR (r.verified_at_ms IS NOT NULL AND r.kind IN ('rule','lesson') \
+                 AND i.promotion_ok_revision IS NOT i.current_revision \
+                 AND (c.item_id IS NULL OR c.state='outdated' OR (c.state='dismissed' AND c.revision!=i.current_revision)) \
+                 AND ((SELECT COUNT(DISTINCT s.provider||':'||s.session_id) FROM memory_sources s WHERE s.item_id=i.id AND s.human=1)>=?5 \
+                   OR (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id \
+                       WHERE rii.item_id=i.id AND ir.turn_id='show' AND ir.created_at_ms>=?4)>=?6))) LIMIT ?7)",
+            params![MEMORY_DISCLOSURE_VERSION, project_id, now_unix_ms.saturating_sub(crate::REVERIFY_INTERVAL_MS),
+                now_unix_ms.saturating_sub(PROMOTION_WINDOW_MS), PROMOTION_HUMAN_SESSIONS, PROMOTION_PULLED_SESSIONS, limit as u64],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn apply_candidates(
@@ -6695,6 +6703,43 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     }
 
     #[test]
+    fn a_due_promotion_check_reserves_the_last_call_and_its_cooldown_releases_it() {
+        use crate::{MemoryCallDeferral as Wait, MemoryCallKind as Kind};
+        let (_temp, mut store, project) = store();
+        let now = 30 * DAY_MS;
+        let words = candidate("Lint before tests", CandidateRelation::New);
+        store
+            .apply_candidates(&sourced_batch(&project, "one", "s1"), &[words.clone()])
+            .unwrap();
+        let card = store.item_by_number(&project, 1).unwrap().unwrap();
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "two", "s2"),
+                &[words.with_relation(CandidateRelation::Same {
+                    target_id: card.id.clone(),
+                })],
+            )
+            .unwrap();
+        assert!(store.pending_cards(&project, now, 1).unwrap().is_empty());
+        assert_eq!(
+            store.promotion_unchecked(&project, now, 1).unwrap().len(),
+            1
+        );
+        store
+            .connection
+            .execute("INSERT INTO analysis_calls VALUES(30,999,0)", [])
+            .unwrap();
+        assert_eq!(
+            store.admit_memory_call(now, Kind::Analysis).unwrap(),
+            Some(Wait::ReservedForChecks)
+        );
+        assert_eq!(store.analysis_calls(now).unwrap(), 999);
+        store.begin_verification(&card.id, now).unwrap();
+        assert_eq!(store.admit_memory_call(now, Kind::Analysis).unwrap(), None);
+        assert_eq!(store.analysis_calls(now).unwrap(), 1000);
+    }
+
+    #[test]
     fn check_share_is_counted_separately_and_preserves_the_migrated_total() {
         use crate::{MemoryCallDeferral as Wait, MemoryCallKind as Kind};
         let (temp, store, _project) = store();
@@ -6763,8 +6808,20 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let (_temp, store, _project) = store();
         let day = 86_400_000;
         assert_eq!(store.analysis_calls(10 * day).unwrap(), 0);
-        assert_eq!(store.count_analysis_call(10 * day).unwrap(), 1);
-        assert_eq!(store.count_analysis_call(10 * day + 5).unwrap(), 2);
+        assert_eq!(
+            store
+                .admit_memory_call(10 * day, crate::MemoryCallKind::Analysis)
+                .unwrap(),
+            None
+        );
+        assert_eq!(store.analysis_calls(10 * day).unwrap(), 1);
+        assert_eq!(
+            store
+                .admit_memory_call(10 * day + 5, crate::MemoryCallKind::Analysis)
+                .unwrap(),
+            None
+        );
+        assert_eq!(store.analysis_calls(10 * day + 5).unwrap(), 2);
         assert_eq!(store.analysis_calls(11 * day - 1).unwrap(), 2);
         assert_eq!(store.analysis_calls(11 * day).unwrap(), 0);
     }
