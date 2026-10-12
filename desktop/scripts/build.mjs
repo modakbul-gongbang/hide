@@ -3,7 +3,8 @@
 // written for Tailwind: its `@theme` blocks, which a plain page drops, become
 // `:root` blocks here, so the status page reads the same names the web shell
 // does. The window's background is the dark theme's `--background` (the web
-// shell's default theme), read here so no color is written into the host.
+// shell's default theme) and the taskbar overlay's dot its `--warning`, read
+// here so no color is written into the host.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +18,9 @@ const tokens = path.resolve(root, "..", "web", "src", "tokens.css");
 const tokenCss = fs.readFileSync(tokens, "utf8");
 const background = /\.dark\s*\{[^}]*?--background:\s*(#[0-9a-fA-F]{3,8})\s*;/.exec(tokenCss)?.[1];
 if (!background) throw new Error(`${tokens} has no dark --background`);
+// The Windows taskbar overlay's dot, in the color the shell's Needs You marks wear.
+const warning = /\.dark\s*\{[^}]*?--warning:\s*(#[0-9a-fA-F]{6})\s*;/.exec(tokenCss)?.[1];
+if (!warning) throw new Error(`${tokens} has no dark --warning`);
 const themeBlocks = /@theme(?:\s+(?:static|inline))?\s*\{/g;
 if (!themeBlocks.test(tokenCss)) throw new Error(`${tokens} has no @theme block; the status page expects Tailwind v4 tokens`);
 
@@ -30,7 +34,7 @@ const common = {
   sourcemap: "linked",
   logLevel: "warning",
 };
-await build({ ...common, entryPoints: [path.join(root, "src/main/index.ts")], outfile: path.join(dist, "main.js"), define: { __HIDE_BACKGROUND__: JSON.stringify(background) } });
+await build({ ...common, entryPoints: [path.join(root, "src/main/index.ts")], outfile: path.join(dist, "main.js"), define: { __HIDE_BACKGROUND__: JSON.stringify(background), __HIDE_WARNING__: JSON.stringify(warning) } });
 await build({ ...common, entryPoints: [path.join(root, "src/preload/index.ts")], outfile: path.join(dist, "preload.js") });
 
 fs.cpSync(path.join(root, "static"), path.join(dist, "static"), { recursive: true });

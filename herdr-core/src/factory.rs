@@ -2036,6 +2036,7 @@ fn start_worker(
             branch: request.branch.clone(),
             path,
             args,
+            task: None,
         },
     )
     .map_err(|reason| spawn_failure(&reason))?;

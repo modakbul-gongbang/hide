@@ -161,6 +161,7 @@ function sceneHost(system: OnboardingSystem, permission: NotificationPermission)
     withdrawNotifications: () => undefined,
     notificationPermission: async () => permission,
     openNotificationSettings: () => undefined,
+    reportBadge: () => undefined,
     browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: none },
   };
 }
