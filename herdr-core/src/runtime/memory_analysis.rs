@@ -1037,7 +1037,15 @@ fn maintain_cards(
     }
     outcome.wants_usage = true;
     let sessions_node = input.sessions_node.as_ref();
-    let mut admit = |store: &MemoryStore| admit_call(store, input.weekly, true);
+    let mut admit = |store: &MemoryStore| {
+        let calls = store
+            .analysis_calls(now_ms())
+            .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+        if calls >= hide_memory::MAINTENANCE_CALL_LIMIT {
+            return Err(AnalysisFailure::Deferred("daily_cap_for_checks"));
+        }
+        admit_call(store, input.weekly, true)
+    };
     let reverified = reverify_pending(
         store,
         sessions_node,
@@ -1066,7 +1074,14 @@ fn maintain_cards(
     match suggested {
         Ok(changed) => tally.checked |= changed > 0,
         Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
-        Err(AnalysisFailure::Deferred(reason)) => *deferred = Some(reason),
+        // A check held back never holds the Projects after this one: it is
+        // a call analysis would not need, and the next pass asks again.
+        Err(AnalysisFailure::Deferred(reason)) => crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "verification.deferred",
+            "project_id": project_id,
+            "reason": reason,
+        })),
         Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => {}
         Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
             "component": "memory",

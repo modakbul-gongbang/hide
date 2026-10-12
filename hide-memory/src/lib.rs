@@ -95,7 +95,11 @@ pub const OUTDATED_REASON_LIMIT_CHARS: usize = 500;
 pub const REVERIFY_INTERVAL_MS: u64 = 86_400_000;
 /// Cards one pass verifies again, and cards one pass checks before a
 /// suggestion (D-11): each is one provider call under the daily cap.
-pub const REVERIFY_PER_PASS: usize = 8;
+pub const REVERIFY_PER_PASS: usize = 4;
+/// Checks of existing cards (a re-verification or a check before a
+/// suggestion) are made only while the day's calls are under this, so a
+/// store full of cards to check cannot use the cap analysis shares with them.
+pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
 pub const PROMOTION_CHECKS_PER_PASS: usize = 3;
 /// Budget available after the helper reaches Rust code.
 ///
