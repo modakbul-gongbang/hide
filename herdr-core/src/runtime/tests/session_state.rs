@@ -193,6 +193,24 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_descendants() {
         "answer",
         "the native question holds for a reply even after it is read"
     );
+    // Its band says what is asked, as the row's ask does, not the label's
+    // line about the work around it.
+    agent.user_turn = Some(hide_session::turns::UserTurnFact {
+        kind: hide_session::turns::UserTurnKind::Question,
+        content: Some(hide_session::turns::UserTurnContent::new(
+            "어디에 배포할까요?",
+            ["미리보기", "운영"],
+        )),
+    });
+    agent.detail = crate::agent_state::native_question_line(agent.user_turn.as_ref());
+    assert_eq!(
+        header::of(&pane, Some(&agent), None, &project, None)
+            .band
+            .unwrap()
+            .reason
+            .as_deref(),
+        Some("어디에 배포할까요?")
+    );
     agent.user_turn.as_mut().unwrap().kind = hide_session::turns::UserTurnKind::PlanApproval;
     assert_eq!(
         header::of(&pane, Some(&agent), None, &project, None)

@@ -222,10 +222,17 @@ pub(crate) fn of(
         band: band(
             kind,
             tone,
-            agent
-                .request
-                .as_ref()
-                .and_then(|request| request.line.clone()),
+            // An Answer says what the row's ask says (`detail`), so a native
+            // question reads as itself here too, not as the label's line
+            // about the work around it.
+            if tag == Some(Tag::Answer) {
+                agent.detail.clone()
+            } else {
+                agent
+                    .request
+                    .as_ref()
+                    .and_then(|request| request.line.clone())
+            },
             agent.state.request_since,
             action,
             if demand { agent.raised.len() } else { 0 },
