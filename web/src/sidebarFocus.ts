@@ -47,8 +47,8 @@ export function revealSidebarFocus(list: HTMLElement): void {
   const marked = [...list.querySelectorAll<HTMLElement>('[aria-current="true"]')];
   if (marked.length === 0) return;
   const view = list.getBoundingClientRect();
-  const covered = list.querySelector<HTMLElement>("[data-section-sticky]")?.getBoundingClientRect().height ?? 0;
-  const top = view.top + (list.scrollTop > 0 ? covered : 0);
+  const covered = list.querySelector<HTMLElement>('[data-section-sticky][data-stuck="true"]')?.getBoundingClientRect().height ?? 0;
+  const top = view.top + covered;
   const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
   if (deepest.some((row) => inside(row.getBoundingClientRect(), top, view.bottom))) return;
   const target = deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!;

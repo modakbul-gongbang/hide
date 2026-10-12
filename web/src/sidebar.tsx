@@ -525,7 +525,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   // The device's Needs You and Done come first, then the projects in their sections; Working and Seen are the Agents tab's.
   const raised = useMemo(() => rows.filter((row) => row.kind === "raised"), [rows]);
   const sections = useMemo(() => projectSections(rows), [rows]);
-  useStuckHeaders(list);
+  useStuckHeaders(list, loaded, sections.length);
   const agentRowMenu = useAgentRowMenu(actions);
   const children = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, directChildren(agent, agents)])), [agents]);
   // A row Hide AI started names its task in its place line, so the place reads the agents too.
@@ -685,7 +685,9 @@ function SectionHeader({ row, actions }: { row: SectionRow; actions: Actions }) 
  * its hairline; read on scroll and resize, written straight to the element so
  * scrolling renders nothing.
  */
-function useStuckHeaders(list: { current: HTMLUListElement | null }) {
+function useStuckHeaders(list: { current: HTMLUListElement | null }, loaded: boolean, sectionCount: number) {
+  // Set up once per list and section count, not per snapshot: scrolling, the
+  // list's size and each section's size are what move a header.
   useEffect(() => {
     const element = list.current;
     if (!element) return undefined;
@@ -700,11 +702,12 @@ function useStuckHeaders(list: { current: HTMLUListElement | null }) {
     element.addEventListener("scroll", mark, { passive: true });
     const observer = new ResizeObserver(mark);
     observer.observe(element);
+    for (const header of element.querySelectorAll<HTMLElement>("[data-section-sticky]")) observer.observe(header.parentElement!);
     return () => {
       element.removeEventListener("scroll", mark);
       observer.disconnect();
     };
-  });
+  }, [list, loaded, sectionCount]);
 }
 
 const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: ProjectRow; context: ListContext }) {

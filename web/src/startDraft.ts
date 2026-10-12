@@ -9,8 +9,12 @@ import { create } from "zustand";
 import type { ProviderKind } from "./agentPicker";
 import type { MessageKey } from "./i18n/catalogs";
 
-/** What an open names instead of what is in front: the first-run wizard's new project and its first agent (PRD first-run-onboarding D-15). */
-/** What a start surface hands the panel: the project to aim at, and the agent kind when it chose one (else the remembered one). */
+/**
+ * What an open names instead of what is in front: the project to aim at, as
+ * the first-run wizard's new project (PRD first-run-onboarding D-15) or a
+ * project row's `+` (PRD sidebar-titlebar-refresh D-04), and the agent kind
+ * when the surface chose one, else the remembered one.
+ */
 export type StartPreset = { projectId: string; kind?: ProviderKind };
 
 /** Why a start did not go: the core's own sentence, shown as sent, or a catalog key the panel words in the operator's language. */

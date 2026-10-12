@@ -42,7 +42,7 @@ export function projectExpanded(workspace: Workspace): boolean {
 /**
  * `listed` is every agent the Agents list shows. A raised section holds, in
  * the core's order, the Needs You or Done agents whose pane a drawn project's
- * (or the device's Home's) checkout owns, so every raised agent is also in the tree below; an empty
+ * or the device's Home's checkout owns, so every raised agent outside the Home is also in the tree below; an empty
  * section is left out, and a raised row never unfolds, so it is handed on
  * folded (docs/status-model.md, The descendant badge). Past its cap a
  * section draws the most recent ones in `agents` and folds the rest into
