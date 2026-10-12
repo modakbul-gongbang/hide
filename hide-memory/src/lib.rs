@@ -81,6 +81,9 @@ pub const NEW_CARDS_PER_SESSION: usize = 2;
 /// A session with fewer of the operator's own events than this makes no new
 /// card (D-03).
 pub const OPERATOR_EVENTS_MINIMUM: u64 = 3;
+/// The most characters of the reason an agent gives when it calls a card
+/// outdated.
+pub const OUTDATED_REASON_LIMIT_CHARS: usize = 500;
 /// A card is verified again at most once in this long (D-07, B10).
 pub const REVERIFY_INTERVAL_MS: u64 = 86_400_000;
 /// Cards one pass verifies again, and cards one pass checks before a

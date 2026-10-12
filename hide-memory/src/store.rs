@@ -390,6 +390,9 @@ pub struct PendingCard {
     pub aliases: Vec<String>,
     pub cited_paths: Vec<String>,
     pub evidence: Vec<Evidence>,
+    /// Why the agent placing the card called it outdated, when it did; the
+    /// verification reads it as a claim to check, not as a fact.
+    pub outdated_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2095,7 +2098,7 @@ impl MemoryStore {
         limit: usize,
     ) -> Result<Vec<PendingCard>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.id,i.number,i.current_revision,r.kind,r.title,r.body,r.aliases,r.cited_paths FROM memory_items i \
+            "SELECT i.id,i.number,i.current_revision,r.kind,r.title,r.body,r.aliases,r.cited_paths,i.outdated_reason FROM memory_items i \
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.verified_at_ms IS NULL \
              AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged') \
@@ -2119,6 +2122,7 @@ impl MemoryStore {
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 },
             )?
@@ -2126,7 +2130,7 @@ impl MemoryStore {
         cards
             .into_iter()
             .map(
-                |(item_id, number, revision, kind, title, body, aliases, cited)| {
+                |(item_id, number, revision, kind, title, body, aliases, cited, outdated_reason)| {
                     Ok(PendingCard {
                         evidence: evidence_rows(&self.connection, &item_id, revision)?,
                         item_id,
@@ -2137,6 +2141,7 @@ impl MemoryStore {
                         body,
                         aliases: parse_aliases(&aliases),
                         cited_paths: parse_aliases(&cited),
+                        outdated_reason,
                     })
                 },
             )
@@ -2186,6 +2191,10 @@ impl MemoryStore {
             return Ok(false);
         }
         write_evidence(&transaction, item_id, revision, evidence, now_unix_ms)?;
+        transaction.execute(
+            "UPDATE memory_items SET outdated_reason=NULL WHERE id=?1",
+            [item_id],
+        )?;
         transaction.commit()?;
         Ok(true)
     }
@@ -2236,7 +2245,7 @@ impl MemoryStore {
         )?;
         transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'active',?9,?10)", params![revision_id(item_id,revision),item_id,revision,card.body,card.title,card.aliases_json(),card.cited_json(),kind,now_unix_ms,batch_id])?;
         transaction.execute(
-            "UPDATE memory_items SET current_revision=?2,updated_at_ms=?3 WHERE id=?1",
+            "UPDATE memory_items SET current_revision=?2,updated_at_ms=?3,outdated_reason=NULL WHERE id=?1",
             params![item_id, revision, now_unix_ms],
         )?;
         write_evidence(&transaction, item_id, revision, evidence, now_unix_ms)?;
@@ -2255,6 +2264,7 @@ impl MemoryStore {
         project_id: &str,
         number: u64,
         from: &Promotion,
+        reason: &str,
         now_unix_ms: u64,
     ) -> Result<bool, MemoryError> {
         self.require_writer()?;
@@ -2282,8 +2292,15 @@ impl MemoryStore {
             params![item_id, revision],
         )?;
         transaction.execute(
-            "UPDATE memory_items SET reverify_at_ms=NULL,promotion_ok_revision=NULL WHERE id=?1",
-            [&item_id],
+            "UPDATE memory_items SET reverify_at_ms=NULL,promotion_ok_revision=NULL,outdated_reason=?2 WHERE id=?1",
+            params![
+                item_id,
+                reason
+                    .trim()
+                    .chars()
+                    .take(crate::OUTDATED_REASON_LIMIT_CHARS)
+                    .collect::<String>()
+            ],
         )?;
         transaction.commit()?;
         Ok(true)
@@ -3018,6 +3035,7 @@ ALTER TABLE memory_revisions ADD COLUMN verified_at_ms INTEGER;
 ALTER TABLE memory_items ADD COLUMN reverify_at_ms INTEGER;
 ALTER TABLE memory_items ADD COLUMN promotion_ok_revision INTEGER;
 ALTER TABLE memory_items ADD COLUMN evidence_checked_at_ms INTEGER;
+ALTER TABLE memory_items ADD COLUMN outdated_reason TEXT;
 ALTER TABLE session_cursors ADD COLUMN operator_events INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE receipt_cursors ADD COLUMN operator_events INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE memory_evidence(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,kind TEXT NOT NULL CHECK(kind IN('file','path','command')),value TEXT NOT NULL,fingerprint TEXT,present INTEGER NOT NULL,PRIMARY KEY(item_id,revision,kind,value));
@@ -3226,7 +3244,7 @@ CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCE
 CREATE TABLE session_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,operator_events INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE receipt_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,operator_events INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE analysis_batches(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,analysis_provider TEXT NOT NULL,session_id TEXT NOT NULL,content_hash TEXT NOT NULL,created_at_ms INTEGER NOT NULL,UNIQUE(project_id,provider,session_id,content_hash));
-CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER,reverify_at_ms INTEGER,promotion_ok_revision INTEGER,evidence_checked_at_ms INTEGER);
+CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER,reverify_at_ms INTEGER,promotion_ok_revision INTEGER,evidence_checked_at_ms INTEGER,outdated_reason TEXT);
 CREATE INDEX memory_items_project_state ON memory_items(project_id,lifecycle,updated_at_ms DESC);
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
 CREATE TABLE memory_revisions(id TEXT PRIMARY KEY,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,lifecycle TEXT NOT NULL,created_at_ms INTEGER NOT NULL,batch_id TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',aliases TEXT NOT NULL DEFAULT '[]',cited_paths TEXT NOT NULL DEFAULT '[]',verified_at_ms INTEGER,UNIQUE(item_id,revision));
@@ -4792,12 +4810,12 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         store.mark_promotion_checked(&project, 1, 1).unwrap();
         assert!(
             !store
-                .mark_outdated(&project, 1, &running(1, "agent-9"), 50)
+                .mark_outdated(&project, 1, &running(1, "agent-9"), "stale", 50)
                 .unwrap()
         );
         assert!(
             !store
-                .mark_outdated(&project, 1, &running(2, "agent-7"), 50)
+                .mark_outdated(&project, 1, &running(2, "agent-7"), "stale", 50)
                 .unwrap()
         );
         assert!(
@@ -4807,9 +4825,9 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .unwrap()
                 .verifying
         );
-        assert!(store.mark_outdated(&project, 1, &attempt, 50).unwrap());
+        assert!(store.mark_outdated(&project, 1, &attempt, "stale", 50).unwrap());
         assert!(
-            !store.mark_outdated(&project, 1, &attempt, 51).unwrap(),
+            !store.mark_outdated(&project, 1, &attempt, "stale", 51).unwrap(),
             "the attempt already ended"
         );
         assert!(
@@ -4832,8 +4850,16 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             given(&store, &project, "linter first"),
             Vec::<String>::new()
         );
+        let waiting = store.pending_cards(&project, 100_000_000, 8).unwrap();
+        assert_eq!(waiting[0].outdated_reason.as_deref(), Some("stale"));
         // Verified again, the card is checked again before it is suggested.
         assert!(store.confirm_card(&card.id, 1, &[], 60).unwrap());
+        assert!(
+            store
+                .pending_cards(&project, 100_000_000, 8)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             store
                 .promotion_unchecked(&project, 70, 3)
@@ -4872,6 +4898,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                  ALTER TABLE memory_items DROP COLUMN reverify_at_ms;
                  ALTER TABLE memory_items DROP COLUMN promotion_ok_revision;
                  ALTER TABLE memory_items DROP COLUMN evidence_checked_at_ms;
+                 ALTER TABLE memory_items DROP COLUMN outdated_reason;
                  ALTER TABLE session_cursors DROP COLUMN operator_events;
                  ALTER TABLE receipt_cursors DROP COLUMN operator_events;
                  DROP TABLE memory_evidence;
@@ -4900,7 +4927,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         // The new state is accepted by the rebuilt table.
         assert!(
             store
-                .mark_outdated("p", 1, &running(1, "agent-7"), 5)
+                .mark_outdated("p", 1, &running(1, "agent-7"), "stale", 5)
                 .unwrap()
         );
         assert!(store.confirm_card(&card.id, 1, &[], 6).unwrap());
