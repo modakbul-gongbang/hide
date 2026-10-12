@@ -39,7 +39,7 @@ use crate::error::{ErrorCode, HostError, HostResult};
 use crate::pane_peer;
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
-const MAX_CONTROL_LINE: u64 = 4096;
+const MAX_CONTROL_LINE: u64 = hide_node_link::panes::HOOK_REQUEST_LIMIT as u64;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const REFERENCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
@@ -76,6 +76,14 @@ struct Bootstrap {
     nonce: String,
     #[serde(default)]
     one_shot: bool,
+    #[serde(default)]
+    hook: Option<hide_node_link::panes::HookRequest>,
+}
+
+#[derive(Clone)]
+enum BootstrapAnswer {
+    Reference(PathBuf),
+    Hook(Value),
 }
 
 struct Started {
@@ -393,7 +401,7 @@ impl Panes {
         let mut issued_token = None;
         let mut token_new = false;
         let mut reference_new = false;
-        let result: Result<PathBuf, String> = (|| {
+        let result: Result<BootstrapAnswer, String> = (|| {
             let peer = stream
                 .peer_pid()
                 .ok()
@@ -405,6 +413,9 @@ impl Panes {
                 || !request.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
                 return Err("invalid_nonce".to_owned());
+            }
+            if request.hook.is_some() && !request.one_shot {
+                return Err("invalid_request".to_owned());
             }
             let pane =
                 pane_peer::inspect(&started.herdr_socket, &request.pane_id).and_then(|identity| {
@@ -441,12 +452,14 @@ impl Panes {
                     identity: identity.clone(),
                     nonce: request.nonce.clone(),
                     one_shot: request.one_shot,
+                    hook: request.hook.clone(),
                 },
                 Proved::Checkout(path) => NodeEvent::CheckoutProof {
                     request: id,
                     path: path.clone(),
                     nonce: request.nonce.clone(),
                     one_shot: request.one_shot,
+                    hook: request.hook.clone(),
                 },
             };
             let sent = write_event(output, &event);
@@ -455,6 +468,13 @@ impl Panes {
                 .and_then(|()| answer.recv_timeout(CLIENT_TIMEOUT).ok());
             lock(&self.proofs).remove(&id);
             let token = match answer.ok_or("bridge_unavailable")? {
+                ProofAnswer::Hook { answer } if request.hook.is_some() => {
+                    if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                        return Err("invalid_response".to_owned());
+                    }
+                    return Ok(BootstrapAnswer::Hook(answer));
+                }
+                ProofAnswer::Hook { .. } => return Err("invalid_response".to_owned()),
                 ProofAnswer::Refused { reason } => {
                     core_refused = true;
                     return Err(reason);
@@ -464,6 +484,10 @@ impl Panes {
                         return Err("invalid_response".to_owned());
                     }
                     token_new = issued_new;
+                    if request.hook.is_some() {
+                        issued_token = Some(token);
+                        return Err("invalid_response".to_owned());
+                    }
                     token
                 }
             };
@@ -474,7 +498,7 @@ impl Panes {
                     reference.token == token && path.is_file() && reference.holder.is_none()
                 })
             {
-                return Ok(path.clone());
+                return Ok(BootstrapAnswer::Reference(path.clone()));
             }
             let path = started.folder.join(format!("{}.json", request.nonce));
             let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
@@ -510,7 +534,7 @@ impl Panes {
                 },
             );
             reference_new = true;
-            Ok(path)
+            Ok(BootstrapAnswer::Reference(path))
         })();
         let delivered = answer_client(&mut stream, result.clone()).is_ok();
         // The core records the refusals it answered itself.
@@ -520,7 +544,7 @@ impl Panes {
             report_refusal(output, named, reason);
         }
         if !delivered || result.is_err() {
-            if reference_new && let Ok(path) = result {
+            if reference_new && let Ok(BootstrapAnswer::Reference(path)) = result {
                 let _ = fs::remove_file(&path);
                 lock(&self.issued).remove(&path);
             }
@@ -743,12 +767,16 @@ fn report_refusal(output: &Mutex<impl Write>, pane_id: Option<String>, reason: &
 
 /// A reference with no wire spelling is not answered at all, so its caller
 /// reads the end of the stream and the issuer withdraws the reference.
-fn answer_client(stream: &mut LocalStream, result: Result<PathBuf, String>) -> io::Result<()> {
+fn answer_client(
+    stream: &mut LocalStream,
+    result: Result<BootstrapAnswer, String>,
+) -> io::Result<()> {
     let answer = match result {
-        Ok(reference) => {
+        Ok(BootstrapAnswer::Reference(reference)) => {
             let reference = hide_platform::path::to_wire(&reference).map_err(io::Error::other)?;
             json!({"ok":true,"reference":reference})
         }
+        Ok(BootstrapAnswer::Hook(answer)) => answer,
         Err(reason) => json!({"ok":false,"reason":reason}),
     };
     writeln!(stream, "{answer}")

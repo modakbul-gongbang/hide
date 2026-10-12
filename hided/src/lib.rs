@@ -32,6 +32,7 @@ pub mod node_daemon;
 pub mod node_pages;
 pub mod node_uploads;
 
+mod hook_request;
 pub mod node_panes;
 pub mod node_role;
 mod owned_task;

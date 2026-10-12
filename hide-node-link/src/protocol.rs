@@ -106,7 +106,9 @@ use crate::error::HostError;
 /// [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent when the node
 /// proved nothing, and the core then checks the command with `pane_inspect`;
 /// a core uploads its own build to a device it dials, so no peer lacks it.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// 29: pane proofs may carry one typed hook read and answer it directly.
+/// Older peers cannot decode the hook answer and are refused at Hello.
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// What a link stream the core opens on a node that dialed it reaches on
 /// the node's machine ([`Call::LinkOpen`]).

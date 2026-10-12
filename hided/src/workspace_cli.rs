@@ -213,11 +213,11 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
     )
 }
 
-fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBuf>, String> {
+fn live_bridges(bridge_dir: &Path) -> Result<Vec<LocalStream>, String> {
     let bridge_dir = bridge_dir.to_path_buf();
     let metadata = match fs::symlink_metadata(&bridge_dir) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("bridge_unavailable".to_owned()),
     };
     if !metadata.is_dir()
@@ -229,12 +229,10 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
     }
     let entries = match fs::read_dir(&bridge_dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("bridge_unavailable".to_owned()),
     };
-    let mut success = None;
-    let mut reason = None;
-    let mut seen = 0;
+    let mut streams = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|_| "bridge_unavailable".to_owned())?;
         if !entry.file_name().to_string_lossy().starts_with("bridge-") {
@@ -252,13 +250,22 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
         {
             continue;
         }
-        let Ok(mut stream) = LocalStream::connect(&socket) else {
+        let Ok(stream) = LocalStream::connect(&socket) else {
             continue;
         };
-        seen += 1;
+        streams.push(stream);
+        let seen = streams.len();
         if seen > 16 {
             return Err("bridge_limit".to_owned());
         }
+    }
+    Ok(streams)
+}
+
+fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBuf>, String> {
+    let mut success = None;
+    let mut reason = None;
+    for mut stream in live_bridges(bridge_dir)? {
         let _ = stream.set_read_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
         // A Windows pipe has no write timeout; the request is one short line.
         let _ = stream.set_write_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
@@ -267,7 +274,7 @@ fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBu
             continue;
         }
         match read_bootstrap_answer(&mut stream) {
-            Ok(path) if path.starts_with(&bridge_dir) => {
+            Ok(path) if path.starts_with(bridge_dir) => {
                 if success.is_some() {
                     // A bridge may return a persistent reference already held
                     // by a live pane. Ambiguity cannot revoke either holder.
@@ -509,9 +516,6 @@ pub fn request_factory_question_guard(
 /// How long `hide workspace memory` waits for the core's answer: the hook
 /// that runs it waits 1,250 ms in all, process start included.
 const MEMORY_WITHIN: Duration = Duration::from_millis(1_200);
-/// The largest request the daemon reads from a pane credential.
-const SCOPED_REQUEST_LIMIT: usize = 16 * 1024;
-
 /// The prompt a hook piped in: at most
 /// `herdr_core::memory_hook::PROMPT_LIMIT_BYTES`, its valid UTF-8 start.
 pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
@@ -535,38 +539,109 @@ pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
 /// A hook's Project Memory from the core (`hide workspace memory`). A prompt
 /// whose escaping would carry the request past what the daemon reads is cut
 /// until it fits.
-pub fn request_memory_hook(credential: &Credential, mut ask: Value) -> Result<Value, String> {
-    let path = &credential.path;
-    let reference = read_reference(path)?;
-    let request_id = fresh_request_id()?;
-    ask["type"] = json!("memory_hook");
-    ask["request_id"] = json!(request_id);
-    while ask.to_string().len() > SCOPED_REQUEST_LIMIT {
-        let Some(prompt) = ask["prompt"].as_str().filter(|prompt| !prompt.is_empty()) else {
-            return Err("memory_request_too_large".to_owned());
-        };
-        let cut = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
-        ask["prompt"] = json!(cut);
-    }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| "request_unavailable".to_owned())?;
-    runtime.block_on(async {
-        let deadline = tokio::time::Instant::now() + MEMORY_WITHIN;
-        let (value, mut socket) = tokio::time::timeout_at(
-            deadline,
-            exchange_response_with_limit(&reference, ask, &request_id, Some(64 * 1024)),
-        )
-        .await
-        .map_err(|_| "memory_deadline".to_owned())??;
-        if credential.after_answer() == AfterAnswer::Claim {
-            tokio::time::timeout_at(deadline, claim(&mut socket, path))
-                .await
-                .map_err(|_| "memory_deadline".to_owned())??;
+pub fn request_memory_hook(env: &Env, mut ask: Value) -> Result<Value, String> {
+    ask["kind"] = json!("memory");
+    let command = serde_json::from_value(ask).map_err(|_| "invalid_request".to_owned())?;
+    request_hook(env, command)
+}
+
+/// Hook reads always use the bootstrap service. Choosing a route happens
+/// before sending; neither a refusal nor a lost answer retries the command.
+pub fn request_hook(
+    env: &Env,
+    mut command: hide_node_link::panes::HookCommand,
+) -> Result<Value, String> {
+    use hide_node_link::panes::{
+        HOOK_REQUEST_LIMIT, HOOK_RESPONSE_LIMIT, HookCommand, HookRequest,
+    };
+    let started = std::time::Instant::now();
+    let timeout = if matches!(command, HookCommand::Memory { .. }) {
+        MEMORY_WITHIN
+    } else {
+        TIMEOUT
+    };
+    let named = match std::env::var(crate::env::HIDE_CAP_REF) {
+        Ok(path) if path.is_empty() => return Err("invalid_reference".to_owned()),
+        Ok(path) => match read_reference(Path::new(&path)) {
+            Ok(reference) => Some((PathBuf::from(path), reference)),
+            Err(reason) if reason == "credential_expired" => None,
+            Err(reason) => return Err(reason),
+        },
+        Err(_) => None,
+    };
+    let selected = match &named {
+        Some((
+            _,
+            Reference {
+                route: Route::Node { socket },
+                ..
+            },
+        )) => LocalStream::connect(&node_socket(socket).ok_or("invalid_reference")?)
+            .map_err(|_| "hide_unavailable".to_owned()),
+        _ => {
+            let state = named
+                .as_ref()
+                .and_then(|(path, _)| path.parent().and_then(Path::parent))
+                .unwrap_or(&env.state_dir);
+            crate::pane_auth::bootstrap_socket_path(state).and_then(|socket| {
+                LocalStream::connect(&socket).map_err(|_| "hide_unavailable".to_owned())
+            })
         }
-        Ok(value)
-    })
+    };
+    let mut stream = match selected {
+        Ok(stream) => stream,
+        Err(_) => {
+            let mut bridges = live_bridges(&hide_kit::layout::workspace_bridges(&env.state_dir))?;
+            if bridges.len() > 1 {
+                return Err("ambiguous_pane".to_owned());
+            }
+            bridges.pop().ok_or("hide_unavailable")?
+        }
+    };
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|_| "reference_unavailable".to_owned())?;
+    let request_id = fresh_request_id()?;
+    let token = named.map(|(_, reference)| reference.token);
+    let line = loop {
+        let hook = HookRequest {
+            request_id: request_id.clone(),
+            command: command.clone(),
+            token: token.clone(),
+        };
+        let request = json!({"pane_id":env.pane_id.as_deref().unwrap_or(""),"nonce":hex::encode(nonce),"one_shot":true,"hook":hook});
+        let line = request.to_string();
+        if line.len() < HOOK_REQUEST_LIMIT {
+            break line;
+        }
+        let HookCommand::Memory { prompt, .. } = &mut command else {
+            return Err("invalid_request".to_owned());
+        };
+        if prompt.is_empty() {
+            return Err("memory_request_too_large".to_owned());
+        }
+        *prompt = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
+    };
+    let within = timeout
+        .checked_sub(started.elapsed())
+        .ok_or("request_timeout")?;
+    stream
+        .set_read_timeout(Some(within))
+        .map_err(|_| "hide_unavailable")?;
+    let _ = stream.set_write_timeout(Some(within));
+    writeln!(stream, "{line}").map_err(|_| "hide_unavailable")?;
+    let mut line = String::new();
+    BufReader::new(stream)
+        .take(HOOK_RESPONSE_LIMIT as u64 + 1)
+        .read_line(&mut line)
+        .map_err(|_| "request_timeout")?;
+    if line.len() > HOOK_RESPONSE_LIMIT || !line.ends_with('\n') {
+        return Err("invalid_response".to_owned());
+    }
+    let answer: Value = serde_json::from_str(&line).map_err(|_| "invalid_response")?;
+    if answer["ok"] == true && answer["request_id"] != request_id {
+        return Err("invalid_response".to_owned());
+    }
+    Ok(answer)
 }
 
 /// The relay socket for one `hide browser` page command: the same scoped

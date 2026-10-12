@@ -14,7 +14,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use hide_node::ssh::{PaneEvents, RemoteHost};
 use hide_node_link::panes::{
-    MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer, StreamCaller,
+    HookRequest, MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer,
+    StreamCaller,
 };
 use hide_node_link::protocol::Call;
 use serde_json::json;
@@ -82,6 +83,7 @@ impl NodePanes {
         request: u64,
         proof: Proof,
         one_shot: bool,
+        hook: Option<HookRequest>,
     ) {
         let named = match &proof {
             Proof::Pane { pane_id, .. } => Some(pane_id.clone()),
@@ -100,12 +102,19 @@ impl NodePanes {
             return;
         };
         let panes = Arc::clone(self);
+        let received = std::time::Instant::now();
         let node = node.to_owned();
         let link = link.clone();
         self.runtime.spawn_blocking(move || {
             let _permit = permit;
             let answer = match panes.state.get() {
-                Some(state) => issue(state, &node, &link, proof, one_shot),
+                Some(state) => match hook {
+                    Some(hook) if one_shot && crate::hook_request::valid(&hook) => {
+                        answer_hook(state, &node, &link, proof, hook, received)
+                    }
+                    Some(_) => refused("invalid_request"),
+                    None => issue(state, &node, &link, proof, one_shot),
+                },
                 None => refused("hide_unavailable"),
             };
             if let ProofAnswer::Refused { reason } = &answer {
@@ -234,24 +243,28 @@ impl PaneEvents for Events {
                 identity,
                 nonce: _,
                 one_shot,
+                hook,
             } => panes.proof(
                 node,
                 link,
                 request,
                 Proof::Pane { pane_id, identity },
                 one_shot,
+                hook,
             ),
             NodeEvent::CheckoutProof {
                 request,
                 path,
                 nonce,
                 one_shot,
+                hook,
             } => panes.proof(
                 node,
                 link,
                 request,
                 Proof::Checkout { path, nonce },
                 one_shot,
+                hook,
             ),
             NodeEvent::Revoke { token } => {
                 if let Some(state) = panes.state.get() {
@@ -298,6 +311,65 @@ enum Proof {
 /// names, so a node can never vouch for a caller of another device. Only a
 /// node that dialed this core vouches for a checkout caller; a device this
 /// core dialed proves pane callers only, as it always has.
+fn answer_hook(
+    state: &AppState,
+    node: &str,
+    link: &RemoteHost,
+    proof: Proof,
+    hook: HookRequest,
+    received: std::time::Instant,
+) -> ProofAnswer {
+    let attested = match &proof {
+        Proof::Pane { pane_id, identity } => Some(pane_auth::StreamAttestation {
+            node: node.to_owned(),
+            link: link.clone(),
+            caller: StreamCaller {
+                pane_id: pane_id.clone(),
+                identity: identity.clone(),
+            },
+            received,
+        }),
+        Proof::Checkout { .. } => None,
+    };
+    let issued = issue(state, node, link, proof, true);
+    let ProofAnswer::Issued { token, .. } = issued else {
+        return issued;
+    };
+    let token = crate::hook_request::Token(&state.pane_capabilities, token);
+    let result = (|| {
+        let cap = state.pane_capabilities.validate(
+            &token.1,
+            state.herdr_socket.as_deref(),
+            &state.core,
+            attested.as_ref(),
+        )?;
+        if let Some(named) = hook.token.as_deref()
+            && state.pane_capabilities.get(named).is_some()
+        {
+            if state.pane_capabilities.vouched(named, node, link).is_none() {
+                return Err("credential_expired");
+            }
+            let prior = state.pane_capabilities.validate(
+                named,
+                state.herdr_socket.as_deref(),
+                &state.core,
+                attested.as_ref(),
+            )?;
+            if !cap.same_identity(&prior) {
+                return Err("pane_changed");
+            }
+        }
+        if link.closed_reason().is_some() {
+            return Err("remote_unavailable");
+        }
+        Ok(crate::hook_request::answer(&state.core, &cap, &hook))
+    })();
+    match result {
+        Ok(answer) => ProofAnswer::Hook { answer },
+        Err(reason) => refused(reason),
+    }
+}
+
 fn issue(
     state: &AppState,
     node: &str,
@@ -476,6 +548,7 @@ mod tests {
                         },
                         nonce: "fixture".to_owned(),
                         one_shot: false,
+                        hook: None,
                     },
                 );
             })

@@ -35,6 +35,38 @@ pub struct PaneIdentity {
     pub shell_started: u64,
 }
 
+/// The only commands admitted by a hook's proof-and-answer exchange.
+/// Keeping this separate from Workspace commands prevents this transport
+/// from acquiring dispatch, browser, or letter-confirmation authority.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HookCommand {
+    LetterPull {
+        prompt_digest: Option<String>,
+        session: Option<String>,
+    },
+    Memory {
+        event: String,
+        runtime: String,
+        session: String,
+        #[serde(default)]
+        prompt: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookRequest {
+    pub request_id: String,
+    pub command: HookCommand,
+    /// A named reference constrains the fresh proof; it never substitutes
+    /// for the node's kernel check of the caller.
+    pub token: Option<String>,
+}
+
+pub const HOOK_REQUEST_LIMIT: usize = 16 * 1024;
+pub const HOOK_RESPONSE_LIMIT: usize = 64 * 1024;
+
 /// What a node tells the core without being asked: one JSON line with an
 /// `event` field and no `id`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -50,6 +82,8 @@ pub enum NodeEvent {
         identity: PaneIdentity,
         nonce: String,
         one_shot: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<HookRequest>,
     },
     /// A process that is in no pane the node can prove asked for a
     /// credential, and the node's kernel says its working directory is
@@ -62,6 +96,8 @@ pub enum NodeEvent {
         path: String,
         nonce: String,
         one_shot: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<HookRequest>,
     },
     /// A credential the node handed out is no longer held: its reference
     /// expired, was removed, or its holder ended.
@@ -115,6 +151,9 @@ pub struct StreamCaller {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ProofAnswer {
+    Hook {
+        answer: serde_json::Value,
+    },
     Issued {
         token: String,
         /// The token was made for this proof; one already held by the pane

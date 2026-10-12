@@ -70,6 +70,11 @@ pub struct Capability {
 }
 
 impl Capability {
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        (self.binding == Binding::Checkout || self.pane_id == other.pane_id)
+            && self.context == other.context
+            && self.binding == other.binding
+    }
     pub fn question_guard_terminal(&self) -> Option<&str> {
         match &self.binding {
             Binding::Pane { terminal_id, .. } => Some(terminal_id),
@@ -285,6 +290,17 @@ impl Registry {
         port: u16,
         holder: Option<(i32, u64)>,
     ) -> Result<(PathBuf, bool), &'static str> {
+        self.issue_with_token(attestation, nonce, port, holder)
+            .map(|(path, new, _)| (path, new))
+    }
+
+    fn issue_with_token(
+        &self,
+        attestation: &Attestation,
+        nonce: &str,
+        port: u16,
+        holder: Option<(i32, u64)>,
+    ) -> Result<(PathBuf, bool, String), &'static str> {
         let path = self.reference_path(nonce)?;
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
         if self.closed.load(Ordering::SeqCst) {
@@ -298,11 +314,11 @@ impl Registry {
             alive
         });
         if holder.is_none()
-            && let Some(existing) = entries.values().find(|entry| {
+            && let Some((token, existing)) = entries.iter().find(|(_, entry)| {
                 !entry.one_shot && entry.remote.is_none() && same_caller(entry, attestation)
             })
         {
-            return Ok((existing.path.clone(), false));
+            return Ok((existing.path.clone(), false, token.clone()));
         }
         if entries.len() >= MAX_CAPABILITIES {
             return Err("capability_limit");
@@ -337,7 +353,7 @@ impl Registry {
                 remote: None,
             },
         );
-        Ok((path, true))
+        Ok((path, true, token))
     }
 
     pub(crate) fn issue_remote(
@@ -998,10 +1014,61 @@ fn answer_bootstrap(
     // A Windows pipe has no write timeout; the answer is one short line.
     let _ = stream.set_write_timeout(Some(BOOTSTRAP_TIMEOUT));
     let mut line = String::new();
-    let result = BufReader::new(&mut stream)
-        .take(4096)
+    let read = BufReader::new(&mut stream)
+        .take(hide_node_link::panes::HOOK_REQUEST_LIMIT as u64 + 1)
         .read_line(&mut line)
-        .map_err(|_| "invalid_request")
+        .map_err(|_| "invalid_request");
+    if read.is_ok()
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&line)
+        && value.get("hook").is_some()
+    {
+        let result = (|| {
+            if line.len() > hide_node_link::panes::HOOK_REQUEST_LIMIT {
+                return Err("invalid_request");
+            }
+            let request: BootstrapRequest =
+                serde_json::from_value(value.clone()).map_err(|_| "invalid_request")?;
+            let hook: hide_node_link::panes::HookRequest =
+                serde_json::from_value(value["hook"].clone()).map_err(|_| "invalid_request")?;
+            if !request.one_shot || !crate::hook_request::valid(&hook) {
+                return Err("invalid_request");
+            }
+            let (attestation, _) = attest_bootstrap(peer, &request, herdr_socket, core)?;
+            let (_, _, token) = registry.issue_with_token(
+                &attestation,
+                &request.nonce,
+                port,
+                Some((peer, process_start(peer).ok_or("caller_unavailable")?)),
+            )?;
+            let token = crate::hook_request::Token(registry, token);
+            let cap = registry.validate(&token.1, herdr_socket, core, None)?;
+            if let Some(named) = hook.token.as_deref()
+                && registry.get(named).is_some()
+            {
+                let prior = registry.validate(named, herdr_socket, core, None)?;
+                if !cap.same_identity(&prior) {
+                    return Err("pane_changed");
+                }
+            }
+            Ok(crate::hook_request::answer(core, &cap, &hook))
+        })();
+        let answer = match result {
+            Ok(answer) => answer,
+            Err(reason) => {
+                json!({"ok":false,"reason":reason,"next_action":refusal_next_action(reason)})
+            }
+        };
+        let _ = writeln!(stream, "{answer}");
+        return;
+    }
+    let result = read
+        .and({
+            if line.len() <= 4096 {
+                Ok(())
+            } else {
+                Err("invalid_request")
+            }
+        })
         .and_then(|_| {
             serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
         })
@@ -1128,6 +1195,60 @@ mod tests {
                 .err(),
             Some("hide_unavailable")
         );
+    }
+
+    #[test]
+    fn a_hook_token_ends_on_return_and_unwind_and_cannot_be_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        for unwind in [false, true] {
+            let (token, _) = registry
+                .issue_remote(
+                    &device_attestation("node-a"),
+                    RemoteGrant {
+                        one_shot: true,
+                        ..device_grant("node-a", &link)
+                    },
+                )
+                .unwrap();
+            let held = token.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _request = crate::hook_request::Token(&registry, held);
+                assert!(registry.vouched(&token, "node-a", &link).is_some());
+                if unwind {
+                    panic!("request unwound");
+                }
+            }));
+            assert_eq!(result.is_err(), unwind);
+            assert!(registry.vouched(&token, "node-a", &link).is_none());
+            assert_eq!(registry.claim(&token), Err("credential_expired"));
+        }
+    }
+
+    #[test]
+    fn a_named_hook_reference_constrains_the_proved_pane_and_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        let (token, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        let cap = registry.get(&token).unwrap();
+        let mut other = cap.clone();
+        other.pane_id = "remote:node-a:pane:w1:p2".to_owned();
+        assert!(!cap.same_identity(&other));
+        other = cap.clone();
+        other.binding = Binding::Pane {
+            terminal_id: "replaced".to_owned(),
+            shell_pid: 42,
+            shell_started: 10,
+        };
+        assert!(!cap.same_identity(&other));
+        other = cap.clone();
+        other.context.device_id = "node-b".to_owned();
+        assert!(!cap.same_identity(&other));
+        assert!(cap.same_identity(&cap));
     }
 
     /// A device's node on a local link that answers `Call::PaneInspect`

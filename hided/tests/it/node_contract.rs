@@ -102,10 +102,17 @@ impl Events {
 impl hide_node::ssh::PaneEvents for Events {
     fn event(&self, _node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
         if let NodeEvent::PaneProof {
-            request, one_shot, ..
+            request,
+            one_shot,
+            hook,
+            ..
         } = &event
         {
-            let answer = if *one_shot {
+            let answer = if let Some(hook) = hook {
+                ProofAnswer::Hook {
+                    answer: json!({"ok":true,"request_id":hook.request_id,"result":{"context":null,"outcome":"empty"}}),
+                }
+            } else if *one_shot {
                 ProofAnswer::Refused {
                     reason: "pane_changed".to_owned(),
                 }
@@ -1321,4 +1328,73 @@ fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
             identity: proved,
         })
     );
+}
+
+/// The socket proves a hook's caller before forwarding the typed command,
+/// answers that command once, and leaves no reusable reference behind.
+#[test]
+fn a_hook_proof_answers_once_and_never_hands_out_a_reference() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let device = Device::start();
+    let sockets = pane_sockets(&device.state);
+    let socket = &sockets[0];
+    let request = json!({"pane_id":PROVED_PANE,"nonce":"ab".repeat(16),"one_shot":true,"hook":{
+        "request_id":"hook-1","token":null,"command":{"kind":"memory","event":"SessionStart","runtime":"claude","session":"session"}
+    }});
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+    writeln!(stream, "{request}").unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let answer: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(answer["request_id"], "hook-1");
+    assert_eq!(answer["ok"], true);
+    assert!(answer.get("reference").is_none());
+    assert!(answer.get("token").is_none());
+    line.clear();
+    assert_eq!(
+        reader.read_line(&mut line).unwrap(),
+        0,
+        "one socket answers only one hook"
+    );
+    assert!(
+        !socket
+            .parent()
+            .unwrap()
+            .join(format!("{}.json", "ab".repeat(16)))
+            .exists()
+    );
+    let proofs = device.events.heard_until(|events| {
+        events
+            .iter()
+            .any(|event| matches!(event, NodeEvent::PaneProof { hook: Some(_), .. }))
+    });
+    assert!(proofs.iter().any(|event| matches!(event, NodeEvent::PaneProof { pane_id, identity, one_shot: true, hook: Some(_), .. } if pane_id == PROVED_PANE && identity.terminal_id == "t-proved")));
+    for invalid in [
+        json!({"kind":"workspace_action","command":{"type":"close_pane"}}),
+        json!({"kind":"letter_confirm","ids":["letter-1"]}),
+    ] {
+        let mut request = request.clone();
+        request["hook"]["command"] = invalid;
+        let mut stream = UnixStream::connect(socket).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut answer = String::new();
+        BufReader::new(stream).read_line(&mut answer).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&answer).unwrap()["reason"],
+            "invalid_request"
+        );
+    }
+    let mut other_pane = request.clone();
+    other_pane["pane_id"] = json!("w1:p999");
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+    writeln!(stream, "{other_pane}").unwrap();
+    let mut answer = String::new();
+    BufReader::new(stream).read_line(&mut answer).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&answer).unwrap()["ok"], false);
+    assert!(!device.events.heard.lock().unwrap().iter().any(|event| matches!(event, NodeEvent::PaneProof { pane_id, hook: Some(_), .. } if pane_id == "w1:p999")));
 }

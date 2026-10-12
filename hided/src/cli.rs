@@ -573,10 +573,8 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             const NEXT: &str = "Continue without Project Memory";
             let prompt = crate::workspace_cli::read_memory_prompt(std::io::stdin().lock())
                 .or_else(|reason| workspace_refusal(&reason, NEXT))?;
-            let credential = crate::workspace_cli::Credential::acquire(&env)
-                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
             let answer = crate::workspace_cli::request_memory_hook(
-                &credential,
+                &env,
                 json_memory_hook_ask(&event, &runtime, &session, &prompt),
             )
             .or_else(|reason| workspace_refusal(&reason, NEXT))?;
