@@ -64,6 +64,13 @@ struct Envelope {
 #[derive(Deserialize)]
 struct Params {
     update: Update,
+    #[serde(rename = "_meta")]
+    meta: Option<Meta>,
+}
+#[derive(Deserialize)]
+struct Meta {
+    #[serde(rename = "agentTimestampMs")]
+    at_ms: Option<u64>,
 }
 #[derive(Deserialize)]
 struct Update {
@@ -102,6 +109,16 @@ pub(super) fn parse(bytes: &[u8], summary: &Summary) -> Result<Vec<Event>, &'sta
         return Ok(Vec::new());
     }
     let prompt = required(record.params.update.prompt_id, 128)?;
+    // Forks rewrite the envelope's seconds but retain the agent's timestamp.
+    let at_ms = match record.params.meta.and_then(|m| m.at_ms) {
+        Some(ms) if ms >= 10_000_000_000 => ms,
+        Some(_) => return Err("timestamp_invalid"),
+        None if record.timestamp >= 10_000_000_000 => record.timestamp,
+        None => record
+            .timestamp
+            .checked_mul(1000)
+            .ok_or("timestamp_invalid")?,
+    };
     let usage = record.params.update.usage.ok_or("usage_missing")?;
     if usage.model_usage.is_empty() {
         return Err("model_missing");
@@ -136,7 +153,7 @@ pub(super) fn parse(bytes: &[u8], summary: &Summary) -> Result<Vec<Event>, &'sta
             };
             Ok(Event {
                 key: key(&[&prompt, &model]),
-                at_ms: record.timestamp,
+                at_ms,
                 model,
                 session: summary.info.id.clone(),
                 cwd: summary.info.cwd.clone(),

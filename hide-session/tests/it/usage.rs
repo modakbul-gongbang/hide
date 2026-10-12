@@ -177,6 +177,7 @@ fn usage_grok_parent_includes_children_and_partial_cost_is_unknown() {
     // The parent's own PromptUsage is the oracle, not parent + child usage.
     assert_eq!(events.len(), 1);
     let event = &events[0];
+    assert_eq!(event.at_ms, 1_790_856_000_000);
     assert_eq!(
         (
             event.tokens.input,
