@@ -660,6 +660,7 @@ mod tests {
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
         };
         fixture
             .store()
@@ -697,6 +698,7 @@ mod tests {
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
         };
         fixture
             .store()

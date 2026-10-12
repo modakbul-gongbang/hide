@@ -430,6 +430,10 @@ impl Runtime {
                 questions.push(MemoryQuestionSnapshot::Failed {
                     number: *number,
                     title: row.title.clone(),
+                    start_failure: promotion
+                        .failure
+                        .as_deref()
+                        .map(crate::model::MemoryStartFailure::of),
                 });
             }
             row.promotion = snapshot;
@@ -1091,6 +1095,7 @@ mod tests {
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
+            failure: None,
         };
         store
             .set_promotion(&identity.id, 2, &promotion(PromotionState::Failed, None))
@@ -1170,6 +1175,7 @@ mod tests {
                 MemoryQuestionSnapshot::Failed {
                     number: 2,
                     title: "Releases are tagged on main".to_owned(),
+                    start_failure: None,
                 },
                 MemoryQuestionSnapshot::Promote {
                     number: 1,

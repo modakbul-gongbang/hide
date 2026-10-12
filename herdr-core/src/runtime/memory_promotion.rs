@@ -20,8 +20,11 @@ use serde_json::json;
 /// followed on each GitHub answer instead.
 const TRACK_INTERVAL_MS: u64 = 60_000;
 /// How long a promotion may stay running with no agent: past it the start
-/// was cut short (Hide quit between writing the state and the spawn).
-const START_GRACE_MS: u64 = 5 * 60_000;
+/// was cut short (Hide quit between writing the state and the spawn). It
+/// outlasts the spawn's own answer, which takes up to two starts, each held
+/// by Herdr until its deadline and asked again on the next check.
+const START_GRACE_MS: u64 =
+    2 * crate::agent_start::AGENT_START_DEADLINE.as_millis() as u64 + 3 * TRACK_INTERVAL_MS;
 /// How much earlier than the attempt's start a pull request may say it was
 /// made, for a clock that runs a little behind GitHub's.
 const START_SLACK_MS: u64 = 60_000;
@@ -78,6 +81,9 @@ pub(super) struct PromotionStart {
     kind: String,
     /// Its remembered model's arguments.
     args: Vec<String>,
+    /// This Mac's Herdr and node, which release a failed attempt's worktree.
+    connector: Option<Arc<dyn hide_herdr_client::ApiConnector>>,
+    node: Arc<dyn crate::node_access::NodeLink>,
 }
 
 /// The tracker's single flight and its schedule.
@@ -160,6 +166,8 @@ impl Runtime {
             repo: repo.to_owned(),
             kind,
             args,
+            connector: self.delivery_connector(self.node.as_str()),
+            node: self.own_node(),
         })
     }
 
@@ -458,9 +466,12 @@ fn track_promotions(
     let followed = MemoryStore::open_read_only(database)
         .and_then(|store| store.open_promotions(node.as_str()))
         .map_err(|error| error.to_string())?;
-    let (moves, mut asks) = {
+    let (moves, mut asks, releaser) = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
+        let releaser = guard
+            .delivery_connector(node.as_str())
+            .map(|connector| (connector, guard.own_node()));
         let mut gone_now = HashSet::new();
         let mut asks = Vec::new();
         let moves = followed
@@ -509,7 +520,7 @@ fn track_promotions(
                 (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
             })
         });
-        (moves, asks)
+        (moves, asks, releaser)
     };
     let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| MemoryStore::open(database))
@@ -533,7 +544,7 @@ fn track_promotions(
             return Ok(outcome);
         }
     };
-    for ((project_id, _, number, promotion), next) in followed.iter().zip(moves) {
+    for ((project_id, root, number, promotion), next) in followed.iter().zip(moves) {
         let state = match (next, store.as_mut()) {
             // Only the state and the pull request move: a file `placed`
             // named meanwhile stays, and a row that moved on is left.
@@ -549,6 +560,19 @@ fn track_promotions(
                             "pr_number": pr_number,
                         }));
                         outcome.moved_projects.insert(project_id.clone());
+                        if state == PromotionState::Failed
+                            && let (Some((connector, node)), Some(branch)) =
+                                (&releaser, &promotion.branch)
+                        {
+                            release_attempt(
+                                connector.as_ref(),
+                                node.as_ref(),
+                                root,
+                                branch,
+                                project_id,
+                                *number,
+                            );
+                        }
                         state
                     }
                     Ok(false) => promotion.state,
@@ -573,14 +597,44 @@ fn track_promotions(
     if let Some(store) = store.as_mut() {
         for (key, promotion, start) in asks.drain(..) {
             let spawn = |start: &PromotionStart| spawn_agent(&key.0, key.1, &promotion, start);
-            if let Some(start) = adopt_agent(store, &key, &promotion, start, spawn) {
-                outcome.unseen.push((key, start));
-            } else {
-                outcome.moved_projects.insert(key.0.clone());
+            match adopt_agent(store, &key, &promotion, start, spawn) {
+                Adoption::Again(start) => outcome.unseen.push((key, start)),
+                Adoption::Recorded => {
+                    outcome.moved_projects.insert(key.0.clone());
+                }
+                Adoption::NotStarted(start, reason) => {
+                    // The spawn answered from its own state, so the start is
+                    // the one that failed; it is not asked for again.
+                    if let Err(message) =
+                        fail_start(store, &key.0, key.1, &promotion, &start, &reason)
+                    {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "promotion.move_failed",
+                            "project_id": key.0,
+                            "card": hide_memory::card_name(key.1),
+                            "message": message,
+                        }));
+                    }
+                    outcome.moved_projects.insert(key.0.clone());
+                }
             }
         }
     }
     Ok(outcome)
+}
+
+/// What asking an unseen agent's spawn again came to.
+#[derive(Debug, PartialEq)]
+enum Adoption<S> {
+    /// The agent showed and is recorded on its attempt.
+    Recorded,
+    /// Not seen yet, another spawn held the lock, or the agent could not be
+    /// recorded: the start comes back for the next check.
+    Again(S),
+    /// The spawn answered that its agent did not start: the attempt failed
+    /// with that answer, and its start comes back to release what it made.
+    NotStarted(S, String),
 }
 
 /// Asks an unseen agent's spawn again; records the agent when it shows, and
@@ -591,25 +645,172 @@ fn adopt_agent<S>(
     promotion: &Promotion,
     start: S,
     spawn: impl FnOnce(&S) -> Result<String, String>,
-) -> Option<S> {
+) -> Adoption<S> {
     let (project_id, number, _) = key;
     match spawn(&start) {
-        Ok(agent_id) => {
-            (!record_agent(store, project_id, *number, promotion, &agent_id)).then_some(start)
+        Ok(agent_id) if record_agent(store, project_id, *number, promotion, &agent_id) => {
+            Adoption::Recorded
         }
+        Ok(_) => Adoption::Again(start),
         // Not seen yet, or another spawn held the lock: ask again next check.
-        Err(reason) if reason == UNSEEN || reason == BUSY => Some(start),
-        Err(reason) => {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "promotion.agent_not_adopted",
-                "project_id": project_id,
-                "card": hide_memory::card_name(*number),
-                "reason": reason,
-            }));
-            None
-        }
+        Err(reason) if reason == UNSEEN || reason == BUSY => Adoption::Again(start),
+        Err(reason) => Adoption::NotStarted(start, reason),
     }
+}
+
+/// Fails `promotion`, a running attempt whose agent never started, with the
+/// spawn's answer as its reason, and releases what the attempt made.
+fn fail_start(
+    store: &mut MemoryStore,
+    project_id: &str,
+    number: u64,
+    promotion: &Promotion,
+    start: &PromotionStart,
+    reason: &str,
+) -> Result<(), String> {
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "promotion.start_failed",
+        "project_id": project_id,
+        "card": hide_memory::card_name(number),
+        "reason": reason,
+    }));
+    store
+        .fail_promotion_start(
+            project_id,
+            number,
+            promotion,
+            reason,
+            super::memory::now_ms(),
+        )
+        .map_err(|error| error.to_string())?;
+    if let (Some(connector), Some(branch)) = (start.connector.as_deref(), &promotion.branch) {
+        release_attempt(
+            connector,
+            start.node.as_ref(),
+            &start.repo,
+            branch,
+            project_id,
+            number,
+        );
+    }
+    Ok(())
+}
+
+/// The worktree of `branch` in the repository at `repo`, `None` when there
+/// is none.
+fn worktree_path(
+    connector: &dyn hide_herdr_client::ApiConnector,
+    repo: &str,
+    branch: &str,
+) -> Result<Option<String>, String> {
+    hide_herdr_client::request_with_connector(
+        connector,
+        "worktree.list",
+        crate::wire::worktree_list_params(repo)?,
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|error| error.to_string())
+    .and_then(|listed| crate::wire::listed_worktree_path(listed, branch))
+}
+
+/// Releases what a failed attempt made (engineering principle 14): its
+/// worktree, the workspace and panes in it, and its branch, when the branch
+/// holds no commit of its own and the worktree nothing uncommitted. One that
+/// holds work stays, and the next attempt continues there
+/// (`start_promotion`), so retries never pile worktrees up. What happened is
+/// logged; a failure leaves the worktree for that next attempt too.
+fn release_attempt(
+    connector: &dyn hide_herdr_client::ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    repo: &str,
+    branch: &str,
+    project_id: &str,
+    number: u64,
+) {
+    use hide_node_link::git::GitCommand;
+    use hide_node_link::protocol::Call;
+    const NODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    let git = |root: &str, command: GitCommand| -> Result<String, String> {
+        crate::node_access::call_as::<String>(
+            node,
+            Call::Git {
+                root: root.to_owned(),
+                command,
+            },
+            NODE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())
+    };
+    let released = (|| -> Result<&'static str, String> {
+        let Some(path) = worktree_path(connector, repo, branch)? else {
+            return Ok("gone");
+        };
+        let own = git(
+            repo,
+            GitCommand::CountCommits {
+                base: "HEAD".to_owned(),
+                head: branch.to_owned(),
+            },
+        )?;
+        if own.trim() != "0" || !git(&path, GitCommand::Status)?.trim().is_empty() {
+            return Ok("kept");
+        }
+        let panes = panes_in(connector, &path)?;
+        crate::live::close_checkout_panes(
+            connector,
+            node,
+            std::slice::from_ref(&path),
+            &panes,
+            crate::live::ProcessWait::for_folder_removal(true),
+            crate::live::CONFIRM_TIMEOUT,
+        )?;
+        crate::node_access::call_as::<()>(
+            node,
+            Call::Factory {
+                call: hide_node_link::factory::FactoryCall::RemoveWorktree {
+                    root: repo.to_owned(),
+                    checkout: path,
+                    branch: branch.to_owned(),
+                    discard: true,
+                },
+            },
+            NODE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok("removed")
+    })();
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "promotion.worktree_released",
+        "project_id": project_id,
+        "card": hide_memory::card_name(number),
+        "branch": branch,
+        "outcome": released.as_ref().ok(),
+        "reason": released.err(),
+    }));
+}
+
+/// The panes Herdr runs in the folder `path` or below it.
+fn panes_in(
+    connector: &dyn hide_herdr_client::ApiConnector,
+    path: &str,
+) -> Result<Vec<String>, String> {
+    let snapshot = hide_herdr_client::request_with_connector(
+        connector,
+        "session.snapshot",
+        crate::wire::empty_params(),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|error| error.to_string())?;
+    let snapshot = crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
+    let inside = |cwd: &str| cwd == path || cwd.starts_with(&format!("{path}/"));
+    Ok(snapshot
+        .panes
+        .into_iter()
+        .filter(|pane| pane.cwd.as_deref().is_some_and(inside))
+        .map(|pane| pane.pane_id)
+        .collect())
 }
 
 /// Records the agent a spawn answered on its attempt; false when the write
@@ -714,9 +915,15 @@ pub(super) fn start_promotion(
             "m{number} is already on its way into the repository"
         ));
     }
-    let attempt = previous.map_or(0, |promotion| promotion.attempt) + 1;
+    let attempt = previous.as_ref().map_or(0, |promotion| promotion.attempt) + 1;
     let started = super::memory::now_ms();
-    let branch = branch(number, started);
+    let branch = attempt_branch(
+        previous.as_ref(),
+        start.connector.as_deref(),
+        &start.repo,
+        number,
+        started,
+    );
     let promotion = Promotion {
         state: PromotionState::Running,
         revision: item.revision,
@@ -727,6 +934,7 @@ pub(super) fn start_promotion(
         target_path: None,
         started_at_unix_ms: started,
         updated_at_unix_ms: started,
+        failure: None,
     };
     store
         .set_promotion(project_id, number, &promotion)
@@ -734,24 +942,7 @@ pub(super) fn start_promotion(
     // Each write after the spawn is conditional on the attempt still running
     // as written, so a tracker move in between stands.
     let failed = |store: &mut MemoryStore, reason: &str| {
-        crate::diagnostic!(json!({
-            "component": "memory",
-            "kind": "promotion.start_failed",
-            "project_id": project_id,
-            "card": hide_memory::card_name(number),
-            "reason": reason,
-        }));
-        store
-            .move_promotion(
-                project_id,
-                number,
-                &promotion,
-                PromotionState::Failed,
-                None,
-                super::memory::now_ms(),
-            )
-            .map(|_| None)
-            .map_err(|error| error.to_string())
+        fail_start(store, project_id, number, &promotion, &start, reason).map(|()| None)
     };
     match spawn_when_free(project_id, number, &promotion, &start) {
         // An agent that started but could not be recorded is the tracker's
@@ -773,6 +964,27 @@ pub(super) fn start_promotion(
         }
         Err(reason) => failed(store, &reason),
     }
+}
+
+/// The branch a new attempt works on: a failed attempt's whose worktree was
+/// kept, holding commits or changes of its own, is continued there rather
+/// than beside it; otherwise a branch of its own.
+fn attempt_branch(
+    previous: Option<&Promotion>,
+    connector: Option<&dyn hide_herdr_client::ApiConnector>,
+    repo: &str,
+    number: u64,
+    started: u64,
+) -> String {
+    previous
+        .filter(|promotion| promotion.state == PromotionState::Failed)
+        .and_then(|promotion| promotion.branch.clone())
+        .filter(|branch| {
+            connector.is_some_and(|connector| {
+                worktree_path(connector, repo, branch).is_ok_and(|path| path.is_some())
+            })
+        })
+        .unwrap_or_else(|| self::branch(number, started))
 }
 
 /// The operator's 안 올림 on a suggestion or a failed attempt: the card is
@@ -813,6 +1025,7 @@ pub(super) fn dismiss_promotion(
         target_path: None,
         started_at_unix_ms: super::memory::now_ms(),
         updated_at_unix_ms: super::memory::now_ms(),
+        failure: None,
     };
     store
         .set_promotion(project_id, number, &promotion)
@@ -920,6 +1133,7 @@ mod tests {
             target_path: None,
             started_at_unix_ms,
             updated_at_unix_ms: started_at_unix_ms,
+            failure: None,
         }
     }
 
@@ -1274,35 +1488,39 @@ mod tests {
         let agent = |store: &MemoryStore| store.promotions("p1").unwrap()[0].1.agent_id.clone();
 
         let busy = adopt_agent(&mut store, &key, &promotion, (), |_| Err(BUSY.into()));
-        assert_eq!(busy, Some(()), "a busy lock keeps the start");
+        assert_eq!(busy, Adoption::Again(()), "a busy lock keeps the start");
         let unseen = adopt_agent(&mut store, &key, &promotion, (), |_| Err(UNSEEN.into()));
-        assert_eq!(unseen, Some(()));
+        assert_eq!(unseen, Adoption::Again(()));
         let mut reader = MemoryStore::open_read_only(&database).unwrap();
         let unrecorded = adopt_agent(&mut reader, &key, &promotion, (), |_| Ok("agent-7".into()));
         assert_eq!(
             unrecorded,
-            Some(()),
+            Adoption::Again(()),
             "an answer the store refused keeps the start"
         );
         assert_eq!(agent(&store), None);
 
         assert_eq!(
             adopt_agent(&mut store, &key, &promotion, (), |_| Ok("agent-7".into())),
-            None
+            Adoption::Recorded
         );
         let (_, adopted) = &store.promotions("p1").unwrap()[0];
         assert_eq!(adopted.state, PromotionState::Running);
         assert_eq!(adopted.agent_id.as_deref(), Some("agent-7"));
         assert_eq!(
             adopt_agent(&mut store, &key, &promotion, (), |_| Ok("agent-7".into())),
-            None,
+            Adoption::Recorded,
             "an agent already recorded is done"
         );
 
         let refused = adopt_agent(&mut store, &key, &promotion, (), |_| {
             Err("agent_not_startable".into())
         });
-        assert_eq!(refused, None, "a terminal answer gives the start up");
+        assert_eq!(
+            refused,
+            Adoption::NotStarted((), "agent_not_startable".to_owned()),
+            "a terminal answer gives the start up with its reason"
+        );
     }
 
     #[test]
@@ -1392,6 +1610,11 @@ mod tests {
             ),
             "no Herdr here, so no agent was made"
         );
+        assert_eq!(
+            failed.failure.as_deref(),
+            Some("herdr_unavailable"),
+            "the card keeps why"
+        );
         let ledger = runtime.lock().unwrap().delivery_state().unwrap();
         assert!(
             ledger.agents.iter().any(|record| record.name
@@ -1418,6 +1641,175 @@ mod tests {
 
         dismiss_promotion(&mut store, "p", 1).unwrap();
         assert_eq!(promotion(&store).unwrap().state, PromotionState::Dismissed);
+    }
+
+    /// The repository a failed attempt leaves: its worktrees by branch, the
+    /// panes Herdr runs in them, and how many commits each branch holds.
+    #[derive(Default)]
+    struct Repository {
+        worktrees: std::collections::BTreeMap<String, String>,
+        panes: Vec<(String, String)>,
+        commits: u32,
+        changed: bool,
+    }
+
+    type Shared = Arc<std::sync::Mutex<Repository>>;
+
+    fn herdr(repository: &Shared) -> crate::fake_herdr::FakeHerdr {
+        let repository = Arc::clone(repository);
+        crate::fake_herdr::FakeHerdr::start("promotion-release", move |method, params| {
+            let mut repository = repository.lock().unwrap();
+            match method {
+                "worktree.list" => json!({"type": "worktree_list", "source": {
+                    "repo_key": "/r/.git", "repo_name": "r", "repo_root": "/r",
+                    "source_checkout_path": "/r", "source_workspace_id": "w1"},
+                    "worktrees": repository.worktrees.iter().map(|(branch, path)| json!({
+                        "branch": branch, "is_bare": false, "is_detached": false,
+                        "is_linked_worktree": true, "is_prunable": false, "label": "r",
+                        "open_workspace_id": "w2", "path": path})).collect::<Vec<_>>()}),
+                "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                    "version": "fixture", "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+                    "workspaces": [], "tabs": [], "layouts": [], "agents": [],
+                    "panes": repository.panes.iter().map(|(pane, cwd)| json!({
+                        "pane_id": pane, "workspace_id": "w2", "tab_id": "w2:t1",
+                        "terminal_id": "t", "focused": false, "agent_status": "idle",
+                        "revision": 1, "cwd": cwd})).collect::<Vec<_>>()}}),
+                "pane.close" => {
+                    repository
+                        .panes
+                        .retain(|(pane, _)| *pane != params["pane_id"]);
+                    json!({"type": "ok"})
+                }
+                other => panic!("unexpected {other}"),
+            }
+        })
+    }
+
+    /// The repository's machine: Git's answers, and the worktree removal.
+    struct Machine(Shared);
+
+    impl crate::node_access::NodeLink for Machine {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: std::time::Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            use hide_node_link::factory::FactoryCall;
+            use hide_node_link::git::GitCommand;
+            use hide_node_link::protocol::Call;
+            let mut repository = self.0.lock().unwrap();
+            Ok(crate::node_access::LinkAnswer::Parsed(match call {
+                Call::Git {
+                    command: GitCommand::CountCommits { .. },
+                    ..
+                } => json!(repository.commits.to_string()),
+                Call::Git {
+                    command: GitCommand::Status,
+                    ..
+                } => json!(if repository.changed {
+                    " M AGENTS.md\n"
+                } else {
+                    ""
+                }),
+                Call::Factory {
+                    call:
+                        FactoryCall::RemoveWorktree {
+                            branch, discard, ..
+                        },
+                } => {
+                    assert!(
+                        discard,
+                        "a branch with nothing of its own is deleted with it"
+                    );
+                    repository.worktrees.remove(&branch);
+                    serde_json::Value::Null
+                }
+                other => panic!("unexpected {other:?}"),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_retry_after_a_failed_attempt_without_commits_leaves_one_worktree() {
+        let first = branch(7, 1);
+        let repository: Shared = Arc::default();
+        repository
+            .lock()
+            .unwrap()
+            .worktrees
+            .insert(first.clone(), "/r.worktrees/first".into());
+        repository
+            .lock()
+            .unwrap()
+            .panes
+            .push(("w2:p1".into(), "/r.worktrees/first/docs".into()));
+        let herdr = herdr(&repository);
+        let connector = herdr.connector();
+        let failed = Promotion {
+            state: PromotionState::Failed,
+            ..running(None, 1)
+        };
+
+        release_attempt(
+            &connector,
+            &Machine(Arc::clone(&repository)),
+            "/r",
+            &first,
+            "p",
+            7,
+        );
+        assert!(repository.lock().unwrap().worktrees.is_empty());
+        assert!(
+            repository.lock().unwrap().panes.is_empty(),
+            "its pane closed first"
+        );
+        let retry = attempt_branch(Some(&failed), Some(&connector), "/r", 7, 2);
+        assert_ne!(retry, first, "the retry makes the only worktree");
+        // Asked again, nothing is left to release.
+        release_attempt(
+            &connector,
+            &Machine(Arc::clone(&repository)),
+            "/r",
+            &first,
+            "p",
+            7,
+        );
+    }
+
+    #[test]
+    fn a_failed_attempt_that_holds_work_keeps_its_worktree_and_the_retry_continues_there() {
+        let first = branch(7, 1);
+        let failed = Promotion {
+            state: PromotionState::Failed,
+            ..running(None, 1)
+        };
+        for (commits, changed) in [(2, false), (0, true)] {
+            let repository: Shared = Arc::default();
+            {
+                let mut repository = repository.lock().unwrap();
+                repository
+                    .worktrees
+                    .insert(first.clone(), "/r.worktrees/first".into());
+                repository.commits = commits;
+                repository.changed = changed;
+            }
+            let herdr = herdr(&repository);
+            let connector = herdr.connector();
+            release_attempt(
+                &connector,
+                &Machine(Arc::clone(&repository)),
+                "/r",
+                &first,
+                "p",
+                7,
+            );
+            assert_eq!(repository.lock().unwrap().worktrees.len(), 1);
+            assert_eq!(
+                attempt_branch(Some(&failed), Some(&connector), "/r", 7, 2),
+                first,
+                "{commits} commits, changed {changed}"
+            );
+        }
     }
 
     #[test]
