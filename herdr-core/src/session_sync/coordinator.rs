@@ -516,7 +516,8 @@ fn run_coordinator(
                     stop_subscription(&mut subscription);
                     return;
                 };
-                if let Some(github) = reader.read_if_due(request)
+                if let Some(request) = request
+                    && let Some(github) = reader.read_if_due(request)
                     && !publish_github(&context, github)
                 {
                     stop_subscription(&mut subscription);
@@ -1594,21 +1595,24 @@ fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker
     times.is_some_and(|times| worker.set_pull_request_times(times))
 }
 
-/// Hands the runtime the Memory receipts this Mac's worker found in its
+/// Hands the runtime the Memory receipts this target's worker found in its
 /// sessions and the sessions its live panes hold, under one brief lock taken
 /// only when there is something; the runtime checks and records receipts off
-/// the lock (PRD project-memory-v2 D-16).
+/// the lock (PRD project-memory-v2 D-16), for this machine and for a node
+/// that dials in (PRD core-host-node-move B14).
 fn hand_memory_receipts(context: &SessionSyncContext, worker: &mut LabelWorker) {
-    if !context.is_local() {
-        return;
-    }
     let Some(handoff) = worker.take_memory_handoff() else {
         return;
+    };
+    let device = match &context.target {
+        SessionSyncTarget::Local { .. } => None,
+        SessionSyncTarget::Remote { target_id, .. } => Some(target_id.as_str()),
     };
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
-        guard.take_memory_handoff(handoff);
+        let device = device.map_or_else(|| guard.node().as_str().to_owned(), str::to_owned);
+        guard.take_memory_handoff(&device, handoff);
     }
 }
 
@@ -1627,7 +1631,7 @@ fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> 
     let on = context
         .runtime
         .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.agent_summary()));
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.labels_asked()));
     on.is_some_and(|on| worker.set_summaries(on, Instant::now()))
 }
 
@@ -1804,10 +1808,17 @@ fn read_worktrees_request(
     Some(request)
 }
 
-fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
+/// The GitHub read due now; `Some(None)` while the core waits for its move's
+/// link, which reads nothing from GitHub until then.
+fn read_github_request(
+    context: &SessionSyncContext,
+) -> Option<Option<crate::github::GithubRequest>> {
     let runtime = context.runtime.upgrade()?;
     let request = {
         let mut guard = runtime.lock().ok()?;
+        if guard.effects_held() {
+            return Some(None);
+        }
         let now = Instant::now();
         match &context.target {
             SessionSyncTarget::Local { .. } => {
@@ -1821,7 +1832,7 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
         }
     };
     drop(runtime);
-    Some(request)
+    Some(Some(request))
 }
 
 fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
@@ -1990,7 +2001,7 @@ fn publish_github(context: &SessionSyncContext, answer: crate::github::GithubAns
                 guard.ingest_github_answer(answer.snapshot, current)
             }
             SessionSyncTarget::Remote { target_id, .. } => {
-                guard.ingest_device_github(target_id, answer.snapshot)
+                guard.ingest_device_github(target_id, &answer.request, answer.snapshot)
             }
         },
         Err(_) => return false,
@@ -3008,6 +3019,35 @@ mod cwd_stand_in_tests {
             &HashSet::from(["w1:t2".to_owned()])
         ));
         assert_eq!(cwd(&payload, "w1:p3").as_deref(), Some("/tmp"));
+    }
+}
+
+#[cfg(test)]
+mod pending_core_tests {
+    use super::*;
+    use crate::fake_herdr::FakeHerdr;
+
+    /// PRD core-host-node-move amendment 3: a core waiting for its move's
+    /// link asks GitHub nothing; the read is asked once the hold is released.
+    #[test]
+    fn a_pending_core_reads_nothing_from_github_until_its_link_commits() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, ..) = crate::runtime::delivery::tests::fixture(root.path());
+        let herdr = FakeHerdr::start("pending-github", |method, _| panic!("unexpected {method}"));
+        let context = SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                runtime: Arc::downgrade(&runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            Arc::new(hide_node::Local::of_process()),
+        );
+        runtime.lock().unwrap().hold_effects();
+        assert!(matches!(read_github_request(&context), Some(None)));
+        assert!(runtime.lock().unwrap().release_effects());
+        assert!(matches!(read_github_request(&context), Some(Some(_))));
     }
 }
 

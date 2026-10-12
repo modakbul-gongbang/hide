@@ -51,8 +51,12 @@ pub(super) struct SleepingSessionPayload {
 impl Runtime {
     /// The minute decision (B4-B6) for this core's machine, run by the local
     /// coordinator's tick. A tick inside the minute is one integer comparison.
+    /// A core waiting for its move's link puts nothing to sleep.
     pub(crate) fn tick_agent_sleep(&mut self, now_unix_ms: u64) -> bool {
-        if now_unix_ms < self.agent_sleep_next_decision_unix_ms || self.live.is_none() {
+        if now_unix_ms < self.agent_sleep_next_decision_unix_ms
+            || self.live.is_none()
+            || self.effects_held()
+        {
             return false;
         }
         self.agent_sleep_next_decision_unix_ms = now_unix_ms.saturating_add(DECISION_INTERVAL_MS);
@@ -70,6 +74,7 @@ impl Runtime {
             .is_some_and(|next| now_unix_ms < *next)
             || self.sleep_machine(device) != SleepMachine::Node
             || self.remote_herdr_api(device).is_none()
+            || self.effects_held()
         {
             return false;
         }
@@ -720,6 +725,16 @@ impl Runtime {
             .collect()
     }
 
+    /// The agents of `device`'s panes as the core holds them: this
+    /// machine's own, or the session a node or a device reports.
+    pub(super) fn machine_agents(&self, device: &str) -> &[SidebarAgentSnapshot] {
+        if device == self.node.as_str() {
+            return &self.snapshot.navigator.agents;
+        }
+        self.node_session(device)
+            .map_or(&[], |session| session.agents.as_slice())
+    }
+
     fn node_session(&self, device: &str) -> Option<&RemoteSessionSnapshot> {
         self.snapshot
             .status
@@ -834,7 +849,7 @@ impl Runtime {
 }
 
 /// The device a pane belongs to, when it is not this core's own.
-fn pane_device(pane_id: &str) -> Option<&str> {
+pub(super) fn pane_device(pane_id: &str) -> Option<&str> {
     pane_id
         .strip_prefix("remote:")
         .and_then(|rest| rest.split_once(":pane:"))

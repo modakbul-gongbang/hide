@@ -27,7 +27,7 @@ use hide_node_link::device::RemoteResult;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
+use tokio::sync::{Mutex, Semaphore, oneshot, watch};
 
 use crate::browser_assets::{self, Asset};
 use crate::core::CoreHandle;
@@ -516,13 +516,13 @@ impl BrowserRoutes {
     pub fn spawn_reaper(
         self: &Arc<Self>,
         desktop_renderers: Arc<AtomicUsize>,
-        shutdown: Arc<Notify>,
+        shutdown: crate::ending::Ending,
     ) -> tokio::task::JoinHandle<()> {
         let routes = Arc::clone(self);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(2));
             loop {
-                tokio::select! { _ = shutdown.notified() => break, _ = tick.tick() => {} }
+                tokio::select! { () = shutdown.ended() => break, _ = tick.tick() => {} }
                 let candidates: Vec<_> = routes
                     .routes
                     .lock()

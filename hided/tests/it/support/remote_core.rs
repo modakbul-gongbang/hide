@@ -42,7 +42,7 @@ impl Herdr {
         Ok(())
     }
 
-    fn start(
+    pub fn start(
         root: &Path,
         environment: Environment,
         socket: PathBuf,
@@ -104,7 +104,7 @@ impl Herdr {
             .to_owned())
     }
 
-    fn stop(&mut self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         if let Some(mut server) = self.server.take() {
             let mut command = self.environment.command(&self.binary);
             command.args(["server", "stop"]);
@@ -293,6 +293,8 @@ impl Fixture {
             node: CORE_NODE.to_owned(),
             program: self.hided.display().to_string(),
             state_dir: Some(self.core_state.display().to_string()),
+            move_intent: None,
+            disconnected: false,
         }
     }
 
@@ -397,6 +399,18 @@ impl Fixture {
             }))?,
         )?;
         hide_platform::fs::private::restrict_to_owner(&record)?;
+        self.spawn_node(hided)
+    }
+
+    /// Starts the screen machine's hided again on the record its last run
+    /// left, after [`Fixture::signal_node`].
+    pub fn restart_node(&mut self) -> Result<(u16, String)> {
+        ensure!(self.node.is_none(), "the node hided still runs");
+        self.spawn_node(&self.hided.clone())
+    }
+
+    fn spawn_node(&mut self, hided: &Path) -> Result<(u16, String)> {
+        let state = self.node_state();
         // A node killed before it could clean up leaves its state behind;
         // this start's state is the one waited for.
         match fs::remove_file(state.join("hided.json")) {

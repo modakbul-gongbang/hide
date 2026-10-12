@@ -118,8 +118,8 @@ pub(crate) struct SightedMemoryReceipt {
     pub(crate) text: String,
 }
 
-/// A session a live pane on this Mac holds, as Memory names it: the
-/// provider (the agent's Herdr kind) and the session id.
+/// A session a live pane on the target's machine holds, as Memory names it:
+/// the provider (the agent's Herdr kind) and the session id.
 pub(crate) type MemorySession = (&'static str, String);
 
 /// What the label reads give Memory since the last take: the receipts they
@@ -550,11 +550,12 @@ impl LabelWorker {
         }
     }
 
-    /// Keeps the Memory receipts a read of this Mac's session found. Only an
-    /// id-referenced session in a known cwd can name the Project and session
-    /// Memory checks a receipt against; a device's Memory is its own.
+    /// Keeps the Memory receipts a read of this target's sessions found. Only
+    /// an id-referenced session in a known cwd can name the Project and
+    /// session Memory checks a receipt against; which machines have Memory is
+    /// the runtime's to decide (`Runtime::take_memory_handoff`).
     fn note_receipts(&mut self, pane_id: &str, receipts: &[MemoryReceiptPart]) {
-        if receipts.is_empty() || self.target != self.store.node() {
+        if receipts.is_empty() {
             return;
         }
         let Some(pane) = self.panes.get(pane_id) else {
@@ -589,22 +590,20 @@ impl LabelWorker {
     }
 
     /// Takes the Memory receipts the reads since the last take found, and
-    /// the sessions this Mac's live panes hold when they changed; `None` when
-    /// there is nothing to hand over.
+    /// the sessions this target's live panes hold when they changed; `None`
+    /// when there is nothing to hand over. Which machines have Memory is the
+    /// runtime's to decide (`Runtime::take_memory_handoff`).
     pub(crate) fn take_memory_handoff(&mut self) -> Option<MemoryHandoff> {
-        let live: std::collections::BTreeSet<MemorySession> = if self.target == self.store.node() {
-            self.panes
-                .values()
-                .filter_map(|pane| match &pane.reference {
-                    Some((kind, session)) if kind == "id" => {
-                        Some((pane.agent.as_str(), session.clone()))
-                    }
-                    _ => None,
-                })
-                .collect()
-        } else {
-            Default::default()
-        };
+        let live: std::collections::BTreeSet<MemorySession> = self
+            .panes
+            .values()
+            .filter_map(|pane| match &pane.reference {
+                Some((kind, session)) if kind == "id" => {
+                    Some((pane.agent.as_str(), session.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         let live_sessions = (live != self.handed_sessions).then(|| {
             self.handed_sessions = live.clone();
             live

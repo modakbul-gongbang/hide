@@ -12,6 +12,7 @@ mod agents;
 mod attachments;
 mod clone;
 mod control_lane;
+pub(crate) mod core_move;
 pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
@@ -56,7 +57,7 @@ mod view_bookmarks;
 mod workspace_control;
 mod workspace_view;
 
-pub(crate) use factory::WorkerProbe;
+pub(crate) use factory::{WorkerProbe, factory_herdr_pane, factory_pane_id};
 pub use hosts::WorkspaceRemoteRoute;
 pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;
@@ -953,9 +954,13 @@ fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&
         .filter(|pane_id| !pane_id.trim().is_empty())
 }
 
+/// Every pane `session` lists, and the panes on screen: while its machine
+/// is in front, the tab its Herdr has in front and `shown_tabs`, the tabs the
+/// Workspace's other Agent areas show.
 fn remote_terminal_pane_sets(
     session: &RemoteSessionSnapshot,
     target_is_active: bool,
+    shown_tabs: &[String],
 ) -> (HashSet<String>, HashSet<String>) {
     let live_pane_ids = session
         .workspaces
@@ -975,16 +980,16 @@ fn remote_terminal_pane_sets(
             .and_then(|checkout_id| session.active_tab_ids.get(checkout_id))
             .map(String::as_str)
     });
-    let active_tab = active_tab_id.and_then(|tab_id| {
-        session
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .flat_map(|checkout| checkout.tabs.iter())
-            .find(|tab| tab.id.as_deref() == Some(tab_id))
-    });
-    let active_pane_ids = active_tab
-        .into_iter()
+    let active_pane_ids = session
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .filter(|tab| {
+            tab.id.as_deref().is_some_and(|id| {
+                Some(id) == active_tab_id || shown_tabs.iter().any(|shown| shown == id)
+            })
+        })
         .flat_map(|tab| tab.panes.iter())
         .map(|pane| pane.id.clone())
         .collect();
@@ -1066,6 +1071,9 @@ pub struct Runtime {
     /// presentation, while lineage and every key naming this machine use
     /// this operating-system id.
     node: crate::node::NodeId,
+    /// What this machine calls itself (`CoreOptions::machine_name`), on its
+    /// device row.
+    machine_name: Option<String>,
     device_machine_ids: HashMap<String, String>,
     unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
@@ -1132,6 +1140,9 @@ pub struct Runtime {
     /// repository name, and when each of its repositories was last asked.
     device_github: HashMap<String, crate::model::GithubSnapshot>,
     device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
+    /// The generation of each node repository's last answered read, which a
+    /// Memory promotion's verdict waits for (`memory_promotion.rs`).
+    device_github_read_generation: HashMap<(String, String), u64>,
     /// How many of each device's projects the pull-request read left out at
     /// its cap, last logged.
     device_github_over_limit: HashMap<String, usize>,
@@ -1498,6 +1509,8 @@ pub struct Runtime {
     local_issues: Result<crate::local_issues::LocalIssueStore, String>,
     /// Absent keeps Local issues in memory only (`CoreOptions::local_issues_path`).
     local_issues_path: Option<PathBuf>,
+    /// Whether this core may act outside its machine yet (`effects.rs`).
+    effects: Arc<crate::effects::EffectHold>,
     /// The save thread's flags, as `state_save_pending`/`state_save_active`.
     local_issues_save_pending: bool,
     local_issues_save_active: bool,
@@ -1736,8 +1749,11 @@ impl Runtime {
             .shortcut_import_path
             .as_deref()
             .is_some_and(|source| import_native_app_shortcuts(&mut snapshot, Path::new(source)));
-        snapshot.navigator.devices =
-            workspace::devices(&options.node_id, &snapshot.ui_state.device_registrations);
+        snapshot.navigator.devices = workspace::devices(
+            &options.node_id,
+            options.machine_name.as_deref(),
+            &snapshot.ui_state.device_registrations,
+        );
         // This machine's row names the root a device consent would name, so
         // the add form can show it before the first device exists.
         if let Some(local) = snapshot
@@ -1885,6 +1901,7 @@ impl Runtime {
             registrations_gone: std::collections::BTreeMap::new(),
             registration_rebinds: std::collections::BTreeMap::new(),
             node: options.node_id.clone(),
+            machine_name: options.machine_name.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),
             file_roots: None,
@@ -1907,6 +1924,7 @@ impl Runtime {
             device_disk_project: HashMap::new(),
             device_github: HashMap::new(),
             device_github_reads: HashMap::new(),
+            device_github_read_generation: HashMap::new(),
             device_github_over_limit: HashMap::new(),
             own_node,
             devices,
@@ -2057,6 +2075,7 @@ impl Runtime {
                 None => Ok(crate::local_issues::LocalIssueStore::default()),
             },
             local_issues_path,
+            effects: crate::effects::EffectHold::new(options.effects_held),
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
@@ -2140,6 +2159,37 @@ impl Runtime {
         terminals: Arc<dyn hide_node_link::terminal::TerminalRoutes>,
     ) {
         self.terminals = terminals;
+    }
+
+    /// The hold on this core's outside effects, for a worker that waits on
+    /// it from a thread of its own.
+    pub(crate) fn effects(&self) -> Arc<crate::effects::EffectHold> {
+        Arc::clone(&self.effects)
+    }
+
+    /// Whether this core still waits for its move's link before it acts
+    /// outside its machine (`effects.rs`).
+    pub(crate) fn effects_held(&self) -> bool {
+        self.effects.held()
+    }
+
+    /// Holds this core's outside effects, as `CoreOptions::effects_held`
+    /// starts a core on a move's copy.
+    #[cfg(test)]
+    pub(crate) fn hold_effects(&mut self) {
+        self.effects = crate::effects::EffectHold::new(true);
+    }
+
+    /// Lets the held effects run, once the move's link committed this core;
+    /// the devices it dials are dialed now. Returns whether this released
+    /// the hold.
+    pub(crate) fn release_effects(&mut self) -> bool {
+        if !self.effects.release() {
+            return false;
+        }
+        crate::diagnostic!(serde_json::json!({"component": "core", "kind": "effects.released"}));
+        self.connect_registered_devices();
+        true
     }
 
     pub fn install_worker_context(

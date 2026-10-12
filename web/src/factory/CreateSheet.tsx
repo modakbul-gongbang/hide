@@ -7,7 +7,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { useInterfaceTranslation } from "../i18n/client";
-import { catalogWorkspaces, localDeviceId } from "../snapshot";
+import { catalogWorkspaces, localDeviceId, type SnapshotRest } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import type { MergeMode, VerificationChoice } from "./commands";
@@ -69,11 +69,21 @@ export function CreateSheet({ actions }: { actions: Actions }) {
   );
 }
 
+/** The machines a Factory runs on: the core's own and each node that dials it; a device the core dials keeps none. */
+export function factoryMachines(rest: SnapshotRest | null): Set<string> {
+  const machines = new Set([localDeviceId(rest)]);
+  for (const device of rest?.navigator?.devices ?? []) if (device.dials_in) machines.add(device.id);
+  return machines;
+}
+
 function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest);
-  // This machine's projects: the engine runs here and reads only local folders.
-  const projects = useMemo(() => catalogWorkspaces(workspaces).filter((workspace) => !workspace.is_home && workspace.device_id === localDeviceId(workspaces)), [workspaces]);
+  // The projects a Factory can run on: this machine's and those of a node that dials the core (docs/factory.md).
+  const projects = useMemo(() => {
+    const machines = factoryMachines(workspaces);
+    return catalogWorkspaces(workspaces).filter((workspace) => !workspace.is_home && machines.has(workspace.device_id));
+  }, [workspaces]);
   const [project, setProject] = useState<string | null>(null);
   const [verification, setVerification] = useState<Verification | null>(null);
   // Whether the verification is the sheet's own first pick rather than the person's.
@@ -82,13 +92,15 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
   const probe = useFactoryRequest(actions);
   const create = useFactoryRequest(actions);
   const [preview, setPreview] = useState<InitPreview | null>(null);
-  const path = projects.find((row) => row.id === project)?.path ?? null;
+  const chosen = projects.find((row) => row.id === project) ?? null;
+  const path = chosen?.path ?? null;
+  const device = chosen?.device_id ?? "";
 
   // Every change of project or verification asks the engine again; the sheet decides nothing itself.
   useEffect(() => {
     if (path === null) return;
-    probe.send({ verb: "init", project: path, verification: verification ? verificationChoice(verification) : null, merge_mode: null, confirm: false });
-  }, [path, verification]);
+    probe.send({ verb: "init", project: path, device, verification: verification ? verificationChoice(verification) : null, merge_mode: null, confirm: false });
+  }, [path, device, verification]);
   useEffect(() => {
     if (probe.state.phase !== "taken") return;
     const answer = probe.state.answer as Record<string, unknown>;
@@ -185,7 +197,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
           aria-busy={create.state.phase === "sending"}
           onClick={() => {
             if (path === null || verification === null) return;
-            create.send({ verb: "init", project: path, verification: verificationChoice(verification), merge_mode: merge, confirm: true });
+            create.send({ verb: "init", project: path, device, verification: verificationChoice(verification), merge_mode: merge, confirm: true });
           }}
         >
           {create.state.phase === "sending" ? <LoaderCircleIcon className="animate-spin" /> : null}

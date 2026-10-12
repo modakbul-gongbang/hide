@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use hide_platform::process;
 use hide_platform::process::OwnedChild;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{Semaphore, watch};
 
 const MAX_IN_FLIGHT_OPENERS: usize = 4;
 const MAX_OPENS_PER_MINUTE: usize = 12;
@@ -40,13 +40,15 @@ pub struct OpenHandler {
     supervisor_exe: PathBuf,
     slots: Arc<Semaphore>,
     recent: Arc<Mutex<VecDeque<Instant>>>,
-    shutdown: Arc<Notify>,
+    /// True once the role that owns the handler ended, and never false
+    /// again; a closed channel is an ended role too.
+    shutdown: watch::Receiver<bool>,
 }
 
 impl OpenHandler {
     pub fn new(
         configured: Option<PathBuf>,
-        shutdown: Arc<Notify>,
+        shutdown: watch::Receiver<bool>,
         supervisor_exe: PathBuf,
     ) -> Self {
         Self {
@@ -112,14 +114,14 @@ impl OpenHandler {
             spawn_opener(&self.supervisor_exe, program.as_os_str(), path)
                 .map_err(|_| "spawn_failed")?
         };
-        let shutdown = Arc::clone(&self.shutdown);
+        let mut shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             let deadline = tokio::time::sleep(OPENER_TIMEOUT);
             tokio::pin!(deadline);
             loop {
                 tokio::select! {
                     _ = &mut deadline => break,
-                    _ = shutdown.notified() => break,
+                    _ = shutdown.wait_for(|ended| *ended) => break,
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         match child.try_wait() {
                             Ok(true) => break,
@@ -451,7 +453,8 @@ mod tests {
 
     #[test]
     fn a_burst_is_bounded() {
-        let handler = OpenHandler::new(None, Arc::new(Notify::new()), PathBuf::new());
+        let (_role, ended) = watch::channel(false);
+        let handler = OpenHandler::new(None, ended, PathBuf::new());
         let mut recent = handler.recent.lock().unwrap();
         for _ in 0..MAX_OPENS_PER_MINUTE {
             recent.push_back(Instant::now());

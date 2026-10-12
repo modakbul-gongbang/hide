@@ -6,11 +6,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{SendError, Sender, TryRecvError, channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 use serde_json::json;
@@ -22,6 +22,60 @@ use super::protocol::{self, Mode, SessionEvent};
 pub trait Attacher: Send + Sync {
     fn open(&self, pane_id: &str, mode: Mode, rows: u16, cols: u16)
     -> Result<SessionParts, String>;
+}
+
+/// The attach children a service started and has not reaped yet, each
+/// counted from before it starts until its reaper has seen it exit, so a
+/// close can wait for the last one.
+#[derive(Default)]
+pub(super) struct Children {
+    live: Mutex<usize>,
+    gone: Condvar,
+}
+
+impl Children {
+    pub(super) fn hold(self: &Arc<Self>) -> ChildHold {
+        *self.lock() += 1;
+        ChildHold(Arc::clone(self))
+    }
+
+    /// Waits until every child counted has been reaped or `within` passes,
+    /// and answers how many were still live.
+    pub(super) fn wait_gone(&self, within: Duration) -> usize {
+        let deadline = Instant::now() + within;
+        let mut live = self.lock();
+        while *live > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            live = self
+                .gone
+                .wait_timeout(live, left)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+        *live
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, usize> {
+        self.live
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// One attach child counted live; dropped once it has been reaped.
+pub(super) struct ChildHold(Arc<Children>);
+
+impl Drop for ChildHold {
+    fn drop(&mut self) {
+        let mut live = self.0.lock();
+        *live = live.saturating_sub(1);
+        if *live == 0 {
+            self.0.gone.notify_all();
+        }
+    }
 }
 
 /// What an open session hands the node: its output, its input in control
@@ -246,6 +300,8 @@ pub(super) struct Session {
     /// An observer's kept stdin, closed with the session.
     _observer_stdin: Option<Box<dyn Write + Send>>,
     cleanup: Cleanup,
+    /// Its child counted live until the reaper has seen it exit.
+    child: Option<ChildHold>,
     pane_id: String,
 }
 
@@ -290,10 +346,17 @@ impl Session {
                 unwritten,
                 _observer_stdin: observer_stdin,
                 cleanup,
+                child: None,
                 pane_id: pane_id.to_owned(),
             },
             reader,
         ))
+    }
+
+    /// Counts this session's child live until it has been reaped.
+    pub(super) fn counted(mut self, child: ChildHold) -> Self {
+        self.child = Some(child);
+        self
     }
 
     /// Hands `command` to the writer within its cap. Only the service, under
@@ -508,10 +571,16 @@ impl Drop for Session {
                 .map(|()| acknowledgement)
         });
         let cleanup = std::mem::replace(&mut self.cleanup, Cleanup::None);
+        // Dropped here, or after the reaper's cleanup: a child is counted
+        // gone only once it has exited.
+        let child = self.child.take();
         if matches!(cleanup, Cleanup::None) {
             return;
         }
         let pane_id = self.pane_id.clone();
+        // Fields drop in order, so a reaper that cannot start still ends the
+        // child before it is counted gone.
+        let reaping = Reaping { cleanup, child };
         if let Err(error) = thread::Builder::new()
             .name(format!("hide-node-terminal-reaper-{pane_id}"))
             .spawn(move || {
@@ -526,7 +595,9 @@ impl Drop for Session {
                         "pane_id": pane_id,
                     }));
                 }
+                let Reaping { cleanup, child } = reaping;
                 run_cleanup(cleanup, &pane_id);
+                drop(child);
             })
         {
             crate::diagnostic!(json!({
@@ -536,6 +607,12 @@ impl Drop for Session {
             }));
         }
     }
+}
+
+/// What a session's reaper ends, in the order it ends it.
+struct Reaping {
+    cleanup: Cleanup,
+    child: Option<ChildHold>,
 }
 
 fn run_cleanup(cleanup: Cleanup, pane_id: &str) {

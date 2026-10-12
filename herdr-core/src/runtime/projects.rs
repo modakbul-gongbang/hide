@@ -2807,9 +2807,12 @@ impl Runtime {
             }));
         }
         repositories.truncate(GITHUB_PROJECT_LIMIT);
-        self.device_github_reads.retain(|(device, root), _| {
+        let listed = |(device, root): &(String, String)| {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
-        });
+        };
+        self.device_github_reads.retain(|key, _| listed(key));
+        self.device_github_read_generation
+            .retain(|key, _| listed(key));
         let answered = self.device_github.get(device_id);
         let projects = repositories
             .into_iter()
@@ -2842,18 +2845,48 @@ impl Runtime {
         crate::github::GithubRequest { projects }
     }
 
-    /// The pull requests of a node's repositories: its rows carry them, as
-    /// this machine's do.
+    /// Asks a node's repository at `root` on the next read, whatever its
+    /// wait; answers the generation that read carries.
+    pub(super) fn refresh_device_pull_requests(&mut self, device_id: &str, root: &str) -> u64 {
+        let read = self
+            .device_github_reads
+            .entry((device_id.to_owned(), root.to_owned()))
+            .or_insert((0, std::time::Instant::now()));
+        *read = (read.0.wrapping_add(1), std::time::Instant::now());
+        read.0
+    }
+
+    /// The generation of the last answered read of a node's repository.
+    pub(super) fn device_github_read(&self, device_id: &str, root: &str) -> Option<u64> {
+        self.device_github_read_generation
+            .get(&(device_id.to_owned(), root.to_owned()))
+            .copied()
+    }
+
+    /// The pull requests of a node's repositories, read for `request`: its
+    /// rows carry them, as this machine's do.
     pub(crate) fn ingest_device_github(
         &mut self,
         device_id: &str,
+        request: &crate::github::GithubRequest,
         github: crate::model::GithubSnapshot,
     ) -> bool {
         if !self
             .link_origin(device_id)
             .is_some_and(LinkOrigin::reports_own_facts)
-            || self.device_github.get(device_id) == Some(&github)
         {
+            return false;
+        }
+        for project in &request.projects {
+            self.device_github_read_generation.insert(
+                (
+                    device_id.to_owned(),
+                    project.root.to_string_lossy().into_owned(),
+                ),
+                project.generation,
+            );
+        }
+        if self.device_github.get(device_id) == Some(&github) {
             return false;
         }
         self.device_github.insert(device_id.to_owned(), github);

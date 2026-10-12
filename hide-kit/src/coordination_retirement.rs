@@ -631,12 +631,8 @@ fn remove_agent(target: &KitTarget, home: &Path) -> Result<(), String> {
     let label = label(home)?;
     target
         .user_agents
-        .unload(&label, &target.home, &target.stop)
-        .map_err(|error| error.to_string())?;
-    remove_file(&hide_platform::user_agents::UserAgents::plist(
-        &target.home,
-        &label,
-    ))
+        .remove(&label, &target.home, &target.stop)
+        .map_err(|error| error.to_string())
 }
 
 fn remove_links(target: &KitTarget) -> Result<crate::Retirement, String> {
@@ -745,14 +741,6 @@ fn preserve(target: &KitTarget, progress: &Progress) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn remove_file(path: &Path) -> Result<(), String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 fn date() -> String {

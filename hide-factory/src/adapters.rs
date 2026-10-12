@@ -95,6 +95,9 @@ pub enum EnvSignal {
     GithubServer,
     Network,
     HerdrSocket,
+    /// The machine that holds the Factory's project is not linked to the
+    /// core (PRD core-host-node-move Q17): its work waits for the link.
+    NodeLink,
     UsageLimit,
 }
 
@@ -109,6 +112,7 @@ impl EnvSignal {
             Self::GithubServer => "github_server",
             Self::Network => "network",
             Self::HerdrSocket => "herdr_socket",
+            Self::NodeLink => "node_link",
             Self::UsageLimit => "usage_limit",
         }
     }
@@ -172,7 +176,8 @@ pub enum OutsideEvent {
 
 /// Issues, labels and outside work (GitHub or local).
 pub trait TaskSource {
-    fn probe(&mut self, project: &str) -> Result<ProjectProbe, Failure>;
+    /// What `project` on the machine `node` names holds (`Factory::node`).
+    fn probe(&mut self, node: Option<&str>, project: &str) -> Result<ProjectProbe, Failure>;
     fn prepare(&mut self, factory: &Factory) -> Result<(), Failure>;
     /// Creates the Task's issue with the card summary and the label; converges
     /// on an existing issue carrying the same Task marker (B73).
@@ -188,10 +193,10 @@ pub trait TaskSource {
     -> Result<Vec<OutsideEvent>, Failure>;
     /// The names in the project's top folder and its guide, for a review
     /// judgment; a project that cannot be read answers neither.
-    fn repo_context(&mut self, project: &str) -> RepoContext;
-    /// The PRD file at `path` a Task attaches; `Err` names why it cannot be
-    /// read.
-    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    fn repo_context(&mut self, node: Option<&str>, project: &str) -> RepoContext;
+    /// The PRD file at `path` on the machine `node` names that a Task
+    /// attaches; `Err` names why it cannot be read.
+    fn read_prd(&mut self, node: Option<&str>, path: &str) -> Result<Vec<u8>, String>;
     /// What the repository and GitHub say about a card before its review
     /// (D-02): the files it names and the issues and pull requests that look
     /// related. What cannot be read is left out.
@@ -215,8 +220,9 @@ pub trait TaskSource {
     fn check_access(&mut self, _factory: &Factory) -> Result<(), Failure> {
         Ok(())
     }
-    /// Whether this machine has the agent a worker candidate names (B28).
-    fn installed(&mut self, _agent: Runtime) -> bool {
+    /// Whether the machine `node` names has the agent a worker candidate
+    /// names (B28).
+    fn installed(&mut self, _node: Option<&str>, _agent: Runtime) -> bool {
         true
     }
 }
@@ -299,9 +305,9 @@ pub trait Verifier {
     /// Starts the bundle on the latest main merged into the Task (B38).
     fn start_premerge(&mut self, factory: &Factory, task: &Task) -> Result<VerifyRun, Failure>;
     fn poll(&mut self, factory: &Factory, run: &VerifyRun) -> VerifyPoll;
-    fn cancel(&mut self, run: &VerifyRun);
+    fn cancel(&mut self, factory: &Factory, run: &VerifyRun);
     /// The end of a run's log, where the run wrote one.
-    fn log_tail(&self, log: &str) -> Option<String>;
+    fn log_tail(&self, factory: &Factory, log: &str) -> Option<String>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,6 +399,9 @@ pub struct RevertRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerSpawn {
     pub factory: String,
+    /// The machine the worker starts on (`Factory::node`).
+    #[serde(default)]
+    pub node: Option<String>,
     pub task: String,
     pub name: String,
     pub runtime: Runtime,
@@ -506,11 +515,18 @@ pub enum MemoryPressure {
 }
 
 pub trait Environment {
-    fn disk_free(&mut self, project: &str) -> Option<u64>;
-    fn memory_pressure(&mut self) -> MemoryPressure;
+    /// Free space where `project` lives on the machine `node` names.
+    fn disk_free(&mut self, node: Option<&str>, project: &str) -> Option<u64>;
+    /// Memory pressure on the machine `node` names.
+    fn memory_pressure(&mut self, node: Option<&str>) -> MemoryPressure;
     /// The operator's language, read when a judgment is queued or a worker
     /// starts, so a change in Settings applies to the next one.
     fn language(&mut self) -> crate::words::Language;
+    /// The `hide` a worker on the machine `node` names runs, when it is not
+    /// the one the engine was given at its open (the core's own).
+    fn hide_program(&mut self, _node: Option<&str>) -> Option<String> {
+        None
+    }
 }
 
 /// Where a person is told (D-30): an inbox item exists in the store; this

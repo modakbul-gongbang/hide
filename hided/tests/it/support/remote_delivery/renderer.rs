@@ -15,6 +15,20 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn connect(port: u16, token: &str) -> Result<Self> {
+        let mut renderer = Self::connect_held(port, token)?;
+        for _ in 0..8 {
+            let frame = renderer.read()?;
+            if frame["type"] == "snapshot" {
+                renderer.snapshot = frame["payload"]["rest"].clone();
+                return Ok(renderer);
+            }
+        }
+        bail!("private renderer did not provide its initial snapshot")
+    }
+
+    /// A window on whatever role the address mounts, answered before any
+    /// snapshot: a move's screen or a node holding its screen sends none.
+    pub fn connect_held(port: u16, token: &str) -> Result<Self> {
         let mut socket = TcpStream::connect(("127.0.0.1", port))?;
         socket.set_read_timeout(Some(Duration::from_secs(2)))?;
         socket.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -60,14 +74,7 @@ impl Renderer {
             1,
             &serde_json::to_vec(&json!({"token":token,"schema_version":2}))?,
         )?;
-        for _ in 0..8 {
-            let frame = renderer.read()?;
-            if frame["type"] == "snapshot" {
-                renderer.snapshot = frame["payload"]["rest"].clone();
-                return Ok(renderer);
-            }
-        }
-        bail!("private renderer did not provide its initial snapshot")
+        Ok(renderer)
     }
 
     pub fn snapshot(&self) -> &Value {
@@ -75,6 +82,30 @@ impl Renderer {
     }
 
     pub fn event(&mut self, kind: &str, payload: Value) -> Result<()> {
+        if let Some(refused) = self.ask(kind, payload)? {
+            bail!("private renderer event {kind} refused: {refused}");
+        }
+        Ok(())
+    }
+
+    /// Sends one event and answers the reason it was refused with, none
+    /// when it was taken. Frames other than its refusal are skipped.
+    pub fn ask(&mut self, kind: &str, payload: Value) -> Result<Option<String>> {
+        self.asked(kind, payload, false)
+    }
+
+    /// As `ask`, for an event that ends this window's screen when it is
+    /// taken, as giving up a move ends the role that drew it: a refusal
+    /// comes before anything else, so the screen closing is a take.
+    pub fn ask_ending(&mut self, kind: &str, payload: Value) -> Result<Option<String>> {
+        self.asked(kind, payload, true)
+    }
+
+    fn asked(&mut self, kind: &str, payload: Value, closing_takes: bool) -> Result<Option<String>> {
+        // A wait before may have left a short bound on reads.
+        self.stream
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(30)))?;
         self.send(
             1,
             &serde_json::to_vec(&json!({"schema_version":2,"kind":kind,"payload":payload}))?,
@@ -83,25 +114,91 @@ impl Renderer {
         // its Pong proves it read the preceding event, instead of dropping
         // the socket while a concurrent snapshot write is still pending.
         self.send(9, b"event")?;
-        for _ in 0..8 {
-            let (opcode, data) = self.read_frame()?;
+        let mut refused = None;
+        for _ in 0..64 {
+            let (opcode, data) = match self.read_frame() {
+                Ok(frame) => frame,
+                Err(error) if closing_takes && refused.is_none() && ended(&error) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
             match opcode {
-                10 if data == b"event" => return Ok(()),
+                10 if data == b"event" => return Ok(refused),
                 1 => {
                     let frame: Value =
                         serde_json::from_slice(&data).context("private renderer JSON")?;
-                    ensure!(
-                        frame["type"] != "error",
-                        "private renderer event {kind} refused: {}",
-                        frame["message"]
-                    );
+                    if frame["type"] == "error" {
+                        refused = Some(frame["message"].as_str().unwrap_or_default().to_owned());
+                    }
                 }
                 9 => self.send(10, &data)?,
+                8 if closing_takes && refused.is_none() => return Ok(None),
                 8 => bail!("private renderer closed before event receipt"),
                 _ => bail!("unexpected private renderer event opcode"),
             }
         }
         bail!("private renderer event receipt frame cap")
+    }
+
+    /// Reads this window's frames until a `core_move` frame whose view
+    /// `done` takes arrives within `bound`, and answers that view.
+    pub fn core_move_until(
+        &mut self,
+        bound: Duration,
+        done: impl Fn(&Value) -> bool,
+    ) -> Result<Value> {
+        let deadline = std::time::Instant::now() + bound;
+        loop {
+            let left = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|left| !left.is_zero())
+                .context("no core_move frame the window waited for")?;
+            self.stream.get_ref().set_read_timeout(Some(left))?;
+            let (opcode, data) = self
+                .read_frame()
+                .context("no core_move frame the window waited for")?;
+            match opcode {
+                1 => {
+                    let frame: Value =
+                        serde_json::from_slice(&data).context("private renderer JSON")?;
+                    if frame["type"] == "core_move" && done(&frame["payload"]) {
+                        return Ok(frame["payload"].clone());
+                    }
+                }
+                9 => self.send(10, &data)?,
+                8 => bail!("the window's socket closed before the core_move frame"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Reads this window's frames until the daemon closes its socket within
+    /// `bound`, and answers the close's code and reason; pings are answered
+    /// and every other frame is skipped.
+    pub fn closed_within(&mut self, bound: Duration) -> Result<(u16, String)> {
+        let deadline = std::time::Instant::now() + bound;
+        loop {
+            let left = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|left| !left.is_zero())
+                .context("the window's socket was not closed")?;
+            self.stream.get_ref().set_read_timeout(Some(left))?;
+            let (opcode, data) = self
+                .read_frame()
+                .context("the window's socket was not closed")?;
+            match opcode {
+                8 => {
+                    ensure!(data.len() >= 2, "the window's socket closed with no code");
+                    return Ok((
+                        u16::from_be_bytes([data[0], data[1]]),
+                        String::from_utf8_lossy(&data[2..]).into_owned(),
+                    ));
+                }
+                9 => self.send(10, &data)?,
+                _ => {}
+            }
+        }
     }
 
     fn send(&mut self, opcode: u8, bytes: &[u8]) -> Result<()> {
@@ -170,4 +267,16 @@ impl Drop for Renderer {
         let _ = self.send(8, &[]);
         let _ = self.stream.get_mut().shutdown(Shutdown::Both);
     }
+}
+
+/// Whether reading a frame failed because the daemon ended the connection.
+fn ended(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::BrokenPipe
+        )
+    })
 }

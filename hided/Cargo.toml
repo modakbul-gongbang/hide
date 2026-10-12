@@ -55,6 +55,9 @@ md5 = "=0.8.1"
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
+# The core's Memory store a journey seeds, keyed by the Project it reads.
+hide-memory = { path = "../hide-memory" }
+hide-project = { path = "../hide-project" }
 # The loopback SSH server of the device link's tests (tests/support).
 russh = { version = "=0.63.3", default-features = false, features = ["ring", "rsa"] }
 http-body-util = "=0.1.5"

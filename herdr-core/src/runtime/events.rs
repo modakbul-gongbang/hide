@@ -2561,10 +2561,8 @@ impl Runtime {
                     .retain(|registration| registration.device_id != payload.device_id);
                 let registrations =
                     registrations - self.snapshot.ui_state.workspace_registrations.len();
-                self.snapshot
-                    .ui_state
-                    .device_expanded_paths
-                    .remove(&payload.device_id);
+                let ui = &mut self.snapshot.ui_state;
+                ui.device_expanded_paths.remove(&payload.device_id);
                 let tabs = self
                     .snapshot
                     .editor
@@ -3620,6 +3618,7 @@ impl Runtime {
                     // shell's last copy of them, which a newer choice can
                     // already have overtaken, so it moves none of them.
                     selected_pane_id: current.selected_pane_id,
+                    focus_from_herdr: current.focus_from_herdr,
                     shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {
                         payload.shortcut_bindings
                     } else {

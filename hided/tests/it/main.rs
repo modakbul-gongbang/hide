@@ -6,6 +6,7 @@
 mod browser_control;
 mod connect_build;
 mod connect_stop;
+mod core_move;
 mod handshake;
 mod held_letter_notice;
 mod mobile;
@@ -20,6 +21,7 @@ mod private_herdr;
 mod real_herdr;
 mod remote_core;
 mod remote_delivery;
+mod seat;
 #[cfg(unix)]
 mod support;
 mod terminal_children;

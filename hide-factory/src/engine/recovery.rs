@@ -315,7 +315,7 @@ impl Engine {
                 .filter(|note| note.factory == factory)
                 .map(|note| json!({"task": note.task, "stage": note.stage, "kind": note.kind.as_str()}))
                 .collect::<Vec<_>>(),
-            "disk_free": self.ports.environment.disk_free(&f.project),
+            "disk_free": self.ports.environment.disk_free(f.node.as_deref(), &f.project),
         });
         let judgment = Judgment {
             id: format!(
@@ -645,14 +645,17 @@ impl Engine {
     /// Removes this Factory's finished worktrees and says what it freed
     /// (B13).
     fn clean_worktrees(&mut self, factory: &str) -> Effect {
-        let project = self.factories.get(factory).map(|f| f.project.clone());
-        let before = project
-            .as_deref()
-            .and_then(|project| self.ports.environment.disk_free(project));
+        let place = self
+            .factories
+            .get(factory)
+            .map(|f| (f.node.clone(), f.project.clone()));
+        let before = place
+            .as_ref()
+            .and_then(|(node, project)| self.ports.environment.disk_free(node.as_deref(), project));
         let removed = self.remove_finished_worktrees(Some(factory));
-        let after = project
-            .as_deref()
-            .and_then(|project| self.ports.environment.disk_free(project));
+        let after = place
+            .as_ref()
+            .and_then(|(node, project)| self.ports.environment.disk_free(node.as_deref(), project));
         Effect {
             acted: !removed.is_empty(),
             freed: before

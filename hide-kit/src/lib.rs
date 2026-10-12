@@ -49,7 +49,7 @@ pub use agents::{
 pub use coordination_retirement::preflight as retirement_preflight;
 pub use device::{CURRENT, device_target};
 pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
-pub use legacy::is_build_name;
+pub use legacy::{BuildPlace, build_of, is_build_name};
 pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
 pub use record::kit_state_dir;
 
@@ -230,6 +230,17 @@ impl KitReport {
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
         }
+    }
+}
+
+/// The login agents the kit uses for `home`: the account's own, and none
+/// for a fixture HOME (`layout::fixture_home`), so a test's kit never
+/// reaches the account's real launchd domain.
+pub fn login_agents(home: &Path) -> hide_platform::user_agents::UserAgents {
+    if layout::fixture_home(home) {
+        hide_platform::user_agents::UserAgents::none()
+    } else {
+        hide_platform::user_agents::UserAgents::current()
     }
 }
 

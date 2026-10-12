@@ -14,6 +14,10 @@ A person sets intent, loosens a gate, widens a scope and decides what cannot be 
 
 A Factory is one project's work queue.
 A project has at most one Factory, named by the project's canonical primary checkout path; its id is `f-` and the first ten hex digits of that path's SHA-256.
+A Factory runs on the machine that holds its project: the core's own, or a node that dials the core (`Factory::node`, none for the core's own, set by `init` from the caller's machine or the machine a create sheet names); a device the core dials keeps none (`factory_device_unsupported`).
+Its git, quick checks, verify runs, file reads, free-space and memory reads and workers are that machine's; its GitHub work and its decisions are the core's.
+While its node is not linked, its work waits in the states it already has, and each step converges when the link is back: a worker start asks the same spawn intent again, which continues the reserved spawn instead of starting a second agent; a merge reads the repository first, so a branch already merged is not merged again; a worktree removal reads it first too, so a folder already gone is left; a revert is made in the Factory's own main worktree and reaches main only through its own merge step; and a verify run the link took with it answers `lost`, which counts as an environment failure and verifies the Task again.
+A core move keeps each Factory and worker on its machine: the old owner's become its node's, the new owner's become the core's own (`herdr-core/src/node_migration/reown.rs`).
 A Factory whose project has a `github.com` origin takes its Tasks from GitHub issues and merges pull requests (a GitHub Factory).
 Any other Factory keeps its issues in the core's local issue store as `L-<number>` and merges into the local default branch (a local Factory).
 A GitHub Factory acts as the login `gh` is signed in as, and only after a person approved that account, the repository and the list of reads and writes `init` shows; the Factory keeps that approval as `github_approval`, and a Factory without one refuses every GitHub write (`github.approval`) before calling `gh` or pushing.
@@ -21,14 +25,14 @@ Closing a Factory keeps its records, and creating a Factory for the same project
 
 | Owner | What it owns |
 | --- | --- |
-| `hide-factory` crate | Values (`model.rs`), the store (`store.rs`), the dependency graph (`dag.rs`), roles and permissions (`role.rs`), the command contract and its printing (`command.rs`), the judgment features (`judgment.rs`), the read model (`summary.rs`), the adapter traits (`adapters.rs`), the engine (`engine.rs`, with Factory AI, the recovery schedule, follow-ups and GitHub access in `engine/`), the sentences the engine writes in the operator's language (`words.rs`), the one-way move of an older store (`migrate.rs`) and the real git, `gh` and verify adapters (`project.rs`, `exec.rs`), which ask the core's own node to do the work (`hide_node_link::factory`, served by `hide-host/src/factory.rs`). It does not know the runtime or Herdr, and starts no process and reads no project file itself. |
+| `hide-factory` crate | Values (`model.rs`), the store (`store.rs`), the dependency graph (`dag.rs`), roles and permissions (`role.rs`), the command contract and its printing (`command.rs`), the judgment features (`judgment.rs`), the read model (`summary.rs`), the adapter traits (`adapters.rs`), the engine (`engine.rs`, with Factory AI, the recovery schedule, follow-ups and GitHub access in `engine/`), the sentences the engine writes in the operator's language (`words.rs`), the one-way move of an older store (`migrate.rs`) and the real git, `gh` and verify adapters (`project.rs`, `exec.rs`), which ask the node of the machine that holds the project to do the work, and the core's own node for `gh` (`hide_node_link::factory`, served by `hide-host/src/factory.rs`). It does not know the runtime or Herdr, and starts no process and reads no project file itself. |
 | Host thread in the core | `herdr-core/src/factory.rs`: the engine thread, its request queue, the worker port (spawn, letters, sleep, wake, worktree removal), the judgment thread and the notifier. `runtime/factory.rs` holds the few reads and requests that take the runtime lock for owned data. |
 | `hided` | The pane-capability `factory` request in `server.rs` (`ScopedRequest::Factory`) and the `hide factory` parser and printer in `factory_cli.rs`. |
 | `hide-kit` | `hide_kit::layout::{factory_store, factory_files}` name the store and its files folder. |
 | `hide-agent-hooks` | The session guidance sentence that sends agents to `hide factory add`. |
 
 A command travels as one scoped request.
-`hide factory ...` sends a `factory` request over the pane-capability socket, which needs no open renderer and refuses a caller from a connected device with `factory_local_only`.
+`hide factory ...` sends a `factory` request over the pane-capability socket, which needs no open renderer, takes a caller on the core's machine or on a node that dials the core, and refuses a caller on a device the core dials with `factory_local_only`.
 The request is at most 256 KiB and is answered within 100 seconds.
 The core checks the caller as delivery does, so a moved checkout returns `caller_context_changed`, and queues the command for the engine thread.
 The queue holds 32 commands; a full queue answers `factory_busy` and a missed answer window answers `factory_timeout`.

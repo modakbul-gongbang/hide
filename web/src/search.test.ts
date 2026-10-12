@@ -1,6 +1,6 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries as drawSearchEntries, type SearchEntry } from "./search";
@@ -126,6 +126,9 @@ const TWO_DEVICES = {
 } as unknown as SnapshotRest;
 
 describe("search entries across devices (PRD home-device-rail B40)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" }));
+  afterEach(() => vi.unstubAllGlobals());
   it("finds every connected device's agents, projects and checkouts and the devices themselves", () => {
     const entries = searchEntries(TWO_DEVICES, t);
     expect(entries.filter((entry) => entry.kind === "agent").map((entry) => entry.title)).toEqual(["Agent one", "Agent elsewhere", "배치 감시"]);

@@ -69,9 +69,15 @@ const GH_FAILURE_KEY: Partial<Record<GithubFailureCategory, MessageKey>> = {
   network_or_rate_limit: "issueSettings.readFailed",
 };
 
-/** What the GitHub row's state says; a category this build does not know is shown as the core named it. */
-export function githubAccessLine(access: GithubAccess, t: Translate): { text: string; tone: "ok" | "warn" } {
+/**
+ * What the GitHub row's state says; a category this build does not know is
+ * shown as the core named it. `coreMachine` is the core's machine when this
+ * window runs on another one (`coreMachineAway`): the core reads GitHub with
+ * that machine's `gh`, so a lapsed sign-in is named there (B15).
+ */
+export function githubAccessLine(access: GithubAccess, t: Translate, coreMachine: string | null = null): { text: string; tone: "ok" | "warn" } {
   if (access.state === "connected") return { text: t("common.connected"), tone: "ok" };
+  if (access.category === "not_logged_in" && coreMachine) return { text: t("issueSettings.ghNotLoggedInOn", { machine: coreMachine }), tone: "warn" };
   const key = GH_FAILURE_KEY[access.category];
   return { text: key ? t(key) : access.category, tone: "warn" };
 }

@@ -40,7 +40,7 @@ pub fn device_target(
         codex: hide_agent_hooks::codex_daemon::find_codex(home),
         login_shell: crate::agents::login_shell(),
         legacy_coordination_home: relocated,
-        user_agents: hide_platform::user_agents::UserAgents::current(),
+        user_agents: crate::login_agents(home),
         retirement_projects: Vec::new(),
         legacy: crate::legacy::device(home, root),
         stop,

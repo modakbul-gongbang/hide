@@ -22,6 +22,11 @@ pub struct SnapshotReply {
     pub bytes: Vec<u8>,
 }
 
+type MoveSourceAnswer =
+    Result<(herdr_core::MoveSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
+type ReleaseSourceAnswer =
+    Result<(herdr_core::ReleaseSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
+
 enum Command {
     FactoryQuestionGuard {
         device_id: String,
@@ -35,6 +40,9 @@ enum Command {
     },
     DeliveryHuman {
         reply: Sender<Result<herdr_core::delivery::worker::PreparedHuman, String>>,
+    },
+    ReleaseEffects {
+        reply: Sender<bool>,
     },
     DeliveryPrepare {
         device_id: String,
@@ -85,6 +93,14 @@ enum Command {
     LinkedNodes {
         reply: Sender<Vec<String>>,
     },
+    ReleaseSource {
+        node: String,
+        reply: Sender<ReleaseSourceAnswer>,
+    },
+    MoveSource {
+        device: String,
+        reply: Sender<MoveSourceAnswer>,
+    },
     InboundNode {
         node: String,
         label: String,
@@ -107,6 +123,10 @@ enum Command {
     LinksScope {
         context: Context,
         reply: Sender<Option<herdr_core::links::query::Scope>>,
+    },
+    MemoryScope {
+        context: Context,
+        reply: Sender<Result<herdr_core::memory_hook::Scope, &'static str>>,
     },
     WorkspaceAction {
         device_id: String,
@@ -145,7 +165,17 @@ pub struct CoreHandle {
     /// What every pane's output reaches: the hub, and the terminals relay
     /// of each linked node (`relay`).
     pub outputs: Arc<crate::relay::ScreenOutputs>,
-    thread: Mutex<Option<JoinHandle<()>>>,
+    /// What a shutdown ends, taken out by the first one, so a second
+    /// shutdown or the `Drop` after it finds nothing left to close.
+    running: Mutex<Option<Running>>,
+}
+
+/// The core's owner thread and this machine's terminal service, which
+/// `terminals` routes its panes to; the service is closed with the core,
+/// since what else holds the router may outlive it.
+struct Running {
+    thread: JoinHandle<()>,
+    local: Arc<Service>,
 }
 
 impl CoreHandle {
@@ -163,6 +193,19 @@ impl CoreHandle {
             .map_err(|_| "delivery_unavailable")?;
         result.recv().map_err(|_| "delivery_unavailable")?
     }
+
+    /// The move's link committed this core: what it held while pending
+    /// runs now. Returns whether this released the hold.
+    pub fn release_effects(&self) -> Result<bool, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::ReleaseEffects { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        result
+            .recv()
+            .map_err(|_| "core owner thread dropped the release reply".to_owned())
+    }
+
     pub fn prepare_delivery(
         &self,
         device: &str,
@@ -294,15 +337,17 @@ impl CoreHandle {
         let reports: Arc<dyn ReportSink> = Arc::new(reports);
         let hub = TerminalHub::new();
         let outputs = crate::relay::ScreenOutputs::new(Arc::clone(&hub));
-        let local = Service::start(
-            local_attacher(&options),
-            Arc::clone(&outputs) as Arc<dyn OutputSink>,
-            Arc::clone(&reports),
-            RetryPolicy::Automatic,
-        )
-        .map_err(|error| format!("terminal service failed to start: {error}"))?;
+        let local = Arc::new(
+            Service::start(
+                local_attacher(&options),
+                Arc::clone(&outputs) as Arc<dyn OutputSink>,
+                Arc::clone(&reports),
+                RetryPolicy::Automatic,
+            )
+            .map_err(|error| format!("terminal service failed to start: {error}"))?,
+        );
         let terminals = Arc::new(Router::new(
-            Arc::new(local),
+            Arc::clone(&local) as Arc<dyn hide_node_link::terminal::TerminalNode>,
             Arc::clone(&outputs) as Arc<dyn OutputSink>,
             reports,
         ));
@@ -330,7 +375,7 @@ impl CoreHandle {
             terminals,
             hub,
             outputs,
-            thread: Mutex::new(Some(thread)),
+            running: Mutex::new(Some(Running { thread, local })),
         })
     }
 
@@ -393,6 +438,32 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped the linked nodes".to_owned())
     }
 
+    /// What a move of the core to `device` is made from, and the device's
+    /// label records (PRD core-host-node-move B4).
+    pub fn release_source(&self, node: &str) -> Result<ReleaseSourceAnswer, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::ReleaseSource {
+                node: node.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the release source".to_owned())
+    }
+
+    pub fn move_source(&self, device: &str) -> Result<MoveSourceAnswer, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::MoveSource {
+                device: device.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the move source".to_owned())
+    }
+
     /// Why a node dialing this core would be refused, before its link is
     /// started (PRD core-host-node-remote-core D-10).
     pub fn inbound_refusal(&self, node: &str) -> Option<String> {
@@ -450,6 +521,23 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped browser route source".to_owned())
+    }
+
+    /// What a hook's Memory read for the pane in `context` is answered from,
+    /// as the core knows it now; the node call and the store read run on the
+    /// caller's blocking task.
+    pub fn memory_scope(
+        &self,
+        context: &Context,
+    ) -> Result<herdr_core::memory_hook::Scope, &'static str> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::MemoryScope {
+                context: context.clone(),
+                reply,
+            })
+            .map_err(|_| "core_unavailable")?;
+        rx.recv().map_err(|_| "core_unavailable")?
     }
 
     /// The Projects a `hide links` read may answer from, as the core knows
@@ -586,17 +674,28 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped snapshot reply".to_owned())?
     }
 
+    /// Ends the core once: the first call takes what it ends, so `Drop`
+    /// after an explicit shutdown closes nothing again and never waits out
+    /// a timed-out close a second time. A second caller waits under the lock
+    /// until the first has finished.
     pub fn shutdown(&self) {
+        let mut running = self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(Running { thread, local }) = running.take() else {
+            return;
+        };
         let _ = self.commands.send(Command::Shutdown);
-        if let Ok(mut thread) = self.thread.lock()
-            && let Some(thread) = thread.take()
-        {
-            let _ = thread.join();
-        }
+        let _ = thread.join();
         // The core that installs devices is gone: a device's terminals end,
-        // so the router, this machine's terminal service and its attach
-        // children end with this handle rather than with the process.
+        // and so do this machine's sessions and their attach children, now
+        // rather than when the last holder of the router lets it go. A core
+        // that stops for a move leaves its process a node, whose own
+        // sessions would otherwise find each pane held and draw it only
+        // read-only.
         self.terminals.remove_every_device();
+        local.close();
     }
 }
 
@@ -714,6 +813,9 @@ fn owner_loop(
             Command::DeliveryHuman { reply } => {
                 let _ = reply.send(core.prepare_delivery_human());
             }
+            Command::ReleaseEffects { reply } => {
+                let _ = reply.send(core.release_effects());
+            }
             Command::MemoryPrepare {
                 device_id,
                 pane_id,
@@ -782,6 +884,12 @@ fn owner_loop(
             Command::LinkedNodes { reply } => {
                 let _ = reply.send(core.linked_nodes());
             }
+            Command::MoveSource { device, reply } => {
+                let _ = reply.send(core.move_source(&device));
+            }
+            Command::ReleaseSource { node, reply } => {
+                let _ = reply.send(core.release_source(&node));
+            }
             Command::InboundNode {
                 node,
                 label,
@@ -814,6 +922,9 @@ fn owner_loop(
             }
             Command::LinksScope { context, reply } => {
                 let _ = reply.send(core.links_scope(&context));
+            }
+            Command::MemoryScope { context, reply } => {
+                let _ = reply.send(core.memory_scope(&context));
             }
             Command::WorkspaceAction {
                 device_id,
@@ -879,6 +990,8 @@ impl CoreHandle {
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,
+                effects_held: false,
+                machine_name: None,
             },
             Default::default(),
         )

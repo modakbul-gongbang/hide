@@ -1130,6 +1130,8 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
+            effects_held: false,
+            machine_name: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -1400,6 +1402,38 @@ fn the_minute_decision_sleeps_only_an_off_screen_agent_past_the_chosen_hours() {
         row(&runtime).get("sleep").is_none(),
         "awake until the end lands"
     );
+}
+
+/// PRD core-host-node-move amendment 3: a core waiting for its move's link
+/// puts no due agent to sleep, and the same minute decision does once the
+/// link committed it.
+#[test]
+fn a_pending_core_puts_no_agent_to_sleep_until_its_link_commits() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    runtime.dispatch_json(&event(
+        "agent_sleep_set",
+        serde_json::json!({"after_hours": 12}),
+    ));
+    runtime.hold_effects();
+    let later = unix_milliseconds() + 13 * 60 * 60 * 1000;
+    let ending = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .ui_state
+            .agent_sleep
+            .records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    assert!(!runtime.tick_agent_sleep(later));
+    assert!(ending(&runtime).is_empty());
+
+    assert!(runtime.release_effects());
+    runtime.tick_agent_sleep(later);
+    assert_eq!(ending(&runtime), [SLEEPER]);
 }
 
 const WOKEN: &str = "w-order:t3:p";

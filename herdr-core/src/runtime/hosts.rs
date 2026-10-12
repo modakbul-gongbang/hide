@@ -22,6 +22,9 @@ use crate::remote::{
     OnClose,
 };
 
+/// A node and the link that reads its files.
+pub(crate) type LinkedNode = (crate::node::NodeId, Arc<dyn NodeLink>);
+
 /// The daemon may open a pane-scoped return route only while the same
 /// consented helper and SSH device connection are live. All fields are owned
 /// handles, so no network work is done under the runtime lock.
@@ -339,7 +342,7 @@ impl Runtime {
         let Some(registration) = self.device_registration(device_id).cloned() else {
             return false;
         };
-        if !registration.origin.core_redials() {
+        if !registration.origin.core_redials() || self.effects_held() {
             return false;
         }
         if matches!(
@@ -734,6 +737,16 @@ impl Runtime {
             .map_or(0, |host| host.generation)
     }
 
+    /// Whether the device's link was up and has ended: its helper reports
+    /// unavailable, or the channel it was ready on has closed.
+    pub(super) fn device_host_ended(&self, device_id: &str) -> bool {
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            Some(HostPhase::Unavailable(_)) => true,
+            Some(HostPhase::Ready { host, .. }) => host.closed_reason().is_some(),
+            _ => false,
+        }
+    }
+
     pub(super) fn device_host_connecting(&self, device_id: &str) -> bool {
         matches!(
             self.device_hosts.get(device_id).map(|host| &host.phase),
@@ -854,6 +867,67 @@ impl Runtime {
             .host_snapshot(device_id)
             .message
             .unwrap_or_else(|| "The device helper is not ready".to_owned()))
+    }
+
+    /// The node that does a Project's work on `device` for what the core
+    /// keeps (Memory, Sessions, a Factory), with its link: the core's own
+    /// node, or a node that dials in while its link is up, never a device the
+    /// core dials, which keeps none of it (PRD core-host-node-move B14, Q17,
+    /// Q20); asking starts no helper.
+    pub(crate) fn linked_node(&self, device: &str) -> Result<LinkedNode, &'static str> {
+        if device == self.node.as_str() {
+            return Ok((self.node.clone(), self.own_node()));
+        }
+        let registration = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|registration| registration.id == device)
+            .ok_or("unregistered")?;
+        if registration.origin != crate::model::LinkOrigin::Inbound {
+            return Err("dialed_device");
+        }
+        let node = crate::node::NodeId::parse(device).map_err(|_| "unregistered")?;
+        match self.device_hosts.get(device).map(|host| &host.phase) {
+            Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
+                Ok((node, Arc::clone(host)))
+            }
+            _ => Err("link_down"),
+        }
+    }
+
+    /// The machines whose Projects have Memory now, each with the link that
+    /// reads its files: this machine's and each node that dials in and is
+    /// linked; and the nodes that dial in but whose link is down.
+    pub(crate) fn memory_nodes(&self) -> (Vec<LinkedNode>, Vec<crate::node::NodeId>) {
+        let mut nodes = vec![(self.node.clone(), self.own_node())];
+        let mut unreached = Vec::new();
+        for registration in &self.snapshot.ui_state.device_registrations {
+            if registration.origin != crate::model::LinkOrigin::Inbound {
+                continue;
+            }
+            match self.linked_node(&registration.id) {
+                Ok(linked) => nodes.push(linked),
+                Err(_) => unreached.extend(crate::node::NodeId::parse(&registration.id).ok()),
+            }
+        }
+        (nodes, unreached)
+    }
+
+    /// What a hook's Memory read for a pane in `context` is answered from
+    /// (`crate::memory_hook`), on the node of the pane's checkout.
+    pub(crate) fn memory_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Result<crate::memory_hook::Scope, &'static str> {
+        let (node, link) = self.linked_node(&context.device_id)?;
+        Ok(crate::memory_hook::Scope {
+            store: self.memory_database_path(),
+            node,
+            checkout_path: context.checkout_path.clone(),
+            link,
+        })
     }
 
     /// The devices whose helper is connected now, each with its channel;

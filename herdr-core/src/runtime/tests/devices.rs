@@ -30,6 +30,22 @@ fn device<'a>(runtime: &'a Runtime, id: &str) -> &'a DeviceSnapshot {
         .expect("device row")
 }
 
+/// A removed device takes its Explorer expansion with it, so the map stays
+/// bounded by the registered machines.
+#[test]
+fn removing_a_device_forgets_its_expanded_paths() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    runtime
+        .snapshot
+        .ui_state
+        .device_expanded_paths
+        .insert("studio".to_owned(), vec!["/srv/p".to_owned()]);
+
+    assert!(dispatch_device(&mut runtime, "remove_device", "studio"));
+    assert!(runtime.snapshot.ui_state.device_expanded_paths.is_empty());
+}
+
 /// A registered device has a remote status entry from the moment it is
 /// registered, and its row says why it is not ready. Nothing is hardcoded
 /// about which host it is: the row is the registration, the reason is the
@@ -236,6 +252,8 @@ pub(super) fn runtime_with_home() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        effects_held: false,
+        machine_name: None,
     };
     let mut runtime = Runtime::new(
         options,
@@ -249,6 +267,27 @@ pub(super) fn runtime_with_home() -> Runtime {
     );
     runtime.test_dirs.push(folder);
     runtime
+}
+
+/// PRD core-host-node-move amendment 3: a core waiting for its move's link
+/// keeps the registration it is given but dials nobody; releasing the hold
+/// dials every registration.
+#[test]
+fn a_pending_core_dials_no_device_until_its_link_commits() {
+    let mut runtime = runtime_with_home();
+    runtime.hold_effects();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    assert_eq!(runtime.snapshot().ui_state.device_registrations.len(), 1);
+    assert!(
+        runtime.snapshot().status.remote.is_empty(),
+        "no connection is attempted"
+    );
+    assert!(runtime.release_effects());
+    let attempt = device(&runtime, "studio").message.clone().expect("reason");
+    assert!(
+        attempt.starts_with("SSH alias studio-host could not be read"),
+        "{attempt}"
+    );
 }
 
 /// Retry is a new attempt, not a repaint of the last answer: fixing the SSH

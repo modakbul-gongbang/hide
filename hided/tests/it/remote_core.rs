@@ -12,10 +12,13 @@ use hided::node_role::{LinkFailure, NodeIdentity, NodeRole, Phase};
 use serde_json::Value;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::support::remote_core::{CORE_NODE, Fixture, Herdr};
-use crate::support::remote_delivery::{PROMPT, wait_for};
+use crate::support::remote_delivery::{quote, successful, wait_for};
+use crate::support::screen::{
+    Socket, chunks, first_snapshot, next_frame, plain, screen_socket, screen_socket_of, send,
+    type_and_read,
+};
 
 const LINK_BOUND: Duration = Duration::from_secs(30);
 
@@ -32,6 +35,7 @@ fn identity(fixture: &Fixture) -> Result<NodeIdentity> {
             .to_owned(),
         label: "screen-fixture".to_owned(),
         build: hided::build_id::of_file(&fixture.hided).map_err(anyhow::Error::msg)?,
+        release: hided::build_order::Release::of_this_build(),
         herdr_socket: fixture.screen.socket.clone(),
         herdr_bin: std::env::var_os("HIDE_E2E_HERDR_BIN")
             .map(std::path::PathBuf::from)
@@ -140,112 +144,6 @@ fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
     })
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-/// A screen of the node's machine: the node's `/ws`, as the web shell opens it.
-async fn screen_socket(port: u16, token: &str) -> Result<Socket> {
-    screen_socket_of(port, token, "web").await
-}
-
-/// A screen of the node's machine as a client of `kind` opens it.
-async fn screen_socket_of(port: u16, token: &str, kind: &str) -> Result<Socket> {
-    let mut request = format!("ws://127.0.0.1:{port}/ws").into_client_request()?;
-    request
-        .headers_mut()
-        .insert("origin", format!("http://127.0.0.1:{port}").parse()?);
-    let (mut socket, _) = tokio_tungstenite::connect_async(request).await?;
-    socket
-        .send(Message::Text(
-            json!({"token": token, "schema_version": 2, "client_kind": kind})
-                .to_string()
-                .into(),
-        ))
-        .await?;
-    Ok(socket)
-}
-
-async fn send(socket: &mut Socket, kind: &str, payload: Value) -> Result<()> {
-    socket
-        .send(Message::Text(
-            json!({"schema_version": 2, "kind": kind, "payload": payload})
-                .to_string()
-                .into(),
-        ))
-        .await?;
-    Ok(())
-}
-
-/// The next text frame, or `None` once the deadline passed.
-async fn next_frame(socket: &mut Socket, deadline: Instant) -> Result<Option<Value>> {
-    loop {
-        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-            return Ok(None);
-        };
-        let Ok(message) = tokio::time::timeout(left, socket.next()).await else {
-            return Ok(None);
-        };
-        match message {
-            Some(Ok(Message::Text(text))) => return Ok(Some(serde_json::from_str(&text)?)),
-            Some(Ok(Message::Close(frame))) => bail!("the screen socket closed: {frame:?}"),
-            Some(Ok(_)) => {}
-            Some(Err(error)) => bail!("the screen socket failed: {error}"),
-            None => bail!("the screen socket ended"),
-        }
-    }
-}
-
-/// Every `{pane_id, bytes_base64}` chunk of a `terminal` frame, decoded.
-fn chunks(frame: &Value) -> Vec<(String, Vec<u8>)> {
-    if frame["type"] != "terminal" {
-        return Vec::new();
-    }
-    frame["payload"]["chunks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|chunk| {
-            let pane = chunk["pane_id"].as_str()?;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(chunk["bytes_base64"].as_str()?)
-                .ok()?;
-            Some((pane.to_owned(), bytes))
-        })
-        .collect()
-}
-
-/// The screen's text without its control sequences.
-fn plain(screen: &str) -> String {
-    let mut text = String::new();
-    let mut chars = screen.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\u{1b}' {
-            if !c.is_control() || c == '\n' {
-                text.push(c);
-            }
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                for c in chars.by_ref() {
-                    if ('@'..='~').contains(&c) {
-                        break;
-                    }
-                }
-            }
-            Some(']') => {
-                while let Some(c) = chars.next() {
-                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    text
-}
-
 /// Brings the checkout at `path` on `device` forward from `socket`, as a
 /// click on its sidebar row does, once the core's navigator lists it.
 async fn focus_checkout(
@@ -255,53 +153,57 @@ async fn focus_checkout(
     path: &std::path::Path,
 ) -> Result<()> {
     send(socket, "focus_device", json!({"device_id": device})).await?;
-    let path = path.to_string_lossy().into_owned();
-    let mut seen = Value::Null;
-    let (workspace, checkout) = tokio::task::block_in_place(|| {
-        wait_for("the checkout in the core's navigator", || {
-            let snapshot = fixture.snapshot()?;
-            // This machine's checkouts are the navigator's; a device's are
-            // its session's.
-            let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            for remote in snapshot["status"]["remote"]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
-                listed.extend(
-                    remote["session"]["workspaces"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-            }
-            seen = json!(
-                listed
-                    .iter()
-                    .map(|workspace| &workspace["path"])
-                    .collect::<Vec<_>>()
-            );
-            Ok(listed
-                .iter()
-                .find(|workspace| workspace["path"] == path.as_str())
-                .and_then(|workspace| {
-                    Some((
-                        workspace["id"].as_str()?.to_owned(),
-                        workspace["checkouts"][0]["id"].as_str()?.to_owned(),
-                    ))
-                }))
-        })
-    })
-    .with_context(|| format!("the core's navigator: {seen}"))?;
+    let (workspace, checkout) = tokio::task::block_in_place(|| listed_checkout(fixture, path))?;
     send(
         socket,
         "focus_checkout",
         json!({"workspace_id": workspace, "checkout_id": checkout, "focus_device": true}),
     )
     .await
+}
+
+/// The Project and checkout ids the core's catalog lists for `path`, once it
+/// lists it.
+fn listed_checkout(fixture: &Fixture, path: &std::path::Path) -> Result<(String, String)> {
+    let path = path.to_string_lossy().into_owned();
+    let mut seen = Value::Null;
+    wait_for("the checkout in the core's navigator", || {
+        let snapshot = fixture.snapshot()?;
+        // This machine's checkouts are the navigator's; a device's are its
+        // session's.
+        let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for remote in snapshot["status"]["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            listed.extend(
+                remote["session"]["workspaces"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        seen = json!(
+            listed
+                .iter()
+                .map(|workspace| &workspace["path"])
+                .collect::<Vec<_>>()
+        );
+        Ok(listed
+            .iter()
+            .find(|workspace| workspace["path"] == path.as_str())
+            .and_then(|workspace| {
+                Some((
+                    workspace["id"].as_str()?.to_owned(),
+                    workspace["checkouts"][0]["id"].as_str()?.to_owned(),
+                ))
+            }))
+    })
+    .with_context(|| format!("the core's navigator: {seen}"))
 }
 
 /// Waits up to `bound` for the node's link to reach `phase`, as its
@@ -322,19 +224,6 @@ async fn node_link(port: u16, phase: &str, bound: Duration) -> Result<Value> {
             "the node's link never reached {phase}: {health}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-/// The first snapshot frame `socket` receives within `bound`.
-async fn first_snapshot(socket: &mut Socket, bound: Duration) -> Result<Value> {
-    let deadline = Instant::now() + bound;
-    loop {
-        let frame = next_frame(socket, deadline)
-            .await?
-            .context("no snapshot reached the screen")?;
-        if frame["type"] == "snapshot" {
-            return Ok(frame);
-        }
     }
 }
 
@@ -404,53 +293,6 @@ async fn node_health(port: u16) -> Result<Value> {
     let text = String::from_utf8(response)?;
     let body = text.split_once("\r\n\r\n").context("health body")?.1;
     Ok(serde_json::from_str(body)?)
-}
-
-/// Types `line` into `pane` once its shell drew its prompt, and reads the screen
-/// until `answer` appears on it; answers what the pane drew after the
-/// keys, without its control sequences.
-async fn type_and_read(
-    socket: &mut Socket,
-    pane: &str,
-    line: &str,
-    answer: &str,
-) -> Result<String> {
-    for kind in ["terminal_viewport", "terminal_resize"] {
-        send(
-            socket,
-            kind,
-            json!({"pane_id": pane, "cols": 100, "rows": 30, "new_view": true}),
-        )
-        .await?;
-    }
-    let mut screen = String::new();
-    let mut typed = false;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while let Some(frame) = next_frame(socket, deadline).await? {
-        for (from, bytes) in chunks(&frame) {
-            if from == pane {
-                screen.push_str(&String::from_utf8_lossy(&bytes));
-            }
-        }
-        if !typed && plain(&screen).contains(PROMPT.trim_end()) {
-            let keys = base64::engine::general_purpose::STANDARD.encode(format!("{line}\r"));
-            send(
-                socket,
-                "key",
-                json!({"pane_id": pane, "bytes_base64": keys}),
-            )
-            .await?;
-            typed = true;
-            screen.clear();
-        }
-        if typed && plain(&screen).contains(answer) {
-            return Ok(plain(&screen));
-        }
-    }
-    bail!(
-        "{answer} never came back on {pane} (typed: {typed}); the screen read: {:?}",
-        plain(&screen)
-    )
 }
 
 #[test]
@@ -550,6 +392,20 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
     })
 }
 
+/// What a held screen receives until `deadline`: where the node's link
+/// stands, each phase it was told, and nothing else.
+async fn held_for(socket: &mut Socket, deadline: Instant) -> Result<Vec<Value>> {
+    let mut told = Vec::new();
+    while let Some(frame) = next_frame(socket, deadline).await? {
+        ensure!(
+            frame["type"] == "core_link",
+            "a held screen received {frame}"
+        );
+        told.push(frame["payload"]["phase"].clone());
+    }
+    Ok(told)
+}
+
 /// What a screen shows of the operator's layout: the focus, the tab and
 /// the panes' places, as one snapshot frame carries them.
 fn layout(snapshot: &Value) -> Value {
@@ -616,13 +472,17 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
                 );
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            // A screen opened meanwhile is held: nothing reaches it, and the
-            // keys it sends are dropped rather than kept for later.
+            // A screen opened meanwhile is held: nothing but where the link
+            // stands reaches it, and the keys it sends are dropped rather
+            // than kept for later.
             let mut held = screen_socket(port, &token).await?;
             let keys = base64::engine::general_purpose::STANDARD.encode("echo held-\"leak\"\r");
             send(&mut held, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
-            let quiet = next_frame(&mut held, Instant::now() + Duration::from_secs(5)).await?;
-            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+            let told = held_for(&mut held, Instant::now() + Duration::from_secs(5)).await?;
+            ensure!(
+                told.first().is_some_and(|phase| phase == "waiting" || phase == "connecting"),
+                "the held screen was told {told:?}"
+            );
             // The outage lasts until the node's next try is further away than
             // the return is allowed to take: only the node noticing SSH
             // answer again brings it back in time.
@@ -635,8 +495,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
                         .then_some(()))
                 })
             })?;
-            let quiet = next_frame(&mut held, Instant::now()).await?;
-            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+            held_for(&mut held, Instant::now()).await?;
 
             // SSH answers again: the held screen attaches within ten seconds
             // and draws the layout it left.
@@ -672,6 +531,176 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
             "the node's link records: {ended:?}"
         );
         for typed in ["before-", "after-", "held-"] {
+            ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
+        }
+        Ok(())
+    })
+}
+
+/// The node's placement record, as the node left it.
+fn node_record(fixture: &Fixture) -> Result<Value> {
+    let record = hided::placement::record_path(&fixture.node_state());
+    Ok(serde_json::from_slice(&std::fs::read(record)?)?)
+}
+
+/// The answer `socket` gets to a `file_list` of `project` on `node`: a
+/// listing or why there is none.
+async fn listing_of(socket: &mut Socket, node: &str, project: &std::path::Path) -> Result<Value> {
+    send(
+        socket,
+        "file_list",
+        json!({"root": project, "path": project, "device_id": node}),
+    )
+    .await?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let frame = next_frame(socket, deadline)
+            .await?
+            .context("the file_list was never answered")?;
+        if ["directory_list", "directory_unavailable", "path_refused"]
+            .contains(&frame["type"].as_str().unwrap_or_default())
+        {
+            return Ok(frame);
+        }
+    }
+}
+
+/// B16: the operator ends the link from the node's window. At once the
+/// core reaches nothing on the node: a key its own window types into the
+/// node's pane never arrives and a listing there is refused, and its row
+/// for the node is no longer ready. The node dials nothing until the
+/// operator reconnects, a restart included, and its held screens are told
+/// so; Reconnect links it again and the core reaches the node as before.
+/// The node's pages are refused through the same end of the link that
+/// `a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_core_through_it`
+/// drives with SSH gone.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_the_operator_disconnects_is_refused_by_its_core_until_they_reconnect() -> Result<()> {
+    Fixture::journey(|fixture| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let (core_port, core_token) = fixture.core_screen();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let mut window = runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
+            type_and_read(&mut socket, &pane, "echo before-\"ok\"", "before-ok").await?;
+            // The core's own window reaches the node's checkout.
+            let mut window = screen_socket(core_port, &core_token).await?;
+            first_snapshot(&mut window, Duration::from_secs(20)).await?;
+            focus_checkout(fixture, &mut window, &node, &project).await?;
+            let listed = listing_of(&mut window, &node, &project).await?;
+            ensure!(listed["type"] == "directory_list", "the core listed {listed}");
+
+            // Disconnect, from the node's own window.
+            send(&mut socket, "core_link", json!({"action": "disconnect"})).await?;
+            let (code, reason) = close_of(&mut socket, Duration::from_secs(15)).await?;
+            ensure!(
+                (code, reason.as_str()) == (1012, "core_link_lost"),
+                "the screen closed as {code} {reason}"
+            );
+            node_link(port, "disconnected", LINK_BOUND).await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo core-\"leak\"\r");
+            send(&mut window, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
+            let refused = listing_of(&mut window, &node, &project).await?;
+            ensure!(
+                refused["type"] != "directory_list",
+                "the core listed the node's checkout after the disconnect: {refused}"
+            );
+            Ok::<_, anyhow::Error>(window)
+        })?;
+        ensure!(
+            node_record(fixture)?["disconnected"] == true,
+            "the record kept no disconnect"
+        );
+        wait_for("the node's row not ready on the core", || {
+            Ok(fixture.device(&node)?.filter(|row| {
+                row.pointer("/host/state")
+                    .is_some_and(|state| state != "ready")
+            }))
+        })?;
+        let linked = fixture.core_log("node_link", "attach.linked")?.len();
+
+        // A restart keeps the disconnect: nothing dials, and a held screen
+        // is told so and drops what it sends.
+        fixture.signal_node(libc::SIGTERM)?;
+        let (port, token) = fixture.restart_node()?;
+        runtime.block_on(async {
+            node_link(port, "disconnected", LINK_BOUND).await?;
+            let mut held = screen_socket(port, &token).await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo held-\"leak\"\r");
+            send(
+                &mut held,
+                "key",
+                json!({"pane_id": pane, "bytes_base64": keys}),
+            )
+            .await?;
+            let told = held_for(&mut held, Instant::now() + Duration::from_secs(5)).await?;
+            ensure!(
+                told == [json!("disconnected")],
+                "the held screen was told {told:?}"
+            );
+            ensure!(
+                tokio::task::block_in_place(|| fixture.attach_processes())?.is_empty(),
+                "the disconnected node runs an attach role"
+            );
+            ensure!(
+                tokio::task::block_in_place(|| fixture.core_log("node_link", "attach.linked"))?
+                    .len()
+                    == linked,
+                "the disconnected node linked to its core"
+            );
+
+            // Reconnect: the held screen attaches and draws the pane, which
+            // nothing typed meanwhile reached.
+            send(&mut held, "core_link", json!({"action": "reconnect"})).await?;
+            first_snapshot(&mut held, Duration::from_secs(20))
+                .await
+                .context("the held screen did not attach after Reconnect")?;
+            type_and_read(&mut held, &pane, "echo after-\"ok\"", "after-ok").await?;
+            let text = pane_text(&mut held, &pane, "after-ok", Duration::from_secs(20)).await?;
+            ensure!(
+                !text.contains("held-") && !text.contains("core-"),
+                "the pane after the disconnect reads {text:?}"
+            );
+            tokio::task::block_in_place(|| {
+                wait_for("the node's ready row on the core again", || {
+                    Ok(fixture.device(&node)?.filter(|row| {
+                        row.pointer("/host/state")
+                            .is_some_and(|state| state == "ready")
+                    }))
+                })
+            })?;
+            focus_checkout(fixture, &mut window, &node, &project).await?;
+            let listed = listing_of(&mut window, &node, &project).await?;
+            ensure!(
+                listed["type"] == "directory_list",
+                "the core listed {listed}"
+            );
+            Ok::<_, anyhow::Error>(())
+        })?;
+        ensure!(
+            node_record(fixture)?.get("disconnected").is_none(),
+            "the record kept the disconnect after Reconnect"
+        );
+        for typed in ["held-", "core-\"leak"] {
             ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
         }
         Ok(())
@@ -723,6 +752,8 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
                     label: "screen-fixture".to_owned(),
                     build: core.build,
                     herdr_socket: fixture.screen.socket.display().to_string(),
+                    release: core.release,
+                    move_intent: None,
                 }),
             )
             .map_err(anyhow::Error::msg)?;
@@ -746,6 +777,81 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
             })?;
         // The node finds its own link ended and returns.
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        Ok(())
+    })
+}
+
+/// The core's own rule, whatever a node decides before its hello (D-10):
+/// only the same build links; an older node is told the core is newer, and
+/// a newer or unordered one is refused as another build, since a newer node
+/// updates the core before it dials and never links across builds.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn the_core_links_only_its_own_build_and_tells_an_older_node_it_is_newer() -> Result<()> {
+    use hided::attach::{Line, NodeHello, read_line, write_line};
+    use hided::build_order::Release;
+    Fixture::journey(|fixture| {
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let socket = hide_node::pane_proof::recorded_socket_path(&hided::attach::attach_record(
+            &fixture.core_state,
+        ))
+        .map_err(anyhow::Error::msg)?;
+        let answer = |version: &str| -> Result<(Line, Release)> {
+            let stream = hide_platform::ipc::LocalStream::connect(&socket)?;
+            stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+            let mut reader = std::io::BufReader::new(stream.duplicate());
+            let mut writer = stream;
+            let Line::Core(core) = read_line(&mut reader).map_err(anyhow::Error::msg)? else {
+                bail!("the core did not greet first");
+            };
+            write_line(
+                &mut writer,
+                &Line::Node(NodeHello {
+                    node: node.clone(),
+                    label: "screen-fixture".to_owned(),
+                    build: "0".repeat(64),
+                    herdr_socket: fixture.screen.socket.display().to_string(),
+                    release: Release {
+                        version: version.to_owned(),
+                        order: core.release.order,
+                        commit: None,
+                    },
+                    move_intent: None,
+                }),
+            )
+            .map_err(anyhow::Error::msg)?;
+            Ok((
+                read_line(&mut reader).map_err(anyhow::Error::msg)?,
+                core.release,
+            ))
+        };
+        let refused = |line: &Line| match line {
+            Line::Refused(refusal) => Some(refusal.reason.clone()),
+            _ => None,
+        };
+        let (older, core) = answer("0.0.1")?;
+        ensure!(
+            refused(&older).as_deref() == Some("core_newer"),
+            "an older node was answered {older:?} by core {core:?}"
+        );
+        for version in ["999.0.0", "nightly"] {
+            let (other, _) = answer(version)?;
+            ensure!(
+                refused(&other).as_deref() == Some("other_build"),
+                "a node at {version} was answered {other:?}"
+            );
+        }
+        let older_logged = |row: &Value| {
+            row["reason"] == "core_newer"
+                && row["node_release"]["version"] == "0.0.1"
+                && row["core_release"]["version"] == core.version.as_str()
+        };
+        fixture.core_log_until("node_link", "attach.refused", |rows| {
+            rows.iter().any(older_logged)
+        })?;
         Ok(())
     })
 }
@@ -828,13 +934,15 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
             answer["ok"] == false && answer["reason"] == "other_build",
             "hide connect did not answer other_build: {answer}"
         );
-        fixture
-            .core_log_until("node_link", "attach.refused", |refused| {
-                refused.iter().any(|row| {
-                    row["reason"] == "other_build" && row["node_build"] != row["core_build"]
-                })
-            })
-            .context("the core logged no build mismatch")?;
+        // Builds that only their hashes tell apart are not ordered: the
+        // node refuses before it says hello and names both builds.
+        let refused = fixture.node_log("node_role", "link.build_refused")?;
+        ensure!(
+            refused.iter().any(|row| {
+                row["reason"] == "other_build" && row["node_build"] != row["core_build"]
+            }),
+            "the node logged no build mismatch: {refused:?}"
+        );
         Ok(())
     })
 }
@@ -874,7 +982,7 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             // A pane's agent: vouched for by the node's kernel as that pane,
             // so it may act as the pane's agent.
             let answer = type_and_read(&mut socket, &pane, &call, "info-done").await?;
-            let info = workspace_answer(&answer)?;
+            let info = workspace_answer(&answer).with_context(|| format!("the pane read {answer:?}"))?;
             ensure!(
                 info["ok"] == true
                     && info["result"]["context"]["device_id"] == node.as_str()
@@ -957,6 +1065,333 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             Ok::<_, anyhow::Error>(())
         })
     })
+}
+
+/// The core's Memory store with one enabled Project, `checkout`'s on `node`,
+/// holding `rule`.
+fn seed_memory(
+    fixture: &Fixture,
+    node: &str,
+    checkout: &std::path::Path,
+    rule: &str,
+) -> Result<()> {
+    let project = hide_project::resolve(checkout, node)?;
+    let mut store =
+        hide_memory::MemoryStore::open(&hide_memory::database_path(&fixture.core_state))?;
+    store.ensure_project(&project.id, &project.root, node)?;
+    store.set_enabled(&project.id, true, true)?;
+    store.apply_candidates(
+        &hide_memory::AnalysisBatch {
+            id: format!("{node}-batch"),
+            project_id: project.id.clone(),
+            provider: "codex".into(),
+            analysis_provider: "codex".into(),
+            session_id: "source-session".into(),
+            content_hash: format!("{node}-hash"),
+            created_at_unix_ms: 1,
+        },
+        &[hide_memory::Candidate {
+            text: rule.into(),
+            title: String::new(),
+            aliases: Vec::new(),
+            kind: hide_memory::CandidateKind::Rule,
+            confidence: 0.9,
+            salience: 0.9,
+            source_offsets: vec![1],
+            human_offsets: vec![1],
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
+            relation: hide_memory::CandidateRelation::New,
+        }],
+    )?;
+    Ok(())
+}
+
+/// `hide workspace memory` for a session start in `cwd`, as `command` runs
+/// it, and how long the answer took.
+fn ask_memory(command: std::process::Command, cwd: &std::path::Path) -> Result<(Value, Duration)> {
+    ask_memory_for(command, cwd, "SessionStart", None)
+}
+
+/// `hide workspace memory` for `event` in `cwd`, with `prompt` on its
+/// standard input as a hook sends it.
+fn ask_memory_for(
+    mut command: std::process::Command,
+    cwd: &std::path::Path,
+    event: &str,
+    prompt: Option<&str>,
+) -> Result<(Value, Duration)> {
+    use std::io::Write;
+    command
+        .args(["workspace", "memory", "--event", event])
+        .args(["--runtime", "codex", "--session", "memory-session"])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let asked = Instant::now();
+    let mut child = command.spawn()?;
+    let mut stdin = child.stdin.take().context("the command's input")?;
+    stdin.write_all(prompt.unwrap_or_default().as_bytes())?;
+    drop(stdin);
+    let output = child.wait_with_output()?;
+    let took = asked.elapsed();
+    let answer = workspace_answer(&String::from_utf8_lossy(&output.stdout))
+        .with_context(|| format!("stderr: {}", String::from_utf8_lossy(&output.stderr)))?;
+    Ok((answer, took))
+}
+
+/// PRD core-host-node-move B14: an agent on either machine gets Project
+/// Memory from the one store the core owns, for the Project of its own
+/// checkout, read by that checkout's node; with the link down the node's
+/// agent is refused at once and its turn goes on without Memory.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()> {
+    Fixture::journey(|fixture| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let node_project = fixture.screen_home().join("project");
+        let core_project = fixture.core_home().join("core-project");
+        // Each its own repository: a run folder sits inside this checkout,
+        // whose Project a folder in it would otherwise read as.
+        for folder in [&node_project, &core_project] {
+            std::fs::create_dir_all(folder)?;
+            let status = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(folder)
+                .status()?;
+            ensure!(status.success(), "git init {}", folder.display());
+        }
+        fixture.screen.workspace_at(&node_project)?;
+        let hide = fixture.hided.with_file_name("hide");
+        seed_memory(
+            fixture,
+            &node,
+            &node_project,
+            "The node's checkout keeps its rule",
+        )?;
+        seed_memory(
+            fixture,
+            CORE_NODE,
+            &core_project,
+            "The core's checkout keeps its rule",
+        )?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            for (device, path) in [(node.as_str(), &node_project), (CORE_NODE, &core_project)] {
+                send(
+                    &mut socket,
+                    "create_workspace",
+                    json!({"device_id": device, "path": path, "label": device, "initialize_git": false}),
+                )
+                .await?;
+                focus_checkout(fixture, &mut socket, device, path).await?;
+            }
+            // A caller outside every pane bootstraps on its first call, which
+            // the node answers once the core has bound the checkout; only
+            // what follows is Memory's own time.
+            let mut info = fixture.screen_command(&hide);
+            info.args(["workspace", "info"]).current_dir(&node_project);
+            tokio::task::block_in_place(|| info.output())?;
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.screen_command(&hide), &node_project)
+            })?;
+            ensure!(
+                answer["ok"] == true
+                    && answer["result"]["outcome"] == "provided"
+                    && answer["result"]["context"]
+                        .as_str()
+                        .is_some_and(|context| context.contains("<hide-memory-index ")
+                            && context.contains("m1 The node's checkout keeps its rule")
+                            && !context.contains("hide-memory-receipt")
+                            && !context.contains("The core's checkout")),
+                "the node's agent did not get its Project's Memory: {answer}"
+            );
+            eprintln!("memory answer for the node's agent took {took:?}");
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.core_command(&hide), &core_project)
+            })?;
+            ensure!(
+                answer["ok"] == true
+                    && answer["result"]["context"]
+                        .as_str()
+                        .is_some_and(|context| context.contains("The core's checkout keeps its rule")
+                            && !context.contains("The node's checkout")),
+                "the core's agent did not get its Project's Memory: {answer}"
+            );
+            eprintln!("memory answer for the core's agent took {took:?}");
+            // A later prompt's first bytes cross to the core with the ask.
+            let prompt = "Where does the zebrafinch-7c41 rule apply?";
+            let (answer, _) = tokio::task::block_in_place(|| {
+                ask_memory_for(
+                    fixture.screen_command(&hide),
+                    &node_project,
+                    "UserPromptSubmit",
+                    Some(prompt),
+                )
+            })?;
+            ensure!(answer["ok"] == true, "the node's prompt ask: {answer}");
+            // `hide memory` from the node's agent reads the same store, for
+            // the node's Project.
+            let shown = tokio::task::block_in_place(|| {
+                let mut command = fixture.screen_command(&hide);
+                command
+                    .args(["memory", "show", "m1"])
+                    .current_dir(&node_project);
+                command.output()
+            })?;
+            let text = String::from_utf8_lossy(&shown.stdout);
+            ensure!(
+                shown.status.success()
+                    && text.contains("The node's checkout keeps its rule")
+                    && !text.contains("The core's checkout"),
+                "the node's hide memory show: {text} {}",
+                String::from_utf8_lossy(&shown.stderr)
+            );
+            // B19: neither the Memory read nor the prompt is recorded with its
+            // text, in either machine's log or anywhere in the core's state.
+            let mut records = vec![
+                fixture.root.join("core-hided.log"),
+                fixture.root.join("node-hided.log"),
+            ];
+            for folder in [fixture.core_state.clone(), fixture.node_state()] {
+                records.extend(files_under(&folder)?);
+            }
+            let mut found_in_store = false;
+            for record in &records {
+                let Ok(bytes) = std::fs::read(record) else {
+                    continue;
+                };
+                // The store holds the Memory itself, never the prompt; that it
+                // is found there shows the search reads what was written.
+                let store = record
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("project-memory.sqlite3"));
+                for text in ["keeps its rule", "zebrafinch-7c41"] {
+                    if store && text == "keeps its rule" {
+                        found_in_store |= bytes.windows(text.len()).any(|window| window == text.as_bytes());
+                        continue;
+                    }
+                    ensure!(
+                        !bytes.windows(text.len()).any(|window| window == text.as_bytes()),
+                        "{text:?} was written to {}",
+                        record.display()
+                    );
+                }
+            }
+            ensure!(found_in_store, "the search found no seeded Memory in the store");
+
+            // Sessions are each machine's own session files: the node's
+            // Project lists what the node holds, read through its link, in the
+            // right panel with its checkout in front and on its Project's
+            // Sessions screen.
+            for (home, project, id) in [
+                (fixture.screen_home(), &node_project, "node-session"),
+                (fixture.core_home(), &core_project, "core-session"),
+            ] {
+                write_claude_session(home, project, id)?;
+            }
+            focus_checkout(fixture, &mut socket, &node, &node_project).await?;
+            send(&mut socket, "sessions_refresh", json!({})).await?;
+            let rows = tokio::task::block_in_place(|| {
+                wait_for("the right panel's sessions of the node's checkout", || {
+                    let sessions = fixture.snapshot()?["sessions"].clone();
+                    Ok((sessions["checkout_path"] == node_project.to_string_lossy().as_ref()
+                        && sessions["loading"] == false)
+                        .then(|| session_ids(&sessions)))
+                })
+            })?;
+            ensure!(rows == ["node-session"], "the right panel listed {rows:?}");
+            let (project_id, _) =
+                tokio::task::block_in_place(|| listed_checkout(fixture, &node_project))?;
+            send(
+                &mut socket,
+                "sessions_refresh",
+                json!({"workspace_id": project_id, "device_id": node}),
+            )
+            .await?;
+            // The named Project rides its own section of a snapshot frame,
+            // beside the rest the renderer reads.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let named = loop {
+                let frame = next_frame(&mut socket, deadline)
+                    .await?
+                    .context("the node's Project's sessions never settled")?;
+                let sessions = &frame["payload"]["project_sessions"];
+                if sessions["workspace_id"] == project_id.as_str() && sessions["loading"] == false {
+                    break sessions.clone();
+                }
+            };
+            ensure!(
+                session_ids(&named) == ["node-session"] && named["unavailable_reason"].is_null(),
+                "the node's Project's Sessions: {named}"
+            );
+
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            node_link(port, "waiting", LINK_BOUND).await?;
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.screen_command(&hide), &node_project)
+            })?;
+            ensure!(
+                answer["ok"] == false && answer["reason"] == "hide_unavailable",
+                "the node's agent was answered while the link was down: {answer}"
+            );
+            ensure!(took < Duration::from_secs(2), "the refusal took {took:?}");
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })
+}
+
+/// A Claude Code session `id` under `home` whose one request was made in
+/// `project`.
+fn write_claude_session(home: &std::path::Path, project: &std::path::Path, id: &str) -> Result<()> {
+    let folder = home.join(".claude/projects/journey");
+    std::fs::create_dir_all(&folder)?;
+    let line = json!({
+        "type": "user", "cwd": std::fs::canonicalize(project)?,
+        "timestamp": "2026-10-11T01:00:00Z", "userType": "external", "promptId": "p-1",
+        "message": {"role": "user", "content": format!("{id} request")},
+    });
+    std::fs::write(folder.join(format!("{id}.jsonl")), format!("{line}\n"))?;
+    Ok(())
+}
+
+/// Every file under `folder`, at any depth.
+fn files_under(folder: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                folders.push(entry.path());
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// The ids of the session rows a Sessions section lists.
+fn session_ids(sessions: &Value) -> Vec<String> {
+    sessions["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["id"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// The one JSON answer a `hide workspace` command printed among `text`.
@@ -2674,6 +3109,319 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                     &out,
                 )?;
             }
+            Ok::<_, anyhow::Error>(())
+        })
+    })
+}
+
+/// A Factory worker's provider on the node: it reports its native session as
+/// the agent's own hook does, writes one line to `starts` each time it
+/// starts, and on each `!` it reads asks the Factory's question guard as its
+/// AskUserQuestion hook would. Its scripts are in `FIXTURE_ROOT`.
+const FACTORY_PROVIDER: &str = r#"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <termios.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--version") == 0) { puts("fixture provider"); return 0; }
+  if (argc > 1 && strcmp(argv[1], "auth") == 0) { puts("{\"loggedIn\":false}"); return 0; }
+  struct termios t;
+  if (tcgetattr(0, &t) == 0) {
+    t.c_lflag &= ~(ICANON | ECHO | IEXTEN);
+    t.c_cc[VMIN] = 1; t.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &t);
+  }
+  if (system("/bin/sh '" FIXTURE_ROOT "/started.sh'") != 0) return 1;
+  puts("FACTORY_FIXTURE_READY"); fflush(stdout);
+  char byte;
+  while (read(0, &byte, 1) == 1) {
+    if (byte == '!' && system("/bin/sh '" FIXTURE_ROOT "/guard.sh'") != 0) return 1;
+  }
+  return 0;
+}
+"#;
+
+/// The id of `task`'s open question that offers `choice`.
+fn question_offering(task: &Value, choice: &str) -> Option<String> {
+    task["questions"]
+        .as_array()?
+        .iter()
+        .find(|question| {
+            question["answer"].is_null()
+                && question["choices"]
+                    .as_array()
+                    .is_some_and(|choices| choices.iter().any(|c| c == choice))
+        })
+        .and_then(|question| question["id"].as_str())
+        .map(str::to_owned)
+}
+
+/// Whether the Task `show` answered runs a worker in a pane.
+fn running(task: &Value) -> bool {
+    task["card"]["state"] == "running" && task["card"]["worker_pane"].is_string()
+}
+
+/// How many starts the Task's activity records.
+fn starts_of(task: &Value) -> usize {
+    task["activity"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["kind"] == "started")
+        .count()
+}
+
+/// The agent row the core shows for `pane` of a device, if any.
+fn device_agent<'a>(snapshot: &'a Value, pane: &str) -> Option<&'a Value> {
+    snapshot["status"]["remote"]
+        .as_array()?
+        .iter()
+        .filter_map(|remote| remote["session"]["agents"].as_array())
+        .flatten()
+        .find(|agent| agent["pane_id"] == pane)
+}
+
+/// Q17: a Factory on the dialing node's project runs its worker on that
+/// node through the link. Made from a node pane, it starts one worker in
+/// the node's Herdr in a worktree on the node; the worker's question guard
+/// is answered with the node's machine; the link dropping mid-run starts
+/// nothing again when it is back (engineering 11); and cancelling ends the
+/// worker there.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_factory_on_a_node_project_runs_its_worker_on_the_node_through_the_link() -> Result<()> {
+    const SESSION: &str = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+    Fixture::journey(|fixture| {
+        let root = fixture.root.clone();
+        let herdr = std::env::var_os("HIDE_E2E_HERDR_BIN")
+            .map(std::path::PathBuf::from)
+            .context("HIDE_E2E_HERDR_BIN")?;
+        let hide = fixture.hided.with_file_name("hide");
+        let node_state = fixture.node_state();
+        let starts = root.join("starts");
+        let guard_out = root.join("guard.out");
+        let guard_status = root.join("guard.status");
+        // The session report waits for Herdr to show the agent it started.
+        std::fs::write(
+            root.join("started.sh"),
+            format!(
+                "printf 'start\\n' >> {starts}\n\
+                 i=0\n\
+                 while [ $i -lt 50 ]; do\n\
+                 {herdr} pane report-agent-session \"$HERDR_PANE_ID\" --source herdr:claude \
+                 --agent claude --agent-session-id {SESSION} --seq 1 >/dev/null 2>&1 && exit 0\n\
+                 i=$((i + 1)); sleep 0.1\n\
+                 done\n\
+                 exit 1\n",
+                starts = quote(&starts),
+                herdr = quote(&herdr),
+            ),
+        )?;
+        std::fs::write(
+            root.join("guard.sh"),
+            format!(
+                "HIDE_STATE_DIR={state} {hide} workspace factory-question-guard --session {SESSION} \
+                 --runtime claude-code > {out} 2>&1\nprintf '%s' \"$?\" > {status}\n",
+                state = quote(&node_state),
+                hide = quote(&hide),
+                out = quote(&guard_out),
+                status = quote(&guard_status),
+            ),
+        )?;
+        let source = root.join("factory-provider.c");
+        std::fs::write(&source, FACTORY_PROVIDER)?;
+        let mut compiler = fixture.screen.environment.command("/usr/bin/cc");
+        compiler
+            .arg("-O1")
+            .arg(format!("-DFIXTURE_ROOT=\"{}\"", root.display()))
+            .arg(&source)
+            .arg("-o")
+            .arg(fixture.screen_home().join("bin/claude"));
+        ensure!(
+            compiler.status()?.success(),
+            "the fixture provider compiles"
+        );
+        let project = fixture.screen_home().join("project");
+        let mut commit = fixture.screen.environment.command("/usr/bin/git");
+        commit
+            .args([
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+            ])
+            .args(["commit", "-q", "--allow-empty", "-m", "fixture"])
+            .current_dir(&project);
+        successful(commit)?;
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let node_pane = fixture.screen.workspace_at(&project)?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "factory", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
+            let out = root.join("factory-out");
+            let node_in = (node_state.as_path(), hide.as_path());
+            let factory = |args: String| -> Result<Value> {
+                workspace_answer(&hide_in_pane(
+                    (&fixture.screen, &node_pane),
+                    node_in,
+                    &format!("factory {args} --json"),
+                    &out,
+                )?)
+            };
+            let at = quote(&project);
+            let init = factory(format!(
+                "init {at} --no-verification --merge manual --confirm"
+            ))?;
+            ensure!(
+                init["created"] == true,
+                "the node's project got no Factory: {init}"
+            );
+            // The fixture's disk may be below the default floor.
+            let config = factory(format!("config --project {at} --set disk_floor_gb=1"))?;
+            ensure!(config["ok"] != false, "the floor was not set: {config}");
+            let added = factory(format!(
+                "add --project {at} --title 'Node task' --goal 'Work on the node' --criterion 'It runs there'"
+            ))?;
+            let task = added["task"]["id"]
+                .as_str()
+                .with_context(|| format!("no Task was added: {added}"))?
+                .to_owned();
+            // Hide AI is off here, so the review is refused and the Task
+            // waits for a person to start it as written.
+            let mut shown = Value::Null;
+            let question = tokio::task::block_in_place(|| {
+                wait_for("the Task's start-as-is question", || {
+                    shown = factory(format!("show {task}"))?;
+                    Ok(question_offering(&shown["task"], "start-as-is"))
+                })
+            })
+            .with_context(|| format!("the Task: {shown}"))?;
+            let answered = factory(format!(
+                "answer {task} --question {question} --choose start-as-is"
+            ))?;
+            ensure!(answered["ok"] != false, "the answer was refused: {answered}");
+            let worker = tokio::task::block_in_place(|| {
+                wait_for("the Task's worker running", || {
+                    shown = factory(format!("show {task}"))?;
+                    Ok(running(&shown["task"]).then(|| shown["task"].clone()))
+                })
+            })
+            .with_context(|| format!("the Task: {shown}"))?;
+            let pane = worker["card"]["worker_pane"]
+                .as_str()
+                .context("the worker's pane")?
+                .to_owned();
+            let raw = pane
+                .strip_prefix(&format!("remote:{node}:pane:"))
+                .with_context(|| format!("the worker's pane is not the node's: {pane}"))?
+                .to_owned();
+            // The worktree and the worker's pane are the node's.
+            let worktree = std::path::PathBuf::from(
+                worker["worktree"].as_str().context("the worker's worktree")?,
+            );
+            ensure!(
+                worktree.starts_with(root.join("s")) && worktree.is_dir(),
+                "the worktree is not on the node's account: {}",
+                worktree.display()
+            );
+            let got = fixture.screen.run(&["pane", "get", &raw])?;
+            ensure!(
+                got["result"]["pane"]["cwd"]
+                    .as_str()
+                    .is_some_and(|cwd| std::path::Path::new(cwd).starts_with(&worktree)),
+                "the node's Herdr does not hold the worker in its worktree: {got}"
+            );
+            let started = || -> Result<usize> {
+                Ok(std::fs::read_to_string(&starts)?.lines().count())
+            };
+            ensure!(started()? == 1, "the worker started {} times", started()?);
+            // The worker's question guard is the node's pane's, answered by
+            // the core with the node's machine.
+            let ask = |what: &str| -> Result<Value> {
+                let _ = std::fs::remove_file(&guard_status);
+                fixture.screen.write(&["pane", "send-text", &raw, "!"])?;
+                wait_for(what, || Ok(guard_status.exists().then_some(())))?;
+                workspace_answer(&std::fs::read_to_string(&guard_out)?)
+            };
+            let guarded = tokio::task::block_in_place(|| ask("the worker's question guard"))?;
+            ensure!(
+                guarded["ok"] == true && guarded["result"]["deny"] == true,
+                "the worker's question was not held for the Factory: {guarded}"
+            );
+            // The link drops while the worker runs. The core keeps the
+            // node's last session, marked stale, so the worker still shows
+            // and is never read as gone; four engine ticks pass.
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            node_link(port, "waiting", LINK_BOUND).await?;
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            let snapshot = fixture.snapshot()?;
+            let away = device_agent(&snapshot, &pane).cloned();
+            let state = snapshot["status"]["remote"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["target_id"] == node.as_str()))
+                .map(|row| row["state"].clone());
+            ensure!(
+                away.is_some() && state == Some(json!("stale")),
+                "the core lost the node's worker while the link was down: {state:?}, {away:?}"
+            );
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            let again = tokio::task::block_in_place(|| {
+                wait_for("the Task running again", || {
+                    let answer = factory(format!("show {task}"));
+                    shown = match answer {
+                        Ok(answer) => answer,
+                        Err(_) => return Ok(None),
+                    };
+                    Ok(running(&shown["task"]).then(|| shown["task"].clone()))
+                })
+            })
+            .with_context(|| format!("the Task: {shown}; the core's row while away: {away:?}"))?;
+            ensure!(
+                again["card"]["worker_pane"] == pane.as_str() && starts_of(&again) == 1,
+                "the relinked Task holds another worker: {again}; row while away: {away:?}"
+            );
+            ensure!(
+                started()? == 1,
+                "the worker started {} times; row while away: {away:?}",
+                started()?
+            );
+            let guarded = tokio::task::block_in_place(|| ask("the question guard after the link"))?;
+            ensure!(
+                guarded["ok"] == true && guarded["result"]["deny"] == true,
+                "the worker's question was not held after the link came back: {guarded}"
+            );
+            // Cancelling ends the worker on the node; its shell holds the pane.
+            let cancelled = factory(format!("cancel {task}"))?;
+            ensure!(cancelled["ok"] != false, "the cancel was refused: {cancelled}");
+            let mut info = Value::Null;
+            tokio::task::block_in_place(|| {
+                wait_for("the worker ended on the node", || {
+                    info = foreground(&fixture.screen, &raw)?.0;
+                    Ok((info["foreground_process_group_id"] == info["shell_pid"]).then_some(()))
+                })
+            })
+            .with_context(|| format!("the worker's pane: {info}"))?;
+            ensure!(started()? == 1, "the worker started {} times", started()?);
             Ok::<_, anyhow::Error>(())
         })
     })

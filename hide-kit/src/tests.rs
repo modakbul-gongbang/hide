@@ -280,10 +280,7 @@ impl Fixture {
             codex: None,
             login_shell: None,
             legacy_coordination_home: None,
-            user_agents: hide_platform::user_agents::UserAgents::fixture(
-                root.join("launchctl"),
-                "fixture".into(),
-            ),
+            user_agents: hide_platform::user_agents::UserAgents::fixture(&root),
             retirement_projects: Vec::new(),
             legacy: Vec::new(),
             stop: Arc::default(),
@@ -2881,5 +2878,24 @@ fn an_explicit_home_or_registered_checkout_anchor_can_have_an_alias() {
             "{report:?}"
         );
         assert_eq!(std::fs::read_link(alias).unwrap(), destination);
+    }
+}
+
+#[test]
+fn only_a_build_folder_s_hided_is_a_build() {
+    assert_eq!(
+        crate::build_of("/h/.hide/host-helper/0123456789abcdef/hided"),
+        Ok(crate::BuildPlace {
+            root: "/h/.hide/host-helper".to_owned(),
+            version: "0123456789abcdef".to_owned(),
+        })
+    );
+    for program in [
+        "/h/.hide/host-helper/current/hided",
+        "/h/.hide/host-helper/0123456789abcdef/hide",
+        "/usr/local/bin/hided",
+        "relative/0123456789abcdef/hided",
+    ] {
+        assert!(crate::build_of(program).is_err(), "{program}");
     }
 }

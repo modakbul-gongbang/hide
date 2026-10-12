@@ -10,18 +10,17 @@ const device = (id: string, label: string, kind = "remote") => ({ id, label, kin
 const registration = (path: string, device_id = "local") => ({ id: path, label: path, path, device_id, pinned: false }) as WorkspaceRegistration;
 
 describe("Add a project", () => {
-  it("lists this Mac first, then every registered device", () => {
-    // Before a snapshot names this machine, it is named for the system the shell runs on.
+  it("lists this window's machine first, named for its system, then every registered device (PRD core-host-node-move B2)", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This Mac" }]);
     expect(addProjectHosts(undefined, ko)).toEqual([{ id: "", label: "이 Mac" }]);
+    expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
+      { id: "local", label: "This Mac" },
+      { id: "mini", label: "Mini" },
+    ]);
     vi.stubGlobal("navigator", { platform: "Win32" });
     expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This PC" }]);
     vi.unstubAllGlobals();
-    expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
-      { id: "local", label: "Studio" },
-      { id: "mini", label: "Mini" },
-    ]);
   });
 
   it("opens on the focused device while it is listed, this Mac otherwise", () => {

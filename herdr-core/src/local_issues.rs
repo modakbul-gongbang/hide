@@ -54,6 +54,12 @@ pub struct LocalIssueStore {
     /// By project path.
     #[serde(default)]
     pub projects: BTreeMap<String, LocalIssueProject>,
+    /// Another machine's projects, by the id this folder names that machine
+    /// by and then by project path: a core move keeps the machine giving up
+    /// the core here (`node_migration::reown`), and the move back makes them
+    /// `projects` again. No core reads or changes them; every save keeps them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub devices: BTreeMap<String, BTreeMap<String, LocalIssueProject>>,
 }
 
 /// `L-3`, the id a local issue shows.

@@ -7,6 +7,7 @@
 //! request's state, a label create is `--force`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ use serde_json::Value;
 
 use crate::adapters::*;
 use crate::engine::{MERGE_COMMIT_AGAIN_MS, task_marker};
-use crate::exec::{Machine, checked, classify, read_run};
+use crate::exec::{Machine, Machines, checked, classify, read_run};
 use crate::model::*;
 
 /// Local issues (`L-<n>`) for a project without GitHub, owned by the core.
@@ -46,10 +47,14 @@ pub const RUN_OUTPUT_LIMIT: u64 = 256 * 1024 * 1024;
 const MAIN_WORKTREE: &str = "factory-main";
 
 pub struct Projects {
-    pub machine: Machine,
+    /// The machine of each Factory's project (`Factory::node`).
+    machines: Arc<dyn Machines>,
     pub issues: Box<dyn IssueBook>,
-    /// The folder the node writes verify logs in.
+    /// The folder the core's own node writes verify logs in.
     logs: PathBuf,
+    /// The machines verify runs were asked of, whose runs end with the
+    /// engine.
+    asked: BTreeSet<Option<String>>,
     /// Issue bodies already seen, to tell an edit from the first read.
     bodies: BTreeMap<(String, u64), String>,
     /// When each commit's checks last answered Pending: they are asked again
@@ -75,11 +80,16 @@ const CI_PENDING_LIMIT: usize = 256;
 pub struct SharedProjects(pub Arc<Mutex<Projects>>);
 
 impl SharedProjects {
-    pub fn new(machine: Machine, issues: Box<dyn IssueBook>, logs: PathBuf) -> Self {
+    pub fn new(
+        machines: impl Machines + 'static,
+        issues: Box<dyn IssueBook>,
+        logs: PathBuf,
+    ) -> Self {
         Self(Arc::new(Mutex::new(Projects {
-            machine,
+            machines: Arc::new(machines),
             issues,
             logs,
+            asked: BTreeSet::new(),
             bodies: BTreeMap::new(),
             ci_pending: BTreeMap::new(),
             ci_poll_every: CI_POLL_EVERY,
@@ -97,15 +107,78 @@ impl SharedProjects {
     fn lock(&self) -> MutexGuard<'_, Projects> {
         self.0.lock().unwrap_or_else(|poison| poison.into_inner())
     }
+
+    /// `Projects` at the machine of `factory`'s project, or why its work
+    /// waits.
+    fn at(&self, factory: &Factory) -> Result<At<'_>, Failure> {
+        let mut at = self.at_node(factory.node.as_deref())?;
+        // A node's verify logs stay beside the project's worktrees there;
+        // the core's own node writes them in the core's Factory files.
+        if factory.node.is_some() {
+            at.logs = Some(node_logs(factory));
+        }
+        Ok(at)
+    }
+
+    /// `Projects` at the machine `node` names, for work that names no
+    /// Factory yet; it writes no verify log.
+    fn at_node(&self, node: Option<&str>) -> Result<At<'_>, Failure> {
+        let mut projects = self.lock();
+        let machine = projects.machines.on(node)?;
+        let core = projects.machines.on(None)?;
+        projects.asked.insert(node.map(str::to_owned));
+        let logs = node.is_none().then(|| projects.logs.clone());
+        Ok(At {
+            projects,
+            machine,
+            core,
+            logs,
+        })
+    }
+}
+
+/// Where a node writes a Factory's verify logs: beside the Factory's main
+/// worktree, in the folder its worktrees are in.
+fn node_logs(factory: &Factory) -> PathBuf {
+    main_worktree(factory).with_file_name("factory-logs")
+}
+
+/// `Projects` at the machine of one Factory's project: git, quick checks,
+/// verify runs and file reads go to `machine`; GitHub goes to the core's own
+/// machine, whose sign-in does the core's GitHub work (PRD
+/// core-host-node-move D-05).
+struct At<'a> {
+    projects: MutexGuard<'a, Projects>,
+    machine: Machine,
+    core: Machine,
+    /// Where `machine` writes verify logs; `None` where nothing is verified.
+    logs: Option<PathBuf>,
+}
+
+impl Deref for At<'_> {
+    type Target = Projects;
+
+    fn deref(&self) -> &Projects {
+        &self.projects
+    }
+}
+
+impl DerefMut for At<'_> {
+    fn deref_mut(&mut self) -> &mut Projects {
+        &mut self.projects
+    }
 }
 
 impl Drop for Projects {
-    /// The engine is closing: the verify runs it asked for end with it
-    /// (engineering rule 14).
+    /// The engine is closing: the verify runs it asked for end with it, on
+    /// every machine it asked (engineering rule 14).
     fn drop(&mut self) {
-        let _ = self
-            .machine
-            .call::<()>("verify.close", FactoryCall::VerifyClose);
+        self.asked.insert(None);
+        for node in &self.asked {
+            if let Ok(machine) = self.machines.on(node.as_deref()) {
+                let _ = machine.call::<()>("verify.close", FactoryCall::VerifyClose);
+            }
+        }
     }
 }
 
@@ -171,13 +244,13 @@ pub fn main_worktree(factory: &Factory) -> PathBuf {
         .join(MAIN_WORKTREE)
 }
 
-impl Projects {
+impl At<'_> {
     fn git(&mut self, stage: &str, cwd: &Path, command: FactoryGit) -> Result<String, Failure> {
         checked(stage, self.machine.git(cwd, command))
     }
 
     fn gh(&mut self, stage: &str, command: FactoryGh) -> Result<String, Failure> {
-        checked(stage, self.machine.gh(command))
+        checked(stage, self.core.gh(command))
     }
 
     /// The primary checkout is off the default branch or has uncommitted
@@ -266,7 +339,11 @@ impl Projects {
     /// Queues a run on the node, its log in the Factory's log folder, and
     /// answers the log's path.
     fn submit(&mut self, mut job: VerifyJob) -> Result<String, Failure> {
-        job.logs = self.logs.to_string_lossy().into_owned();
+        let logs = self
+            .logs
+            .as_ref()
+            .ok_or_else(|| Failure::task("verify", "no log folder for a run without a Factory"))?;
+        job.logs = logs.to_string_lossy().into_owned();
         self.machine
             .call("verify", FactoryCall::VerifySubmit { job })
     }
@@ -511,14 +588,15 @@ fn verify_id(task: &Task, stage: &str) -> String {
 }
 
 impl TaskSource for SharedProjects {
-    fn repo_context(&mut self, project: &str) -> RepoContext {
-        self.project_context(project)
+    fn repo_context(&mut self, node: Option<&str>, project: &str) -> RepoContext {
+        self.project_context(node, project)
     }
 
-    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String> {
+    fn read_prd(&mut self, node: Option<&str>, path: &str) -> Result<Vec<u8>, String> {
         use base64::Engine as _;
         let encoded: String = self
-            .lock()
+            .at_node(node)
+            .map_err(|failure| failure.detail)?
             .machine
             .call(
                 "attachment",
@@ -532,12 +610,13 @@ impl TaskSource for SharedProjects {
             .map_err(|error| error.to_string())
     }
 
-    fn installed(&mut self, agent: Runtime) -> bool {
-        installed_runtimes(&self.lock().machine).contains(&agent)
+    fn installed(&mut self, node: Option<&str>, agent: Runtime) -> bool {
+        self.at_node(node)
+            .is_ok_and(|at| installed_runtimes(&at.machine).contains(&agent))
     }
 
-    fn probe(&mut self, project: &str) -> Result<ProjectProbe, Failure> {
-        let mut this = self.lock();
+    fn probe(&mut self, node: Option<&str>, project: &str) -> Result<ProjectProbe, Failure> {
+        let mut this = self.at_node(node)?;
         let path = PathBuf::from(project);
         this.git("probe", &path, FactoryGit::ShowToplevel)?;
         let branch = this
@@ -584,7 +663,7 @@ impl TaskSource for SharedProjects {
                 }
             }
             let repo = probe.repo.clone().unwrap_or_default();
-            let answer = this.machine.gh(FactoryGh::RequiredChecks {
+            let answer = this.core.gh(FactoryGh::RequiredChecks {
                 repo,
                 branch: probe.default_branch.clone(),
             })?;
@@ -609,7 +688,7 @@ impl TaskSource for SharedProjects {
             return Ok(());
         }
         let repo = write_repo(factory)?;
-        self.lock()
+        self.at(factory)?
             .gh("github.label", FactoryGh::LabelCreate { repo })?;
         Ok(())
     }
@@ -621,7 +700,7 @@ impl TaskSource for SharedProjects {
         body: &str,
     ) -> Result<IssueRef, Failure> {
         let marker = task_marker(factory, task);
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match factory.source {
             SourceKind::Local => {
                 let number =
@@ -671,7 +750,7 @@ impl TaskSource for SharedProjects {
         marker: &str,
         labelled: bool,
     ) -> Result<IssueRef, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match factory.source {
             SourceKind::Local => {
                 let number = this.issues.create(&factory.project, title, body, marker)?;
@@ -712,7 +791,10 @@ impl TaskSource for SharedProjects {
     }
 
     fn intake_facts(&mut self, factory: &Factory, card: &Card) -> IntakeFacts {
-        let mut this = self.lock();
+        // What cannot be read is left out, the machine's files with it.
+        let Ok(mut this) = self.at(factory) else {
+            return IntakeFacts::default();
+        };
         let mut facts = IntakeFacts::default();
         for path in named_paths(card) {
             let text = this.machine.call::<Option<String>>(
@@ -766,7 +848,7 @@ impl TaskSource for SharedProjects {
             return Ok(());
         }
         let repo = repo(factory)?;
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         this.gh_json("github.access", FactoryGh::User)?;
         this.gh_json(
             "github.access",
@@ -783,7 +865,7 @@ impl TaskSource for SharedProjects {
             return Ok(());
         };
         let repo = write_repo(factory)?;
-        self.lock().gh(
+        self.at(factory)?.gh(
             "github.label_issue",
             FactoryGh::IssueLabel {
                 repo,
@@ -794,7 +876,7 @@ impl TaskSource for SharedProjects {
     }
 
     fn read_issue(&mut self, factory: &Factory, issue: &IssueRef) -> Result<IssueText, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match issue {
             IssueRef::Local { number } => this.issues.read(&factory.project, *number),
             IssueRef::Github { number } => {
@@ -820,7 +902,7 @@ impl TaskSource for SharedProjects {
         factory: &Factory,
         tasks: &[&Task],
     ) -> Result<Vec<OutsideEvent>, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let mut events = Vec::new();
         if factory.source == SourceKind::Local {
             for task in tasks {
@@ -1024,9 +1106,11 @@ impl TaskSource for SharedProjects {
 }
 
 impl SharedProjects {
-    fn project_context(&mut self, project: &str) -> RepoContext {
-        self.lock()
-            .machine
+    fn project_context(&mut self, node: Option<&str>, project: &str) -> RepoContext {
+        let Ok(at) = self.at_node(node) else {
+            return RepoContext::default();
+        };
+        at.machine
             .call::<ProjectFiles>(
                 "project",
                 FactoryCall::Project {
@@ -1044,7 +1128,7 @@ impl MergeTarget for SharedProjects {
             return Ok(None);
         }
         let Some(pr) = &task.pr else { return Ok(None) };
-        let view = self.lock().pr_view(factory, pr.number)?;
+        let view = self.at(factory)?.pr_view(factory, pr.number)?;
         if view["state"].as_str() != Some("MERGED") {
             return Ok(None);
         }
@@ -1052,7 +1136,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn main_head(&mut self, factory: &Factory) -> Result<String, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let project = PathBuf::from(&factory.project);
         Ok(this
@@ -1080,7 +1164,7 @@ impl MergeTarget for SharedProjects {
             .as_ref()
             .map(|w| w.branch.clone())
             .unwrap_or_else(|| task.branch_slug());
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         // Every report publishes its commits, so CI reads what the worker
         // committed since the last one; a rebase needs the lease (B36, B40).
         let path = worktree(task)?;
@@ -1158,7 +1242,7 @@ impl MergeTarget for SharedProjects {
 
     fn close_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
         let repo = write_repo(factory)?;
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let state = this.pr_view(factory, pr.number)?;
         if state["state"].as_str() != Some("OPEN") {
             return Ok(());
@@ -1175,7 +1259,7 @@ impl MergeTarget for SharedProjects {
 
     fn reopen_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
         let repo = write_repo(factory)?;
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let state = this.pr_view(factory, pr.number)?;
         if state["state"].as_str() != Some("CLOSED") {
             return Ok(());
@@ -1191,7 +1275,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn diff_lines(&mut self, factory: &Factory, task: &Task) -> Result<u32, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let path = worktree(task)?;
         let text = this.git("git.diff", &path, FactoryGit::DiffNumstat { base })?;
@@ -1207,7 +1291,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn changed_paths(&mut self, factory: &Factory, task: &Task) -> Result<Vec<String>, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let path = worktree(task)?;
         Ok(changed_names(&this.git(
@@ -1218,7 +1302,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn diff_text(&mut self, factory: &Factory, task: &Task) -> Result<String, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let path = worktree(task)?;
         let text = this.git("git.diff", &path, FactoryGit::DiffPatch { base })?;
@@ -1226,7 +1310,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn premerge(&mut self, factory: &Factory, task: &Task) -> Result<PreMerge, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let path = worktree(task)?;
         // merge-tree answers 1 with the conflicted files listed (B38).
@@ -1284,7 +1368,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn main_dirty(&mut self, factory: &Factory) -> Result<bool, Failure> {
-        self.lock().main_dirty(factory)
+        self.at(factory)?.main_dirty(factory)
     }
 
     fn merge(
@@ -1293,7 +1377,7 @@ impl MergeTarget for SharedProjects {
         task: &Task,
         method: MergeMethod,
     ) -> Result<String, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match factory.source {
             SourceKind::Local => {
                 let project = PathBuf::from(&factory.project);
@@ -1388,7 +1472,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn main_check(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match &factory.config.verification {
             Verification::None => Ok(MainCheck::None),
             Verification::Ci { .. } => this.checks(factory, sha),
@@ -1400,7 +1484,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn rerun_main(&mut self, factory: &Factory, sha: &str) -> Result<(), Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match &factory.config.verification {
             Verification::Ci { .. } => {
                 let repo = write_repo(factory)?;
@@ -1438,7 +1522,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn revert(&mut self, factory: &Factory, task: &Task, sha: &str) -> Result<RevertRef, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let base = this.base(factory)?;
         let path = this.ensure_main_worktree(factory)?;
         this.git(
@@ -1541,7 +1625,7 @@ impl MergeTarget for SharedProjects {
         factory: &Factory,
         revert: &RevertRef,
     ) -> Result<MainCheck, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let commit = revert.commit.clone().unwrap_or_default();
         match &factory.config.verification {
             Verification::None => Ok(MainCheck::None),
@@ -1554,7 +1638,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn merge_revert(&mut self, factory: &Factory, revert: &RevertRef) -> Result<String, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let commit = revert.commit.clone().unwrap_or_default();
         match (factory.source, revert.pr) {
             (SourceKind::Github, Some(number)) => {
@@ -1598,7 +1682,7 @@ impl MergeTarget for SharedProjects {
 
 impl Verifier for SharedProjects {
     fn start(&mut self, factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         match &factory.config.verification {
             Verification::Commands { commands } => {
                 let id = verify_id(task, "task");
@@ -1633,7 +1717,7 @@ impl Verifier for SharedProjects {
     }
 
     fn start_premerge(&mut self, factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {
-        let mut this = self.lock();
+        let mut this = self.at(factory)?;
         let Verification::Commands { commands } = &factory.config.verification else {
             return Err(Failure::task(
                 "verify",
@@ -1667,7 +1751,10 @@ impl Verifier for SharedProjects {
     }
 
     fn poll(&mut self, factory: &Factory, run: &VerifyRun) -> VerifyPoll {
-        let mut this = self.lock();
+        // A machine that is not linked holds the run: the next poll asks again.
+        let Ok(mut this) = self.at(factory) else {
+            return VerifyPoll::Pending;
+        };
         if let Some(sha) = run.id.strip_prefix("ci:") {
             return match this.checks(factory, sha) {
                 Ok(MainCheck::Green) | Ok(MainCheck::None) => VerifyPoll::Passed,
@@ -1691,20 +1778,25 @@ impl Verifier for SharedProjects {
         this.verify_poll(&run.id)
     }
 
-    fn cancel(&mut self, run: &VerifyRun) {
-        // A run the node no longer holds has nothing left to end.
-        let _ = self.lock().machine.call::<()>(
+    fn cancel(&mut self, factory: &Factory, run: &VerifyRun) {
+        // A run the node no longer holds has nothing left to end, and one on
+        // a machine that is not linked ends with that machine's engine.
+        let Ok(this) = self.at(factory) else {
+            return;
+        };
+        let _ = this.machine.call::<()>(
             "verify.cancel",
             FactoryCall::VerifyCancel { id: run.id.clone() },
         );
     }
 
-    fn log_tail(&self, log: &str) -> Option<String> {
+    fn log_tail(&self, factory: &Factory, log: &str) -> Option<String> {
         // A CI run's link is a page, not a log the node wrote.
         if !Path::new(log).is_absolute() {
             return None;
         }
-        self.lock()
+        self.at(factory)
+            .ok()?
             .machine
             .call(
                 "verify.log",
@@ -1722,6 +1814,12 @@ impl Verifier for SharedProjects {
 fn read_outcome(outcome: VerifyOutcome) -> VerifyPoll {
     match outcome {
         VerifyOutcome::Pending => VerifyPoll::Pending,
+        // The run ended with the link to its machine: the Task waits for the
+        // link and is verified again, as after any environment failure.
+        VerifyOutcome::Lost => VerifyPoll::Environment {
+            signal: EnvSignal::NodeLink,
+            check: "verify".into(),
+        },
         VerifyOutcome::Passed => VerifyPoll::Passed,
         VerifyOutcome::StepFailed { step, answer } => {
             let failure = match read_run("verify.prepare", answer) {
