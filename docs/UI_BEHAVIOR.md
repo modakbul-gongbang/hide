@@ -1600,7 +1600,7 @@ Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu'
 Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
 The list reads, top to bottom: the group name `App` with General, Notifications, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
 Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
-The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab enters the page (B3).
+The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
 A page has its title and no description line (B4).
 While a remote device is selected, a small device chip beside the page title says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
 Esc and the close button close Settings and leave the screen under it as it was (B14).
