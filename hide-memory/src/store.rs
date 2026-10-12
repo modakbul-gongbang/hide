@@ -21,7 +21,7 @@ const SCHEMA_VERSION: i64 = 9;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
-const MEMORY_DISCLOSURE_VERSION: i64 = 2;
+const MEMORY_DISCLOSURE_VERSION: i64 = 3;
 /// One UTC day, the window the machine-wide analysis call count is kept in.
 const DAY_MS: u64 = 86_400_000;
 
@@ -3092,7 +3092,10 @@ ALTER TABLE memory_items DROP COLUMN conflict_with_id;"#,
 /// agents; the cards written before it rest on nothing stored, so every one
 /// starts unverified and is verified again within the daily bound (B18). A
 /// promotion can end `outdated`, which SQLite can only add by rebuilding the
-/// table that checks its states.
+/// table that checks its states. The disclosure now names the repository
+/// files a card cites and the instruction files the checks read (version 3),
+/// so a Project that accepted the earlier wording is off until it accepts
+/// again; its stored Memory, search and Sessions stay.
 fn migrate_version_eight(connection: &Connection) -> Result<(), MemoryError> {
     connection.execute_batch(
         r#"BEGIN IMMEDIATE;
@@ -3108,6 +3111,7 @@ CREATE TABLE card_promotions_v9(item_id TEXT PRIMARY KEY REFERENCES memory_items
 INSERT INTO card_promotions_v9(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms) SELECT item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms FROM card_promotions;
 DROP TABLE card_promotions;
 ALTER TABLE card_promotions_v9 RENAME TO card_promotions;
+UPDATE projects SET enabled=0 WHERE disclosure_version<3;
 PRAGMA user_version=9;
 COMMIT;"#,
     )?;
@@ -4626,7 +4630,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             ["Run the linter before the tests"]
         );
         assert_eq!(index_lines(&store, &project), ["Lint first"]);
-        let to_check = store.cards_to_check(&project, u64::MAX, 10).unwrap();
+        let to_check = store.cards_to_check(&project, i64::MAX as u64, 10).unwrap();
         assert_eq!(
             (to_check.len(), to_check[0].number, to_check[0].rows.len()),
             (1, 1, 2)
@@ -4663,7 +4667,10 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             1,
             "a new candidate is compared with it"
         );
-        assert_eq!(store.cards_to_check(&project, u64::MAX, 10).unwrap(), []);
+        assert_eq!(
+            store.cards_to_check(&project, i64::MAX as u64, 10).unwrap(),
+            []
+        );
 
         // One verification a day, however often the file changes.
         let day = 86_400_000;
@@ -4802,10 +4809,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             ["Run scripts/verify-cargo.sh before merging"]
         );
 
-        // The card's Undo restores the old text, which is still unverified.
+        // The card's Undo restores the old text as the operator's choice, so
+        // the next check does not give the same verdict again.
         let restored = store.undo_card(&project, 1).unwrap().unwrap();
         assert_eq!(restored.body, "Run scripts/verify-swift.sh before merging");
-        assert!(restored.verifying);
+        assert!(!restored.verifying);
     }
 
     #[test]
@@ -5056,6 +5064,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                  INSERT INTO cp8 SELECT * FROM card_promotions;
                  DROP TABLE card_promotions;
                  ALTER TABLE cp8 RENAME TO card_promotions;
+                 UPDATE projects SET disclosure_version=2;
                  PRAGMA user_version=8;",
             )
             .unwrap();
@@ -5066,6 +5075,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             backup_path(&path, 8).exists(),
             "the store as it was is kept"
         );
+        // The Project accepted version 2 of the disclosure: it asks again.
+        let state = store.project_state("p").unwrap();
+        assert!(!state.enabled);
+        assert!(state.disclosure_accepted_at_unix_ms.is_none());
+        store.set_enabled("p", true, true).unwrap();
         let card = store.item_by_number("p", 1).unwrap().unwrap();
         assert!(card.verifying);
         assert_eq!(given(&store, "p", "linter first"), Vec::<String>::new());
@@ -5080,7 +5094,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .mark_outdated("p", 1, &running(1, "agent-7"), "stale", 5)
                 .unwrap()
         );
-        assert!(store.confirm_card(&card.id, 1, None, &[], 6).unwrap());
+        assert!(
+            store
+                .confirm_card(&card.id, 1, Some("stale"), &[], 6)
+                .unwrap()
+        );
         assert_eq!(given(&store, "p", "linter first"), ["Run the linter first"]);
     }
 
@@ -6031,7 +6049,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection
             .execute_batch(&format!(
                 r#"{SCHEMA_V7}
-                INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1,2);
+                INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1,3);
                 INSERT INTO project_receipt_keys VALUES('p',randomblob(32));
                 INSERT INTO memory_items VALUES('blue','p','active',1,0.9,0.8,NULL,10,10);
                 INSERT INTO memory_items VALUES('red','p','conflicting',1,0.9,0.8,'blue',20,20);
@@ -6085,7 +6103,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection
             .execute_batch(&format!(
                 r#"{SCHEMA_V7}
-                INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1,2);
+                INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1,3);
                 INSERT INTO project_receipt_keys VALUES('p',randomblob(32));
                 INSERT INTO memory_items VALUES('second','p','active',1,0.9,0.5,NULL,20,20);
                 INSERT INTO memory_items VALUES('first','p','active',1,0.9,0.9,NULL,10,10);

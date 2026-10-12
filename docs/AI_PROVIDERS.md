@@ -191,7 +191,8 @@ It is absent while the chosen agent answers and while Hide AI is off.
 With Hide AI off or no agent chosen, the label analyzer answers every job as stopped without asking anything and the runtime says `agent_summary()` is false, so rows show the session's own text and a turn is made once it is on again; worktree naming returns the dialog's own name; Project Memory analysis waits (the project stays enabled, its saved Memory and Sessions keep working).
 A request already running when the switch turns off finishes or is cancelled by the analyzer's own check, and `AiError::Disabled` reaching a turn is a wait (`AnalysisFailure::retry_after`), not a parked failure.
 
-Project Memory's disclosure is version 2: analysis may go to the agent Hide AI runs on or one added under fallback.
+Project Memory's disclosure is version 3: analysis may go to the agent Hide AI runs on or one added under fallback, and with it the repository files a card cites and the instruction files the checks read (the repository's `AGENTS.md` and `CLAUDE.md`, the documents they link, and the operator's global instruction files).
+Moving from version 2 to 3 turns every enabled Project off once; its stored Memory stays, and enabling it again accepts the new text.
 A Memory analysis builds its router once, so one already running is stopped when Use Hide AI turns off or Runs on, its model or the fallback list changes (`Runtime::stop_memory_analysis_if_ai_moved`); the stored Memory stays and Retry starts a run on the new choice.
 Opening a Memory store from the earlier version disables the projects that accepted version 1 until the operator accepts again; their stored Memory, search and Sessions stay.
 
