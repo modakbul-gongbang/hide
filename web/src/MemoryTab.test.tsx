@@ -7,6 +7,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import type { DispatchFn } from "./ws";
 
 const browserCanvas = vi.hoisted(() => {
@@ -231,6 +232,49 @@ describe("the Memory tab", () => {
       await act(async () => otherRoot.unmount());
       other.remove();
     }
+  });
+
+  it("says Hide AI is paused when every agent is past the usage limit, and keeps the dimmed chip and the settings button (B5)", async () => {
+    useShellStore.setState({
+      connection: "live",
+      rest: {
+        ...rest,
+        status: {
+          background_ai: {
+            enabled: true, provider: "claude", chosen: true, unavailable_reason: null,
+            providers: [{ id: "claude", label: "Claude Code", agent: "claude-code" }],
+            refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: null, used_percent: 93, limit: 90 },
+          },
+        },
+      } as unknown as SnapshotRest,
+      memory: { project: memory({ analysis: "ai_not_ready" }) },
+    });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    expect(container.querySelector("[data-memory-ai='not_ready']")?.textContent).toContain("every agent is past your usage limit this week");
+    expect(container.querySelector("[data-memory-ai-chip]")?.className).toContain("opacity-(--opacity-dimmed)");
+    await click("[data-memory-ai='not_ready'] button");
+    expect(useUiStore.getState()).toMatchObject({ overlay: "settings", settingsTab: "hideAi" });
+  });
+
+  it("names the agent standing in on the chip while Runs on is past the limit (B4)", async () => {
+    useShellStore.setState({
+      connection: "live",
+      rest: {
+        ...rest,
+        status: {
+          background_ai: {
+            enabled: true, provider: "claude", chosen: true, unavailable_reason: null,
+            providers: [{ id: "claude", label: "Claude Code", agent: "claude-code" }, { id: "codex", label: "Codex", agent: "codex" }],
+            refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: "codex", used_percent: 93, limit: 90 },
+          },
+        },
+      } as unknown as SnapshotRest,
+      memory: { project: memory() },
+    });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    expect(container.querySelector("[data-memory-ai-chip]")?.textContent).toBe("Hide AI · Codex");
   });
 
   it("says a device's Project keeps no Memory here", async () => {

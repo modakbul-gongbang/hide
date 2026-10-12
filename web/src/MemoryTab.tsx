@@ -79,6 +79,11 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
   const busy = project.pending_action !== null;
   const [deleting, setDeleting] = useState(false);
   const label = useShellStore((state) => catalogWorkspaces(state.rest).find((row) => row.id === id)?.label ?? id);
+  // Every agent is past the usage limit: Hide AI is on but asks nothing until one is under it (D-06).
+  const pastLimit = useShellStore((state) => {
+    const refusal = state.rest?.status?.background_ai?.refusal;
+    return refusal?.reason === "past_limit" && !refusal.using;
+  });
   const unavailable = project.unavailable;
   if (unavailable?.reason === "remote_device") {
     return (
@@ -120,7 +125,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         )}
         {project.enabled && project.analysis === "ai_not_ready" ? (
           <div className="-mt-sm flex flex-col items-start gap-sm" data-memory-ai="not_ready">
-            <p className="break-keep text-caption text-subtle-foreground">{t("memory.aiNotReady")}</p>
+            <p className="break-keep text-caption text-subtle-foreground">{t(pastLimit ? "memory.aiPastLimit" : "memory.aiNotReady")}</p>
             <Button size="sm" variant="outline" onClick={() => actions.openSettings("hideAi")}>
               <SettingsIcon aria-hidden="true" />
               {t("memory.openHideAi")}
@@ -165,7 +170,9 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
 function Header({ project, actions, busy }: { project: ProjectMemory; actions: Actions; busy: boolean }) {
   const { t } = useInterfaceTranslation();
   const ai = useShellStore((state) => state.rest?.status?.background_ai ?? null);
-  const provider = ai?.provider ? ai.providers.find((row) => row.id === ai.provider) ?? null : null;
+  // The chip names the agent answering now: the listed one that stands in while Runs on cannot answer (B4).
+  const answering = ai?.refusal?.using ?? ai?.provider ?? null;
+  const provider = answering ? ai?.providers.find((row) => row.id === answering) ?? null : null;
   const switchId = `memory-switch-${project.workspace_id}`;
   const dim = project.enabled && project.analysis === "ai_not_ready";
   return (
