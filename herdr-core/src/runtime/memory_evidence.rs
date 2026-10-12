@@ -24,9 +24,16 @@ use crate::node_access::{NodeLink, call_as, index_root, pinned_root};
 
 /// Cards whose evidence one Project's walk compares with the node.
 pub(super) const CARD_CHECKS_PER_WALK: usize = 200;
-/// File fingerprints one Project's walk asks the node for, over all cards;
-/// a card whose file is past it keeps its state until a later walk.
+/// File fingerprints one Project's walk asks the node for when it compares
+/// cards, over all cards; a card whose file is past it keeps its state until
+/// a later walk.
 const REVISION_READS_PER_WALK: usize = 300;
+/// File fingerprints one Project's walk asks the node for when it writes a
+/// card's evidence. Apart from the comparison's, so a long comparison never
+/// leaves a new card without the fingerprints its check rests on.
+const WRITE_READS_PER_WALK: usize = 200;
+/// Cards the evidence comparison looks at again no sooner than this.
+pub(super) const EVIDENCE_RECHECK_MS: u64 = 10 * 60 * 1000;
 
 /// The node's answer for one file's content revision.
 enum Revision {
@@ -50,6 +57,7 @@ pub(crate) struct CheckoutFacts<'a> {
     root: &'a str,
     names: Option<Names>,
     revisions_left: usize,
+    writes_left: usize,
 }
 
 impl<'a> CheckoutFacts<'a> {
@@ -59,6 +67,7 @@ impl<'a> CheckoutFacts<'a> {
             root,
             names: None,
             revisions_left: REVISION_READS_PER_WALK,
+            writes_left: WRITE_READS_PER_WALK,
         }
     }
 
@@ -104,7 +113,7 @@ impl<'a> CheckoutFacts<'a> {
             // A file is fingerprinted; a folder, or a file the node cannot
             // read, is kept as a path that exists.
             let fingerprint = match cited.contains(path) {
-                true => match self.revision(path) {
+                true => match self.revision(path, true) {
                     Revision::Found(revision) => Some(revision),
                     Revision::Missing | Revision::Unreadable => None,
                 },
@@ -172,7 +181,7 @@ impl<'a> CheckoutFacts<'a> {
                     Some(PathState::Real { .. }) if row.kind == EvidenceKind::Path => {
                         EvidenceFact::Found { fingerprint: None }
                     }
-                    Some(PathState::Real { .. }) => match self.revision(&row.value) {
+                    Some(PathState::Real { .. }) => match self.revision(&row.value, false) {
                         Revision::Found(revision) => EvidenceFact::Found {
                             fingerprint: Some(revision),
                         },
@@ -221,11 +230,16 @@ impl<'a> CheckoutFacts<'a> {
             .collect()
     }
 
-    fn revision(&mut self, relative: &str) -> Revision {
-        if self.revisions_left == 0 {
+    fn revision(&mut self, relative: &str, writing: bool) -> Revision {
+        let left = if writing {
+            &mut self.writes_left
+        } else {
+            &mut self.revisions_left
+        };
+        if *left == 0 {
             return Revision::Unreadable;
         }
-        self.revisions_left -= 1;
+        *left -= 1;
         let root = match pinned_root(self.node, self.root, SESSION_CALL_TIMEOUT) {
             Ok(root) => root,
             Err(_) => return Revision::Unreadable,
@@ -288,7 +302,11 @@ pub(super) fn check_evidence(
     now_unix_ms: u64,
 ) -> Result<usize, String> {
     let cards = store
-        .cards_to_check(project_id, CARD_CHECKS_PER_WALK)
+        .cards_to_check(
+            project_id,
+            now_unix_ms.saturating_sub(EVIDENCE_RECHECK_MS),
+            CARD_CHECKS_PER_WALK,
+        )
         .map_err(|error| error.to_string())?;
     let mut moved = 0;
     let mut examined = Vec::with_capacity(cards.len());

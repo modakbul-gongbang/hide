@@ -161,7 +161,7 @@ They are read against the Project's own root, so a session in a worktree does no
 A node that cannot answer leaves a card as it was.
 
 A card is unverified (`확인 중`) when its current revision has no verification time (`memory_revisions.verified_at_ms IS NULL`), the one stored fact that the hooks, which have no node and no model, can exclude with a single predicate: an unverified card is left out of the session-start index and the prompt match, and still comes out of `hide memory show` and `search` (marked) and still serves as a comparison target, so analysis does not make a duplicate of it.
-Schema 9 starts every migrated card unverified, after keeping the store as it was as a backup, and the re-verification bound below drains that backlog over days.
+Schema 9 starts every migrated card unverified, after keeping the store as it was as a backup, and the re-verification bound below drains that backlog four cards a pass, within the maintenance share of the day's calls, so the backlog is bounded by passes and the day's share of calls, not by a day per card.
 Each pass compares up to 200 verified cards' evidence with the node, oldest check first, and unverifies the ones that moved; that needs no model and runs with Hide AI off.
 
 An unverified card is read again in the background, at most four a pass and one question per card per day (`reverify_at_ms`), under the analysis call cap and weekly deferral, and only while the day's calls are under half the cap, so a store full of cards to check cannot starve analysis; a deferral leaves it unverified (D-07, D-08).
@@ -170,7 +170,7 @@ A rule or lesson about to be suggested gets one more question (`project_memory_p
 An `in_docs` answer naming a file the request did not carry is refused.
 
 A session makes at most two new cards in all, counted across the groups and passes that analyzed it (`new_card_limit`; `hide memory add` has none), and a session with fewer than three operator events makes none and asks no provider (D-02, D-03).
-The operator's events are the session's `human` events; in a session some agent started, which the coordination ledger records with a `parent` (a handoff has an `origin` and is the operator's), they are sent as `parent_agent` instead (D-04).
+The operator's events are the session's `human` events; in a session some agent started, which the coordination ledger records with a `parent` (a handoff has an `origin` and is the operator's), they are sent as `parent_agent` instead (D-04); such a session counts no operator events, so it makes no cards.
 
 `hide memory show|search|add|forget|undo|placed|outdated` (`herdr-core/src/memory_command.rs`) goes through hided like `hide links`: the core checks the caller under its lock (`Core::prepare_memory`), answering a caller on this machine or on a node that dials in and refusing one on a device the core dials (D-22; PRD core-host-node-move B14), and naming the Project by the caller's checkout as its node reads it, and the command runs on hided's blocking task.
 `show` answers a card with its state, kind, source counts, cited paths and whether it is waiting to be checked (`verifying`) and counts the read for the caller's session, `search` answers at most ten matching cards, and `add` writes through the same `write_cards` path background analysis uses, as an `agent_note` the provider sees, never as the operator's words (D-11, B7, B8, B14-B16, B27).

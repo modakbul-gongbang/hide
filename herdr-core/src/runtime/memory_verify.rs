@@ -80,11 +80,11 @@ pub(super) fn reverify_pending(
         }
         // The deferral comes first, so a held-back card keeps its day.
         admit(store)?;
-        if !store
-            .begin_verification(&card.item_id, now_ms())
-            .map_err(|error| local(error.to_string()))?
-        {
-            continue;
+        // A card from before evidence was kept has none; what its text names
+        // is read now, so the check is not asked blind.
+        let mut card = card;
+        if card.evidence.is_empty() {
+            card.evidence = facts.gather(&card.body, &card.cited_paths);
         }
         let answers = facts.facts(&card.evidence);
         let files = cited_files(&card.evidence)
@@ -109,15 +109,35 @@ pub(super) fn reverify_pending(
         let verdict = parse_verification(&answer.value).map_err(|error| {
             AnalysisFailure::Provider(AiError::InvalidOutput(error.to_string()))
         })?;
-        let applied = match verdict {
+        // The day is spent by an answer, not by a call: a provider that
+        // failed leaves the card due for the next pass.
+        if !store
+            .begin_verification(&card.item_id, now_ms())
+            .map_err(|error| local(error.to_string()))?
+        {
+            continue;
+        }
+        let applied = match &verdict {
             Verification::Valid => {
                 let evidence = facts.gather(&card.body, &card.cited_paths);
-                store.confirm_card(&card.item_id, card.revision, &evidence, now_ms())
+                store.confirm_card(
+                    &card.item_id,
+                    card.revision,
+                    card.outdated_reason.as_deref(),
+                    &evidence,
+                    now_ms(),
+                )
             }
-            Verification::Outdated(correction) => {
-                revise(store, facts, project_id, &card, correction, root, node)
-            }
-            Verification::Gone => store.forget(project_id, &card.item_id).map(|_| true),
+            Verification::Outdated(correction) => revise(
+                store,
+                facts,
+                project_id,
+                &card,
+                correction.clone(),
+                root,
+                node,
+            ),
+            Verification::Gone => store.forget_checked(project_id, &card.item_id, card.revision),
         }
         .map_err(|error| local(error.to_string()))?;
         if applied {
@@ -128,6 +148,11 @@ pub(super) fn reverify_pending(
             "kind": "verification.applied",
             "project_id": project_id,
             "card": card.number,
+            "verdict": match &verdict {
+                Verification::Valid => "valid",
+                Verification::Outdated(_) => "outdated",
+                Verification::Gone => "gone",
+            },
             "applied": applied,
         }));
     }
@@ -165,6 +190,7 @@ fn revise(
         project_id,
         &card.item_id,
         card.revision,
+        card.outdated_reason.as_deref(),
         &correction.text,
         title,
         aliases,
@@ -291,14 +317,6 @@ pub(super) fn check_before_suggestion(
             .map_err(|error| local(error.to_string()))?;
         let answers = facts.facts(&detail.evidence);
         admit(store)?;
-        // The day's one question about the card, so a card the check keeps
-        // correcting costs one call a day (B10).
-        if !store
-            .begin_verification(&item.id, now_ms())
-            .map_err(|error| local(error.to_string()))?
-        {
-            continue;
-        }
         let request = promote_check_request(
             digest(&[
                 "memory-promote-check",
@@ -323,6 +341,14 @@ pub(super) fn check_before_suggestion(
         let verdict = parse_promote_check(&answer.value, &known).map_err(|error| {
             AnalysisFailure::Provider(AiError::InvalidOutput(error.to_string()))
         })?;
+        // The day's one answer about the card, so a card the check keeps
+        // correcting costs one call a day (B10).
+        if !store
+            .begin_verification(&item.id, now_ms())
+            .map_err(|error| local(error.to_string()))?
+        {
+            continue;
+        }
         match verdict {
             PromoteCheck::Propose => {
                 store
@@ -354,7 +380,7 @@ pub(super) fn check_before_suggestion(
                         .map_err(|error| local(error.to_string()))?;
                 } else {
                     store
-                        .forget(project_id, &item.id)
+                        .forget_checked(project_id, &item.id, item.revision)
                         .map_err(|error| local(error.to_string()))?;
                 }
                 checked.changed += 1;

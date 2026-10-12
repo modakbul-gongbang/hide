@@ -1370,7 +1370,7 @@ impl MemoryStore {
                     )?;
                     transaction.execute("UPDATE memory_revisions SET lifecycle='superseded' WHERE item_id=?1 AND revision=?2", params![target_id,previous.1])?;
                     transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'active',?9,?10)", params![revision_id(target_id,revision),target_id,revision,card.body,card.title,card.aliases_json(),card.cited_json(),candidate.kind.as_str(),batch.created_at_unix_ms,batch.id])?;
-                    transaction.execute("UPDATE memory_items SET lifecycle='active',current_revision=?2,confidence=?3,salience=?4,updated_at_ms=?5 WHERE id=?1", params![target_id,revision,candidate.confidence,candidate.salience,batch.created_at_unix_ms])?;
+                    transaction.execute("UPDATE memory_items SET lifecycle='active',current_revision=?2,confidence=?3,salience=?4,updated_at_ms=?5,outdated_reason=NULL WHERE id=?1", params![target_id,revision,candidate.confidence,candidate.salience,batch.created_at_unix_ms])?;
                     attach_sources(&transaction, batch, candidate, target_id, revision)?;
                     write_evidence(
                         &transaction,
@@ -1643,6 +1643,36 @@ impl MemoryStore {
             revisions,
             previous,
         })
+    }
+
+    /// The check found the card no longer applies: it is forgotten, and its
+    /// Undo takes that back and keeps the card verified. False when the card
+    /// moved on since it was read (another text, forgotten meanwhile).
+    pub fn forget_checked(
+        &mut self,
+        project_id: &str,
+        item_id: &str,
+        expected_revision: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let transaction = self.connection.transaction()?;
+        let (state, current) = require_target(&transaction, project_id, item_id)?;
+        if state != MemoryLifecycle::Active || current != expected_revision {
+            return Ok(false);
+        }
+        let batch_id = stable_id(
+            "verify",
+            &[item_id, &current.to_string(), &now_ms().to_string(), "gone"],
+        );
+        append_lifecycle(
+            &transaction,
+            project_id,
+            item_id,
+            MemoryLifecycle::Tombstoned,
+            &batch_id,
+        )?;
+        transaction.commit()?;
+        Ok(true)
     }
 
     pub fn forget(&mut self, project_id: &str, item_id: &str) -> Result<String, MemoryError> {
@@ -2029,6 +2059,7 @@ impl MemoryStore {
     pub fn cards_to_check(
         &self,
         project_id: &str,
+        checked_before_ms: u64,
         limit: usize,
     ) -> Result<Vec<CardEvidence>, MemoryError> {
         let mut statement = self.connection.prepare(
@@ -2036,16 +2067,20 @@ impl MemoryStore {
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.verified_at_ms IS NOT NULL \
              AND EXISTS(SELECT 1 FROM memory_evidence e WHERE e.item_id=i.id AND e.revision=i.current_revision) \
+             AND (i.evidence_checked_at_ms IS NULL OR i.evidence_checked_at_ms<?3) \
              ORDER BY COALESCE(i.evidence_checked_at_ms,0),i.number LIMIT ?2",
         )?;
         let cards = statement
-            .query_map(params![project_id, limit as u64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, u64>(1)?,
-                    row.get::<_, u64>(2)?,
-                ))
-            })?
+            .query_map(
+                params![project_id, limit as u64, checked_before_ms],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, u64>(2)?,
+                    ))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         cards
             .into_iter()
@@ -2187,19 +2222,25 @@ impl MemoryStore {
         &mut self,
         item_id: &str,
         revision: u64,
+        claim_read: Option<&str>,
         evidence: &[Evidence],
         now_unix_ms: u64,
     ) -> Result<bool, MemoryError> {
         self.require_writer()?;
         let transaction = self.connection.transaction()?;
-        let current: Option<u64> = transaction
+        let current: Option<(u64, Option<String>)> = transaction
             .query_row(
-                "SELECT current_revision FROM memory_items WHERE id=?1 AND lifecycle='active'",
+                "SELECT current_revision,outdated_reason FROM memory_items WHERE id=?1 AND lifecycle='active'",
                 [item_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        if current != Some(revision) {
+        // A claim an agent made while the check ran was never judged.
+        if current
+            .as_ref()
+            .map(|(revision, claim)| (*revision, claim.as_deref()))
+            != Some((revision, claim_read))
+        {
             return Ok(false);
         }
         write_evidence(&transaction, item_id, revision, evidence, now_unix_ms)?;
@@ -2220,6 +2261,7 @@ impl MemoryStore {
         project_id: &str,
         item_id: &str,
         expected_revision: u64,
+        claim_read: Option<&str>,
         body: &str,
         title: &str,
         aliases: &[String],
@@ -2237,6 +2279,14 @@ impl MemoryStore {
         let transaction = self.connection.transaction()?;
         let (state, current) = require_target(&transaction, project_id, item_id)?;
         if state != MemoryLifecycle::Active || current != expected_revision {
+            return Ok(false);
+        }
+        let claim: Option<String> = transaction.query_row(
+            "SELECT outdated_reason FROM memory_items WHERE id=?1",
+            [item_id],
+            |row| row.get(0),
+        )?;
+        if claim.as_deref() != claim_read {
             return Ok(false);
         }
         let kind: String = transaction.query_row(
@@ -2307,11 +2357,14 @@ impl MemoryStore {
             "UPDATE memory_items SET reverify_at_ms=NULL,promotion_ok_revision=NULL,outdated_reason=?2 WHERE id=?1",
             params![
                 item_id,
-                reason
-                    .trim()
-                    .chars()
-                    .take(crate::OUTDATED_REASON_LIMIT_CHARS)
-                    .collect::<String>()
+                redact(
+                    &reason
+                        .trim()
+                        .chars()
+                        .take(crate::OUTDATED_REASON_LIMIT_CHARS)
+                        .collect::<String>()
+                )
+                .text
             ],
         )?;
         transaction.commit()?;
@@ -3410,6 +3463,16 @@ fn undo_item(
             remove_index(transaction, item_id)?;
         }
     }
+    // The operator took back a verdict the check gave on its own: the text it
+    // restores stands as verified, or the next day's check would give the same
+    // verdict again.
+    if batch_id.starts_with("verify:") {
+        transaction.execute(
+            "UPDATE memory_revisions SET verified_at_ms=?2 WHERE item_id=?1 \
+             AND revision=(SELECT current_revision FROM memory_items WHERE id=?1)",
+            params![item_id, now_ms()],
+        )?;
+    }
     Ok(true)
 }
 
@@ -4040,7 +4103,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     fn verify_all(store: &mut MemoryStore, project: &str) {
         for card in store.list_memories(project).unwrap() {
             assert!(card.verifying, "a migrated card starts unverified (B18)");
-            assert!(store.confirm_card(&card.id, card.revision, &[], 1).unwrap());
+            assert!(
+                store
+                    .confirm_card(&card.id, card.revision, None, &[], 1)
+                    .unwrap()
+            );
         }
     }
     impl Candidate {
@@ -4559,7 +4626,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             ["Run the linter before the tests"]
         );
         assert_eq!(index_lines(&store, &project), ["Lint first"]);
-        let to_check = store.cards_to_check(&project, 10).unwrap();
+        let to_check = store.cards_to_check(&project, u64::MAX, 10).unwrap();
         assert_eq!(
             (to_check.len(), to_check[0].number, to_check[0].rows.len()),
             (1, 1, 2)
@@ -4596,7 +4663,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             1,
             "a new candidate is compared with it"
         );
-        assert_eq!(store.cards_to_check(&project, 10).unwrap(), []);
+        assert_eq!(store.cards_to_check(&project, u64::MAX, 10).unwrap(), []);
 
         // One verification a day, however often the file changes.
         let day = 86_400_000;
@@ -4619,7 +4686,11 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             Some("sha256:2"),
             true,
         )];
-        assert!(store.confirm_card(&card.id, 1, &now_rows, 2_000).unwrap());
+        assert!(
+            store
+                .confirm_card(&card.id, 1, None, &now_rows, 2_000)
+                .unwrap()
+        );
         assert!(
             !store
                 .item_by_number(&project, 1)
@@ -4632,6 +4703,37 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             ["Run the linter before the tests"]
         );
         assert_eq!(store.detail(&project, &card.id).unwrap().evidence, now_rows);
+    }
+
+    #[test]
+    fn a_card_the_check_forgot_comes_back_verified_and_only_at_the_text_it_read() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[candidate(
+                    "Run the linter before the tests",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+        let card = store.item_by_number(&project, 1).unwrap().unwrap();
+        assert!(store.confirm_card(&card.id, 1, None, &[], 10).unwrap());
+        // Another text since it was read: the verdict is not applied.
+        assert!(!store.forget_checked(&project, &card.id, 2).unwrap());
+        assert!(store.forget_checked(&project, &card.id, 1).unwrap());
+        assert!(
+            store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .lifecycle
+                != MemoryLifecycle::Active
+        );
+        store.undo_card(&project, 1).unwrap();
+        let back = store.item_by_number(&project, 1).unwrap().unwrap();
+        assert_eq!(back.lifecycle, MemoryLifecycle::Active);
+        assert!(!back.verifying, "the verdict is not asked for again");
     }
 
     #[test]
@@ -4652,7 +4754,18 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         // A card that moved on since it was read is left alone.
         assert!(
             !store
-                .revise_card(&project, &card.id, 9, "Wrong base", "", &[], &[], &[], 500)
+                .revise_card(
+                    &project,
+                    &card.id,
+                    9,
+                    None,
+                    "Wrong base",
+                    "",
+                    &[],
+                    &[],
+                    &[],
+                    500
+                )
                 .unwrap()
         );
         assert!(
@@ -4661,6 +4774,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                     &project,
                     &card.id,
                     1,
+                    None,
                     "Run scripts/verify-cargo.sh before merging",
                     "Verify before merging",
                     &[],
@@ -4871,7 +4985,17 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let waiting = store.pending_cards(&project, 100_000_000, 8).unwrap();
         assert_eq!(waiting[0].outdated_reason.as_deref(), Some("stale"));
         // Verified again, the card is checked again before it is suggested.
-        assert!(store.confirm_card(&card.id, 1, &[], 60).unwrap());
+        // A claim made after the check read the card was never judged.
+        assert!(
+            !store
+                .confirm_card(&card.id, 1, Some("another claim"), &[], 60)
+                .unwrap()
+        );
+        assert!(
+            store
+                .confirm_card(&card.id, 1, Some("stale"), &[], 60)
+                .unwrap()
+        );
         assert!(
             store
                 .pending_cards(&project, 100_000_000, 8)
@@ -4956,7 +5080,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .mark_outdated("p", 1, &running(1, "agent-7"), "stale", 5)
                 .unwrap()
         );
-        assert!(store.confirm_card(&card.id, 1, &[], 6).unwrap());
+        assert!(store.confirm_card(&card.id, 1, None, &[], 6).unwrap());
         assert_eq!(given(&store, "p", "linter first"), ["Run the linter first"]);
     }
 

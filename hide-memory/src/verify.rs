@@ -107,11 +107,14 @@ pub fn fact_states(evidence: &[Evidence], facts: &[EvidenceFact]) -> Vec<Value> 
         .iter()
         .zip(facts)
         .map(|(row, fact)| {
-            let state = match crate::still_holds(row, fact) {
-                None => "unknown",
-                Some(true) => "unchanged",
-                Some(false) if matches!(fact, EvidenceFact::Missing) => "missing",
-                Some(false) => "changed",
+            // A name the repository no longer has is missing even when the
+            // card was stored with it not found; the model reads what is
+            // there now, and the card's own text says what it expected.
+            let state = match (fact, crate::still_holds(row, fact)) {
+                (EvidenceFact::Missing, _) => "missing",
+                (_, None) => "unknown",
+                (_, Some(true)) => "unchanged",
+                (_, Some(false)) => "changed",
             };
             json!({"kind": row.kind.as_str(), "value": row.value, "state": state})
         })
@@ -160,20 +163,29 @@ pub fn verify_request(
     facts: &[EvidenceFact],
     files: &[Excerpt],
 ) -> Result<AiRequest, VerifyError> {
-    let mut input = json!({
-        "card": card_json(card.number, card.kind, &card.title, &card.body),
-        "facts": fact_states(&card.evidence, facts),
-        "files": excerpts_json(files),
-    });
-    if let Some(claim) = &card.outdated_reason {
-        input["claim"] = json!(redact(claim).text);
-    }
+    // The last excerpts are the least cited; they go before the request is
+    // refused, so a card with large files is still checked.
+    let mut kept = files.len();
+    let input = loop {
+        let mut input = json!({
+            "card": card_json(card.number, card.kind, &card.title, &card.body),
+            "facts": fact_states(&card.evidence, facts),
+            "files": excerpts_json(&files[..kept]),
+        });
+        if let Some(claim) = &card.outdated_reason {
+            input["claim"] = json!(redact(claim).text);
+        }
+        match bounded(input) {
+            Err(VerifyError::InputTooLarge { .. }) if kept > 0 => kept -= 1,
+            other => break other?,
+        }
+    };
     Ok(AiRequest {
         feature_id: VERIFY_FEATURE.into(),
         request_id: RequestId(request_id.into()),
         subject_id: format!("{project_id}:{}", card_name(card.number)),
         system: VERIFY_PROMPT.to_owned(),
-        input: bounded(input)?,
+        input,
         output_schema: verify_schema(false),
         deadline: Duration::from_secs(60),
         schema_version: VERIFY_SCHEMA_VERSION.into(),
@@ -199,18 +211,27 @@ pub fn promote_check_request(
     documents: &[Excerpt],
     global: &[Excerpt],
 ) -> Result<AiRequest, VerifyError> {
-    let input = json!({
-        "card": card_json(card.number, card.kind, card.title, card.body),
-        "facts": fact_states(card.evidence, card.facts),
-        "documents": excerpts_json(documents),
-        "global": excerpts_json(global),
-    });
+    // Global files go first, then the repository's documents from the end.
+    let (mut documents_kept, mut global_kept) = (documents.len(), global.len());
+    let input = loop {
+        let input = json!({
+            "card": card_json(card.number, card.kind, card.title, card.body),
+            "facts": fact_states(card.evidence, card.facts),
+            "documents": excerpts_json(&documents[..documents_kept]),
+            "global": excerpts_json(&global[..global_kept]),
+        });
+        match bounded(input) {
+            Err(VerifyError::InputTooLarge { .. }) if global_kept > 0 => global_kept -= 1,
+            Err(VerifyError::InputTooLarge { .. }) if documents_kept > 0 => documents_kept -= 1,
+            other => break other?,
+        }
+    };
     Ok(AiRequest {
         feature_id: PROMOTE_CHECK_FEATURE.into(),
         request_id: RequestId(request_id.into()),
         subject_id: format!("{project_id}:{}", card_name(card.number)),
         system: PROMOTE_PROMPT.to_owned(),
-        input: bounded(input)?,
+        input,
         output_schema: verify_schema(true),
         deadline: Duration::from_secs(60),
         schema_version: VERIFY_SCHEMA_VERSION.into(),
@@ -445,15 +466,34 @@ mod tests {
     }
 
     #[test]
-    fn an_input_past_the_cap_is_refused_not_cut() {
-        let big = Excerpt {
-            path: "a".into(),
-            text: "x".repeat(ANALYSIS_INPUT_LIMIT_BYTES),
+    fn an_input_past_the_cap_loses_its_last_excerpts_and_is_still_asked() {
+        let big = |path: &str| Excerpt {
+            path: path.into(),
+            text: "x".repeat(ANALYSIS_INPUT_LIMIT_BYTES / 2),
             truncated: false,
         };
-        assert!(matches!(
-            verify_request("r", "p", &pending(None), &[EvidenceFact::Unknown], &[big]),
-            Err(VerifyError::InputTooLarge { .. })
-        ));
+        let request = verify_request(
+            "r",
+            "p",
+            &pending(None),
+            &[EvidenceFact::Unknown],
+            &[big("a"), big("b"), big("c")],
+        )
+        .unwrap();
+        assert!(request.input.len() <= ANALYSIS_INPUT_LIMIT_BYTES);
+        assert!(request.input.contains("\"a\""));
+        assert!(!request.input.contains("\"c\""));
+    }
+
+    #[test]
+    fn a_name_the_repository_lacks_is_missing_even_when_stored_not_found() {
+        let row = Evidence {
+            kind: EvidenceKind::File,
+            value: "docs/GONE.md".into(),
+            fingerprint: None,
+            present: false,
+        };
+        let states = fact_states(&[row], &[EvidenceFact::Missing]);
+        assert_eq!(states[0]["state"], "missing");
     }
 }

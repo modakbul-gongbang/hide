@@ -859,7 +859,10 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         }
         // Reported whatever ended the walk, so a Project that turned
         // "analyzing" always ends it and keeps what it learned.
-        if tally.analyzing {
+        // A failure with no session analyzed (a check's call failed) is
+        // reported too: the hold and backoff throttle the next pass, which
+        // would otherwise ask again at once.
+        if tally.analyzing || tally.error.is_some() {
             report(PassReport::Analyzed {
                 project_id,
                 learned: tally.learned,
@@ -2050,6 +2053,8 @@ mod tests {
     struct Scripted {
         answers: Mutex<Vec<Value>>,
         calls: AtomicUsize,
+        /// What each request carried, oldest first.
+        inputs: Mutex<Vec<String>>,
     }
 
     impl AiBackend for Scripted {
@@ -2062,8 +2067,9 @@ mod tests {
         fn models(&self) -> ModelCatalog {
             ModelCatalog::Offered(vec!["fixture".to_owned()])
         }
-        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+        fn execute(&self, request: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inputs.lock().unwrap().push(request.input.clone());
             let value = self.answers.lock().unwrap().pop();
             value
                 .map(|value| AiResponse {
@@ -2180,6 +2186,7 @@ mod tests {
                 backend: Arc::new(Scripted {
                     answers: Mutex::new(Vec::new()),
                     calls: AtomicUsize::new(0),
+                    inputs: Mutex::new(Vec::new()),
                 }),
                 node,
             }
@@ -2302,6 +2309,15 @@ mod tests {
 
         fn calls(&self) -> usize {
             self.backend.calls.load(Ordering::SeqCst)
+        }
+
+        /// Lets the next walk compare every card's evidence again, as it
+        /// does once the recheck interval has passed.
+        fn age_evidence_checks(&self) {
+            rusqlite::Connection::open(&self.database)
+                .unwrap()
+                .execute("UPDATE memory_items SET evidence_checked_at_ms=NULL", [])
+                .unwrap();
         }
     }
 
@@ -2846,9 +2862,102 @@ mod tests {
         fixture.backend.answers.lock().unwrap().push(json!({
             "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
         }));
-        assert!(closed_pass(&fixture, &[], true).is_empty() || card().verifying);
+        // Inside the recheck interval the card is not compared again.
+        assert!(closed_pass(&fixture, &[], true).is_empty());
+        assert!(!card().verifying);
+        fixture.age_evidence_checks();
+        assert_eq!(closed_pass(&fixture, &[], true), ["checked"]);
         assert_eq!(fixture.calls(), calls + 1, "one question a day");
         assert!(card().verifying);
+    }
+
+    #[test]
+    fn a_card_from_before_evidence_is_asked_with_the_facts_its_text_names() {
+        // Review: the check is not asked blind about a migrated card.
+        let fixture = Fixture::new();
+        std::fs::create_dir_all(fixture.root.join("src")).unwrap();
+        std::fs::write(fixture.root.join("src/lib.rs"), "fn a() {}").unwrap();
+        let mut store = fixture.store();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "old".to_owned(),
+                    project_id: fixture.project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "old".to_owned(),
+                    content_hash: "old".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "src/lib.rs holds the entry point".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Fact,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: Vec::new(),
+                    source_times: Default::default(),
+                    cited_paths: vec!["src/lib.rs".to_owned()],
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        let old = store
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&old.id, 1).unwrap();
+        drop(store);
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["checked"]);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        let asked = inputs.last().unwrap();
+        assert!(asked.contains("src/lib.rs"), "{asked}");
+        assert!(asked.contains("\"state\":\"unchanged\""), "{asked}");
+    }
+
+    #[test]
+    fn a_failed_check_with_nothing_analyzed_is_reported_and_held_not_asked_again_at_once() {
+        // Review: a provider that fails a check must not be asked every pass.
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&seeded.id, 1).unwrap();
+        drop(store);
+        // No scripted answer: the provider fails the call.
+        let (reports, _) = fixture.run(
+            ("claude", SESSION.to_owned()),
+            true,
+            false,
+            WeeklyUsage::Unknown,
+            &[],
+            true,
+        );
+        assert_eq!(reports, ["failed"]);
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert!(
+            card.verifying,
+            "the card is still due; the failure spent no day"
+        );
     }
 
     #[test]
