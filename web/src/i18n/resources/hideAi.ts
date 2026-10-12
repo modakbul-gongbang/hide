@@ -99,7 +99,7 @@ const ko = {
   "hideAi.state.pastLimit": "한도 초과 · 이번 주 {{percent}}%",
   "hideAi.state.pastLimitUntil": "한도 초과 · 이번 주 {{percent}}% · {{time}}에 초기화",
   "hideAi.reason.pastLimit": "{{agent}}: 이번 주 {{limit}}% 한도 초과",
-  "hideAi.reason.pastLimitUntil": "{{agent}}: {{limit}}% 한도 초과 ({{time}}까지)",
+  "hideAi.reason.pastLimitUntil": "{{agent}}: {{limit}}% 한도 초과 · {{time}}까지",
   "hideAi.pausedAllPast": "Hide AI가 멈춰 있어요 · 모든 에이전트가 이번 주 {{limit}}% 한도를 넘었어요",
   "hideAi.usageLimit": "사용 한도",
   "hideAi.usageLimitSummary": "에이전트별 주간 사용량의 {{limit}}%까지",
