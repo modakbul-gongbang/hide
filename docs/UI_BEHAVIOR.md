@@ -379,6 +379,19 @@ While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
 Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
+### Rows Hide AI started
+
+Hide AI starts agents for the operator by itself (today a Memory card's `올리기`), and the screen tells them from the agents the operator started with one fact, that Hide AI started it; the work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work.
+The fact comes only from the coordination record of the spawn (`docs/delivery.md`), never from a branch or worktree name: a checkout the operator made by hand on a branch called `hide-memory-m9` is an ordinary checkout.
+In a project's tree the checkouts Hide AI made gather behind the operator's under a `Hide AI` head, its 12 mark, its name and the number of checkouts; the head exists only while the project has one and goes with the last, and the rows inside carry no badge.
+An opened checkout in the group shows a second line under its agent row with the task (`Memory 올리기 · m43`), and a folded one puts the task in the purpose line's place ahead of the purpose (`Memory 올리기 · m72 · PR 없이 끝남`); a start the core named no task for says `Hide AI` alone, and nothing else is invented.
+A checkout in one of the folds (`에이전트 없는 워크트리`, `정리할 것`, inactive) stays in that fold and names its task there.
+The group is by who made the checkout and the task line and badge are by who started the agent, so an agent the operator started in a Hide AI worktree has neither, and a Hide AI agent has both wherever it is listed.
+Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the provider's icon wears an 11 badge of the Hide mark (its 9 mark in a panel-colored ring) on its lower-right corner, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
+The row's accessible name carries `Hide AI` and the task (`Hide AI · Memory 올리기 · m72`), and the head's list is named `Hide AI, N`.
+A connected device's projects get the same group and badges, and they hold across a restart of hided because the ledger is persisted.
+Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the badge and the mark), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
+
 ### Subagent count
 
 Hide draws no count of the subagents an agent runs inside its own session, on any surface: not on a sidebar row, in a pane header, in Sessions, in an Overview line, in ⌘K and not in Settings (operator decision on issue #810).

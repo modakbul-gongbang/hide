@@ -500,6 +500,10 @@ Those tokens die with the pane, not with the agent, so a relationship holds only
 A spawn without `--parent` is an operator handoff: `AgentRecord.parent` is empty and its separate optional `origin` records the spawner.
 Delegated origin is derived from parent, and all CLI agent answers include nullable origin.
 Origin never feeds lineage tokens, sidebar ownership, ancestor unread state, descendant badges, subtree close or the links worker's parent edges; a handed-off session remains linked to its own branch without a delegation line.
+The one thing the screen reads from it is whether Hide itself started the agent: a handoff whose origin is Hide's code-owned identity (`docs/delivery.md`).
+The core derives that from the ledger alone (`coordination::started`) and lays it on each live agent row as `hide_ai` (with the task Hide gave the spawn) and on the snapshot as `navigator.hide_ai_checkouts`, the checkouts Hide made, keyed by device and path.
+The checkouts are a list beside the catalog and not a field on a checkout row because a row is rebuilt from Git and Herdr at several places and would lose a value laid on it, and a checkout stays listed after its agent ends.
+The derivation runs inside `publish_delivery` and is compared by value with the last one, so a letter, a watch or another agent's registration stamps no new revision; only an agent or checkout Hide started appearing or ending does (`runtime/tests/lineage.rs`).
 The spawn receipt's `parent` continues to name the caller that authorizes every creation phase in both modes, with an explicit `SpawnMode` distinguishing responsibility and watch behavior.
 Only delegation installs an automatic watch; handoff retains normal mail and explicit watches.
 Version-1 receipts lacking mode default to delegation, and legacy `no_watch` fields are ignored while completed receipts and existing watches survive unchanged.

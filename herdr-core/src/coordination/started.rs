@@ -36,7 +36,7 @@ pub(crate) struct HideStarted {
     pub(crate) checkouts: Vec<StartedCheckout>,
 }
 
-fn hide_handoff<'a>(ledger: &'a Ledger, spawn: &SpawnRecord) -> bool {
+fn hide_handoff(ledger: &Ledger, spawn: &SpawnRecord) -> bool {
     spawn.mode == SpawnMode::Handoff
         && ledger
             .agents
