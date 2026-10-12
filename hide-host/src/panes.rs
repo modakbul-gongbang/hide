@@ -11,7 +11,9 @@
 //! writes the reference file the caller reads. On the screen machine's node
 //! a caller in no pane is proved by its working directory instead
 //! ([`NodeEvent::CheckoutProof`]). A stream carries one `hide`
-//! command's bytes up and down the same link. Everything here lives only as
+//! command's bytes up and down the same link, and opens with the caller the
+//! node proved when it holds a one-shot credential issued here
+//! ([`StreamCaller`]). Everything here lives only as
 //! long as the link: the node's input closing ends the listener, every
 //! stream and every reference with it.
 
@@ -26,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use hide_node_link::panes::{
-    MAX_CHUNK, MAX_STREAMS, NodeEvent, PaneIdentity, PanesStarted, ProofAnswer,
+    MAX_CHUNK, MAX_STREAMS, NodeEvent, PaneIdentity, PanesStarted, ProofAnswer, StreamCaller,
 };
 use hide_platform::fs::private;
 use hide_platform::ipc::{ListenerCloser, LocalListener, LocalStream, ShutdownHandle};
@@ -56,6 +58,8 @@ struct IssuedReference {
     /// The pane's shell and its start, for a pane caller's reference, which
     /// ends with the shell; a checkout caller's has none.
     shell: Option<(i32, u64)>,
+    /// The pane a pane caller's reference was proved for.
+    pane_id: Option<String>,
 }
 
 /// What the node proved about a caller.
@@ -497,6 +501,10 @@ impl Panes {
                         }
                         Proved::Checkout(_) => None,
                     },
+                    pane_id: match &proved {
+                        Proved::Pane(_) => Some(request.pane_id.clone()),
+                        Proved::Checkout(_) => None,
+                    },
                 },
             );
             reference_new = true;
@@ -546,8 +554,9 @@ impl Panes {
                 },
             );
         }
+        let caller = self.stream_caller(&stream);
         let mut reader = stream;
-        if write_event(output, &NodeEvent::StreamOpen { stream: id }).is_ok() {
+        if write_event(output, &NodeEvent::StreamOpen { stream: id, caller }).is_ok() {
             let mut buffer = vec![0_u8; MAX_CHUNK];
             loop {
                 match reader.read(&mut buffer) {
@@ -565,6 +574,26 @@ impl Panes {
         }
         self.end_stream(id);
         let _ = write_event(output, &NodeEvent::StreamClosed { stream: id });
+    }
+
+    /// What the node proves about the process that opened a stream: the
+    /// holder of a one-shot credential issued here for a pane, still
+    /// descended from that pane's shell as its Herdr answers now, the same
+    /// checks a bootstrap makes. `None` when the peer holds no such
+    /// credential or the pane no longer answers for it; the core then asks
+    /// `Call::PaneInspect` for the stream's command, as it always did.
+    fn stream_caller(&self, stream: &LocalStream) -> Option<StreamCaller> {
+        let started = self.started.get()?;
+        let peer = i32::try_from(stream.peer_pid().ok()?).ok()?;
+        let holder = (peer, pane_peer::process_start(peer)?);
+        let pane_id = lock(&self.issued)
+            .values()
+            .find(|reference| reference.holder == Some(holder))?
+            .pane_id
+            .clone()?;
+        let identity = pane_peer::inspect(&started.herdr_socket, &pane_id).ok()?;
+        pane_peer::descends_from(peer, identity.shell_pid)
+            .then_some(StreamCaller { pane_id, identity })
     }
 
     fn sweep_references(&self, output: &Mutex<impl Write>) -> io::Result<()> {

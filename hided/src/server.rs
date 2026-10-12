@@ -626,13 +626,21 @@ async fn ws_upgrade(
 /// takes only a credential `node` vouched for over `link`. A browser never
 /// reaches it, so it has no Origin to check, and the shell's token, a phone
 /// and a credential of this machine or of another device are refused.
+/// `attested` is the caller the node proved when the stream opened, which
+/// the command's check reads in place of asking the node again.
 pub async fn serve_link_connection(
     state: AppState,
     node: String,
     link: hide_node::ssh::RemoteHost,
+    attested: Option<crate::pane_auth::StreamAttestation>,
     io: tokio::io::DuplexStream,
 ) {
-    let route = LinkRoute { state, node, link };
+    let route = LinkRoute {
+        state,
+        node,
+        link,
+        attested: attested.map(Arc::new),
+    };
     let router = Router::new()
         .route("/ws", get(link_ws_upgrade))
         .with_state(route);
@@ -648,6 +656,7 @@ struct LinkRoute {
     state: AppState,
     node: String,
     link: hide_node::ssh::RemoteHost,
+    attested: Option<Arc<crate::pane_auth::StreamAttestation>>,
 }
 
 async fn link_ws_upgrade(ws: WebSocketUpgrade, State(route): State<LinkRoute>) -> Response {
@@ -655,7 +664,12 @@ async fn link_ws_upgrade(ws: WebSocketUpgrade, State(route): State<LinkRoute>) -
 }
 
 async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
-    let LinkRoute { state, node, link } = route;
+    let LinkRoute {
+        state,
+        node,
+        link,
+        attested,
+    } = route;
     let handshake = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Handshake>(&text).ok(),
         _ => None,
@@ -681,6 +695,7 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
                 handshake.token,
                 capability.one_shot,
                 Some((node, link)),
+                attested,
             )
             .await;
         }
@@ -783,6 +798,7 @@ async fn client_loop(
                 connection,
                 handshake.token,
                 capability.one_shot,
+                None,
                 None,
             )
             .await;
@@ -1290,6 +1306,7 @@ async fn scoped_client_loop(
     token: String,
     one_shot: bool,
     source: Option<(String, hide_node::ssh::RemoteHost)>,
+    attested: Option<Arc<crate::pane_auth::StreamAttestation>>,
 ) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -1431,9 +1448,9 @@ async fn scoped_client_loop(
                                 if !binding.question_guard_source_matches(command_source.as_ref().map(|(node, link)| (node.as_str(), link))) {
                                     return Err(("factory_guard_connection_mismatch".to_owned(), "Continue the tool call"));
                                 }
-                                registry.validate_question_guard(&query_token, herdr_socket.as_deref(), &core, guard_deadline)
+                                registry.validate_question_guard(&query_token, herdr_socket.as_deref(), &core, attested.as_deref(), guard_deadline)
                             } else {
-                                registry.validate(&query_token, herdr_socket.as_deref(), &core)
+                                registry.validate(&query_token, herdr_socket.as_deref(), &core, attested.as_deref())
                             }
                                 .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
                             if command.needs_renderer() && renderers.load(Ordering::SeqCst) == 0 {

@@ -1217,3 +1217,104 @@ fn a_device_pane_s_proof_crosses_the_link_and_its_refusals_are_reported() {
     gone_within(&reference, TIMEOUT);
     assert!(!reference.exists(), "a reference outlived its link");
 }
+
+/// Pane events that issue a credential for a one-shot proof too, as the core
+/// does for a pane it resolves, and hear everything else as [`Events`].
+#[derive(Default)]
+struct IssuingEvents(Events);
+
+/// The one-shot credential [`IssuingEvents`] issues.
+const ONE_SHOT_TOKEN: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+impl hide_node::ssh::PaneEvents for IssuingEvents {
+    fn event(&self, node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
+        let NodeEvent::PaneProof {
+            request,
+            one_shot: true,
+            ..
+        } = &event
+        else {
+            return self.0.event(node, link, event);
+        };
+        let (link, request) = (link.clone(), *request);
+        std::thread::spawn(move || {
+            let answer = ProofAnswer::Issued {
+                token: ONE_SHOT_TOKEN.to_owned(),
+                issued_new: true,
+            };
+            link.call(Call::PaneProofAnswer { request, answer }, TIMEOUT)
+                .unwrap();
+        });
+        self.0.heard.lock().unwrap().push(event);
+        self.0.arrived.notify_all();
+    }
+
+    fn closed(&self, node: &str, link: &hide_node::ssh::RemoteHost) {
+        self.0.closed(node, link);
+    }
+}
+
+/// A stream opens naming its caller when the caller holds a one-shot
+/// credential the device's node issued for a pane, with that pane's
+/// identity as the node reads it then, so the core need not ask the node
+/// again; a caller holding only a lasting credential opens a stream that
+/// names no one, and the core asks as before.
+#[test]
+fn a_stream_opened_by_a_one_shot_holder_names_its_pane() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let events = Arc::new(IssuingEvents::default());
+    let device = Device::start_with_pane_events(Some(events.clone()));
+    let sockets = pane_sockets(&device.state);
+    assert_eq!(sockets.len(), 1, "{sockets:?}");
+    let socket = &sockets[0];
+    let open = |count: usize| {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        writeln!(stream, "{}", json!({"stream": true})).unwrap();
+        let heard = events.0.heard_until(|heard| {
+            heard
+                .iter()
+                .filter(|event| matches!(event, NodeEvent::StreamOpen { .. }))
+                .count()
+                >= count
+        });
+        let opened = heard
+            .into_iter()
+            .filter_map(|event| match event {
+                NodeEvent::StreamOpen { caller, .. } => Some(caller),
+                _ => None,
+            })
+            .nth(count - 1)
+            .expect("the stream opened");
+        drop(stream);
+        opened
+    };
+
+    assert_eq!(ask(socket, PROVED_PANE, 'a', false)["ok"], true);
+    assert_eq!(open(1), None);
+
+    let issued = ask(socket, PROVED_PANE, 'b', true);
+    assert_eq!(issued["ok"], true, "{issued}");
+    let proved = events
+        .0
+        .heard
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            NodeEvent::PaneProof {
+                identity,
+                one_shot: true,
+                ..
+            } => Some(identity.clone()),
+            _ => None,
+        })
+        .expect("the one-shot proof");
+    assert_eq!(
+        open(2),
+        Some(hide_node_link::panes::StreamCaller {
+            pane_id: PROVED_PANE.to_owned(),
+            identity: proved,
+        })
+    );
+}
