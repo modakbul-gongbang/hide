@@ -156,17 +156,27 @@ fn fish_gives_the_users_environment_back_before_their_own_configuration() {
         data_dirs: data_dirs.map(str::to_owned),
     };
 
+    // The answer is the same fish started without Hide: a system's own
+    // vendor configuration runs after Hide's and must see what it would have
+    // seen (Ubuntu's snapd.fish sets XDG_DATA_DIRS when it is unset).
+    let without = |originals: &[(&str, &str)]| {
+        let env = originals
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        run(&fish, &["-i"], &home, &env, &after).0
+    };
+
     let env = install(&home.join("hide"), &user(None, None)).unwrap();
     let (log, _) = run(&fish, &["-i"], &home, &env, &after);
-    assert_eq!(
-        log,
-        "config unset unset clean\nafter unset unset clean absent\n"
-    );
+    assert_eq!(log, without(&[]));
+    assert!(log.contains(" clean"), "{log}");
 
     let env = install(&home.join("hide"), &user(Some("/z"), Some("/opt/share"))).unwrap();
     let (log, _) = run(&fish, &["-i"], &home, &env, &after);
     assert_eq!(
         log,
-        "config /opt/share /z clean\nafter /opt/share /z clean exported\n"
+        without(&[("ZDOTDIR", "/z"), ("XDG_DATA_DIRS", "/opt/share")])
     );
+    assert!(log.starts_with("config /opt/share /z clean\n"), "{log}");
 }

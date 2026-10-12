@@ -336,15 +336,18 @@ impl Shell<'_> {
                     "The pane's shell could not be read, so the agent was not started: {message}"
                 ))
             })?;
-            // The mark and the limit of a terminal that still holds lines,
-            // read only while the shell holds it.
-            let waiting = match group.shell_pid.filter(|_| group.shell_holds_terminal()) {
+            // An unmarked shell is still starting whoever else holds the
+            // terminal with it (a startup file's own program, or fish's
+            // completion generator beside a question); the limit of a
+            // terminal that still holds lines is read only while the shell
+            // holds it alone.
+            let waiting = match group.shell_pid {
                 Some(_) if self.awaits_prompt(&group)? => Waiting::Prompt,
-                Some(shell) => match self.line_cut_at(shell)? {
+                Some(shell) if group.shell_holds_terminal() => match self.line_cut_at(shell)? {
                     None => return Ok(()),
                     Some(limit) => Waiting::LineEditor(limit),
                 },
-                None => Waiting::Terminal,
+                _ => Waiting::Terminal,
             };
             if Instant::now() >= deadline {
                 let held = match waiting {
@@ -391,10 +394,11 @@ impl Shell<'_> {
         }
         // A shell the integration does not reach (bash, or one a startup
         // file replaced the shell with) marks nothing, so nothing is waited
-        // for; its start is confirmed after it was typed.
-        if !group
+        // for; its start is confirmed after it was typed. Its name is read
+        // only while it is in the foreground, so until then it is waited for.
+        if group
             .shell_name()
-            .is_some_and(|name| MARKING_SHELLS.contains(&name))
+            .is_some_and(|name| !MARKING_SHELLS.contains(&name))
         {
             self.awaits_mark.set(false);
             return Ok(false);
@@ -1016,27 +1020,33 @@ mod tests {
         assert_eq!(methods.last().map(String::as_str), Some("agent.start"));
     }
 
+    /// The question holds the terminal with the shell alone, or with a
+    /// program of the shell's own beside it (fish starts its completion
+    /// generator when the question reads): either way the shell is starting.
     #[test]
     fn a_shell_held_by_a_startup_question_gets_nothing_typed_and_names_the_question() {
-        let herdr = FakeHerdr::start("agent-start-question", |method, _| match method {
-            "pane.process_info" => process_info(SHELL, &[SHELL]),
-            "pane.get" => pane_with(json!({})),
-            "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
-                "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
-                "format": "text", "revision": 1, "truncated": false,
-                "text": "Last login: today\n[oh-my-zsh] Would you like to update? [Y/n] \n\n"}}),
-            other => panic!("unexpected {other}"),
-        });
-        let Err(StartError::ShellStarting(line)) =
-            start_integrated(&herdr, Duration::from_millis(300))
-        else {
-            panic!("an unmarked shell is not a start");
-        };
-        assert_eq!(
-            line.as_deref(),
-            Some("[oh-my-zsh] Would you like to update? [Y/n]")
-        );
-        assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
+        for foreground in [&[SHELL][..], &[SHELL, SHELL + 1]] {
+            let foreground = foreground.to_vec();
+            let herdr = FakeHerdr::start("agent-start-question", move |method, _| match method {
+                "pane.process_info" => process_info(SHELL, &foreground),
+                "pane.get" => pane_with(json!({})),
+                "pane.read" => json!({"type": "pane_read", "read": {"pane_id": "w1:p1",
+                    "workspace_id": "w1", "tab_id": "w1:t1", "source": "visible",
+                    "format": "text", "revision": 1, "truncated": false,
+                    "text": "Last login: today\n[oh-my-zsh] Would you like to update? [Y/n] \n\n"}}),
+                other => panic!("unexpected {other}"),
+            });
+            let Err(StartError::ShellStarting(line)) =
+                start_integrated(&herdr, Duration::from_millis(300))
+            else {
+                panic!("an unmarked shell is not a start");
+            };
+            assert_eq!(
+                line.as_deref(),
+                Some("[oh-my-zsh] Would you like to update? [Y/n]")
+            );
+            assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
+        }
     }
 
     /// bash takes no startup file through the environment, so it never marks

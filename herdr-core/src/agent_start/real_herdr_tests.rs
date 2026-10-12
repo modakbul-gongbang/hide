@@ -116,6 +116,11 @@ impl PrivateHerdr {
             .unwrap();
         let home = root.path().join("home");
         std::fs::create_dir_all(home.join("bin")).unwrap();
+        // fish generates completions from man pages in the background the
+        // first time it reads input, in the shell's own foreground group,
+        // unless this folder exists; its run would hold the terminal beside
+        // the shell and keep the plain start below from being typed.
+        std::fs::create_dir_all(home.join(".local/share/fish/generated_completions")).unwrap();
         let rc = home.join(fixture.rc);
         std::fs::create_dir_all(rc.parent().unwrap()).unwrap();
         std::fs::write(rc, fixture.text).unwrap();
@@ -220,16 +225,50 @@ impl PrivateHerdr {
         std::fs::read_to_string(self.home.join(name)).unwrap_or_default()
     }
 
-    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-    fn wait_for(&self, within: Duration, what: &str, mut done: impl FnMut() -> bool) {
-        let deadline = Instant::now() + within;
-        while !done() {
-            assert!(
-                Instant::now() < deadline,
+    fn wait_for(&self, within: Duration, what: &str, done: impl FnMut() -> bool) {
+        self.wait_until(within, done, || {
+            format!(
                 "{what}; server log:\n{}",
                 std::fs::read_to_string(self.socket.with_file_name("server.log"))
                     .unwrap_or_default()
-            );
+            )
+        });
+    }
+
+    /// [`Self::wait_for`] a state of `pane`, whose screen and processes the
+    /// failure shows.
+    fn wait_on(&self, pane: &str, within: Duration, what: &str, done: impl FnMut() -> bool) {
+        self.wait_until(within, done, || {
+            let processes = wire::pane_process_info_params(pane)
+                .map_err(|error| error.to_string())
+                .and_then(|params| {
+                    request_with_connector(
+                        &self.connector(),
+                        "pane.process_info",
+                        params,
+                        READ_TIMEOUT,
+                    )
+                    .map_err(|error| error.to_string())
+                });
+            format!(
+                "{what}; pane {pane} shows:\n{}\nprocesses: {processes:?}",
+                self.screen(pane)
+            )
+        });
+    }
+
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn wait_until(
+        &self,
+        within: Duration,
+        mut done: impl FnMut() -> bool,
+        failure: impl FnOnce() -> String,
+    ) {
+        let deadline = Instant::now() + within;
+        while !done() {
+            if Instant::now() >= deadline {
+                panic!("{}", failure());
+            }
             thread::sleep(POLL_INTERVAL);
         }
     }
@@ -331,9 +370,12 @@ fn startup_question(fixture: &Fixture) {
     let first = herdr.pane("m43", &env);
     let second = herdr.pane("m72", &env);
     for pane in [&first, &second] {
-        herdr.wait_for(Duration::from_secs(20), "the question is asked", || {
-            herdr.screen(pane).contains(QUESTION)
-        });
+        herdr.wait_on(
+            pane,
+            Duration::from_secs(20),
+            "the question is asked",
+            || herdr.screen(pane).contains(QUESTION),
+        );
     }
     for (pane, name) in [(&first, "m43"), (&second, "m72")] {
         let Err(StartError::ShellStarting(line)) = start(
@@ -358,9 +400,12 @@ fn startup_question(fixture: &Fixture) {
     // terminal types into the question, whose one key is the command's first
     // letter, and the shell runs the rest.
     let plain = herdr.pane("plain", &Default::default());
-    herdr.wait_for(Duration::from_secs(20), "the question is asked", || {
-        herdr.screen(&plain).contains(QUESTION)
-    });
+    herdr.wait_on(
+        &plain,
+        Duration::from_secs(20),
+        "the question is asked",
+        || herdr.screen(&plain).contains(QUESTION),
+    );
     start(
         &herdr,
         &node,
@@ -373,7 +418,7 @@ fn startup_question(fixture: &Fixture) {
     herdr.wait_for(Duration::from_secs(20), "the question is answered", || {
         herdr.file("answers").contains("plain answered [c]")
     });
-    herdr.wait_for(Duration::from_secs(20), "the rest runs", || {
+    herdr.wait_on(&plain, Duration::from_secs(20), "the rest runs", || {
         herdr.screen(&plain).contains("laude")
     });
     assert_eq!(herdr.file("claude-args"), "", "no agent ran");
