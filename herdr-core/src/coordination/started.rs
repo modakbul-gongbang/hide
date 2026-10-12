@@ -5,7 +5,7 @@
 //! pane's identity as its origin, so neither matches. Nothing here reads a
 //! branch name or a path's spelling.
 
-use super::{SpawnMode, SpawnRecord, SpawnTask};
+use super::{SpawnMode, SpawnTask};
 use crate::delivery::ledger::Ledger;
 
 /// One live agent Hide started.
@@ -36,24 +36,26 @@ pub(crate) struct HideStarted {
     pub(crate) checkouts: Vec<StartedCheckout>,
 }
 
-fn hide_handoff(ledger: &Ledger, spawn: &SpawnRecord) -> bool {
-    spawn.mode == SpawnMode::Handoff
-        && ledger
-            .agents
-            .iter()
-            .any(|origin| origin.id == spawn.parent && origin.actor.hide_owned())
-}
-
 /// The agents and checkouts Hide started, in ledger order. Compared by value
 /// with the previous answer, so a ledger change that moves neither (a letter,
 /// a watch) publishes nothing.
 pub(crate) fn hide_started(ledger: &Ledger) -> HideStarted {
     let mut started = HideStarted::default();
-    for spawn in ledger
-        .spawns
+    // Hide's own identities are one or two records, found once; the ledger's
+    // spawns are then filtered by a parent in that short list, so a publish
+    // with no Hide AI start costs one pass over the agents and one over the spawns.
+    let origins: Vec<&str> = ledger
+        .agents
         .iter()
-        .filter(|spawn| hide_handoff(ledger, spawn))
-    {
+        .filter(|agent| agent.actor.hide_owned())
+        .map(|agent| agent.id.as_str())
+        .collect();
+    if origins.is_empty() {
+        return started;
+    }
+    for spawn in ledger.spawns.iter().filter(|spawn| {
+        spawn.mode == SpawnMode::Handoff && origins.contains(&spawn.parent.as_str())
+    }) {
         let machine = super::spawn_machine(ledger, spawn);
         if let (Some(path), Some(machine)) = (&spawn.path, machine) {
             started.checkouts.push(StartedCheckout {
