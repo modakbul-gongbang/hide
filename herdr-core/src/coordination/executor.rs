@@ -305,12 +305,8 @@ fn publish_tokens(client: &Client, connector: &dyn ApiConnector, id: &str) -> Re
         .iter()
         .find(|record| record.id == id)
         .ok_or("agent_unavailable")?;
-    if let Some(parent) = child
-        .parent
-        .as_ref()
-        .and_then(|id| ledger.agents.iter().find(|record| &record.id == id))
-    {
-        super::lineage::write_record(connector, child, parent)?;
+    if let Some(related) = super::lineage::related(child, &ledger) {
+        super::lineage::write_record(connector, child, related)?;
     }
     Ok(())
 }
@@ -1019,14 +1015,14 @@ fn device_unreachable(
 
 pub(crate) fn link_fork(
     context: &crate::live::LiveContext,
-    parent: &str,
+    source: &str,
     child: &str,
 ) -> Result<(), String> {
     let runtime = context.runtime.upgrade().ok_or("delivery_unavailable")?;
     let (client, authority, actor) = runtime
         .lock()
         .map_err(|_| "delivery_unavailable")?
-        .coordination_fork_context(parent)?;
+        .coordination_fork_context(source)?;
     let CoordinationContext {
         connector,
         host_scope,
@@ -1035,41 +1031,41 @@ pub(crate) fn link_fork(
         ..
     } = self::context(&client, &actor.device_id)?;
     let observed = agents(connector.as_ref())?;
-    let native_parent = observed
+    let native_source = observed
         .iter()
-        .find(|agent| agent.pane_id == parent)
+        .find(|agent| agent.pane_id == source)
         .ok_or("parent_unavailable")?;
     let ledger = state(&client)?;
-    let parent_id = if let Some(parent) = ledger
+    let source_id = if let Some(existing) = ledger
         .agents
         .iter()
         .find(|record| !record.ended && record.actor.same_identity(&actor))
     {
-        parent.id.clone()
+        existing.id.clone()
     } else {
-        let parent_record = record(
-            native_parent,
+        let source_record = record(
+            native_source,
             HostIdentity {
                 machine: &actor.device_id,
                 scope: &host_scope,
                 native_machine: &native_machine,
                 on_node,
             },
-            parent.into(),
+            source.into(),
             actor.name.clone(),
             None,
             None,
         )?;
-        let parent_value = mutate(
+        let source_value = mutate(
             &client,
             &authority,
             &actor,
             Mutation::Register {
-                record: parent_record,
+                record: source_record,
                 check: false,
             },
         )?;
-        parent_value["id"]
+        source_value["id"]
             .as_str()
             .ok_or("parent_unavailable")?
             .to_owned()
@@ -1078,7 +1074,7 @@ pub(crate) fn link_fork(
         connector.as_ref(),
         child,
         None,
-        native_parent.agent.as_deref().ok_or("parent_unavailable")?,
+        native_source.agent.as_deref().ok_or("parent_unavailable")?,
     )?;
     let mut child_record = record(
         &native_child,
@@ -1090,9 +1086,12 @@ pub(crate) fn link_fork(
         },
         child.into(),
         native_child.name.clone().unwrap_or_else(|| child.into()),
-        Some(parent_id),
+        None,
         native_child.cwd.clone(),
     )?;
+    // The fork is the operator's own work: no parent supervises it, and the
+    // source it was forked from is its origin, which its fork mark names.
+    child_record.origin = Some(source_id);
     child_record.forked = true;
     let value = mutate(
         &client,

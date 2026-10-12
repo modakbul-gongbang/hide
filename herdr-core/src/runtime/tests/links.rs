@@ -589,7 +589,11 @@ fn native_archive_current_journey(kind: &'static str, flag: &str) {
                 vec![]
             }
         );
-        assert!(replacement.methods().is_empty());
+        // The fork worker never reaches the replacement; only a keyboard move
+        // queued on the lane before the swap can, which is the lane's
+        // accepted residual for any queued focus (`ingest_fork_pane` itself
+        // refuses a pane the replaced server made).
+        assert!(fork_methods(&replacement).is_empty());
         if case == "intent-during-start-connect" {
             assert_eq!(
                 runtime
@@ -612,6 +616,50 @@ fn a_native_fork_worker_refuses_control_retired_during_create_or_start_connect()
     for kind in ["pi", "omp"] {
         native_fork_current_journey(kind);
     }
+}
+
+/// The fork moves the keyboard on the control lane, which runs beside the
+/// fork worker and answers to whichever server is current when it takes the
+/// move up; either server confirms whichever pane it is asked to focus, so
+/// the worker's own requests stay what each case is about.
+#[cfg(unix)]
+fn focus_answer(
+    method: &str,
+    params: &serde_json::Value,
+    focused: &std::sync::Mutex<String>,
+) -> Option<serde_json::Value> {
+    let mut focused = focused.lock().unwrap();
+    if let Some(pane) = params["pane_id"].as_str() {
+        *focused = pane.to_owned();
+    }
+    let pane = focused.as_str();
+    let tab = if pane == "child-pane" {
+        "w-order:t2"
+    } else {
+        "w-order:t1"
+    };
+    Some(match method {
+        "pane.focus" => serde_json::json!({"type":"pane_info","pane":{
+            "pane_id":pane,"terminal_id":"terminal","workspace_id":"w-order",
+            "tab_id":tab,"focused":true,"agent_status":"idle","revision":3}}),
+        "pane.layout" => serde_json::json!({"type":"pane_layout","layout":{
+            "workspace_id":"w-order","tab_id":tab,"zoomed":false,
+            "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":pane,
+            "panes":[{"pane_id":pane,"focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}),
+        "workspace.get" => serde_json::json!({"type":"workspace_info","workspace":{
+            "workspace_id":"w-order","number":1,"label":"w-order","focused":true,"pane_count":2,
+            "tab_count":2,"active_tab_id":tab,"agent_status":"idle"}}),
+        _ => return None,
+    })
+}
+
+#[cfg(unix)]
+fn fork_methods(server: &FakeHerdr) -> Vec<String> {
+    server
+        .methods()
+        .into_iter()
+        .filter(|method| !["pane.focus", "pane.layout", "workspace.get"].contains(&method.as_str()))
+        .collect()
 }
 
 #[cfg(unix)]
@@ -661,14 +709,20 @@ fn native_fork_current_journey(kind: &'static str) {
         initial.agents = owned.agents;
         runtime.ingest_session(Ok(initial));
         let shared = SharedRuntime::new(runtime);
-        let replacement = FakeHerdr::start("pi-fork-current", |method, _| {
-            panic!("unexpected replacement-server request: {method}")
+        let replacement_focus = std::sync::Mutex::new(String::new());
+        let replacement = FakeHerdr::start("pi-fork-current", move |method, params| {
+            focus_answer(method, params, &replacement_focus)
+                .unwrap_or_else(|| panic!("unexpected replacement-server request: {method}"))
         });
         let replacement_connector: Arc<dyn hide_herdr_client::ApiConnector> =
             Arc::new(replacement.connector());
         let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let arm_connect = Arc::clone(&armed);
-        let old = FakeHerdr::start("pi-fork-retired", move |method, _| match method {
+        let old_focus = std::sync::Mutex::new(String::new());
+        let old = FakeHerdr::start("pi-fork-retired", move |method, params| match method {
+            "pane.focus" | "pane.layout" | "workspace.get" => {
+                focus_answer(method, params, &old_focus).unwrap()
+            }
             "session.snapshot" => {
                 if case == "during-tab-connect" {
                     arm_connect.store(true, Ordering::SeqCst);
@@ -724,11 +778,15 @@ fn native_fork_current_journey(kind: &'static str) {
             context.api_connector = connector;
             runtime.set_live(context);
             assert!(runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
-                "schema_version":SCHEMA_VERSION,"kind":"fork_pane","payload":{"pane_id":parent}
+                "schema_version":SCHEMA_VERSION,"kind":"fork_pane","payload":{"pane_id":parent,"placement":"tab"}
             })).unwrap()));
         }
         wait_for("actual fork worker settles", || {
-            !shared.lock().unwrap().forks_in_flight.contains(parent)
+            !shared.lock().unwrap().forks_in_flight.contains_key(parent)
+        });
+        wait_for("the fork's focus settles", || {
+            let runtime = shared.lock().unwrap();
+            runtime.pending_pane_focus.is_none() && runtime.pane_focus_in_flight.is_none()
         });
         let runtime = shared.lock().unwrap();
         if case == "current" {
@@ -748,7 +806,7 @@ fn native_fork_current_journey(kind: &'static str) {
             );
         }
         assert_eq!(
-            old.methods(),
+            fork_methods(&old),
             match case {
                 "current" => vec![
                     "session.snapshot",
@@ -769,12 +827,20 @@ fn native_fork_current_journey(kind: &'static str) {
         );
         if case == "during-start-connect" {
             assert_eq!(
-                old.calls().last().unwrap().1["pane_id"],
+                old.calls()
+                    .iter()
+                    .rfind(|(method, _)| method == "pane.close")
+                    .unwrap()
+                    .1["pane_id"],
                 "child-pane",
                 "cleanup owns only the created child"
             );
         }
-        assert!(replacement.methods().is_empty());
+        // The fork worker never reaches the replacement; only a keyboard move
+        // queued on the lane before the swap can, which is the lane's
+        // accepted residual for any queued focus (`ingest_fork_pane` itself
+        // refuses a pane the replaced server made).
+        assert!(fork_methods(&replacement).is_empty());
         assert_eq!(std::fs::read_to_string(&source).unwrap(), bytes);
     }
 }

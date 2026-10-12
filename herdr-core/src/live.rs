@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::agent_find::AgentFind;
 use crate::checkout_owner::OwnerOpen;
 use crate::find::PaneFindOptions;
-use crate::fork::ForkRequest;
+use crate::fork::{ForkPlacement, ForkRequest};
 use crate::handle::ChangeNotifier;
 use crate::model::{
     EditorDocumentSnapshot, PaneFindRoute, PaneLayoutDirection, PaneLayoutNodeSnapshot,
@@ -3011,6 +3011,21 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
                 context.node.as_ref(),
                 &request,
                 &|| fork_execution_current(&context, &request),
+                |tab_id, pane_id| {
+                    let Some(runtime) = context.runtime.upgrade() else {
+                        return;
+                    };
+                    let changed = match runtime.lock() {
+                        Ok(mut guard) => {
+                            guard.ingest_fork_pane(&request.parent_pane_id, tab_id, pane_id)
+                        }
+                        Err(_) => return,
+                    };
+                    drop(runtime);
+                    if changed {
+                        context.notifier.notify();
+                    }
+                },
                 |parent, child| {
                     fork_execution_current(&context, &request)?;
                     crate::coordination::link_fork(&context, parent, child)
@@ -3049,14 +3064,17 @@ fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Resul
     Ok(())
 }
 
-/// Starts a natively proven fork without changing the parent's tab. Legacy
-/// providers retain their sibling split. A pane whose agent never started is closed;
-/// registration never turns a working fork into a failure.
+/// Starts a fork where the operator asked for it, in its own tab or beside
+/// the source. Herdr makes the pane without moving the keyboard; `created`
+/// hands it to the core, which moves the keyboard to it and places its tab.
+/// A pane whose agent never started is closed; registration never turns a
+/// working fork into a failure.
 fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
     node: &dyn crate::node_access::NodeLink,
     request: &ForkRequest,
     current: &(dyn Fn() -> Result<(), String> + Sync),
+    created: impl FnOnce(Option<&str>, &str),
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
     let checked = CurrentSessionConnector { connector, current };
@@ -3077,7 +3095,7 @@ fn run_agent_fork_with_registration(
     check()?;
     // A split takes no command, so only a fork in its own tab runs the
     // integration's launch.
-    let launch = proven
+    let launch = matches!(request.placement, ForkPlacement::Tab)
         .then(|| {
             crate::agent_start::shell_launch(
                 Some(node),
@@ -3086,51 +3104,65 @@ fn run_agent_fork_with_registration(
         })
         .flatten();
     let shell = crate::agent_start::ShellStart::of_tab(true, launch.as_ref());
-    let child_pane_id = if proven {
-        let cwd = request
-            .cwd
-            .as_deref()
-            .ok_or("Session fork has no confirmed checkout")?;
-        let snapshot = fetch_session_with_connector(mutation_connector)
+    let child_pane_id = match request.placement {
+        // `Fork agent`: the fork's own tab, which the core puts right of the
+        // source's tab once Herdr has named it (`created`).
+        ForkPlacement::Tab => {
+            let cwd = request
+                .cwd
+                .as_deref()
+                .filter(|cwd| !cwd.trim().is_empty())
+                .ok_or("Session fork has no confirmed checkout")?;
+            let snapshot = fetch_session_with_connector(mutation_connector)
+                .map_err(|error| error.message().to_owned())?;
+            let mut parents = snapshot.layouts.iter().filter(|layout| {
+                layout
+                    .panes
+                    .iter()
+                    .any(|pane| pane.pane_id == request.parent_pane_id)
+            });
+            let parent = parents
+                .next()
+                .ok_or("Session fork parent is no longer in its workspace")?;
+            if parents.next().is_some() {
+                return Err("Session fork parent has ambiguous workspace ownership".into());
+            }
+            let label = request
+                .tab_label
+                .as_deref()
+                .ok_or("Session fork has no checkout to name its tab in")?;
+            check()?;
+            let tab = create_tab_in(
+                mutation_connector,
+                &parent.workspace_id,
+                cwd,
+                label,
+                false,
+                launch
+                    .as_ref()
+                    .map(|launch| launch.env.clone())
+                    .unwrap_or_default(),
+                launch.as_ref().map(|launch| launch.command.as_slice()),
+            )
             .map_err(|error| error.message().to_owned())?;
-        let mut parents = snapshot.layouts.iter().filter(|layout| {
-            layout
-                .panes
-                .iter()
-                .any(|pane| pane.pane_id == request.parent_pane_id)
-        });
-        let parent = parents
-            .next()
-            .ok_or("Session fork parent is no longer in its workspace")?;
-        if parents.next().is_some() {
-            return Err("Session fork parent has ambiguous workspace ownership".into());
+            created(Some(&tab.tab_id), &tab.pane_id);
+            tab.pane_id
         }
-        check()?;
-        create_tab_in(
-            mutation_connector,
-            &parent.workspace_id,
-            cwd,
-            &request.name,
-            false,
-            launch
-                .as_ref()
-                .map(|launch| launch.env.clone())
-                .unwrap_or_default(),
-            launch.as_ref().map(|launch| launch.command.as_slice()),
-        )
-        .map_err(|error| error.message().to_owned())?
-        .pane_id
-    } else {
-        control_request(
-            connector,
-            "pane.split",
-            wire::fork_split_params(
-                &request.parent_pane_id,
-                request.cwd.as_deref(),
-                Default::default(),
-            )?,
-        )
-        .and_then(wire::split_pane)?
+        // `Fork agent to the side`: a split right of the source, in its tab.
+        ForkPlacement::Side => {
+            let pane_id = control_request(
+                mutation_connector,
+                "pane.split",
+                wire::fork_split_params(
+                    &request.parent_pane_id,
+                    request.cwd.as_deref(),
+                    Default::default(),
+                )?,
+            )
+            .and_then(wire::split_pane)?;
+            created(None, &pane_id);
+            pane_id
+        }
     };
     let started = start_agent_checked(
         mutation_connector,
@@ -3782,8 +3814,10 @@ mod tests {
                         assert_eq!(params["workspace_id"], "w1");
                         assert_eq!(params["root"]["cwd"], expected_cwd);
                         assert_eq!(params["focus"], false);
-                        // The fork's tab runs the node's shell with the
-                        // integration's launch.
+                        // Named as a new tab, so the strip shows the agent;
+                        // it runs the node's shell with the integration's
+                        // launch.
+                        assert_eq!(params["tab_label"], "Tab 2");
                         assert_eq!(params["root"]["command"][0], "/bin/zsh");
                         json!({"type":"layout_apply","layout":{"workspace_id":"w1","tab_id":"w1:t2",
                             "zoomed":false,"focused_pane_id":"child-pane",
@@ -3828,7 +3862,10 @@ mod tests {
                 session_id: "native-pi".into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
+            let created = std::cell::RefCell::new(Vec::new());
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
                 &node,
@@ -3840,9 +3877,29 @@ mod tests {
                         Ok(())
                     }
                 },
+                |tab, pane| {
+                    created
+                        .borrow_mut()
+                        .push((tab.map(str::to_owned), pane.to_owned()))
+                },
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
+            // The core hears of the fork's tab once, as soon as Herdr made it,
+            // whatever happens to its start afterwards.
+            let made_tab = herdr
+                .methods()
+                .iter()
+                .any(|method| method == "layout.apply");
+            assert_eq!(
+                created.into_inner(),
+                if made_tab {
+                    vec![(Some("w1:t2".to_owned()), "child-pane".to_owned())]
+                } else {
+                    Vec::new()
+                },
+                "{case}"
+            );
             assert_eq!(
                 std::fs::read(if source.exists() {
                     source.clone()
@@ -3998,6 +4055,8 @@ mod tests {
                 session_id: session.into(),
                 cwd: Some(checkout.clone()),
                 name: "fork-opencode-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
@@ -4010,6 +4069,7 @@ mod tests {
                         Ok(())
                     }
                 },
+                |_, _| {},
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
@@ -4132,6 +4192,8 @@ mod tests {
                 session_id: id.into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-grok-1".into(),
+                tab_label: Some("Tab 2".into()),
+                placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
@@ -4144,6 +4206,7 @@ mod tests {
                         Ok(())
                     }
                 },
+                |_, _| {},
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}: {result:?}");
@@ -4200,6 +4263,8 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-parent-pane-1".to_owned(),
+            tab_label: None,
+            placement: ForkPlacement::Side,
         };
 
         let pane_id = run_agent_fork_with_registration(
@@ -4207,6 +4272,7 @@ mod tests {
             &hide_node::Local::new(None),
             &request,
             &|| Ok(()),
+            |_, _| {},
             |_, _| Err("ledger_unavailable".into()),
         )
         .expect("registration cannot close a started fork");

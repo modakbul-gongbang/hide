@@ -4,8 +4,9 @@ import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, forkLabel, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { originLine } from "../hideAiOrigin";
+import { AgentForkMark } from "./fork-mark";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -176,7 +177,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ref={main}
           type="button"
           disabled={unreachable}
-          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), forkLabel(t, agent), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           aria-expanded={tree && tree.open !== null && !tree.popover ? tree.open : undefined}
           data-agent-open={agent.pane_id}
@@ -199,6 +200,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
               {agent.identity_label}
             </span>
+            <AgentForkMark agent={agent} />
             {closing ? (
               <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
                 {t("agents.closing")}

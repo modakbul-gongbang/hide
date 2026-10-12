@@ -18,6 +18,12 @@ const KEYS: [&str; 4] = [
     "child_session",
     "parent_session",
 ];
+/// A fork's provenance, written on its pane by the same writer.
+pub(crate) const FORK_KEYS: [&str; 3] = [
+    crate::wire::FORK_PANE_TOKEN,
+    crate::wire::FORK_SESSION_TOKEN,
+    crate::wire::FORK_SOURCE_SESSION_TOKEN,
+];
 #[derive(Clone, Debug, PartialEq)]
 struct Patch {
     pane: String,
@@ -199,14 +205,54 @@ fn placements(ledger: &Ledger) -> (usize, u64) {
 fn signature(patch: &Patch) -> String {
     format!("{}:{:?}", patch.pane, patch.tokens)
 }
+/// What a registration's pane declares about the registration it is
+/// related to: a delegated child its parent, a fork the source it was forked
+/// from. A fork made before forks were the operator's roots has a parent and
+/// is a child like any other.
+pub(super) fn related<'a>(record: &AgentRecord, ledger: &'a Ledger) -> Option<&'a AgentRecord> {
+    let id = record.parent.as_ref().or_else(|| fork_source(record))?;
+    ledger.agents.iter().find(|candidate| &candidate.id == id)
+}
+/// The source a parentless fork was forked from.
+fn fork_source(record: &AgentRecord) -> Option<&String> {
+    (record.forked && record.parent.is_none())
+        .then_some(record.origin.as_ref())
+        .flatten()
+}
 fn desired(
     record: &AgentRecord,
-    parent: Option<&AgentRecord>,
+    related: Option<&AgentRecord>,
     current_session: Option<&str>,
 ) -> BTreeMap<String, Value> {
     let live = (record.actor.session.as_deref() == current_session)
-        .then_some(parent)
+        .then_some(related)
         .flatten();
+    let session = |record: &AgentRecord| {
+        record
+            .actor
+            .session
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null)
+    };
+    // A fork's source is provenance, never responsibility, so its pane names
+    // the source under keys of its own: a `parent_pane` would make it the
+    // source's child again (`wire::FORK_PANE_TOKEN`).
+    if fork_source(record).is_some() {
+        let values = match live {
+            Some(source) => [
+                Value::String(source.pane.clone()),
+                session(record),
+                session(source),
+            ],
+            None => [Value::Null, Value::Null, Value::Null],
+        };
+        return FORK_KEYS
+            .into_iter()
+            .zip(values)
+            .map(|(key, value)| (key.into(), value))
+            .collect();
+    }
     let values = if let Some(parent) = live {
         [
             Value::String(parent.pane.clone()),
@@ -215,40 +261,16 @@ fn desired(
             } else {
                 Value::String(parent.native_machine.clone())
             },
-            record
-                .actor
-                .session
-                .clone()
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-            parent
-                .actor
-                .session
-                .clone()
-                .map(Value::String)
-                .unwrap_or(Value::Null),
+            session(record),
+            session(parent),
         ]
     } else {
         [Value::Null, Value::Null, Value::Null, Value::Null]
     };
-    let mut tokens = KEYS
-        .into_iter()
+    KEYS.into_iter()
         .zip(values)
         .map(|(key, value)| (key.into(), value))
-        .collect::<BTreeMap<String, Value>>();
-    // A fork carries its mark on the pane that hosts its registration, for as
-    // long as the lineage holds; it is cleared with it (`wire::FORK_TOKEN`).
-    if record.forked {
-        tokens.insert(
-            crate::wire::FORK_TOKEN.into(),
-            if live.is_some() {
-                Value::String("1".into())
-            } else {
-                Value::Null
-            },
-        );
-    }
-    tokens
+        .collect()
 }
 fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> {
     if ledger.agents.is_empty() {
@@ -280,7 +302,10 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
         let Some(registrations) = records.remove(agent.pane_id.as_str()) else {
             continue;
         };
-        if !registrations.iter().any(|record| record.parent.is_some()) {
+        if !registrations
+            .iter()
+            .any(|record| record.parent.is_some() || fork_source(record).is_some())
+        {
             continue;
         };
         // Each pane group is consumed once, so identity selection is linear
@@ -294,11 +319,12 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
         else {
             continue;
         };
-        let parent = record
+        let related = record
             .parent
             .as_ref()
+            .or_else(|| fork_source(record))
             .and_then(|id| parents.get(id.as_str()).copied());
-        let tokens = desired(record, parent, Some(current_session));
+        let tokens = desired(record, related, Some(current_session));
         if tokens.iter().any(|(key, value)| {
             if value.is_null() {
                 agent.tokens.get(key).is_some_and(|old| !old.is_null())
@@ -328,13 +354,13 @@ fn write(connector: &dyn ApiConnector, patch: &Patch) -> Result<(), String> {
 pub(crate) fn write_record(
     connector: &dyn ApiConnector,
     record: &AgentRecord,
-    parent: &AgentRecord,
+    related: &AgentRecord,
 ) -> Result<(), String> {
     write(
         connector,
         &Patch {
             pane: record.pane.clone(),
-            tokens: desired(record, Some(parent), record.actor.session.as_deref()),
+            tokens: desired(record, Some(related), record.actor.session.as_deref()),
         },
     )
 }
@@ -393,37 +419,58 @@ mod tests {
                 .all(Value::is_null)
         );
     }
-    #[test]
-    fn a_forks_registration_carries_the_mark_only_while_its_lineage_holds() {
-        let parent = record("agent-1", "w1:p1", "parent", None);
-        let mut child = record("agent-2", "w2:p1", "child", Some(&parent.id));
-        let delegated = desired(&child, Some(&parent), child.actor.session.as_deref());
-        assert!(!delegated.contains_key("fork"));
-        child.forked = true;
-        let live = desired(&child, Some(&parent), child.actor.session.as_deref());
-        assert_eq!(live["fork"], "1");
-        assert!(desired(&child, Some(&parent), Some("replacement"))["fork"].is_null());
+    /// A fork as `link_fork` registers it: the operator's root, with the
+    /// source as provenance.
+    fn fork(id: &str, pane: &str, session: &str, source: &AgentRecord) -> AgentRecord {
+        let mut fork = record(id, pane, session, None);
+        fork.origin = Some(source.id.clone());
+        fork.forked = true;
+        fork
     }
     #[test]
-    fn a_fork_that_is_woken_in_another_pane_wears_the_mark_there() {
-        let parent = record("agent-1", "w1:p1", "parent", None);
-        let mut child = record("agent-2", "w2:p1", "child", Some(&parent.id));
-        child.forked = true;
+    fn a_fork_names_its_source_under_fork_keys_and_never_as_a_parent() {
+        let source = record("agent-1", "w1:p1", "source", None);
+        let fork = fork("agent-2", "w2:p1", "fork", &source);
+        let tokens = desired(&fork, Some(&source), fork.actor.session.as_deref());
+        assert_eq!(tokens["fork_pane"], "w1:p1");
+        assert_eq!(tokens["fork_session"], fork.actor.session.clone().unwrap());
+        assert_eq!(
+            tokens["fork_source_session"],
+            source.actor.session.clone().unwrap()
+        );
+        assert!(!tokens.contains_key("parent_pane"));
+        // A new conversation in the pane is no longer the fork.
+        assert!(
+            desired(&fork, Some(&source), Some("replacement"))
+                .values()
+                .all(Value::is_null)
+        );
+        // A fork made while forks were children keeps its parent and no mark.
+        let mut old = record("agent-3", "w3:p1", "old", Some(&source.id));
+        old.forked = true;
+        let tokens = desired(&old, Some(&source), old.actor.session.as_deref());
+        assert_eq!(tokens["parent_pane"], "w1:p1");
+        assert!(FORK_KEYS.iter().all(|key| !tokens.contains_key(*key)));
+    }
+    #[test]
+    fn a_fork_that_is_woken_in_another_pane_names_its_source_there() {
+        let source = record("agent-1", "w1:p1", "source", None);
+        let mut fork = fork("agent-2", "w2:p1", "fork", &source);
         // The wake continues the registration in a pane Herdr just made, which
         // carries none of the tokens the closed pane held.
-        child.pane = "w3:p1".into();
-        child.actor.pane_id = "w3:p1".into();
-        let woken = agent(&child, BTreeMap::new());
+        fork.pane = "w3:p1".into();
+        fork.actor.pane_id = "w3:p1".into();
+        let woken = agent(&fork, BTreeMap::new());
         let ledger = Ledger {
             next_id: 3,
-            agents: vec![parent, child],
+            agents: vec![source, fork],
             ..Default::default()
         };
         let patches = plan(&ledger, crate::node::TEST_NODE, &[woken]);
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, "w3:p1");
-        assert_eq!(patches[0].tokens["fork"], "1");
-        assert_eq!(patches[0].tokens["parent_pane"], "w1:p1");
+        assert_eq!(patches[0].tokens["fork_pane"], "w1:p1");
+        assert!(!patches[0].tokens.contains_key("parent_pane"));
     }
     #[test]
     fn an_ended_registration_keeps_lineage_and_same_server_omits_machine() {

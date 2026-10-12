@@ -303,7 +303,7 @@ export const PaneView = memo(function PaneView({
           {title}
         </span>
         </Hint>
-        {agentKind ? <PaneForkMark pane={pane} /> : null}
+        {agentKind ? <PaneForkMark pane={pane} actions={actions} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
         {agentKind ? <PaneTreeButton paneId={paneId} actions={actions} /> : null}
         <span className="flex-1" />

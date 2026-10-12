@@ -472,7 +472,9 @@ impl SessionReplica {
                                     identity_label: agent.map(|agent| agent.identity_label.clone()),
                                     activity_at_unix_ms: agent
                                         .and_then(|agent| agent.changed_at_unix_ms),
-                                    fork: crate::runtime::pane_fork_snapshot(agent),
+                                    // Fork agent runs on this machine's panes
+                                    // only, so a device pane offers none.
+                                    fork: Default::default(),
                                     // Ports describe this machine's listeners,
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.

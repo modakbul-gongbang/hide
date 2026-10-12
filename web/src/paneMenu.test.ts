@@ -26,28 +26,31 @@ describe("a right-click in a terminal", () => {
   });
 });
 
-describe("the pane menu's Fork agent item", () => {
-  const forkItem = (fork?: PaneRow["fork"], sleep_action?: PaneRow["sleep_action"]) =>
-    paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork, sleep_action } as unknown as PaneRow, "reviewer").find((item) => item.id === "fork_agent");
+// PRD fork-operator-root B2, B3, D-03: both placements share one availability.
+describe("the pane menu's Fork agent items", () => {
+  const forkItems = (fork?: PaneRow["fork"], sleep_action?: PaneRow["sleep_action"]) =>
+    paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork, sleep_action } as unknown as PaneRow, "reviewer").filter((item) => item.id === "fork_agent" || item.id === "fork_agent_side");
 
-  it("is offered on a pane the core can fork", () => {
-    expect(forkItem({ available: true })).toMatchObject({ label: "Fork agent", unavailable: null });
+  it("offers both placements on a pane the core can fork", () => {
+    expect(forkItems({ available: true })).toMatchObject([
+      { id: "fork_agent", label: "Fork agent", unavailable: null },
+      { id: "fork_agent_side", label: "Fork agent to the side", unavailable: null },
+    ]);
   });
 
-  it("is drawn disabled with the core's reason on an agent that cannot fork yet", () => {
-    expect(forkItem({ available: false, reason: "This agent has not reported its conversation yet" })).toMatchObject({
-      unavailable: "This agent has not reported its conversation yet",
-    });
+  it("draws both disabled with the core's reason on an agent that cannot fork yet", () => {
+    const reason = "This agent has not reported its conversation yet";
+    expect(forkItems({ available: false, reason })).toMatchObject([{ unavailable: reason }, { unavailable: reason }]);
   });
 
-  it("is absent on a shell and on an agent with no fork command", () => {
-    expect(forkItem({ available: false, reason: null })).toBeUndefined();
-    expect(forkItem()).toBeUndefined();
+  it("offers neither on a shell and on an agent with no fork command", () => {
+    expect(forkItems({ available: false, reason: null })).toEqual([]);
+    expect(forkItems()).toEqual([]);
   });
 
-  it("sits with Sleep agent, apart from the copy items", () => {
+  it("follows Sleep agent, apart from the copy items", () => {
     const items = paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork: { available: true }, sleep_action: { available: true } } as unknown as PaneRow, "reviewer");
-    expect(items.map((item) => item.id)).toEqual(["sleep_agent", "fork_agent", "copy_name", "copy_pane_id", "close_pane"]);
+    expect(items.map((item) => item.id)).toEqual(["sleep_agent", "fork_agent", "fork_agent_side", "copy_name", "copy_pane_id", "close_pane"]);
     expect(items.filter((item) => item.separated).map((item) => item.id)).toEqual(["close_pane"]);
   });
 });

@@ -318,7 +318,9 @@ A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
 The PR mark shows the pane's own PRs only, as Sessions draws them (below); a descendant's PRs stay on its own rows.
-The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>`, or `Forked from another pane` when that pane is no longer in the lineage, and a delegated child that was not forked has none (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from_pane_id`).
+The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
+A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
+A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
 The tree button, a tree icon and the direct child count with `자식 에이전트 N` as its tooltip, opens the tree popover (docs/status-model.md, The descendant mark and the tree popover).
 There is no status sentence, child-chip row or relationship sheet.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
@@ -346,7 +348,10 @@ A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the term
 The core band reads Sleeping, Waking or the resume failure, and typed input to the pane goes nowhere.
 Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
 The pane menu offers Sleep agent on an agent pane that is awake on this machine, or on the machine the window runs on when that machine's core runs on another machine, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported; a device's pane offers none.
-Fork agent follows it in the same group: it is offered on a local agent pane whose conversation Herdr reported (`fork.available`) and sends `fork_pane`, which starts that conversation again as a new session in a pane of its own; on an agent that has a fork command but has not reported its conversation yet it is drawn disabled with the core's reason, and on a shell or an agent with no fork command there is no item.
+Fork agent and Fork agent to the side follow it in the same group (PRD fork-operator-root): both are offered on a local agent pane whose conversation Herdr reported (`fork.available`) and send `fork_pane` with the placement, which starts that conversation again as a new session the operator owns; on an agent that has a fork command but has not reported its conversation yet both are drawn disabled with the core's reason, and on a shell, an agent with no fork command or a device's pane there is neither.
+Fork agent opens the fork in a new tab immediately right of the source's tab in its Agent area, or at the end when the source's tab has closed meanwhile; Fork agent to the side splits the source's tab and puts the fork to the right of the source.
+Either moves the keyboard to the fork as soon as Herdr has made its pane, as a new tab does, unless the operator chose another view after the press or the Agent area has no room to show the tab, where the fork then waits; what is typed before the fork's agent has started reaches that agent, never the shell that starts it, as long as it was typed within the 3 seconds before the start that every held key gets.
+A second press while a fork of the same pane is starting, either item, is refused with `pane.fork_already_running`, and a fork whose agent does not start closes the pane it made and shows the same failure notice for both.
 On such a window's own machine, bringing a tab forward wakes what sleeps there once that machine's Herdr has it in front.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
@@ -587,6 +592,8 @@ Resolved holds work resolved in the last 24 hours, by the operator or automatica
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
 
 A row's first line is its mark, provider, title, descendant mark while its tree is closed, own PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
+A fork's row, here and in the sidebar, wears the fork mark right after its title, before the PR mark: the fork icon whose tooltip reads `Forked from <source>` or `Forked from another pane`, the same words the row's accessible name adds after the title (PRD fork-operator-root B8; `web/src/components/fork-mark.tsx`).
+A fork is a root row of its own, never a child under its source; ⌘K, the Agents graph, the Overview lenses and the phone draw no fork mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.

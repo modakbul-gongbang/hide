@@ -72,6 +72,30 @@ pub enum Ownership {
     Delegated,
 }
 
+/// Names each fork's source (`SidebarAgentSnapshot::forked_from`). A fork is
+/// the operator's root, so its source is provenance that no ownership,
+/// grouping, unread or close rule reads. The source is named only while its
+/// pane still hosts the session the fork was made from, as a parent is.
+fn apply_fork_sources(agents: &mut [SidebarAgentSnapshot], by_pane: &BTreeMap<String, usize>) {
+    for index in 0..agents.len() {
+        let Some((pane, session)) = agents[index].declared_fork.clone() else {
+            agents[index].forked_from = None;
+            continue;
+        };
+        let source = by_pane.get(&pane).copied().filter(|&source| {
+            source != index
+                && crate::wire::session_holds(
+                    session.as_deref(),
+                    agents[source].lineage_session.as_deref(),
+                )
+        });
+        agents[index].forked_from = Some(crate::model::ForkSourceSnapshot {
+            pane_id: source.map(|_| pane),
+            label: source.map(|source| agents[source].identity_label.clone()),
+        });
+    }
+}
+
 /// Adds a tree view without reordering, duplicating, or changing the axes of
 /// the canonical agent list. Child ordering belongs to this view alone.
 /// Missing and cyclic parent references are visible orphan roots, so malformed
@@ -108,6 +132,7 @@ pub fn apply_lineage(
                 })
         })
         .collect::<BTreeMap<_, _>>();
+    apply_fork_sources(agents, &by_pane);
     let mut parents = agents
         .iter()
         .map(|agent| {

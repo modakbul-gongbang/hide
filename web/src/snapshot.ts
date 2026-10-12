@@ -116,6 +116,8 @@ export type AgentRow = {
   /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
+  /** Present on a fork the operator made with Fork agent: where it came from (PRD fork-operator-root). */
+  forked_from?: ForkSource | null;
   /** The ancestors from the lineage root down to the parent, root first. */
   lineage_path_pane_ids?: string[];
   lineage_child_pane_ids?: string[];
@@ -209,11 +211,21 @@ export type AgentSleep = {
 };
 
 /**
- * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
- * `available` offers Fork agent, `reason` says why a forkable agent cannot fork yet,
- * and `forked_from_pane_id` names the pane this one was forked from.
+ * Where a fork came from (`ForkSourceSnapshot`): the source's pane and title while
+ * the source runs the conversation it was forked from; both absent once it closed
+ * or moved on, and the mark then names no pane and opens nothing.
  */
-export type PaneFork = { available: boolean; reason?: string | null; forked_from_pane_id?: string | null };
+export type ForkSource = { pane_id?: string | null; label?: string | null };
+
+/**
+ * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
+ * `available` offers Fork agent and Fork agent to the side, `reason` says why a
+ * forkable agent cannot fork yet, and `forked_from` is present on a fork.
+ */
+export type PaneFork = { available: boolean; reason?: string | null; forked_from?: ForkSource | null };
+
+/** Where the pane menu's fork puts the fork: its own tab, or beside the source. */
+export type ForkPlacement = "tab" | "side";
 
 /** The pane menu's Sleep agent item (`AgentSleepActionSnapshot`); absent where it does not apply. */
 export type AgentSleepAction = { available: boolean; reason?: string | null };
@@ -809,6 +821,8 @@ export type TerminalPane = {
 export type InputRequest = {
   request_id: string;
   state: "pending" | "ready" | "discarded";
+  /** The pane a pending request's keys wait for while it has the keyboard: a fork's pane until its agent starts. */
+  held_for?: string | null;
 };
 
 export type AsyncOperation = {

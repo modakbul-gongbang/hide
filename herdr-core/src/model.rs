@@ -1019,11 +1019,17 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
-    /// Whether this agent is the pane Hide's Fork made from its declared
-    /// parent (`wire::FORK_TOKEN`). Any child has a parent; only a fork is a
-    /// fork of it, and a name cannot tell them apart once the agent is woken.
+    /// What this pane declares about the agent it was forked from: the
+    /// source's pane and the digest of the session it hosted
+    /// (`wire::fork_declaration`). A fork is the operator's root, so this is
+    /// provenance and never enters ownership.
     #[serde(skip_serializing)]
-    pub started_as_fork: bool,
+    pub declared_fork: Option<(String, Option<String>)>,
+    /// Present on a pane Hide's Fork agent made, after its title on every
+    /// row and header that draws the fork mark
+    /// (`agent_state::apply_fork_sources`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -2132,6 +2138,18 @@ pub struct ServerEndpointSnapshot {
     pub port: u16,
 }
 
+/// The agent a fork was forked from. Both fields are present only while the
+/// source's pane still hosts the session the fork was made from; a source
+/// that closed or moved on to another conversation leaves both absent, and
+/// the mark then names no pane and opens nothing.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ForkSourceSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// What the pane header needs to know about forking this pane.
 ///
 /// Both facts come from Herdr: whether the pane runs an agent whose own fork
@@ -2145,7 +2163,9 @@ pub struct ServerEndpointSnapshot {
 pub struct PaneForkSnapshot {
     pub available: bool,
     pub reason: Option<String>,
-    pub forked_from_pane_id: Option<String>,
+    /// Present when this pane is a fork, as its row's `forked_from`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2268,6 +2288,11 @@ pub struct TerminalSnapshot {
 pub struct InputRequestSnapshot {
     pub request_id: String,
     pub state: InputRequestState,
+    /// The pane a pending request's keys wait for, once it exists and holds
+    /// the keyboard: a fork's pane until its agent has started. The shell
+    /// keeps sending against the request while that pane has the keyboard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held_for: Option<String>,
 }
 
 /// Where keys sent against a creation request stand: kept until Herdr

@@ -164,6 +164,11 @@ impl ControlLane {
         (serial, Submitted::Queued)
     }
 
+    /// The serial the lane gave last; every later submission is above it.
+    pub(super) fn issued_serial(&self) -> u64 {
+        self.next_serial
+    }
+
     fn take_serial(&mut self) -> u64 {
         self.next_serial = self.next_serial.saturating_add(1);
         self.next_serial

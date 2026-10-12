@@ -106,7 +106,9 @@ pub struct AgentRecord {
     pub instance: String,
     pub pane: String,
     pub parent: Option<String>,
-    /// Provenance only for handoffs; delegated provenance is the parent.
+    /// Provenance only for handoffs and forks; delegated provenance is the
+    /// parent. A fork's origin is the source it was forked from, which its
+    /// pane's fork mark names (`lineage::FORK_KEYS`).
     #[serde(default)]
     pub origin: Option<String>,
     pub project: Option<String>,
@@ -114,7 +116,8 @@ pub struct AgentRecord {
     pub ended: bool,
     /// Made by Fork agent: the conversation is another execution's, resumed
     /// as a new session. The registration owns the fact, so it follows the
-    /// registration to the pane that wakes it.
+    /// registration to the pane that wakes it. A fork made before forks were
+    /// the operator's roots has a parent and carries no mark.
     #[serde(default)]
     pub forked: bool,
 }
@@ -416,18 +419,29 @@ pub(crate) fn apply(
     match mutation {
         Mutation::Register { record, check } => {
             validate_registration_name(caller, record)?;
-            if record.parent.as_ref().is_some_and(|id| {
-                !ledger
+            let callers_own = |id: &String| {
+                ledger
                     .agents
                     .iter()
                     .any(|p| &p.id == id && !p.ended && p.actor.same_identity(caller))
-            }) || (record.parent.is_none() && !record.actor.same_identity(caller))
+            };
+            // A fork is the operator's root, so it has no parent; the source
+            // that asked for it registers it and is named as its origin.
+            let forked_by_caller = record.forked
+                && record.parent.is_none()
+                && record.origin.as_ref().is_some_and(callers_own);
+            if record.parent.as_ref().is_some_and(|id| !callers_own(id))
+                || (record.parent.is_none()
+                    && !record.actor.same_identity(caller)
+                    && !forked_by_caller)
             {
                 return Err("parent_authority_required".into());
             }
-            // Registration has no provenance input. A handoff's own retry
-            // keeps its stored origin; binding a spawn still compares the
-            // complete immutable identity through the strict insertion path.
+            // Registration has no provenance input but a fork's, which only
+            // the core's own Fork agent sets (`executor::link_fork`). A
+            // handoff's own retry keeps its stored origin; binding a spawn
+            // still compares the complete immutable identity through the
+            // strict insertion path.
             let mut registration = record.clone();
             if registration.origin.is_none()
                 && let Some(existing) = ledger
@@ -1090,6 +1104,42 @@ mod tests {
             },
             1,
         )
+    }
+
+    // PRD fork-operator-root B1, B19: the source registers its fork as the
+    // operator's root, and `hide agent show` names the source as its origin.
+    #[test]
+    fn a_fork_registers_as_a_root_whose_origin_is_its_source() {
+        let mut ledger = Ledger::default();
+        let source = record("pane-a", "session-a", None);
+        let other = record("pane-b", "session-b", None);
+        let source_id = register(&mut ledger, source.clone(), &source.actor);
+        register(&mut ledger, other.clone(), &other.actor);
+        let fork = || {
+            let mut fork = record("pane-c", "session-c", None);
+            fork.origin = Some(source_id.clone());
+            fork.forked = true;
+            fork
+        };
+        // Only the source itself vouches for its fork.
+        let before = ledger.clone();
+        assert_eq!(
+            register_as(&mut ledger, fork(), &other.actor).unwrap_err(),
+            "parent_authority_required"
+        );
+        assert_eq!(ledger, before);
+        let id = register(&mut ledger, fork(), &source.actor);
+        let fork = ledger.agents.iter().find(|record| record.id == id).unwrap();
+        let shown = view(fork, &ledger);
+        assert!(shown["parent"].is_null());
+        assert_eq!(shown["origin"], source_id);
+        // Without the fork's provenance, the source is not the new pane.
+        let mut stranger = record("pane-d", "session-d", None);
+        stranger.origin = Some(source_id.clone());
+        assert_eq!(
+            register_as(&mut ledger, stranger, &source.actor).unwrap_err(),
+            "parent_authority_required"
+        );
     }
 
     /// Both ways a registration ends, `hide agent end` and the core finding

@@ -639,12 +639,12 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
             .map(str::to_owned),
-        started_as_fork: non_empty(agent.spawned_from_pane_id.as_deref()).is_some()
-            && agent
-                .tokens
-                .get(crate::wire::FORK_TOKEN)
-                .and_then(Value::as_str)
-                == Some("1"),
+        declared_fork: crate::wire::fork_declaration(
+            &agent.tokens,
+            non_empty(agent.lineage_session.as_deref()),
+        ),
+        // Laid on with the lineage, where the source's row is known.
+        forked_from: None,
         pane_id,
         workspace_label,
         checkout_label: None,
