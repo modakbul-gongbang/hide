@@ -11,13 +11,15 @@ use sha2::{Digest, Sha256};
 
 use crate::{Agent, SESSION_INCREMENT_READ_LIMIT_BYTES, SESSION_LINE_LIMIT_BYTES};
 
+mod grok;
+mod opencode;
 mod records;
 
 pub const CANDIDATE_LIMIT: usize = 10_000;
 const DISCOVERY_ENTRY_LIMIT: usize = 100_000;
 const DISCOVERY_DEPTH_LIMIT: usize = 16;
 const PATH_BYTES_LIMIT: usize = 4096;
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 2;
 
 /// Disjoint components: output already includes reasoning. One-hour writes
 /// are a subset of cache_write, retained only for their different price.
@@ -41,6 +43,8 @@ pub struct Event {
     pub session: String,
     pub cwd: Option<String>,
     pub provider: Option<String>,
+    /// Native usage is a lower bound. Its recorded cost must not be displayed.
+    pub incomplete: bool,
 }
 
 /// Errors deliberately carry no filesystem path or source record.
@@ -84,6 +88,7 @@ pub struct Checkpoint {
     discarding: bool,
     parser_version: u32,
     context: records::Context,
+    database: opencode::Cursor,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -221,7 +226,11 @@ pub fn read(
     path: &Path,
     saved: Option<Checkpoint>,
 ) -> Result<Step, Refusal> {
-    if matches!(agent, Agent::OpenCode | Agent::Cursor | Agent::Grok) {
+    if agent == Agent::OpenCode {
+        checked_file(home, agent, path)?;
+        return opencode::read(home, saved);
+    }
+    if agent == Agent::Cursor {
         return Err(Refusal::Unsupported);
     }
     let mut file = checked_file(home, agent, path)?;
@@ -229,6 +238,11 @@ pub fn read(
         hide_platform::fs::identity::file_id_of(&file).map_err(|_| Refusal::Unreadable)?;
     let identity = format!("{}:{}", identity.volume(), identity.index());
     let size = file.metadata().map_err(|_| Refusal::Unreadable)?.len();
+    let summary = if agent == Agent::Grok {
+        Some(grok::summary(home, path)?)
+    } else {
+        None
+    };
     let mut checkpoint = saved.unwrap_or_default();
     let rescanned = checkpoint.identity.is_some()
         && (checkpoint.identity.as_ref() != Some(&identity)
@@ -239,16 +253,28 @@ pub fn read(
     }
     checkpoint.identity = Some(identity);
     checkpoint.parser_version = PARSER_VERSION;
+    if summary.as_ref().is_some_and(|s| s.is_child()) {
+        checkpoint.offset = size;
+        return Ok(Step {
+            events: Vec::new(),
+            checkpoint,
+            read_bytes: summary.as_ref().unwrap().read_bytes,
+            has_more: false,
+            rescanned,
+            skipped: BTreeMap::new(),
+        });
+    }
     file.seek(SeekFrom::Start(checkpoint.offset))
         .map_err(|_| Refusal::Unreadable)?;
     let mut bytes = Vec::new();
-    file.take(SESSION_INCREMENT_READ_LIMIT_BYTES)
+    let metadata_bytes = summary.as_ref().map_or(0, |s| s.read_bytes);
+    file.take(SESSION_INCREMENT_READ_LIMIT_BYTES - metadata_bytes)
         .read_to_end(&mut bytes)
         .map_err(|_| Refusal::Unreadable)?;
     let mut step = Step {
         events: Vec::new(),
         checkpoint,
-        read_bytes: bytes.len() as u64,
+        read_bytes: bytes.len() as u64 + metadata_bytes,
         has_more: false,
         rescanned,
         skipped: BTreeMap::new(),
@@ -262,9 +288,14 @@ pub fn read(
             step.checkpoint.offset += fragment.len() as u64;
             step.checkpoint.discarding = !complete;
         } else if complete {
-            match records::parse(agent, fragment, &mut step.checkpoint.context) {
-                Ok(Some(event)) => step.events.push(event),
-                Ok(None) => (),
+            let parsed = if let Some(summary) = &summary {
+                grok::parse(fragment, summary)
+            } else {
+                records::parse(agent, fragment, &mut step.checkpoint.context)
+                    .map(|event| event.into_iter().collect())
+            };
+            match parsed {
+                Ok(events) => step.events.extend(events),
                 Err(reason) => *step.skipped.entry(reason.into()).or_default() += 1,
             }
             step.checkpoint.offset += fragment.len() as u64;

@@ -9,6 +9,8 @@ pub(super) struct Context {
     cwd: Option<String>,
     model: Option<String>,
     origin: Option<String>,
+    fork_boundary: Option<u64>,
+    native_usage: bool,
 }
 
 // Serde skips every unknown field with IgnoredAny. In particular none of these
@@ -26,6 +28,7 @@ struct Record {
     cwd: Option<String>,
     message: Option<Message>,
     payload: Option<Payload>,
+    ordinal: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -45,7 +48,18 @@ struct Payload {
     cwd: Option<String>,
     model: Option<String>,
     forked_from_id: Option<String>,
+    forked_from_ordinal_exclusive: Option<u64>,
+    history_base: Option<HistoryBase>,
+    thread_id: Option<String>,
+    response_id: Option<String>,
+    usage: Option<Usage>,
     info: Option<Info>,
+}
+
+#[derive(Deserialize)]
+struct HistoryBase {
+    thread_id: String,
+    end_ordinal_exclusive: u64,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +70,7 @@ struct Info {
 
 #[derive(Default, Deserialize, Serialize)]
 struct Usage {
+    total_tokens: Option<u64>,
     #[serde(alias = "input_tokens")]
     input: Option<u64>,
     #[serde(alias = "output_tokens")]
@@ -73,7 +88,7 @@ struct Usage {
     )]
     cache_write: Option<u64>,
     cache_creation: Option<CacheCreation>,
-    #[serde(alias = "reasoning_output_tokens")]
+    #[serde(alias = "reasoning_output_tokens", alias = "reasoningTokens")]
     reasoning: Option<u64>,
     cost: Option<Cost>,
 }
@@ -88,7 +103,7 @@ struct Cost {
     total: Option<f64>,
 }
 
-fn bounded(value: Option<String>, limit: usize) -> Result<Option<String>, &'static str> {
+pub(super) fn bounded(value: Option<String>, limit: usize) -> Result<Option<String>, &'static str> {
     match value {
         Some(value)
             if value.is_empty() || value.len() > limit || value.chars().any(char::is_control) =>
@@ -99,7 +114,7 @@ fn bounded(value: Option<String>, limit: usize) -> Result<Option<String>, &'stat
     }
 }
 
-fn required(value: Option<String>, limit: usize) -> Result<String, &'static str> {
+pub(super) fn required(value: Option<String>, limit: usize) -> Result<String, &'static str> {
     bounded(value, limit)?.ok_or("identity_missing")
 }
 
@@ -198,6 +213,7 @@ pub(super) fn parse(
                 session,
                 cwd: bounded(record.cwd, 4096)?,
                 provider: None,
+                incomplete: false,
             }))
         }
         Agent::Pi | Agent::Omp => {
@@ -233,6 +249,7 @@ pub(super) fn parse(
                 session,
                 cwd: context.cwd.clone(),
                 provider: bounded(message.provider, 128)?,
+                incomplete: false,
             }))
         }
         Agent::Codex => {
@@ -240,6 +257,12 @@ pub(super) fn parse(
                 let payload = record.payload.ok_or("record_invalid")?;
                 context.session = Some(required(payload.id, 128)?);
                 context.origin = bounded(payload.forked_from_id, 128)?;
+                context.fork_boundary = payload.forked_from_ordinal_exclusive.or_else(|| {
+                    payload
+                        .history_base
+                        .filter(|b| Some(&b.thread_id) == context.origin.as_ref())
+                        .map(|b| b.end_ordinal_exclusive)
+                });
                 context.cwd = bounded(payload.cwd, 4096)?;
                 return Ok(None);
             }
@@ -247,29 +270,63 @@ pub(super) fn parse(
                 context.model = Some(required(record.payload.and_then(|p| p.model), 128)?);
                 return Ok(None);
             }
-            if record.kind != "event_msg" {
+            if record.kind == "token_usage_record" {
+                let payload = record.payload.ok_or("record_invalid")?;
+                let session = context.session.clone().ok_or("identity_missing")?;
+                let thread = required(payload.thread_id, 128)?;
+                // Legacy forks retain the parent's native response identity.
+                if thread != session {
+                    return Ok(None);
+                }
+                context.native_usage = true;
+                let response = required(payload.response_id, 256)?;
+                let usage = payload.usage.ok_or("usage_missing")?;
+                return Ok(Some(Event {
+                    key: key(&[&thread, &response]),
+                    at_ms: at()?,
+                    model: context.model.clone().ok_or("model_missing")?,
+                    tokens: tokens(&usage, true)?,
+                    recorded_cost_micro_usd: None,
+                    session,
+                    cwd: context.cwd.clone(),
+                    provider: None,
+                    incomplete: false,
+                }));
+            }
+            if record.kind != "event_msg" || context.native_usage {
                 return Ok(None);
             }
             let payload = record.payload.ok_or("record_invalid")?;
             if payload.kind.as_deref() != Some("token_count") {
                 return Ok(None);
             }
+            if context.origin.is_some() {
+                match (context.fork_boundary, record.ordinal) {
+                    (Some(boundary), Some(ordinal)) if ordinal >= boundary => (),
+                    (Some(_), Some(_)) => return Ok(None),
+                    _ => return Err("fork_boundary_missing"),
+                }
+            }
             // A rate-limit-only observation has no token event.
             let Some(info) = payload.info else {
                 return Ok(None);
             };
             let usage = info.last_token_usage.ok_or("usage_missing")?;
+            // Compaction estimates and context-window-full notifications carry
+            // only total_tokens. They are not billed model responses.
+            if usage.input.unwrap_or(0) == 0 && usage.output.unwrap_or(0) == 0 {
+                return Ok(None);
+            }
             let total = info.total_token_usage.ok_or("dedup_missing")?;
             let session = context.session.clone().ok_or("identity_missing")?;
             let model = context.model.clone().ok_or("model_missing")?;
-            let total = tokens(&total, true)?;
-            let fingerprint = serde_json::to_string(&total).map_err(|_| "dedup_invalid")?;
-            // Native origin plus cumulative counters makes a replay of an
-            // archived/copied prefix converge without adding its last usage.
-            let origin = context.origin.as_deref().unwrap_or(&session);
+            // Include total_tokens: synthetic window-full resets component
+            // counters while retaining a synthetic total baseline.
+            let fingerprint = serde_json::to_string(&(tokens(&total, true)?, total.total_tokens))
+                .map_err(|_| "dedup_invalid")?;
             let at_ms = at()?;
             Ok(Some(Event {
-                key: key(&[origin, &model, &fingerprint]),
+                key: key(&[&session, &fingerprint]),
                 at_ms,
                 model,
                 tokens: tokens(&usage, true)?,
@@ -277,6 +334,7 @@ pub(super) fn parse(
                 session,
                 cwd: context.cwd.clone(),
                 provider: None,
+                incomplete: false,
             }))
         }
         _ => Err("unsupported"),

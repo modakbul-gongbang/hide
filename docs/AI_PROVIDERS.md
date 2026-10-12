@@ -325,6 +325,29 @@ The web shell reports its page visibility and its popover through the two `ui_st
 The previous Claude `.usage-cache.json` input is not read.
 Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
 
+## Local historical usage readers
+
+`hide-session::usage` reads content-free usage events from the local Claude Code, Codex, OpenCode, Pi, omp and Grok session stores.
+It opens agent files and the OpenCode database read-only, does not invoke an agent, and does not reuse conversation parsing.
+Candidates are confined to the selected agent's native root, including Claude subagent files and Codex archived sessions; Cursor is unsupported.
+Discovery reports its 10,000-candidate cap and unreadable entries.
+One read returns at most 1 MiB of source data, a bounded checkpoint, normalized events and skip counts; a checkpoint never contains a partial JSON line or conversation content.
+The executable contracts are `hide-session/tests/it/usage.rs` and the scrubbed Grok fixture under `hide-session/tests/fixtures/usage/`.
+
+Input, output, cache read and cache write are disjoint components.
+Reasoning is a subset of output, and one-hour cache writes are retained as a subset of cache writes.
+Native identities are hashed with full SHA-256 digests so copies and repeated notifications keep one identity.
+Claude streaming updates retain their message/request identity, while its subagent files count separately.
+Pi and omp use session/message identities and retain their provider metadata and recorded cost.
+Codex prefers native per-response `TokenUsageRecord` items, excluding inherited records by thread identity, and ignores subsequent duplicate `TokenCount` notifications.
+Older rollouts use the last response's usage, with cumulative counters only as the repeated-notification identity; compaction estimates and context-window-full synthetic totals never count.
+A copied fork prefix without a native boundary is reported as skipped.
+Grok prompt totals include children: `summary.json`'s `session_kind` beginning with `subagent` excludes a child's own records, and preserved prompt/model identities deduplicate top-level fork copies.
+Grok incomplete usage or partial cost retains the reported token lower bound with an incomplete flag and no cost.
+OpenCode reads completed assistant messages' `step-finish` parts, whose input already excludes cache and whose output excludes reasoning, so reasoning is added once.
+Each part supplies its own cost; the accumulated message cost is used only for a single-step message without a part cost, and message tokens never feed totals.
+Its bounded keyset cursor revisits the last timestamp for late rows and restarts on file replacement or a changed schema version, including `VACUUM`.
+
 ## Selection and fallback
 
 A request is asked of the chosen provider and then of each provider in the `fallback` list, in that order, once each, and of nothing else (`RouterConfig::priority` is exactly that list).
