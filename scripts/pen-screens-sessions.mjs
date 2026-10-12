@@ -18,8 +18,8 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   };
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
-  // A Sessions row (B30, B31): mark, provider, title, own PR mark, the folded
-  // descendant mark and the age; the second line is the ask for Needs You and
+  // A Sessions row (B30, B31): mark, provider, title, the folded descendant
+  // mark, own PR mark and the age; the second line is the ask for Needs You and
   // otherwise the label line, absent when there is none. A child row steps one
   // indent per level down to the third (`rails` says which ancestor levels run
   // on past it); a deeper one (`chain`) keeps the third level's column and
@@ -55,8 +55,8 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         caption(`${id}-mark`, spec.mark ?? '●', spec.tone ?? '$--agent-working', {mono:true,weight:'600'}),
         provider(`${id}-provider`, spec.provider),
         caption(`${id}-title`, spec.title, spec.depth && !spec.selected && !spec.ask ? '$--subtle-foreground' : '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
-        ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
         ...(spec.desc ? [descendantMark(`${id}-desc`, spec.desc[0], spec.desc[1])] : []),
+        ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
         caption(`${id}-age`, spec.age ?? '3m', '$--muted-foreground', {mono:true}),
       ]),
       ...(spec.ask ? [frame(`${id}-ask`, 'Ask', {width:'fill_container',layout:'horizontal',gap:6,alignItems:'center'}, [verb(`${id}-verb`, spec.ask[0]), caption(`${id}-what`, spec.ask[1], '$--warning')])]
@@ -87,7 +87,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'hide 에이전트 지원 PR 묶음 머지 조율',mark:'!',tone:'$--warning',open:false,age:'12m',ask:['승인','e2e 테스트 돌리던 중']},
       ]),
       group('working','Working',[
-        {title:'공통 후보 전체 검증과 PR 제출',provider:'codex',pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
+        {title:'공통 후보 전체 검증과 PR 제출',provider:'codex',open:false,desc:['working',1],pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
         {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,age:'2m',line:'4단계 리뷰 지적 수정 중'},
         {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
         {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},

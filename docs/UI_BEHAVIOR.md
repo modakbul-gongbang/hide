@@ -569,7 +569,7 @@ Delegated children and Factory workers are not Sessions rows of their own.
 Resolved holds work resolved in the last 24 hours, by the operator or automatically once the agent stopped with no demand and every PR it held merged or closed.
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
 
-A row's first line is its mark, provider, title, own PR mark, descendant mark while its tree is closed, and elapsed time; a Needs You row has no PR mark and no descendant mark.
+A row's first line is its mark, provider, title, descendant mark while its tree is closed, own PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.

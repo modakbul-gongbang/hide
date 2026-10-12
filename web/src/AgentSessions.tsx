@@ -169,8 +169,8 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
           {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
         </button>
-        {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         {needsYou || open ? null : <DescendantMark agent={agent} />}
+        {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
         {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : <ResolveLane />}
       </div>
@@ -205,8 +205,8 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
           <StatusMark symbol={child.symbol} className={markTone(child)} /><AgentMark kind={child.agent_kind} />
           <span className={cn("min-w-0 truncate text-caption", titleTone)}>{child.identity_label}</span>
         </button>
-        <AgentPrMark agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
         {open ? null : <DescendantMark agent={child} />}
+        <AgentPrMark agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
         <Elapsed since={child.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
         <ResolveLane />
       </div>
