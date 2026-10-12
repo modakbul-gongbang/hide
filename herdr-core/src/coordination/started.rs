@@ -195,6 +195,7 @@ pub(crate) mod tests {
                 path: Some(format!("/repo.worktrees/{branch}")),
                 pane: Some(actor.pane_id.clone()),
                 terminal: None,
+                shell: None,
                 child: None,
             },
             1,

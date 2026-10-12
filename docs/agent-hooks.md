@@ -103,7 +103,7 @@ This delivery path has its own bounded private diagnostics; Memory's request run
 
 Memory has one store, `project-memory.sqlite3` in the core's state folder, which only the core opens, whichever machine the agent runs on (PRD core-host-node-move D-12, B14).
 The hook asks for it through `hide workspace memory --event <event> --runtime <runtime> --session <id>`, the same pane credential and node link its letters come by, on its own thread beside the letter pull; on another machine the request goes through that machine's node to the core.
-Both hook commands now use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 29).
+Both hook commands now use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 30).
 The service accepts only the `LetterPull` and `Memory` variants of `HookCommand`, never Workspace control or letter confirmation, and reuses the ordinary core executors after credential validation.
 Its one-shot token stays inside the core and is revoked before the answer is sent, even if the caller ended or the request unwound; no reusable credential is returned to the hook.
 A live `HIDE_CAP_REF` must agree with the fresh proof and, on a node, its own link; a hook read does not claim or extend that persistent reference.

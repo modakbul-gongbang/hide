@@ -2662,8 +2662,61 @@ pub enum MemoryQuestionSnapshot {
         human_session_count: usize,
         pulled_session_count: usize,
     },
-    /// The agent ended without a pull request: "PR 없이 끝남", try again.
-    Failed { number: u64, title: String },
+    /// The attempt ended with no pull request, try again: "PR 없이 끝남", or,
+    /// when its agent never started, why.
+    Failed {
+        number: u64,
+        title: String,
+        start_failure: Option<MemoryStartFailure>,
+    },
+}
+
+/// Why a failed promotion's agent never started, as its spawn answered.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryStartFailure {
+    pub code: MemoryStartFailureCode,
+    /// The last line the new pane's shell showed for `shell_starting`, at
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters; the other
+    /// answers' words are the diagnostic log's (`promotion.start_failed`).
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStartFailureCode {
+    /// The new pane's shell stopped in its startup files (a question).
+    ShellStarting,
+    /// The agent's start ended at the shell without the agent, twice.
+    AgentNotStarted,
+    /// Any other answer: the device, the lock, Herdr's refusal.
+    Other,
+}
+
+impl MemoryStartFailure {
+    pub const DETAIL_CHARS: usize = 160;
+
+    /// The failure a promotion keeps (`hide_memory::Promotion::failure`), a
+    /// spawn's refusal code with its detail after a unit separator.
+    pub fn of(failure: &str) -> Self {
+        let short = |text: &str| {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.chars().take(Self::DETAIL_CHARS).collect())
+        };
+        match crate::coordination::split_refusal(failure) {
+            (crate::agent_start::SHELL_STARTING, detail) => Self {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: detail.and_then(short),
+            },
+            (code, _) => Self {
+                code: if code == "agent_not_started" {
+                    MemoryStartFailureCode::AgentNotStarted
+                } else {
+                    MemoryStartFailureCode::Other
+                },
+                detail: None,
+            },
+        }
+    }
 }
 
 /// What a card is; the same words the extraction and `hide memory show`
@@ -5387,6 +5440,55 @@ mod interface_language_tests {
 }
 
 #[cfg(test)]
+mod memory_start_failure_tests {
+    use super::{MemoryStartFailure, MemoryStartFailureCode};
+
+    /// The failed card shows why its agent never started: the question its
+    /// shell stopped at, and never more than that one line.
+    #[test]
+    fn a_start_failure_carries_its_code_and_at_most_the_question_line() {
+        let question = crate::coordination::refusal(
+            crate::agent_start::SHELL_STARTING,
+            "[oh-my-zsh] Would you like to update? [Y/n]",
+        );
+        assert_eq!(
+            MemoryStartFailure::of(&question),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::ShellStarting,
+                detail: Some("[oh-my-zsh] Would you like to update? [Y/n]".to_owned()),
+            }
+        );
+        let long =
+            crate::coordination::refusal(crate::agent_start::SHELL_STARTING, &"y".repeat(400));
+        assert_eq!(
+            MemoryStartFailure::of(&long)
+                .detail
+                .map(|line| line.chars().count()),
+            Some(MemoryStartFailure::DETAIL_CHARS)
+        );
+        assert_eq!(
+            MemoryStartFailure::of(crate::agent_start::SHELL_STARTING).detail,
+            None,
+            "a screen that could not be read"
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_started"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::AgentNotStarted,
+                detail: None,
+            }
+        );
+        assert_eq!(
+            MemoryStartFailure::of("agent_not_installed"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::Other,
+                detail: None,
+            }
+        );
+    }
+}
+
+#[cfg(test)]
 mod pull_request_state_tests {
     use super::PullRequestSnapshot;
 
@@ -5816,6 +5918,21 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "memory_promotion_state", &promotion_states);
         checked.insert("memory_promotion_state");
+
+        let start_failures = [
+            MemoryStartFailureCode::ShellStarting,
+            MemoryStartFailureCode::AgentNotStarted,
+            MemoryStartFailureCode::Other,
+        ];
+        for variant in start_failures {
+            match variant {
+                MemoryStartFailureCode::ShellStarting
+                | MemoryStartFailureCode::AgentNotStarted
+                | MemoryStartFailureCode::Other => {}
+            }
+        }
+        assert_wire(&contract, "memory_start_failure_code", &start_failures);
+        checked.insert("memory_start_failure_code");
 
         let actions = [
             MemoryAction::Enable,

@@ -356,6 +356,7 @@ fn start_dormant(
             Some(node),
             &correlation,
             pane,
+            crate::agent_start::ShellStart::Plain,
             params,
             answer_timeout,
             &confirm,
@@ -366,6 +367,7 @@ fn start_dormant(
             Some(node),
             &correlation,
             pane,
+            crate::agent_start::ShellStart::Plain,
             params,
             answer_timeout,
             &confirm,
@@ -382,9 +384,9 @@ fn start_dormant(
                 DormantStartOutcome::Unknown
             }
         },
-        Err(StartError::NotStarted(_)) | Err(StartError::Herdr(ApiError::Remote { .. })) => {
-            DormantStartOutcome::NotStarted
-        }
+        Err(StartError::NotStarted(_))
+        | Err(StartError::ShellStarting(_))
+        | Err(StartError::Herdr(ApiError::Remote { .. })) => DormantStartOutcome::NotStarted,
         Err(StartError::Herdr(_)) => {
             crate::diagnostic!(serde_json::json!({
                 "component": "agent_sleep", "kind": "agent_sleep.resume_unconfirmed",

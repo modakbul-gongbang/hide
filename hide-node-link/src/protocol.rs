@@ -106,9 +106,25 @@ use crate::error::HostError;
 /// [`crate::panes::NodeEvent::StreamOpen`]'s `caller` is absent when the node
 /// proved nothing, and the core then checks the command with `pane_inspect`;
 /// a core uploads its own build to a device it dials, so no peer lacks it.
-/// 29: pane proofs may carry one typed hook read and answer it directly.
+/// 29: `shell_integration` writes the startup files that mark a pane shell's
+/// first prompt and answers the command and environment an agent's pane
+/// starts its shell with, so a start types only once the shell has finished
+/// starting. A node on 28 would refuse it as unknown, and a start on that
+/// device could be typed into a startup question, so it is refused at Hello
+/// and reinstalled.
+/// 30: pane proofs may carry one typed hook read and answer it directly.
 /// Older peers cannot decode the hook answer and are refused at Hello.
-pub const PROTOCOL_VERSION: u32 = 29;
+pub const PROTOCOL_VERSION: u32 = 30;
+
+/// How a pane's shell is started so that it marks its first prompt
+/// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
+/// its integration arguments, and the environment it is given.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellLaunch {
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
 
 /// What a link stream the core opens on a node that dialed it reaches on
 /// the node's machine ([`Call::LinkOpen`]).
@@ -440,6 +456,12 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
+    /// Writes Hide's shell integration under the node's home once and
+    /// answers how a pane Hide makes for an agent starts the account's
+    /// shell so it marks its first prompt (`hide_host::shell_integration`),
+    /// a [`ShellLaunch`], or `null` for a shell the integration does not
+    /// reach.
+    ShellIntegration,
     /// The start time and program of each pid, in order
     /// (`process::ProcessStart`).
     ProcessStarts {
@@ -737,6 +759,7 @@ impl Call {
             | Self::Git { .. }
             | Self::TerminateGroup { .. }
             | Self::AgentInstalled { .. }
+            | Self::ShellIntegration
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
             | Self::LineInput { .. }

@@ -3681,7 +3681,9 @@ impl Runtime {
                     purpose_error,
                     unconfirmed_purpose_token,
                     issue_error,
+                    shell,
                 } = outcome;
+                self.task_pane_shell = Some((id, shell));
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     match device.as_deref() {
                         None => self.record_created_tab_checkout(tab_id, &path),
@@ -4496,6 +4498,11 @@ impl Runtime {
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
             codex_daemon: self
                 .codex_daemon(operation.device_id.as_deref().unwrap_or(self.node.as_str())),
+            shell: self
+                .task_pane_shell
+                .clone()
+                .filter(|(task, _)| *task == id)
+                .map_or(crate::agent_start::ShellStart::Plain, |(_, shell)| shell),
         })
     }
 
