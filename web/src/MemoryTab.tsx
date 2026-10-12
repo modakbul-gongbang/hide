@@ -110,7 +110,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         <Header project={project} actions={actions} busy={busy} />
         {project.enabled ? null : (
           <div className="-mt-sm flex flex-col items-start gap-sm">
-            <p className="break-keep text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
+            <p className="break-keep [overflow-wrap:anywhere] text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
             {count > 0 ? (
               <button type="button" className="text-caption text-muted-foreground underline-offset-4 hover:underline" onClick={() => setDeleting(true)} data-memory-delete="link">
                 {t("memory.deleteData")}
