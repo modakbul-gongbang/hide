@@ -708,7 +708,7 @@ pub(crate) fn report_memory_change(
 struct PassInput {
     /// The machines whose Projects have Memory, each with the link that
     /// reads its files: this machine's and each node that dials in now.
-    nodes: Vec<(NodeId, Arc<dyn NodeLink>)>,
+    nodes: Vec<super::hosts::LinkedNode>,
     /// Nodes that dial in but whose link is down: their Projects wait.
     unreached: Vec<NodeId>,
     database: PathBuf,

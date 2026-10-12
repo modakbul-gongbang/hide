@@ -22,6 +22,9 @@ use crate::remote::{
     OnClose,
 };
 
+/// A node and the link that reads its files.
+pub(crate) type LinkedNode = (crate::node::NodeId, Arc<dyn NodeLink>);
+
 /// The daemon may open a pane-scoped return route only while the same
 /// consented helper and SSH device connection are live. All fields are owned
 /// handles, so no network work is done under the runtime lock.
@@ -871,10 +874,7 @@ impl Runtime {
     /// node, or a node that dials in while its link is up, never a device the
     /// core dials, which keeps none of it (PRD core-host-node-move B14, Q17,
     /// Q20); asking starts no helper.
-    pub(crate) fn linked_node(
-        &self,
-        device: &str,
-    ) -> Result<(crate::node::NodeId, Arc<dyn NodeLink>), &'static str> {
+    pub(crate) fn linked_node(&self, device: &str) -> Result<LinkedNode, &'static str> {
         if device == self.node.as_str() {
             return Ok((self.node.clone(), self.own_node()));
         }
@@ -900,12 +900,7 @@ impl Runtime {
     /// The machines whose Projects have Memory now, each with the link that
     /// reads its files: this machine's and each node that dials in and is
     /// linked; and the nodes that dial in but whose link is down.
-    pub(crate) fn memory_nodes(
-        &self,
-    ) -> (
-        Vec<(crate::node::NodeId, Arc<dyn NodeLink>)>,
-        Vec<crate::node::NodeId>,
-    ) {
+    pub(crate) fn memory_nodes(&self) -> (Vec<LinkedNode>, Vec<crate::node::NodeId>) {
         let mut nodes = vec![(self.node.clone(), self.own_node())];
         let mut unreached = Vec::new();
         for registration in &self.snapshot.ui_state.device_registrations {
