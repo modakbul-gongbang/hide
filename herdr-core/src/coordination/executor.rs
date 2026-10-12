@@ -7,6 +7,8 @@ use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
+use crate::agent_start::ShellStart;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -624,6 +626,9 @@ fn spawn(
     // command continues once it answers again.
     let (spawn_id, on_device) = (reserved.id.clone(), reserved.machine.is_some());
     let placed = (|| -> Result<Value, String> {
+        // How the pane's shell says it has finished starting: known only for
+        // a pane this call made.
+        let mut shell = ShellStart::Plain;
         if reserved.pane.is_none() {
             // Reconcile a worktree whose creation reply was interrupted. The
             // existing local/device connector and checkout owner are shared with
@@ -678,16 +683,26 @@ fn spawn(
                 let pane = match existing_pane {
                     Some(pane) => pane,
                     None => {
-                        crate::live::open_owner_tab(
+                        let (env, integration) =
+                            crate::agent_start::shell_environment(node.as_deref(), &reserved.id);
+                        let tab = crate::live::open_owner_tab(
                             connector.as_ref(),
                             &owner,
                             &existing,
                             &label,
                             false,
-                            Default::default(),
+                            env.clone(),
                         )
-                        .map_err(|error| format!("{error:?}"))?
-                        .pane_id
+                        .map_err(|error| format!("{error:?}"))?;
+                        let (pane, started) = integrated_pane(
+                            connector.as_ref(),
+                            &reserved.id,
+                            &existing,
+                            tab,
+                            (env, integration),
+                        );
+                        shell = started;
+                        pane
                     }
                 };
                 (existing, pane)
@@ -705,7 +720,20 @@ fn spawn(
                 )
                 .map_err(|error| format!("{error}"))?;
                 let created = crate::wire::created_worktree(result)?;
-                (created.path, created.pane_id)
+                let (pane, started) = integrated_pane(
+                    connector.as_ref(),
+                    &reserved.id,
+                    &created.path,
+                    crate::live::OwnedTab {
+                        workspace_id: created.workspace_id,
+                        tab_id: created.tab_id,
+                        pane_id: created.pane_id,
+                        with_env: false,
+                    },
+                    crate::agent_start::shell_environment(node.as_deref(), &reserved.id),
+                );
+                shell = started;
+                (created.path, pane)
             };
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
@@ -724,7 +752,8 @@ fn spawn(
             )?)
             .map_err(|_| "spawn_unavailable")?;
         }
-        let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
+        let pane = reserved.pane.clone().ok_or("spawn_unavailable")?;
+        let pane = pane.as_str();
         let observed = agents(connector.as_ref())?;
         let live = observed
             .iter()
@@ -735,18 +764,32 @@ fn spawn(
             if reserved.child.is_some() {
                 return Err("child_identity_changed".into());
             }
-            // This spawn already had its start typed here, and Herdr still
-            // holds the name with no agent while the shell is back at its
-            // prompt: the start ended without the agent. Asking the same
-            // intent again answers that, rather than typing the start again
-            // each time; a new attempt closes this pane and starts afresh.
-            if observed.iter().any(|agent| {
-                agent.pane_id == pane
-                    && agent.name.as_deref() == Some(name)
-                    && agent.agent.is_none()
-            }) && shell_alone(connector.as_ref(), pane) == Ok(true)
-            {
-                return Err("agent_not_started".into());
+            if reserved.typed > 0 {
+                // A start of this spawn was typed here already. While Herdr
+                // holds its name with no agent (`launch_pending`), it gives
+                // that name to whatever agent shows in this terminal and
+                // refuses another start here, so nothing is typed while the
+                // agent may still be starting: asking again later answers it.
+                let held = observed.iter().any(|agent| {
+                    agent.pane_id == pane
+                        && agent.name.as_deref() == Some(name)
+                        && agent.agent.is_none()
+                });
+                if held && !name_released(connector.as_ref(), name) {
+                    return Err("native_identity_unavailable".into());
+                }
+                // Herdr gave that start up. Only a shell back at rest, with
+                // nothing of its own in the foreground, takes the start again,
+                // and only once: a start typed into a question at startup is
+                // typed again at the prompt that followed, and a second one
+                // that ends the same way is the answer.
+                if reserved.typed >= 2 || shell_alone(connector.as_ref(), pane) != Ok(true) {
+                    return Err("agent_not_started".into());
+                }
+                crate::diagnostic!(json!({
+                    "component": "spawn", "kind": "start.resent", "spawn": reserved.id,
+                    "pane_id": pane,
+                }));
             }
             close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
             crate::live::start_agent(
@@ -754,11 +797,21 @@ fn spawn(
                 node.as_deref(),
                 &reserved.id,
                 pane,
+                shell,
                 name,
                 kind,
                 args.clone(),
                 codex_daemon,
             )?;
+            reserved = serde_json::from_value(mutate(
+                client,
+                authority,
+                actor,
+                Mutation::Typed {
+                    id: reserved.id.clone(),
+                },
+            )?)
+            .map_err(|_| "spawn_unavailable")?;
         }
         let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
         let mut child = record(
@@ -813,6 +866,62 @@ fn spawn(
             reason
         }
     })
+}
+
+/// The pane the spawn's agent starts in, and how its shell will say it has
+/// finished starting. Herdr's `worktree.create` and `worktree.open` make a
+/// workspace's first pane with no environment, so when Hide's shell
+/// integration was had (`agent_start::shell_environment`), a tab carrying it
+/// is made in that workspace, labelled for the spawn so an interrupted retry
+/// finds it, and the first pane is closed. When that tab cannot be made, the
+/// first pane is kept and its shell is started plain.
+fn integrated_pane(
+    connector: &dyn ApiConnector,
+    spawn: &str,
+    cwd: &str,
+    tab: crate::live::OwnedTab,
+    (env, integration): (BTreeMap<String, String>, ShellStart),
+) -> (String, ShellStart) {
+    if tab.with_env || integration == ShellStart::Plain {
+        return (tab.pane_id, if tab.with_env { integration } else { ShellStart::Plain });
+    }
+    let label = format!("hide:{spawn}");
+    match crate::live::create_tab_in(connector, &tab.workspace_id, cwd, &label, false, env) {
+        Ok(integrated) => {
+            let closed = crate::wire::pane_target_params(&tab.pane_id).and_then(|params| {
+                request_with_connector(connector, "pane.close", params, Duration::from_secs(5))
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            });
+            crate::diagnostic!(json!({
+                "component": "spawn", "kind": "integrated_pane.opened", "spawn": spawn,
+                "pane_id": integrated.pane_id, "replaced": tab.pane_id,
+                "closed": closed.is_ok(), "reason": closed.err(),
+            }));
+            (integrated.pane_id, ShellStart::Integrated)
+        }
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "spawn", "kind": "integrated_pane.failed", "spawn": spawn,
+                "pane_id": tab.pane_id, "reason": error.message(),
+            }));
+            (tab.pane_id, ShellStart::Plain)
+        }
+    }
+}
+
+/// Whether Herdr has let go of `name`. Herdr holds the name of a start whose
+/// agent never showed until that start's own deadline, and settles a passed
+/// deadline only when the name is read, which this `agent.get` is.
+fn name_released(connector: &dyn ApiConnector, name: &str) -> bool {
+    crate::wire::agent_target_params(name)
+        .map_err(hide_herdr_client::ApiError::Transport)
+        .and_then(|params| {
+            request_with_connector(connector, "agent.get", params, Duration::from_secs(2))
+        })
+        .is_err_and(|error| {
+            matches!(error, hide_herdr_client::ApiError::Remote { code, .. } if code == "agent_not_found")
+        })
 }
 
 /// Whether `pane`'s shell alone holds its terminal: no program it started

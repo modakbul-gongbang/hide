@@ -629,6 +629,10 @@ pub(crate) struct OwnedTab {
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
     pub(crate) pane_id: String,
+    /// Whether the pane's shell was started with the `env` asked for: a
+    /// workspace's first tab that `worktree.open` made was not, since it
+    /// takes none.
+    pub(crate) with_env: bool,
 }
 
 /// Plain-folder owners are found and made one at a time, so two requests
@@ -677,6 +681,7 @@ pub(crate) fn open_owner_tab(
                 workspace_id,
                 tab_id,
                 pane_id,
+                with_env: matches!(owner, OwnerOpen::Folder { .. }),
             }
         }
         None => create_tab_in(connector, &workspace_id, cwd, label, focus, env)?,
@@ -787,7 +792,7 @@ fn ensure_owner(
     }
 }
 
-fn create_tab_in(
+pub(crate) fn create_tab_in(
     connector: &dyn ApiConnector,
     workspace_id: &str,
     cwd: &str,
@@ -805,6 +810,7 @@ fn create_tab_in(
         workspace_id: workspace_id.to_owned(),
         tab_id,
         pane_id,
+        with_env: true,
     })
 }
 
@@ -2137,6 +2143,7 @@ fn start_or_degrade_agent(
             None,
             &format!("herdr-core:{key}:agent:{index}:resume"),
             pane_id,
+            crate::agent_start::ShellStart::Plain,
             &name,
             &agent.kind,
             args,
@@ -2163,6 +2170,7 @@ fn start_or_degrade_agent(
         None,
         &format!("herdr-core:{key}:agent:{index}:fresh"),
         pane_id,
+        crate::agent_start::ShellStart::Plain,
         &name,
         &agent.kind,
         Vec::new(),
@@ -2222,13 +2230,16 @@ fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> 
 }
 
 /// `node` runs the pane (`agent_start::start_at_shell_checked`); none
-/// when it cannot be reached.
+/// when it cannot be reached. A start whose shell had not finished starting
+/// is refused as `agent_start::SHELL_STARTING` with the screen's last line,
+/// so the spawn that asked can say what the shell waits for.
 #[allow(clippy::too_many_arguments)] // the start identity and the pane's node
 pub(crate) fn start_agent(
     connector: &dyn ApiConnector,
     node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
+    shell: crate::agent_start::ShellStart,
     name: &str,
     kind: &str,
     args: Vec<String>,
@@ -2239,12 +2250,20 @@ pub(crate) fn start_agent(
         node,
         request_id,
         pane_id,
+        shell,
         name,
         kind,
         args,
         codex_daemon,
         &|| Ok(()),
     )
+    .map_err(|error| match error {
+        crate::agent_start::StartError::ShellStarting(screen) => crate::coordination::refusal(
+            crate::agent_start::SHELL_STARTING,
+            screen.as_deref().unwrap_or_default(),
+        ),
+        other => start_error_message(other),
+    })
 }
 
 #[allow(clippy::too_many_arguments)] // the existing start identity plus its effect admission
@@ -2253,26 +2272,36 @@ fn start_agent_checked(
     node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
+    shell: crate::agent_start::ShellStart,
     name: &str,
     kind: &str,
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
     check: &dyn Fn() -> Result<(), String>,
-) -> Result<String, String> {
-    crate::agent_start::start_at_shell_checked(
+) -> Result<String, crate::agent_start::StartError> {
+    let answer = crate::agent_start::start_at_shell_checked(
         connector,
         node,
         request_id,
         pane_id,
-        wire::agent_start_params(pane_id, name, kind, args, codex_daemon)?,
+        shell,
+        wire::agent_start_params(pane_id, name, kind, args, codex_daemon)
+            .map_err(crate::agent_start::StartError::NotStarted)?,
         Duration::from_secs(5),
         check,
-    )
-    .map_err(|error| match error {
+    )?;
+    wire::started_agent(answer).map_err(crate::agent_start::StartError::NotStarted)
+}
+
+/// A start's failure as an operator reads it.
+fn start_error_message(error: crate::agent_start::StartError) -> String {
+    match error {
         crate::agent_start::StartError::NotStarted(message) => message,
+        crate::agent_start::StartError::ShellStarting(screen) => {
+            crate::agent_start::shell_starting_message(screen.as_deref())
+        }
         crate::agent_start::StartError::Herdr(error) => format!("agent.start failed: {error}"),
-    })
-    .and_then(wire::started_agent)
+    }
 }
 
 /// One action-only node proof, never called under Runtime. Authenticated
@@ -2966,6 +2995,10 @@ fn run_agent_fork_with_registration(
         current()
     };
     check()?;
+    let (env, shell) = crate::agent_start::shell_environment(
+        Some(node),
+        &format!("herdr-core:fork:{}:start", request.name),
+    );
     let child_pane_id = if proven {
         let cwd = request
             .cwd
@@ -2992,7 +3025,7 @@ fn run_agent_fork_with_registration(
             cwd,
             &request.name,
             false,
-            Default::default(),
+            env,
         )
         .map_err(|error| error.message().to_owned())?
         .pane_id
@@ -3000,7 +3033,7 @@ fn run_agent_fork_with_registration(
         control_request(
             connector,
             "pane.split",
-            wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
+            wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref(), env)?,
         )
         .and_then(wire::split_pane)?
     };
@@ -3009,12 +3042,14 @@ fn run_agent_fork_with_registration(
         Some(node),
         &format!("herdr-core:fork:{}:start", request.name),
         &child_pane_id,
+        shell,
         &request.name,
         request.agent.kind(),
         request.agent.resume_arguments(&request.session_id),
         request.codex_daemon,
         &check,
-    );
+    )
+    .map_err(start_error_message);
     match started {
         Ok(pane_id) => {
             if let Err(message) = register(&request.parent_pane_id, &pane_id) {
@@ -3652,6 +3687,12 @@ mod tests {
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["pane_id"], "child-pane");
                         assert_eq!(params["kind"], kind);
@@ -3718,6 +3759,7 @@ mod tests {
                 "session.snapshot",
                 "tab.create",
                 "pane.process_info",
+                "pane.get",
                 "agent.start",
             ];
             if case == "duplicate-before" || case == "source-missing-before" {
@@ -3730,6 +3772,7 @@ mod tests {
                 if case == "execution-after" {
                     // Retired execution is now refused before even the
                     // shell-read connection; the owned child still closes.
+                    expected.pop();
                     expected.pop();
                 }
                 expected.push("pane.close");
@@ -3805,6 +3848,12 @@ mod tests {
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["kind"], "opencode");
                         assert_eq!(params["args"], json!(["-s", "ses_root", "--fork"]));
@@ -3854,12 +3903,14 @@ mod tests {
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                 ],
                 "refused" => &[
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                     "pane.close",
                 ],
@@ -3868,6 +3919,7 @@ mod tests {
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "pane.close",
                 ],
                 _ => &["session.snapshot", "tab.create", "pane.close"],
@@ -3922,6 +3974,12 @@ mod tests {
                     "pane.process_info" => json!({"type":"pane_process_info","process_info":{
                         "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "pane.get" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"pane_info","pane":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"unknown","revision":1,
+                            "tokens":{"hide_prompt":"1"}}})
+                    }
                     "agent.start" => {
                         assert_eq!(params["kind"], "grok");
                         assert_eq!(params["args"], json!(["--resume", id, "--fork-session"]));
@@ -3970,12 +4028,14 @@ mod tests {
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                 ],
                 "refused" => &[
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start",
                     "pane.close",
                 ],
@@ -4791,6 +4851,7 @@ mod tests {
                     workspace_id: "w9".to_owned(),
                     tab_id: "w9:t2".to_owned(),
                     pane_id: "w9:p2".to_owned(),
+                    with_env: true,
                 }
             );
             assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);

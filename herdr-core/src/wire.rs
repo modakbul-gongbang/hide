@@ -1167,7 +1167,7 @@ pub(crate) fn agent_start_params(
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),
-        timeout_ms: Some(120_000),
+        timeout_ms: Some(crate::agent_start::AGENT_START_DEADLINE.as_millis() as u64),
     })
 }
 
@@ -1217,13 +1217,17 @@ pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
 /// A split that creates the pane a fork will run in. Unlike the operator's
 /// own split it does not take focus: the operator forked the pane they are
 /// reading, and taking focus away from it would undo that.
-pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Result<Value, String> {
+pub(crate) fn fork_split_params(
+    parent_pane_id: &str,
+    cwd: Option<&str>,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::PaneSplitParams {
         target_pane_id: Some(parent_pane_id.into()),
         direction: req::SplitDirection::Right,
         cwd: cwd.filter(|v| !v.trim().is_empty()).map(herdr_param),
         focus: false,
-        env: Default::default(),
+        env: env.into_iter().collect(),
         ratio: None,
         right_click: req::PaneRightClickTarget::Herdr,
         workspace_id: None,
@@ -1455,6 +1459,16 @@ impl PaneProcessGroup {
             }
             _ => false,
         }
+    }
+
+    /// The shell's own program name, read while it is in the foreground.
+    pub(crate) fn shell_name(&self) -> Option<&str> {
+        let shell = self.shell_pid?;
+        self.foreground_pids
+            .iter()
+            .zip(&self.foreground_names)
+            .find(|(pid, _)| **pid == shell)
+            .map(|(_, name)| name.trim_start_matches('-'))
     }
 
     /// The first foreground process that is not the pane's shell.
@@ -1703,6 +1717,19 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
 /// The terminal a `pane.get` answer runs in its pane. Herdr gives every
 /// terminal it starts a new id, a restored one included, while a pane id can
 /// be handed out again, so this is what tells a pane from a later one.
+/// The value of the pane token `token` in a `pane.get` answer, `None` when
+/// the pane carries none.
+pub(crate) fn pane_token(value: Value, token: &str) -> Result<Option<String>, String> {
+    let missing = "pane.get response is missing pane";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => Ok(pane
+            .tokens
+            .into_iter()
+            .find(|(key, _)| String::from(key.clone()) == token)
+            .map(|(_, value)| value)),
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn pane_terminal(value: Value) -> Result<String, String> {
     let missing = "pane.get response is missing pane.terminal_id";
     match response(value, missing)? {
@@ -2078,12 +2105,12 @@ mod tests {
     #[test]
     fn a_fork_splits_without_focus() {
         assert_eq!(
-            fork_split_params("w1:p1", Some("/fixture")).unwrap(),
+            fork_split_params("w1:p1", Some("/fixture"), Default::default()).unwrap(),
             json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/fixture",
                 "focus": false, "right_click": "herdr"})
         );
         assert_eq!(
-            fork_split_params("w1:p1", Some("  ")).unwrap()["cwd"],
+            fork_split_params("w1:p1", Some("  "), Default::default()).unwrap()["cwd"],
             Value::Null
         );
     }

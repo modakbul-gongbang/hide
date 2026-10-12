@@ -211,6 +211,7 @@ pub(crate) fn start_agent(
         Some(node),
         &format!("herdr-core:agent-sleep:{}:wake", request.pane_id),
         &request.pane_id,
+        crate::agent_start::ShellStart::Plain,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
         &|| Ok(()),
@@ -225,6 +226,10 @@ pub(crate) fn start_agent(
         Err(StartError::NotStarted(detail)) => WakeOutcome::Failed {
             reason: refused_reason(request.mode).to_owned(),
             detail,
+        },
+        Err(StartError::ShellStarting(screen)) => WakeOutcome::Failed {
+            reason: refused_reason(request.mode).to_owned(),
+            detail: crate::agent_start::shell_starting_message(screen.as_deref()),
         },
         Err(StartError::Herdr(ApiError::Remote { code, message })) => WakeOutcome::Failed {
             reason: refused_reason(request.mode).to_owned(),

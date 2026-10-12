@@ -683,6 +683,12 @@ fn native_fork_current_journey(kind: &'static str) {
                     "pane_id":"child-pane","shell_pid":4100,"foreground_process_group_id":4100,
                     "foreground_processes":[{"pid":4100,"name":"zsh"}]}})
             }
+            // The fork's node writes the shell integration, so its shell marks
+            // the first prompt before the start is typed.
+            "pane.get" => serde_json::json!({"type":"pane_info","pane":{
+                "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w-order",
+                "tab_id":"w-order:t2","focused":false,"agent_status":"unknown","revision":1,
+                "tokens":{"hide_prompt":"1"}}}),
             "agent.start" => serde_json::json!({"type":"agent_started","argv":[],"agent":{
                 "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w-order",
                 "tab_id":"w-order:t2","focused":false,"agent_status":"idle","revision":2}}),
@@ -738,6 +744,7 @@ fn native_fork_current_journey(kind: &'static str) {
                     "session.snapshot",
                     "tab.create",
                     "pane.process_info",
+                    "pane.get",
                     "agent.start"
                 ],
                 "during-tab-connect" => vec!["session.snapshot"],

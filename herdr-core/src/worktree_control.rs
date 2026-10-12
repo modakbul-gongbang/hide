@@ -1258,6 +1258,7 @@ fn launch_agent(
         pane_node,
         &format!("herdr-core:task:{id}:agent"),
         pane_id,
+        crate::agent_start::ShellStart::Plain,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
         check,
@@ -1269,6 +1270,9 @@ fn launch_agent(
             )),
         },
         Err(StartError::NotStarted(message)) => Launch::Failed(message),
+        Err(StartError::ShellStarting(screen)) => {
+            Launch::Failed(crate::agent_start::shell_starting_message(screen.as_deref()))
+        }
         Err(StartError::Herdr(ApiError::Remote { code, message })) => {
             Launch::Refused { code, message }
         }

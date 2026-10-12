@@ -1104,7 +1104,10 @@ fn delivery_next_action(code: &str) -> &'static str {
             "Use a new intent, or repeat the request this intent was first used for"
         }
         "agent_not_started" => {
-            "The agent's start ended in its pane without the agent; check that pane for why, then spawn with a new intent"
+            "The agent's start ended in its pane without the agent and was not typed again; check that pane for why, then spawn with a new intent"
+        }
+        "shell_starting" => {
+            "The new pane's shell had not finished starting; answer what its startup files ask in that pane, then spawn with a new intent"
         }
         _ => "Check the current agent pane and retry the same intent",
     }
@@ -1115,6 +1118,11 @@ fn delivery_next_action(code: &str) -> &'static str {
 /// reason stays the code.
 fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
     match herdr_core::coordination::split_refusal(&reason) {
+        (code @ "shell_starting", Some(screen)) if !screen.is_empty() => (
+            code.to_owned(),
+            format!("{next_action}. Its screen ends with: {screen}"),
+        ),
+        (code @ "shell_starting", _) => (code.to_owned(), next_action.to_owned()),
         (code, Some("")) => (
             code.to_owned(),
             "No other device is connected; connect one in Settings > Devices, then retry"
@@ -3837,6 +3845,12 @@ mod tests {
             delivery_next_action("machine_unknown"),
         );
         assert!(none.contains("No other device is connected"), "{none}");
+        let (code, next) = refusal_answer(
+            "shell_starting\u{1f}[oh-my-zsh] Would you like to update? [Y/n]".to_owned(),
+            delivery_next_action("shell_starting"),
+        );
+        assert_eq!(code, "shell_starting");
+        assert!(next.ends_with("[oh-my-zsh] Would you like to update? [Y/n]"), "{next}");
         for code in [
             "spawn_busy",
             "machine_not_permitted",
@@ -3845,6 +3859,7 @@ mod tests {
             "agent_not_installed",
             "intent_conflict",
             "agent_not_started",
+            "shell_starting",
         ] {
             let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
             assert_eq!(reason, code);

@@ -28,6 +28,21 @@
 //! that start again on exactly that refusal, inside a bounded wait. The other
 //! starts take that refusal as the answer, since their name is someone else's.
 //!
+//! The shell holding the terminal does not say its startup files are done:
+//! a startup file that asks a question (oh-my-zsh's `[Y/n]` update prompt
+//! reads one key with `read -k 1`) leaves the shell alone in the foreground
+//! too, and a start typed then answers the question with the command's first
+//! letter and runs the rest. A pane Hide makes for a start is therefore
+//! started with Hide's shell integration (`hide_host::shell_integration`,
+//! reached through Herdr's `env`), whose zsh and fish startup files mark the
+//! shell's first prompt on the pane, and a start in such a pane
+//! ([`ShellStart::Integrated`]) waits for that mark too. A shell that never
+//! shows it within the bound, stopped at a question, is a start that did not
+//! happen, and the screen's last line says what it waits for. Other shells
+//! (bash, sh, PowerShell, cmd) take no startup file through the environment;
+//! a start there is confirmed after it was typed, by its spawn
+//! (`coordination::executor`).
+//!
 //! Every call here runs on a worker thread, never under `Mutex<Runtime>`.
 
 use std::thread;
@@ -46,6 +61,10 @@ use crate::wire;
 /// How long a pane's shell gets to reach its prompt: the pinned Herdr's own
 /// default wait for an agent's readiness.
 pub(crate) const SHELL_WAIT: Duration = Duration::from_secs(30);
+/// How long Herdr waits for the agent of a start it typed (`timeout_ms`), and
+/// so how long it holds the start's name while no agent shows. Long, because
+/// typing a long first prompt into a slow shell takes most of it.
+pub(crate) const AGENT_START_DEADLINE: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const PANE_BUSY: &str = "agent_pane_busy";
@@ -61,14 +80,92 @@ const SHORTEST_LINE_LIMIT: usize = 1024;
 /// refuses `agent.start` under that name until it has.
 pub(crate) const NAME_RELEASE_WAIT: Duration = Duration::from_secs(10);
 
+/// The refusal of a start whose shell had not finished starting: the code,
+/// then the screen's last line after [`crate::coordination::DETAIL`] when it
+/// could be read.
+pub(crate) const SHELL_STARTING: &str = "shell_starting";
+/// The shells whose startup files Hide's shell integration reaches through
+/// the environment, which therefore mark their first prompt.
+const MARKING_SHELLS: [&str; 2] = ["zsh", "fish"];
+/// The pane token the integration's first prompt reports
+/// (`hide_host::shell_integration::PROMPT_TOKEN`).
+const PROMPT_TOKEN: &str = "hide_prompt";
+/// The most of a screen line a refusal carries.
+const SCREEN_LINE_CHARS: usize = 120;
+
+/// What says a pane's shell has finished starting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShellStart {
+    /// The caller made the pane with Hide's shell integration in its
+    /// environment: a zsh or fish shell marks its first prompt, and the start
+    /// waits for that mark.
+    Integrated,
+    /// No mark is coming (a pane made before, by someone else, or where the
+    /// integration could not be written): the shell holding the terminal is
+    /// the only sign.
+    Plain,
+}
+
 /// Why a start did not settle with Herdr's answer to `agent.start`.
 #[derive(Debug)]
 pub(crate) enum StartError {
     /// Nothing was typed into the pane: its shell never held the terminal in
     /// time, or its state could not be read.
     NotStarted(String),
+    /// Nothing was typed into the pane: its shell held the terminal but had
+    /// not marked its first prompt within the wait, stopped in its startup
+    /// files (a question waiting for a key). Carries the screen's last line.
+    ShellStarting(Option<String>),
     /// Herdr's own answer to `agent.start`: a refusal, or no answer at all.
     Herdr(ApiError),
+}
+
+/// The environment a pane Hide makes for a start is created with, and how
+/// its shell will say it has finished starting: Hide's shell integration,
+/// written by `node`, the node of the machine that will run the pane. A
+/// node that cannot be reached or cannot write it leaves the pane
+/// [`ShellStart::Plain`], logged, and the start is confirmed after typing.
+pub(crate) fn shell_environment(
+    node: Option<&dyn NodeLink>,
+    correlation_id: &str,
+) -> (std::collections::BTreeMap<String, String>, ShellStart) {
+    let answer = match node {
+        Some(node) => crate::node_access::call_as::<std::collections::BTreeMap<String, String>>(
+            node,
+            Call::ShellIntegration,
+            READ_TIMEOUT,
+        )
+        .map_err(|error| error.to_string()),
+        None => Err("the machine that runs the pane cannot be reached".to_owned()),
+    };
+    match answer {
+        Ok(env) if !env.is_empty() => (env, ShellStart::Integrated),
+        Ok(env) => (env, ShellStart::Plain),
+        Err(reason) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "agent_start",
+                "kind": "shell_integration.unavailable",
+                "request": correlation_id,
+                "reason": reason,
+            }));
+            (Default::default(), ShellStart::Plain)
+        }
+    }
+}
+
+/// What an operator reads for a start whose shell had not finished starting,
+/// with the screen's last line when there was one.
+pub(crate) fn shell_starting_message(screen: Option<&str>) -> String {
+    match screen {
+        Some(line) => format!(
+            "The pane's shell had not finished starting after {} s, so the agent was not started. Its screen ends with \"{line}\": answer what it asks in that pane, then retry.",
+            SHELL_WAIT.as_secs()
+        ),
+        None => format!(
+            "The pane's shell had not finished starting after {} s, so the agent was not started. Check what its startup files wait for in that pane, then retry.",
+            SHELL_WAIT.as_secs()
+        ),
+    }
 }
 
 /// Action proof after shell readiness, repeated before every actual start
@@ -81,6 +178,7 @@ pub(crate) fn start_at_shell_checked(
     node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
+    shell: ShellStart,
     params: Value,
     answer_timeout: Duration,
     check: &dyn Fn() -> Result<(), String>,
@@ -90,6 +188,7 @@ pub(crate) fn start_at_shell_checked(
         node,
         correlation_id,
         pane_id,
+        shell,
         params,
         answer_timeout,
         SHELL_WAIT,
@@ -108,6 +207,7 @@ pub(crate) fn start_at_shell_reusing_name(
     node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
+    shell: ShellStart,
     params: Value,
     answer_timeout: Duration,
     check: &dyn Fn() -> Result<(), String>,
@@ -117,6 +217,7 @@ pub(crate) fn start_at_shell_reusing_name(
         node,
         correlation_id,
         pane_id,
+        shell,
         params,
         answer_timeout,
         SHELL_WAIT,
@@ -132,6 +233,7 @@ fn start_within(
     node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
+    start: ShellStart,
     params: Value,
     answer_timeout: Duration,
     wait: Duration,
@@ -147,6 +249,7 @@ fn start_within(
         correlation_id,
         pane_id,
         line: wire::agent_start_line_bytes(&params),
+        awaits_mark: std::cell::Cell::new(start == ShellStart::Integrated),
     };
     let mut settled = false;
     loop {
@@ -188,18 +291,31 @@ fn start_within(
     }
 }
 
-/// The pane a start waits on, and how many bytes its start line types.
+/// The pane a start waits on, how many bytes its start line types, and
+/// whether its first prompt's mark is still awaited.
 struct Shell<'a> {
     connector: &'a dyn ApiConnector,
     node: Option<&'a dyn NodeLink>,
     correlation_id: &'a str,
     pane_id: &'a str,
     line: usize,
+    awaits_mark: std::cell::Cell<bool>,
+}
+
+/// What a start still waited for when its wait ran out.
+enum Waiting {
+    /// The shell to hold the terminal.
+    Terminal,
+    /// The shell's first prompt, marked by the integration.
+    Prompt,
+    /// The shell's line editor, while the terminal keeps only this many bytes.
+    LineEditor(usize),
 }
 
 impl Shell<'_> {
-    /// Returns once the shell alone holds the terminal and its terminal
-    /// would hand the start line over whole.
+    /// Returns once the shell alone holds the terminal, has marked its first
+    /// prompt when it was started to, and its terminal would hand the start
+    /// line over whole.
     #[allow(clippy::disallowed_methods)] // a production wait, not test code
     fn wait(&self, started: Instant, deadline: Instant) -> Result<(), StartError> {
         let params =
@@ -218,16 +334,21 @@ impl Shell<'_> {
                     "The pane's shell could not be read, so the agent was not started: {message}"
                 ))
             })?;
-            // The limit of a terminal that still holds lines, read only while
-            // the shell holds it.
-            let held = match group.shell_pid.filter(|_| group.shell_holds_terminal()) {
+            // The mark and the limit of a terminal that still holds lines,
+            // read only while the shell holds it.
+            let waiting = match group.shell_pid.filter(|_| group.shell_holds_terminal()) {
+                Some(_) if self.awaits_prompt(&group)? => Waiting::Prompt,
                 Some(shell) => match self.line_cut_at(shell)? {
                     None => return Ok(()),
-                    held => held,
+                    Some(limit) => Waiting::LineEditor(limit),
                 },
-                None => None,
+                None => Waiting::Terminal,
             };
             if Instant::now() >= deadline {
+                let held = match waiting {
+                    Waiting::LineEditor(limit) => Some(limit),
+                    _ => None,
+                };
                 crate::diagnostic!(serde_json::json!({
                     "component": "agent_start",
                     "kind": "shell_wait.timeout",
@@ -239,7 +360,11 @@ impl Shell<'_> {
                     "foreground_pids": group.foreground_pids,
                     "line_bytes": self.line,
                     "line_limit": held,
+                    "prompt_unmarked": matches!(waiting, Waiting::Prompt),
                 }));
+                if matches!(waiting, Waiting::Prompt) {
+                    return Err(StartError::ShellStarting(self.last_screen_line()));
+                }
                 return Err(StartError::NotStarted(match held {
                     Some(limit) => format!(
                         "The pane's shell did not start reading its command line within {} s, so the agent was not started: until it does, its terminal keeps only {limit} bytes of a typed line, and this start's line is up to {} bytes. Check what the shell's startup files wait on, then retry.",
@@ -254,6 +379,54 @@ impl Shell<'_> {
             }
             thread::sleep(POLL_INTERVAL);
         }
+    }
+
+    /// Whether the start still waits for the first prompt's mark: only for a
+    /// shell the integration reaches, and only until the mark is seen once.
+    fn awaits_prompt(&self, group: &wire::PaneProcessGroup) -> Result<bool, StartError> {
+        if !self.awaits_mark.get() {
+            return Ok(false);
+        }
+        // A shell the integration does not reach (bash, or one a startup
+        // file replaced the shell with) marks nothing, so nothing is waited
+        // for; its start is confirmed after it was typed.
+        if !group
+            .shell_name()
+            .is_some_and(|name| MARKING_SHELLS.contains(&name))
+        {
+            self.awaits_mark.set(false);
+            return Ok(false);
+        }
+        let marked = wire::pane_target_params(self.pane_id)
+            .and_then(|params| {
+                request_with_connector(self.connector, "pane.get", params, READ_TIMEOUT)
+                    .map_err(|error| format!("pane.get failed: {error}"))
+            })
+            .and_then(|pane| wire::pane_token(pane, PROMPT_TOKEN))
+            .map_err(|message| {
+                StartError::NotStarted(format!(
+                    "The pane's shell could not be read, so the agent was not started: {message}"
+                ))
+            })?
+            .is_some();
+        self.awaits_mark.set(!marked);
+        Ok(!marked)
+    }
+
+    /// The last line the pane's screen shows, at most [`SCREEN_LINE_CHARS`]
+    /// characters: what a shell stopped in its startup files is asking.
+    /// `None` when the screen could not be read or shows nothing.
+    fn last_screen_line(&self) -> Option<String> {
+        let text = wire::pane_read_params(self.pane_id, "visible", 40)
+            .and_then(|params| {
+                request_with_connector(self.connector, "pane.read", params, READ_TIMEOUT)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(wire::pane_text)
+            .ok()?
+            .text;
+        let line = text.lines().rev().map(str::trim).find(|line| !line.is_empty())?;
+        Some(line.chars().filter(|c| !c.is_control()).take(SCREEN_LINE_CHARS).collect())
     }
 
     /// Whether Herdr lets go of the start's name once asked about it.
@@ -355,6 +528,7 @@ mod tests {
             None,
             "test:start",
             "w1:p1",
+            ShellStart::Plain,
             json!({"pane_id": "w1:p1"}),
             Duration::from_secs(5),
             wait,
@@ -369,6 +543,7 @@ mod tests {
             None,
             "test:start",
             "w1:p1",
+            ShellStart::Plain,
             json!({"pane_id": "w1:p1"}),
             Duration::from_secs(5),
             Duration::from_secs(5),
@@ -444,6 +619,7 @@ mod tests {
                 None,
                 "checked",
                 "w1:p1",
+                ShellStart::Plain,
                 json!({"pane_id":"w1:p1"}),
                 Duration::from_secs(5),
                 Duration::from_secs(5),
@@ -528,6 +704,7 @@ mod tests {
             None,
             "test:start",
             "w1:p1",
+            ShellStart::Plain,
             json!({"pane_id": "w1:p1", "name": "factory-hide-t1", "kind": "claude"}),
             Duration::from_secs(5),
             Duration::from_secs(5),
@@ -682,6 +859,7 @@ mod tests {
             node,
             "test:start",
             "w1:p1",
+            ShellStart::Plain,
             json!({"pane_id": "w1:p1", "args": ["--", "가".repeat(bytes / 3)]}),
             Duration::from_secs(5),
             wait,
