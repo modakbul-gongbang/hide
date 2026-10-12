@@ -2827,9 +2827,12 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.fork_sequence += 1;
                 self.forks_in_flight.insert(
                     pane_id.clone(),
                     super::agents::PendingFork {
+                        press: self.fork_sequence,
+                        generation: self.live_generation,
                         // A view the operator chooses after this press is
                         // where they are now, and the fork does not take it.
                         issued_serial: self.control_lane.issued_serial(),
@@ -2863,7 +2866,6 @@ impl Runtime {
                         Some((pane.cwd.clone(), checkout.next_tab_label.clone()))
                     })
                     .unzip();
-                self.fork_sequence += 1;
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),

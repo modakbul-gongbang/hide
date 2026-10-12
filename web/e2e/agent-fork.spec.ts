@@ -50,9 +50,9 @@ async function fork(page: Page, herdr: HerdrFixture, forker: string, item: "fork
   if (item === "fork_agent") await screenshot(page, "agent-fork-menu");
   const pressed = Date.now();
   await page.locator(`[data-menu-item="${item}"]`).click();
-  const keyboard = () => page.evaluate(() => document.activeElement?.closest<HTMLElement>("[data-terminal-host]")?.dataset.terminalHost ?? "");
+  const terminalWithFocus = () => page.evaluate(() => document.activeElement?.closest<HTMLElement>("[data-terminal-host]")?.dataset.terminalHost ?? "");
   let focused = "";
-  await expect.poll(async () => (focused = await keyboard()), { timeout: 30_000 }).not.toMatch(new RegExp(`^(${forker})?$`));
+  await expect.poll(async () => (focused = await terminalWithFocus()), { timeout: 30_000 }).not.toMatch(new RegExp(`^(${forker})?$`));
   const focusMs = Date.now() - pressed;
   await page.keyboard.type(marker);
   const launched = () => (herdr.run(["pane", "process-info", "--pane", focused]) as ProcessInfo).result.process_info.foreground_processes.map((process) => process.argv?.join(" "));

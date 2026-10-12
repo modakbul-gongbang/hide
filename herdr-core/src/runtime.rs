@@ -1594,6 +1594,8 @@ pub struct Runtime {
     /// pane. `agent.start` blocks until the agent has started, so without this
     /// a second activation during that wait would bill a second session.
     forks_in_flight: HashMap<String, agents::PendingFork>,
+    /// The last keyboard move made for a fork (`agents::ForkFocus`).
+    fork_focus: Option<agents::ForkFocus>,
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
@@ -2118,6 +2120,7 @@ impl Runtime {
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashMap::new(),
+            fork_focus: None,
             agent_sleep_next_decision_unix_ms: 0,
             node_sleep_next_decision_unix_ms: HashMap::new(),
             node_sleep_shown_tabs: HashMap::new(),

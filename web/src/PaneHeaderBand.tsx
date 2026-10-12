@@ -39,18 +39,23 @@ const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning:
 export function PaneForkMark({ pane, actions }: { pane: PaneRow; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const source = pane.fork?.forked_from;
-  const target = source?.pane_id && source.label ? { paneId: source.pane_id, name: source.label } : null;
-  const progress = useRelationProgress(pane.id, target?.paneId ?? null);
   if (!source) return null;
-  const label = target ? t("panes.fork.forkedFrom", { name: target.name }) : t("panes.fork.forked");
-  const icon = <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />;
-  if (!target) {
-    return (
-      <Hint label={label}>
-        <span className="flex shrink-0 items-center text-subtle-foreground" role="img" aria-label={label} data-pane-fork="">{icon}</span>
-      </Hint>
-    );
-  }
+  if (source.pane_id && source.label) return <ForkSourceButton paneId={pane.id} source={{ paneId: source.pane_id, name: source.label }} actions={actions} />;
+  const label = t("panes.fork.forked");
+  return (
+    <Hint label={label}>
+      <span className="flex shrink-0 items-center text-subtle-foreground" role="img" aria-label={label} data-pane-fork="">
+        <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />
+      </span>
+    </Hint>
+  );
+}
+
+/** The mark of a fork whose source still runs its conversation: it opens the source. */
+function ForkSourceButton({ paneId, source, actions }: { paneId: string; source: { paneId: string; name: string }; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const progress = useRelationProgress(paneId, source.paneId);
+  const label = t("panes.fork.forkedFrom", { name: source.name });
   const pending = progress?.phase === "pending";
   const failed = progress?.phase === "failed";
   return (
@@ -60,11 +65,11 @@ export function PaneForkMark({ pane, actions }: { pane: PaneRow; actions: Action
         className={cn("flex shrink-0 items-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", failed && "text-destructive")}
         aria-label={label}
         aria-busy={pending}
-        data-pane-fork={target.paneId}
+        data-pane-fork={source.paneId}
         disabled={pending || (failed && !progress.retryable)}
-        onClick={() => actions.followRelation(pane.id, target.paneId, target.name)}
+        onClick={() => actions.followRelation(paneId, source.paneId, source.name)}
       >
-        {icon}
+        <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />
       </button>
     </Hint>
   );

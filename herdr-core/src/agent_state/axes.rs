@@ -72,15 +72,6 @@ pub enum Ownership {
     Delegated,
 }
 
-/// Adds a tree view without reordering, duplicating, or changing the axes of
-/// the canonical agent list. Child ordering belongs to this view alone.
-/// Missing and cyclic parent references are visible orphan roots, so malformed
-/// external lineage cannot hide an agent or recurse forever.
-///
-/// The same walk that finds each row's ancestors also hands the row's own
-/// state up to every one of them, so the descendant badge and the descendant
-/// signals the read record compares are derived on this pass and nowhere
-/// else (PRD B3, B4, B5, D-05).
 /// Names each fork's source (`SidebarAgentSnapshot::forked_from`). A fork is
 /// the operator's root, so its source is provenance that no ownership,
 /// grouping, unread or close rule reads. The source is named only while its
@@ -105,6 +96,15 @@ fn apply_fork_sources(agents: &mut [SidebarAgentSnapshot], by_pane: &BTreeMap<St
     }
 }
 
+/// Adds a tree view without reordering, duplicating, or changing the axes of
+/// the canonical agent list. Child ordering belongs to this view alone.
+/// Missing and cyclic parent references are visible orphan roots, so malformed
+/// external lineage cannot hide an agent or recurse forever.
+///
+/// The same walk that finds each row's ancestors also hands the row's own
+/// state up to every one of them, so the descendant badge and the descendant
+/// signals the read record compares are derived on this pass and nowhere
+/// else (PRD B3, B4, B5, D-05).
 pub fn apply_lineage(
     agents: &mut [SidebarAgentSnapshot],
     workspaces: &[crate::model::WorkspaceSnapshot],

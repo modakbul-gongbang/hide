@@ -3719,6 +3719,7 @@ mod tests {
                 tab_label: Some("Tab 2".into()),
                 placement: ForkPlacement::Tab,
             };
+            let created = std::cell::RefCell::new(Vec::new());
             let result = run_agent_fork_with_registration(
                 &herdr.connector(),
                 &node,
@@ -3730,10 +3731,26 @@ mod tests {
                         Ok(())
                     }
                 },
-                |_, _| {},
+                |tab, pane| {
+                    created
+                        .borrow_mut()
+                        .push((tab.map(str::to_owned), pane.to_owned()))
+                },
                 |_, _| Ok(()),
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
+            // The core hears of the fork's tab once, as soon as Herdr made it,
+            // whatever happens to its start afterwards.
+            let made_tab = herdr.methods().iter().any(|method| method == "tab.create");
+            assert_eq!(
+                created.into_inner(),
+                if made_tab {
+                    vec![(Some("w1:t2".to_owned()), "child-pane".to_owned())]
+                } else {
+                    Vec::new()
+                },
+                "{case}"
+            );
             assert_eq!(
                 std::fs::read(if source.exists() {
                     source.clone()

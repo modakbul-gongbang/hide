@@ -1369,6 +1369,8 @@ fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
     runtime.forks_in_flight.insert(
         source.into(),
         super::agents::PendingFork {
+            press: runtime.forks_in_flight.len() as u64 + 1,
+            generation: runtime.live_generation,
             issued_serial: runtime.control_lane.issued_serial(),
             tab_id: None,
             focused: None,
@@ -1547,4 +1549,97 @@ fn a_second_fork_of_a_pane_still_forking_is_refused_whichever_item_asked() {
         Some(InputRequestState::Discarded)
     );
     assert_eq!(runtime.forks_in_flight.len(), 1);
+}
+
+// PRD fork-operator-root D-10: one fork's keyboard move is not the operator
+// choosing a view, so of two forks starting at once the later press keeps the
+// keyboard, whichever pane Herdr makes first.
+#[test]
+fn of_two_forks_starting_at_once_the_later_press_keeps_the_keyboard() {
+    for later_first in [false, true] {
+        let (mut runtime, _) = setup();
+        pending_fork(&mut runtime, "w-order:t1:p", Some("first"));
+        pending_fork(&mut runtime, "w-order:t2:p", Some("second"));
+        let earlier =
+            |runtime: &mut Runtime| runtime.ingest_fork_pane("w-order:t1:p", None, "w-order:t9:p");
+        let later =
+            |runtime: &mut Runtime| runtime.ingest_fork_pane("w-order:t2:p", None, "w-order:t8:p");
+        if later_first {
+            later(&mut runtime);
+            earlier(&mut runtime);
+        } else {
+            earlier(&mut runtime);
+            later(&mut runtime);
+        }
+        assert_eq!(
+            runtime.snapshot.focused.pane_id.as_deref(),
+            Some("w-order:t8:p"),
+            "later first: {later_first}"
+        );
+        assert_eq!(
+            input_state(&runtime, "second"),
+            Some(InputRequestState::Pending)
+        );
+        assert_eq!(
+            input_state(&runtime, "first"),
+            Some(if later_first {
+                InputRequestState::Discarded
+            } else {
+                InputRequestState::Pending
+            })
+        );
+    }
+}
+
+// PRD fork-operator-root B2, D-10: a fork's tab the full Agent area cannot
+// show waits in the strip as a new tab does, and does not take the keys.
+#[test]
+fn a_fork_tab_the_full_agent_area_cannot_show_does_not_take_the_keyboard() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=64)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(layout(&runtime).tree.display_count(), 64);
+    pending_fork(&mut runtime, "w-order:t1:p", Some("fork-keys"));
+    let before = runtime.snapshot.focused.pane_id.clone();
+    runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t65"), "w-order:t65:p");
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+}
+
+// A pane the replaced Herdr made is neither placed nor focused on the
+// connection that replaced it.
+#[test]
+fn a_fork_pane_from_a_replaced_herdr_is_not_placed_or_focused() {
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t1:p", Some("fork-keys"));
+    runtime.live_generation += 1;
+    let before = runtime.snapshot.focused.pane_id.clone();
+    assert!(!runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t4"), "w-order:t4:p"));
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+    runtime.ingest_fork_result(
+        "w-order:t1:p",
+        Err("session_fork_execution_changed".into()),
+        1,
+    );
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
 }

@@ -589,7 +589,10 @@ fn native_archive_current_journey(kind: &'static str, flag: &str) {
                 vec![]
             }
         );
-        assert!(replacement.methods().is_empty());
+        // The fork worker never reaches the replacement; only a keyboard move
+        // the lane took up after the swap can (`ingest_fork_pane` refuses a
+        // pane the replaced server made).
+        assert!(fork_methods(&replacement).is_empty());
         if case == "intent-during-start-connect" {
             assert_eq!(
                 runtime
@@ -615,8 +618,9 @@ fn a_native_fork_worker_refuses_control_retired_during_create_or_start_connect()
 }
 
 /// The fork moves the keyboard on the control lane, which runs beside the
-/// fork worker; either server confirms whichever pane it is asked to focus,
-/// so the worker's own requests stay what each case is about.
+/// fork worker and answers to whichever server is current when it takes the
+/// move up; either server confirms whichever pane it is asked to focus, so
+/// the worker's own requests stay what each case is about.
 #[cfg(unix)]
 fn focus_answer(
     method: &str,
@@ -814,6 +818,9 @@ fn native_fork_current_journey(kind: &'static str) {
                 "cleanup owns only the created child"
             );
         }
+        // The fork worker never reaches the replacement; only a keyboard move
+        // the lane took up after the swap can (`ingest_fork_pane` refuses a
+        // pane the replaced server made).
         assert!(fork_methods(&replacement).is_empty());
         assert_eq!(std::fs::read_to_string(&source).unwrap(), bytes);
     }

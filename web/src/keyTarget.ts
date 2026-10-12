@@ -73,14 +73,27 @@ export function keyPayload(paneId: string, bytesBase64: string, now: number = Da
  */
 export function noteTerminalFocus(paneId: string) {
   if (!armed || paneId === armed.originPaneId) return;
-  const requestId = armed.requestId;
-  const row = useShellStore.getState().rest?.terminal?.input_requests?.find((request) => request.request_id === requestId);
-  if (row?.state === "pending" && row.held_for === paneId) return;
+  if (heldPane() === paneId) return;
   armed = null;
 }
 
-/** The operator pointed at a pane, a tab or an area: they chose where they are. */
-export function noteOperatorPointer() {
+/** The pending row of the armed request, if the core lists one. */
+function heldPane(): string | null {
+  if (!armed) return null;
+  const requestId = armed.requestId;
+  const row = useShellStore.getState().rest?.terminal?.input_requests?.find((request) => request.request_id === requestId);
+  return row?.state === "pending" ? (row.held_for ?? null) : null;
+}
+
+/**
+ * The operator pointed at a pane, a tab or an area: they chose where they are.
+ * Pointing into the pane the keys already wait for (a fork whose agent has not
+ * started) chooses nothing new, so its keys keep waiting for that agent.
+ */
+export function noteOperatorPointer(event?: Event) {
+  const held = heldPane();
+  const target = event?.target instanceof Element ? event.target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView : undefined;
+  if (held && target === held) return;
   armed = null;
 }
 
