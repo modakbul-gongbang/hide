@@ -102,13 +102,20 @@ fn version_folder(home: &Path) -> io::Result<PathBuf> {
             std::fs::write(zsh.join(name), text)?;
         }
         let fish = staging.path().join("fish-data").join(FISH_FILE);
-        std::fs::create_dir_all(fish.parent().ok_or_else(|| io::Error::other("no fish folder"))?)?;
+        std::fs::create_dir_all(
+            fish.parent()
+                .ok_or_else(|| io::Error::other("no fish folder"))?,
+        )?;
         std::fs::write(&fish, FISH)
     })();
     // A writer that finished first removed this staging folder with the
     // others; its folder is the same text.
     if let Err(error) = written {
-        return if folder.is_dir() { Ok(folder) } else { Err(error) };
+        return if folder.is_dir() {
+            Ok(folder)
+        } else {
+            Err(error)
+        };
     }
     match hide_platform::fs::atomic::rename_no_replace_path(staging.path(), &folder) {
         Ok(()) => {
