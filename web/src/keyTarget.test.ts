@@ -106,7 +106,6 @@ describe("keys after a new tab or split", () => {
     const inside = document.createElement("span");
     view.append(inside);
     document.body.append(view);
-    inside.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     noteOperatorPointer({ target: inside } as unknown as Event);
     expect(keyPayload("w1:p9", "YQ==")).toEqual({ pending_request: "r1", bytes_base64: "YQ==" });
     noteOperatorPointer({ target: document.body } as unknown as Event);

@@ -590,8 +590,9 @@ fn native_archive_current_journey(kind: &'static str, flag: &str) {
             }
         );
         // The fork worker never reaches the replacement; only a keyboard move
-        // the lane took up after the swap can (`ingest_fork_pane` refuses a
-        // pane the replaced server made).
+        // queued on the lane before the swap can, which is the lane's
+        // accepted residual for any queued focus (`ingest_fork_pane` itself
+        // refuses a pane the replaced server made).
         assert!(fork_methods(&replacement).is_empty());
         if case == "intent-during-start-connect" {
             assert_eq!(
@@ -819,8 +820,9 @@ fn native_fork_current_journey(kind: &'static str) {
             );
         }
         // The fork worker never reaches the replacement; only a keyboard move
-        // the lane took up after the swap can (`ingest_fork_pane` refuses a
-        // pane the replaced server made).
+        // queued on the lane before the swap can, which is the lane's
+        // accepted residual for any queued focus (`ingest_fork_pane` itself
+        // refuses a pane the replaced server made).
         assert!(fork_methods(&replacement).is_empty());
         assert_eq!(std::fs::read_to_string(&source).unwrap(), bytes);
     }

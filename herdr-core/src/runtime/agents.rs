@@ -2105,14 +2105,20 @@ impl Runtime {
             self.discard_input_request(&origin, "not_shown");
             return true;
         }
+        let prior_intent_serial = self.last_view_intent_serial;
+        self.focus_pane(pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+        // A focus the core refused (a waiting tab, a closing pane) moved
+        // nothing: the fork does not hold the keys or count as a move.
+        if self.snapshot.focused.pane_id.as_deref() != Some(pane_id) {
+            self.discard_input_request(&origin, "not_shown");
+            return true;
+        }
         if let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) {
             pending.focused = Some(pane_id.to_owned());
         }
         // The shell keeps typing against the request while the fork's pane
         // has the keyboard, so nothing reaches its shell first.
         self.hold_input_request_for(&origin, pane_id);
-        let prior_intent_serial = self.last_view_intent_serial;
-        self.focus_pane(pane_id.to_owned(), PaneFocusOrigin::Operator, None);
         self.fork_focus = Some(ForkFocus {
             intent_serial: self.last_view_intent_serial,
             prior_intent_serial,
