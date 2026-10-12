@@ -830,7 +830,9 @@ impl Runtime {
         crate::usage::UsageActivity {
             // Background Memory analysis reads the weekly figure with no
             // window attached (D-10 b).
-            window_visible: self.usage_window_visible || self.memory_reads_usage(),
+            window_visible: self.usage_window_visible
+                || self.memory_reads_usage()
+                || self.limit_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
         }
     }
@@ -1566,7 +1568,10 @@ impl Runtime {
         self.ai_settings
             .as_ref()
             .is_some_and(|settings| settings.agent_summary && self.ai_active())
-            && !self.usage_paused()
+            // The pause as the last refresh found it: this runs every
+            // coordinator tick, and the refresh runs on each usage read,
+            // settings change and wake that can move it.
+            && !self.usage_pause_announced
     }
 
     /// Whether the label worker asks a provider now: agent summaries are on
@@ -1839,6 +1844,14 @@ impl Runtime {
     ) -> Option<crate::model::BackgroundAiRefusalSnapshot> {
         if !settings.chosen || !settings.enabled {
             return None;
+        }
+        // Every agent past the limit is what the screen must say, whatever the
+        // analyzer last recorded: labels are not asked while it holds, so that
+        // record is not refreshed.
+        if self.usage_pause_announced
+            && let Some(refusal) = self.usage_refusal(settings)
+        {
+            return Some(refusal);
         }
         let standing = self
             .label_services

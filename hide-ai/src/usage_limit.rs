@@ -141,13 +141,13 @@ impl UsageLimits {
 
     /// Replaces the limit and the readings. Returns whether anything moved,
     /// so a caller republishes only a real change.
-    pub fn set(&self, limit: UsageLimit, readings: BTreeMap<ProviderId, UsageReading>) -> bool {
+    pub fn set(&self, limit: UsageLimit, readings: &BTreeMap<ProviderId, UsageReading>) -> bool {
         let mut state = self.lock();
-        if state.limit == limit && state.readings == readings {
+        if state.limit == limit && state.readings == *readings {
             return false;
         }
         state.limit = limit;
-        state.readings = readings;
+        state.readings = readings.clone();
         true
     }
 
@@ -208,7 +208,7 @@ mod tests {
 
     fn limits(limit: UsageLimit, rows: &[(ProviderId, UsageReading)]) -> UsageLimits {
         let gate = UsageLimits::new();
-        gate.set(limit, rows.iter().copied().collect());
+        gate.set(limit, &rows.iter().copied().collect());
         gate
     }
 
@@ -305,8 +305,8 @@ mod tests {
     fn setting_what_is_already_there_reports_no_change() {
         let gate = UsageLimits::new();
         let rows: BTreeMap<_, _> = [(ProviderId::CLAUDE, reading(40.0, Some(9)))].into();
-        assert!(gate.set(UsageLimit::Percent(95), rows.clone()));
-        assert!(!gate.set(UsageLimit::Percent(95), rows.clone()));
-        assert!(gate.set(UsageLimit::None, rows));
+        assert!(gate.set(UsageLimit::Percent(95), &rows));
+        assert!(!gate.set(UsageLimit::Percent(95), &rows));
+        assert!(gate.set(UsageLimit::None, &rows));
     }
 }

@@ -1255,13 +1255,9 @@ fn degraded_of(selected: ProviderId, chosen: &Selection) -> Option<Degraded> {
             reason: reason.clone(),
             until: None,
         }),
-        Selection::PastLimit(past) => Some(Degraded {
-            provider: selected,
-            reason: chosen.availability(),
-            until: past
-                .resets_at_unix_ms
-                .map(|reset| Duration::from_millis(reset.saturating_sub(unix_ms()))),
-        }),
+        // The limit is judged where a request is placed, never on this
+        // selection: an agent past it is signed in and able, not degraded.
+        Selection::PastLimit(_) => None,
     }
 }
 
@@ -1822,7 +1818,7 @@ mod tests {
         rows: &[(ProviderId, crate::UsageReading)],
     ) -> Arc<UsageLimits> {
         let gate = Arc::new(UsageLimits::new());
-        gate.set(limit, rows.iter().copied().collect());
+        gate.set(limit, &rows.iter().copied().collect());
         gate
     }
 
@@ -1977,13 +1973,13 @@ mod tests {
         let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex"), ok("codex")]);
         let rows: std::collections::BTreeMap<_, _> = [(ProviderId::CLAUDE, week(86.0))].into();
         let limits = Arc::new(UsageLimits::new());
-        limits.set(crate::UsageLimit::Percent(80), rows.clone());
+        limits.set(crate::UsageLimit::Percent(80), &rows);
         let router = gated_router(vec![claude.clone(), codex.clone()], sink, &limits);
         let first = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
         assert_eq!(first.provider, ProviderId::CODEX);
-        limits.set(crate::UsageLimit::Percent(95), rows);
+        limits.set(crate::UsageLimit::Percent(95), &rows);
         let second = router
             .execute(&request("p2", "y"), &CancelToken::new())
             .unwrap();

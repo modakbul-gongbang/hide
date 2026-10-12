@@ -225,3 +225,42 @@ fn reading_the_same_usage_again_changes_nothing() {
         "nothing moved with the clock either"
     );
 }
+
+/// Reviewed gap: with no window attached the figure is still read while
+/// Hide AI is paused (only a fresh one lifts it) or an agent worked lately,
+/// and not otherwise, so a quiet daemon spawns no usage child.
+#[test]
+fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_quiet() {
+    let mut runtime = two_agents();
+    // A core starts counting as lately active; a quiet one has been idle past the hint.
+    runtime.pet_active_at_unix_ms = 0;
+    assert!(
+        !runtime.usage_activity().window_visible,
+        "a quiet daemon under the limit reads nothing"
+    );
+
+    runtime.ingest_provider_usage(vec![
+        weekly("claude", Some(93.0), next_week_ms()),
+        weekly("codex", Some(96.0), next_week_ms()),
+    ]);
+    assert!(runtime.usage_paused());
+    assert!(
+        runtime.usage_activity().window_visible,
+        "a paused order needs a fresh figure to lift"
+    );
+
+    runtime.dispatch_json(&ai_event(serde_json::json!({"usage_limit": "none"})));
+    assert!(
+        !runtime.usage_activity().window_visible,
+        "No limit judges nothing, so it reads nothing"
+    );
+
+    runtime.dispatch_json(&ai_event(serde_json::json!({"usage_limit": 90})));
+    runtime.ingest_provider_usage(vec![weekly("claude", Some(10.0), next_week_ms())]);
+    assert!(!runtime.usage_paused());
+    runtime.pet_active_at_unix_ms = unix_milliseconds();
+    assert!(
+        runtime.usage_activity().window_visible,
+        "an agent worked lately, so labels are judged by a fresh figure"
+    );
+}

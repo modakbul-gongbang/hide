@@ -13,6 +13,9 @@ use super::*;
 use crate::model::{BackgroundAiRefusalSnapshot, BackgroundAiWeekly};
 use hide_ai::{ProviderId, UsageLimit, UsageLimits, UsageReading};
 
+/// How long after an agent last worked a set limit keeps the usage reader on.
+const LIMIT_USAGE_WANTED_MS: u64 = 30 * 60_000;
+
 impl Runtime {
     /// The cell the label and Memory routers are judged by.
     pub(crate) fn usage_gate(&self) -> Arc<UsageLimits> {
@@ -61,6 +64,20 @@ impl Runtime {
             .collect()
     }
 
+    /// Whether the weekly figure is worth reading with no window attached: a
+    /// limit is set and Hide AI is on, and either the order is paused (only a
+    /// fresh figure can lift it) or an agent worked in the last half hour, so
+    /// labels are judged by a figure that is not days old. Bounded like
+    /// Memory's own hint: at most one read per agent every five minutes, and
+    /// none while nothing runs.
+    pub(crate) fn limit_reads_usage(&self) -> bool {
+        self.ai_active()
+            && self.usage_limit().threshold().is_some()
+            && (self.usage_pause_announced
+                || unix_milliseconds().saturating_sub(self.pet_active_at_unix_ms)
+                    < LIMIT_USAGE_WANTED_MS)
+    }
+
     /// The limit the operator chose, 90% while the settings are not read.
     fn usage_limit(&self) -> UsageLimit {
         self.ai_settings
@@ -73,7 +90,7 @@ impl Runtime {
     /// snapshot moved, so a caller republishes only a real change.
     pub(super) fn refresh_usage_limit(&mut self) -> bool {
         let readings = self.weekly_readings();
-        self.usage_limits.set(self.usage_limit(), readings.clone());
+        self.usage_limits.set(self.usage_limit(), &readings);
         let limit = self.usage_limit().threshold();
         let now = unix_milliseconds();
         let snapshot = &mut self.snapshot.status.background_ai;
@@ -110,7 +127,10 @@ impl Runtime {
             "kind": if paused { "usage_limit.paused" } else { "usage_limit.resumed" },
             "reason": "usage_limit",
             "limit": self.usage_limit().threshold(),
-            "agents": self.usage_order().iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+            "agents": self.usage_order().iter().map(|id| serde_json::json!({
+                "agent": id.as_str(),
+                "used": self.usage_limits.reading(*id).map(|reading| reading.used_percent),
+            })).collect::<Vec<_>>(),
         }));
         self.sync_project_memory();
     }
