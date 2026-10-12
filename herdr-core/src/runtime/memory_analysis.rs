@@ -19,7 +19,7 @@
 
 use super::memory::{
     MemoryReceipt, SESSION_CALL_TIMEOUT, digest, now_ms, project_identity, project_sessions,
-    session_chunk, session_stat, trusted_memory_receipt,
+    session_conversation, session_stat, trusted_memory_receipt,
 };
 use super::memory_evidence::{CheckoutFacts, check_evidence};
 use super::memory_verify::{check_before_suggestion, reverify_pending};
@@ -34,6 +34,7 @@ use hide_memory::{
     HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
+use hide_node_link::sessions::ReaderFeature;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -71,6 +72,14 @@ const USAGE_WANTED_MS: u64 = 30 * 60_000;
 const COMPARISON_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 /// The text of the new events the comparison set is chosen by.
 const COMPARISON_TEXT_LIMIT_BYTES: usize = 16 * 1024;
+/// The most session read failures remembered so each is logged once per
+/// version of its file; past it a new failure is logged on every pass.
+const FAILED_READS_LIMIT: usize = 4096;
+
+/// The session read failures the log already has: each by its kind and
+/// session, with the version of the file it failed on (its size and
+/// modification time; an OpenCode session's row has only its update time).
+type FailedReads = HashMap<(&'static str, MemorySession), (u64, Option<u64>)>;
 
 /// Memory's background state on the runtime, owned by this module.
 #[derive(Default)]
@@ -102,6 +111,9 @@ pub(super) struct MemoryWork {
     /// sessions carried it.
     receipts_pending: Vec<(String, SightedMemoryReceipt)>,
     receipts_in_flight: bool,
+    /// What the last pass left of [`FailedReads`]; a pass that panicked
+    /// leaves none, and its failures are logged again once.
+    failed_reads: FailedReads,
     /// Each Project's analysis state and last change, by Memory's Project id.
     pub(super) projects: HashMap<String, ProjectMemoryWork>,
 }
@@ -146,6 +158,45 @@ struct PassOutcome {
     /// A session was due for background analysis, which needs the
     /// provider's weekly usage read fresh.
     wants_usage: bool,
+    failed_reads: FailedReads,
+}
+
+impl PassOutcome {
+    /// Logs a session that could not be read once per version of its file:
+    /// the same file failing the same way on the next pass, a minute later,
+    /// says nothing new.
+    fn read_failed(
+        &mut self,
+        kind: &'static str,
+        project_id: &str,
+        session: &ProjectSession,
+        version: (u64, Option<u64>),
+        message: &str,
+    ) {
+        let key = (kind, (session.agent.as_str(), session.id.clone()));
+        if self.failed_reads.get(&key) == Some(&version) {
+            return;
+        }
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": kind,
+            "project_id": project_id,
+            "provider": session.agent.as_str(),
+            "session_id": session.id,
+            "message": message,
+        }));
+        if self.failed_reads.len() < FAILED_READS_LIMIT || self.failed_reads.contains_key(&key) {
+            self.failed_reads.insert(key, version);
+        }
+    }
+
+    /// The session was read: a later failure is news again.
+    fn read_succeeded(&mut self, kind: &'static str, session: &ProjectSession) {
+        if !self.failed_reads.is_empty() {
+            self.failed_reads
+                .remove(&(kind, (session.agent.as_str(), session.id.clone())));
+        }
+    }
 }
 
 /// The analysis provider's weekly usage as a pass sees it (D-10 b).
@@ -399,6 +450,7 @@ impl Runtime {
             home,
             delegated,
             cancel,
+            failed_reads: work.failed_reads.clone(),
         };
         let report_context = context.clone();
         let spawn = thread::Builder::new()
@@ -448,6 +500,7 @@ impl Runtime {
         work.pass_settings = None;
         work.closed_sessions
             .retain(|session| !outcome.settled.contains(session));
+        work.failed_reads = outcome.failed_reads;
         if outcome.wants_usage {
             let now = now_ms();
             work.usage_wanted_until_unix_ms = now.saturating_add(USAGE_WANTED_MS);
@@ -778,10 +831,14 @@ struct PassInput {
     /// agent's instruction, not the operator's (D-04).
     delegated: HashSet<String>,
     cancel: CancelToken,
+    failed_reads: FailedReads,
 }
 
 fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcome {
-    let mut outcome = PassOutcome::default();
+    let mut outcome = PassOutcome {
+        failed_reads: input.failed_reads.clone(),
+        ..PassOutcome::default()
+    };
     // No store yet: Memory was never turned on on this machine.
     if !MemoryStore::exists(&input.database) {
         outcome.settled = input.closed.clone();
@@ -887,6 +944,10 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
     outcome
 }
 
+/// The log kinds of a session whose receipts, or whose analysis, failed.
+const RECEIPTS_FAILED: &str = "receipts.walk_failed";
+const ANALYSIS_FAILED: &str = "analysis.session_failed";
+
 /// What one Project's walk analyzed.
 #[derive(Default)]
 struct ProjectTally {
@@ -917,33 +978,39 @@ fn walk_project(
     store
         .prune_receipts(project_id, now_ms())
         .map_err(|error| error.to_string())?;
-    // Memory analyzes the sessions of agents this build has a Memory reader
-    // for (the JSONL ones: Claude Code, Codex, Grok, Pi, omp); an OpenCode
-    // session, kept in OpenCode's database, is walked for its receipts alone
-    // through the conversation reader (D-16).
-    let readers = hide_node_link::sessions::ReaderFeatures::implemented();
+    // Memory analyzes the sessions of agents the node holding them reads for
+    // Memory (the JSONL ones: Claude Code, Codex, Grok, Pi, omp), which it
+    // does through their conversation reader; an OpenCode session, kept in
+    // OpenCode's database, is walked for its receipts alone through that
+    // reader (D-16). A session the node has no such reader for, an older
+    // node's, is one Memory does not read, never a failed read.
+    let reads = |session: &ProjectSession, feature| {
+        sessions_node
+            .reader_features()
+            .is_some_and(|readers| readers.supports(session.agent.as_str(), feature))
+    };
     let mut sessions = Vec::new();
     for session in project_sessions(sessions_node, &identity)? {
-        if readers.supports(
-            session.agent.as_str(),
-            hide_node_link::sessions::ReaderFeature::Memory,
-        ) {
+        if reads(&session, ReaderFeature::Memory) && reads(&session, ReaderFeature::Conversation) {
             sessions.push(session);
         } else if session.agent == hide_session::Agent::OpenCode
+            && reads(&session, ReaderFeature::Conversation)
             && matches!(session.availability, SessionAvailability::Available)
             && !input
                 .live
                 .contains(&(session.agent.as_str(), session.id.clone()))
             && !input.cancel.is_cancelled()
-            && let Err(message) = read_database_receipts(store, sessions_node, project_id, &session)
         {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "receipts.walk_failed",
-                "project_id": project_id,
-                "provider": session.agent.as_str(),
-                "message": message,
-            }));
+            match read_database_receipts(store, sessions_node, project_id, &session) {
+                Ok(()) => outcome.read_succeeded(RECEIPTS_FAILED, &session),
+                Err(message) => outcome.read_failed(
+                    RECEIPTS_FAILED,
+                    project_id,
+                    &session,
+                    (0, Some(session.updated_at_unix_ms)),
+                    &message,
+                ),
+            }
         }
     }
     // What a card rests on is compared with the repository first: it needs
@@ -999,16 +1066,14 @@ fn walk_project(
         let Ok(stat) = session_stat(sessions_node, &session) else {
             continue;
         };
-        if !input.live.contains(&key)
-            && let Err(message) = read_receipts(store, sessions_node, project_id, &session, &stat)
-        {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "receipts.walk_failed",
-                "project_id": project_id,
-                "provider": session.agent.as_str(),
-                "message": message,
-            }));
+        let version = (stat.size, stat.modified_unix_ms);
+        if !input.live.contains(&key) {
+            match read_receipts(store, sessions_node, project_id, &session, &stat) {
+                Ok(()) => outcome.read_succeeded(RECEIPTS_FAILED, &session),
+                Err(message) => {
+                    outcome.read_failed(RECEIPTS_FAILED, project_id, &session, version, &message);
+                }
+            }
         }
         let pending = analysis_pending(store, project_id, &session, &stat)?;
         if closed && !pending {
@@ -1053,22 +1118,22 @@ fn walk_project(
             root,
             &session,
             input.delegated.contains(&session.id),
+            &stat,
             &input.cancel,
             &mut admit,
         ) {
-            Ok(learned) => tally.learned += learned,
+            Ok(learned) => {
+                tally.learned += learned;
+                outcome.read_succeeded(ANALYSIS_FAILED, &session);
+            }
             // One provider failure stops this Project's analysis for the pass;
             // its receipts are still walked.
             Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
             Err(AnalysisFailure::Deferred(reason)) => *deferred = Some(reason),
             Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => break,
-            Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "analysis.session_failed",
-                "project_id": project_id,
-                "provider": session.agent.as_str(),
-                "message": message,
-            })),
+            Err(AnalysisFailure::Local(message)) => {
+                outcome.read_failed(ANALYSIS_FAILED, project_id, &session, version, &message);
+            }
         }
     }
     // The operator's own instruction files are this machine's.
@@ -1272,14 +1337,11 @@ fn read_receipts(
     if !cursor_behind(saved.as_ref(), stat) {
         return Ok(());
     }
-    let chunk = session_chunk(sessions_node, session, saved.as_ref())?;
-    let checkpoint = serde_json::to_vec(&chunk.checkpoint).map_err(|error| error.to_string())?;
     // Joined as the label read joins a message's parts, so a receipt in a
     // later part is named by the same turn whichever reader finds it.
-    let mut parsed =
-        hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
-    parsed.coalesce();
-    for (event, offset) in parsed.events.iter().zip(&parsed.event_offsets) {
+    let read = session_conversation(sessions_node, session, saved.as_ref())?;
+    let checkpoint = serde_json::to_vec(&read.checkpoint).map_err(|error| error.to_string())?;
+    for (event, offset) in read.events.iter().zip(&read.event_offsets) {
         if event.kind != EventKind::Injected {
             continue;
         }
@@ -1300,14 +1362,53 @@ fn read_receipts(
                 project_id: project_id.to_owned(),
                 provider: provider.to_owned(),
                 session_id: session.id.clone(),
-                byte_offset: chunk.offset,
+                byte_offset: read_through(&read, stat),
                 checkpoint,
                 last_content_hash: None,
                 operator_events: 0,
                 updated_at_unix_ms: now_ms(),
             },
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    log_skipped("receipts.records_skipped", project_id, session, &read);
+    Ok(())
+}
+
+/// Logs the records a read passed over, by reason, most often a tool result
+/// past the line cap. Called once the cursor moved past them, so each is
+/// logged once.
+fn log_skipped(
+    kind: &'static str,
+    project_id: &str,
+    session: &ProjectSession,
+    read: &hide_session::ConversationRead,
+) {
+    if read.skipped_reasons.is_empty() {
+        return;
+    }
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": kind,
+        "project_id": project_id,
+        "provider": session.agent.as_str(),
+        "session_id": session.id,
+        "skipped": read.skipped_reasons,
+    }));
+}
+
+/// How much of the file `stat` saw a read accounted for: a read that reached
+/// the end it found accounts for all of it, a torn last line too, so an
+/// unchanged file is not read again on every pass.
+fn read_through(
+    read: &hide_session::ConversationRead,
+    stat: &hide_node_link::sessions::SessionStat,
+) -> u64 {
+    let offset = read.checkpoint.offset();
+    if read.has_more {
+        offset
+    } else {
+        offset.max(stat.size)
+    }
 }
 
 /// Records the receipts an OpenCode session stored past the receipt cursor,
@@ -1341,7 +1442,7 @@ fn read_database_receipts(
         hide_node_link::link::call_as_reader(
             sessions_node,
             session.agent,
-            hide_node_link::sessions::ReaderFeature::Conversation,
+            ReaderFeature::Conversation,
             Call::LabelTranscript {
                 request: hide_session::label_transcript::LabelTranscriptRequest {
                     agent: session.agent,
@@ -1522,7 +1623,7 @@ fn record_sighted_receipts(
 /// Analyzes the session's conversation past the analysis cursor, one
 /// provider call per bounded group, and moves the cursor only when every
 /// group was written. Answers how many cards it created or replaced.
-#[allow(clippy::too_many_arguments)] // one session: its store, node, provider, Project, delegation and limits
+#[allow(clippy::too_many_arguments)] // one session: its store, nodes, provider, Project, delegation, file and limits
 fn analyze_session(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
@@ -1531,6 +1632,7 @@ fn analyze_session(
     root: &str,
     session: &ProjectSession,
     delegated: bool,
+    stat: &hide_node_link::sessions::SessionStat,
     cancel: &CancelToken,
     admit: &mut dyn FnMut(&MemoryStore) -> Result<(), AnalysisFailure>,
 ) -> Result<usize, AnalysisFailure> {
@@ -1539,16 +1641,14 @@ fn analyze_session(
     let saved = store
         .load_cursor(CursorReader::Analysis, project_id, provider, &session.id)
         .map_err(|error| local(error.to_string()))?;
-    let chunk = session_chunk(sessions_node, session, saved.as_ref()).map_err(local)?;
+    let read = session_conversation(sessions_node, session, saved.as_ref()).map_err(local)?;
     let checkpoint =
-        serde_json::to_vec(&chunk.checkpoint).map_err(|error| local(error.to_string()))?;
-    let mut parsed =
-        hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
-    parsed.coalesce();
-    let events = parsed
+        serde_json::to_vec(&read.checkpoint).map_err(|error| local(error.to_string()))?;
+    let byte_offset = read_through(&read, stat);
+    let events = read
         .events
-        .into_iter()
-        .zip(parsed.event_offsets)
+        .iter()
+        .zip(&read.event_offsets)
         .filter(|(event, _)| matches!(event.kind, EventKind::Human | EventKind::Assistant))
         .map(|(event, offset)| {
             // What another agent sent a session it started is that agent's
@@ -1616,7 +1716,7 @@ fn analyze_session(
                 project_id: project_id.to_owned(),
                 provider: provider.to_owned(),
                 session_id: session.id.clone(),
-                byte_offset: chunk.offset,
+                byte_offset,
                 checkpoint,
                 last_content_hash: last_hash,
                 operator_events,
@@ -1624,6 +1724,7 @@ fn analyze_session(
             },
         )
         .map_err(|error| local(error.to_string()))?;
+    log_skipped("analysis.records_skipped", project_id, session, &read);
     Ok(learned)
 }
 
@@ -2049,7 +2150,8 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Answers each request with the next scripted value and counts calls.
+    /// Answers each request with the next scripted value, counts calls and
+    /// keeps what each was asked.
     struct Scripted {
         answers: Mutex<Vec<Value>>,
         calls: AtomicUsize,
@@ -2084,11 +2186,15 @@ mod tests {
         _temp: tempfile::TempDir,
         root: PathBuf,
         locator: PathBuf,
+        /// The session's records: the operator's rule, then the receipt.
+        lines: Vec<Value>,
         database: PathBuf,
         home: PathBuf,
         project_id: String,
         backend: Arc<Scripted>,
         node: Arc<dyn NodeLink>,
+        /// What the last pass remembered, as the runtime keeps it.
+        failed_reads: std::cell::RefCell<FailedReads>,
     }
 
     const SESSION: &str = "claude-memory-pass";
@@ -2168,18 +2274,11 @@ mod tests {
                     "attachment": {"type": "hook_additional_context", "hookEvent": "UserPromptSubmit",
                         "hookName": "UserPromptSubmit", "content": [receipt]}}),
             ];
-            std::fs::write(
-                &locator,
-                lines
-                    .iter()
-                    .map(|line| format!("{line}\n"))
-                    .collect::<String>(),
-            )
-            .unwrap();
-            Self {
+            let fixture = Self {
                 _temp: temp,
                 root,
                 locator,
+                lines: lines.to_vec(),
                 database,
                 home,
                 project_id: identity.id,
@@ -2189,7 +2288,22 @@ mod tests {
                     inputs: Mutex::new(Vec::new()),
                 }),
                 node,
-            }
+                failed_reads: Default::default(),
+            };
+            fixture.write(&fixture.lines);
+            fixture
+        }
+
+        /// Replaces the session file with `lines`, one record each.
+        fn write(&self, lines: &[Value]) {
+            std::fs::write(
+                &self.locator,
+                lines
+                    .iter()
+                    .map(|line| format!("{line}\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
         }
 
         fn answer(&self, cited: &[&str]) {
@@ -2289,6 +2403,7 @@ mod tests {
                 home: Some((crate::node::test_node(), self.home.clone())),
                 delegated: delegated.iter().map(|id| (*id).to_owned()).collect(),
                 cancel: CancelToken::new(),
+                failed_reads: self.failed_reads.borrow().clone(),
             };
             let mut reports = Vec::new();
             let outcome = run_pass(&input, &mut |report| {
@@ -2300,6 +2415,7 @@ mod tests {
                     PassReport::Analyzed { .. } => "analyzed",
                 })
             });
+            *self.failed_reads.borrow_mut() = outcome.failed_reads.clone();
             (reports, outcome)
         }
 
@@ -2684,6 +2800,169 @@ mod tests {
         let stray = ("codex", "not-in-any-project".to_owned());
         let (_, outcome) = fixture.pass_for(stray.clone(), false, true, WeeklyUsage::Unknown);
         assert!(outcome.settled.contains(&stray));
+    }
+
+    /// The Memory records a pass logged, by kind.
+    fn memory_kinds(records: &[Value]) -> Vec<String> {
+        records
+            .iter()
+            .filter(|record| record["component"] == "memory")
+            .map(|record| record["kind"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_session_holding_an_oversized_tool_result_is_analyzed_and_its_receipts_read_past_it() {
+        // A screenshot's tool result past the 256 KiB line cap, between the
+        // operator's rule and the agent's reply, before the receipt.
+        let fixture = Fixture::new();
+        let screenshot = json!({"type": "user", "sessionId": SESSION, "cwd": fixture.root,
+            "timestamp": "2026-10-11T00:00:02Z",
+            "message": {"role": "user", "content": [{"type": "tool_result",
+                "tool_use_id": "toolu_1", "content": "x".repeat(300 * 1024)}]}});
+        let reply = json!({"type": "assistant", "sessionId": SESSION, "cwd": fixture.root,
+            "timestamp": "2026-10-11T00:00:03Z",
+            "message": {"role": "assistant",
+                "content": [{"type": "text", "text": "Nextest runs before every merge"}]}});
+        // The operator's three lines keep the session above the short-session
+        // floor; the receipt is the fixture's last line.
+        let mut lines = fixture.lines[..3].to_vec();
+        lines.extend([screenshot, reply, fixture.lines[3].clone()]);
+        fixture.write(&lines);
+        fixture.answer(&[]);
+
+        let (reports, records) =
+            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        assert_eq!(reports, ["analyzing", "learned one"]);
+        assert_eq!(
+            memory_kinds(&records),
+            ["receipts.records_skipped", "analysis.records_skipped"]
+        );
+        for record in &records {
+            assert_eq!(record["skipped"], json!({"non_conversation_capacity": 1}));
+        }
+        let inputs = fixture.backend.inputs.lock().unwrap().clone();
+        assert_eq!(inputs.len(), 1);
+        assert!(inputs[0].contains("Always run tests with nextest before a merge"));
+        assert!(inputs[0].contains("Nextest runs before every merge"));
+        assert!(
+            !inputs[0].contains("xxxxxxxx"),
+            "the tool result is not sent"
+        );
+        let seeded = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(seeded.provided_session_count, 1, "the receipt was read");
+
+        let (reports, records) =
+            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        assert!(reports.is_empty());
+        assert!(memory_kinds(&records).is_empty(), "{records:?}");
+        assert_eq!(fixture.calls(), 1);
+    }
+
+    #[test]
+    fn a_session_that_cannot_be_read_is_logged_once_per_change_of_its_file() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        for reader in [CursorReader::Receipts, CursorReader::Analysis] {
+            store
+                .save_cursor(
+                    reader,
+                    &SessionCursorRecord {
+                        project_id: fixture.project_id.clone(),
+                        provider: "claude".to_owned(),
+                        session_id: SESSION.to_owned(),
+                        byte_offset: 1,
+                        checkpoint: b"no checkpoint".to_vec(),
+                        last_content_hash: None,
+                        updated_at_unix_ms: 1,
+                        operator_events: 0,
+                    },
+                )
+                .unwrap();
+        }
+        drop(store);
+        let logged = || {
+            let (_, records) =
+                crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+            memory_kinds(&records)
+        };
+        let failed = ["receipts.walk_failed", "analysis.session_failed"];
+
+        assert_eq!(logged(), failed);
+        assert!(logged().is_empty(), "the same file fails the same way");
+
+        let mut lines = fixture.lines.clone();
+        lines.push(
+            json!({"type": "user", "sessionId": SESSION, "cwd": fixture.root,
+            "timestamp": "2026-10-11T00:01:00Z", "origin": {"kind": "human"},
+            "message": {"role": "user", "content": "And lint before tests"}}),
+        );
+        fixture.write(&lines);
+        assert_eq!(logged(), failed, "a changed file is read and logged again");
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    /// A node on protocol 24, which predates `Call::SessionConversation`
+    /// (protocol 26): it refuses that call as an unknown one and answers the
+    /// rest as the node it wraps.
+    struct Protocol24 {
+        node: Arc<dyn NodeLink>,
+        readers: hide_node_link::sessions::ReaderFeatures,
+    }
+
+    impl NodeLink for Protocol24 {
+        fn call(
+            &self,
+            call: Call,
+            timeout: std::time::Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(call, Call::SessionConversation { .. }) {
+                return Err(crate::node_access::LinkError::Refused(
+                    hide_node_link::error::HostError::new(
+                        hide_node_link::error::ErrorCode::InvalidRequest,
+                        "unknown variant `session_conversation`",
+                    ),
+                ));
+            }
+            self.node.call(call, timeout)
+        }
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            Some(&self.readers)
+        }
+        fn predates_current_protocol(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn an_older_nodes_sessions_are_not_read_for_memory_and_log_no_failed_read() {
+        let mut fixture = Fixture::new();
+        let hello: hide_node_link::protocol::Hello = serde_json::from_value(json!({
+            "protocol": 24, "version": "fixture", "os": "macos", "arch": "aarch64",
+            "home": null, "machine_identity": {"state": "unavailable", "reason": "fixture"},
+        }))
+        .unwrap();
+        fixture.node = Arc::new(Protocol24 {
+            node: Arc::clone(&fixture.node),
+            readers: hello.readers(),
+        });
+        fixture.answer(&[]);
+
+        let (reports, records) =
+            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        assert!(reports.is_empty());
+        assert!(memory_kinds(&records).is_empty(), "{records:?}");
+        assert_eq!(fixture.calls(), 0);
+        let seeded = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(seeded.provided_session_count, 0);
     }
 
     #[test]

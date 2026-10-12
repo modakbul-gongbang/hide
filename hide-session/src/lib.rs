@@ -5,8 +5,9 @@
 //!
 //! - [`SessionLocator`] resolves a reported session identity or a working
 //!   directory to a local file.
-//! - [`SessionCursor`] reads only bytes appended since its previous read and
-//!   reports replacement and truncation explicitly.
+//! - [`ConversationCursor`] reads only bytes appended since its previous read,
+//!   reports replacement and truncation explicitly, and reads past a record
+//!   longer than the line cap without holding it.
 //! - The conversation parsers turn provider-specific records into a small,
 //!   common event stream.
 //! - [`session_activity`] reuses native ownership proof and returns only
@@ -726,17 +727,8 @@ impl FileIdentity {
     }
 }
 
-/// The complete-line bytes returned by [`SessionCursor::read`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionChunk {
-    pub contents: String,
-    /// Absolute byte offset where `contents` begins in the session file.
-    /// This can precede the prior cursor offset when a torn line was retained.
-    pub start_offset: u64,
-    pub rescan_reason: Option<RescanReason>,
-}
-
-/// Incremental byte reader for one session file.
+/// The byte position of one session file that [`ConversationCursor`] reads
+/// from.
 ///
 /// The cursor retains an unterminated final line instead of discarding it.
 /// This makes a later append complete the same JSON object without rereading
@@ -757,14 +749,6 @@ struct AppendedBytes {
 }
 
 impl SessionCursor {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub const fn offset(&self) -> u64 {
-        self.offset
-    }
-
     pub fn checkpoint(&self) -> CursorCheckpoint {
         CursorCheckpoint {
             offset: self.offset.saturating_sub(self.pending.len() as u64),
@@ -787,107 +771,10 @@ impl SessionCursor {
         }
     }
 
-    /// Serializes the durable cursor and file identity without transcript
-    /// bytes. An unterminated line is reread from its start after relaunch.
-    pub fn encode_checkpoint(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&self.checkpoint())
-            .map_err(|error| SessionError::Checkpoint(error.to_string()))
-    }
-
-    pub fn restore_checkpoint(bytes: &[u8]) -> Result<Self> {
-        let checkpoint = serde_json::from_slice(bytes)
-            .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
-        Ok(Self::restore(checkpoint))
-    }
-
     pub fn reset(&mut self) {
         self.offset = 0;
         self.identity = None;
         self.pending.clear();
-    }
-
-    fn read_appended(&mut self, path: &Path) -> Result<AppendedBytes> {
-        let mut file =
-            open_session_file(path).map_err(|error| SessionError::io("open", path, error))?;
-        let metadata = file
-            .metadata()
-            .map_err(|error| SessionError::io("stat", path, error))?;
-        let identity = FileIdentity::from_metadata(&metadata);
-        let rescan_reason = match self.identity {
-            Some(previous) if previous != identity => {
-                self.offset = 0;
-                self.pending.clear();
-                Some(RescanReason::Replaced)
-            }
-            Some(_) if metadata.len() < self.offset => {
-                self.offset = 0;
-                self.pending.clear();
-                Some(RescanReason::Truncated)
-            }
-            None => {
-                self.offset = 0;
-                self.pending.clear();
-                None
-            }
-            _ => None,
-        };
-
-        file.seek(SeekFrom::Start(self.offset))
-            .map_err(|error| SessionError::io("seek", path, error))?;
-        let start = self.offset;
-        let mut appended = Vec::new();
-        file.take(SESSION_INCREMENT_READ_LIMIT_BYTES)
-            .read_to_end(&mut appended)
-            .map_err(|error| SessionError::io("read", path, error))?;
-
-        Ok(AppendedBytes {
-            has_more: start + (appended.len() as u64) < metadata.len(),
-            contents: appended,
-            start_offset: start,
-            identity,
-            rescan_reason,
-        })
-    }
-
-    pub fn read(&mut self, path: &Path) -> Result<SessionChunk> {
-        let AppendedBytes {
-            contents: appended,
-            start_offset: start,
-            identity,
-            rescan_reason,
-            ..
-        } = self.read_appended(path)?;
-
-        let retained_len = self.pending.len() as u64;
-        let mut combined = self.pending.clone();
-        combined.extend(appended);
-        if combined
-            .split_inclusive(|byte| *byte == b'\n')
-            .any(|line| line.len() > SESSION_LINE_LIMIT_BYTES)
-        {
-            return Err(SessionError::Capacity {
-                resource: "line_bytes",
-                limit: SESSION_LINE_LIMIT_BYTES as u64,
-            });
-        }
-        self.offset = start.saturating_add(combined.len() as u64 - retained_len);
-        self.identity = Some(identity);
-        let chunk_start = start.saturating_sub(retained_len);
-        let Some(last_newline) = combined.iter().rposition(|byte| *byte == b'\n') else {
-            self.pending = combined;
-            return Ok(SessionChunk {
-                contents: String::new(),
-                start_offset: chunk_start,
-                rescan_reason,
-            });
-        };
-        let remainder = combined.split_off(last_newline + 1);
-        self.pending = remainder;
-        Ok(SessionChunk {
-            contents: String::from_utf8_lossy(&combined).into_owned(),
-            start_offset: chunk_start,
-            rescan_reason,
-        })
     }
 }
 
@@ -2061,7 +1948,6 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::Write;
     use tempfile::tempdir;
 
     #[test]
@@ -2072,34 +1958,6 @@ mod tests {
             Some(1_234)
         );
         assert_eq!(parse_rfc3339("not-a-date"), None);
-    }
-
-    #[test]
-    fn cursor_reads_the_first_file_then_only_appended_complete_lines() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        fs::write(&path, b"one\ntwo\n").unwrap();
-        let mut cursor = SessionCursor::new();
-
-        assert_eq!(
-            cursor.read(&path).unwrap(),
-            SessionChunk {
-                contents: "one\ntwo\n".to_owned(),
-                start_offset: 0,
-                rescan_reason: None,
-            }
-        );
-        let offset = cursor.offset();
-        fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b"three\n")
-            .unwrap();
-        let appended = cursor.read(&path).unwrap();
-        assert_eq!(appended.contents, "three\n");
-        assert_eq!(appended.start_offset, offset);
-        assert!(cursor.offset() > offset);
     }
 
     #[test]
@@ -2135,111 +1993,6 @@ mod tests {
             read_page_before(&path, Some(4), 8).unwrap().contents,
             "one\n"
         );
-    }
-
-    #[test]
-    fn cursor_holds_a_torn_final_line_until_the_next_append() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        fs::write(&path, b"partial").unwrap();
-        let mut cursor = SessionCursor::new();
-        assert_eq!(cursor.read(&path).unwrap().contents, "");
-
-        fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b"-line\n")
-            .unwrap();
-        let completed = cursor.read(&path).unwrap();
-        assert_eq!(completed.contents, "partial-line\n");
-        assert_eq!(completed.start_offset, 0);
-    }
-
-    #[test]
-    fn durable_checkpoint_rewinds_without_copying_a_torn_line() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        fs::write(&path, b"complete\nsecret partial").unwrap();
-        let mut cursor = SessionCursor::new();
-        let first = cursor.read(&path).unwrap();
-        assert_eq!(first.contents, "complete\n");
-
-        let checkpoint = cursor.encode_checkpoint().unwrap();
-        assert!(
-            !checkpoint
-                .windows(b"secret partial".len())
-                .any(|window| { window == b"secret partial" })
-        );
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["offset"],
-            "complete\n".len()
-        );
-
-        fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b" completed\n")
-            .unwrap();
-        let mut restored = SessionCursor::restore_checkpoint(&checkpoint).unwrap();
-        let completed = restored.read(&path).unwrap();
-        assert_eq!(completed.contents, "secret partial completed\n");
-        assert_eq!(completed.start_offset, "complete\n".len() as u64);
-    }
-
-    #[test]
-    fn cursor_reports_truncation_and_replacement() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        fs::write(&path, b"first\nsecond\n").unwrap();
-        let mut cursor = SessionCursor::new();
-        cursor.read(&path).unwrap();
-        fs::write(&path, b"new\n").unwrap();
-        let truncated = cursor.read(&path).unwrap();
-        assert_eq!(truncated.rescan_reason, Some(RescanReason::Truncated));
-        assert_eq!(truncated.contents, "new\n");
-
-        let replacement = directory.path().join("replacement.jsonl");
-        fs::write(&replacement, b"replacement\n").unwrap();
-        fs::rename(&replacement, &path).unwrap();
-        let replaced = cursor.read(&path).unwrap();
-        assert_eq!(replaced.rescan_reason, Some(RescanReason::Replaced));
-        assert_eq!(replaced.contents, "replacement\n");
-    }
-
-    #[test]
-    fn cursor_bounds_each_poll_and_continues_from_the_next_byte() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        let contents = "x\n".repeat(600_000);
-        fs::write(&path, contents.as_bytes()).unwrap();
-        let mut cursor = SessionCursor::new();
-
-        let first = cursor.read(&path).unwrap();
-        assert_eq!(
-            first.contents.len(),
-            SESSION_INCREMENT_READ_LIMIT_BYTES as usize
-        );
-        assert_eq!(cursor.offset(), SESSION_INCREMENT_READ_LIMIT_BYTES);
-        let second = cursor.read(&path).unwrap();
-        assert_eq!(first.contents.len() + second.contents.len(), contents.len());
-        assert_eq!(cursor.offset(), contents.len() as u64);
-    }
-
-    #[test]
-    fn cursor_rejects_a_line_larger_than_the_retention_cap() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("session.jsonl");
-        fs::write(&path, vec![b'x'; SESSION_LINE_LIMIT_BYTES + 1]).unwrap();
-        let error = SessionCursor::new().read(&path).unwrap_err();
-        assert!(matches!(
-            error,
-            SessionError::Capacity {
-                resource: "line_bytes",
-                limit
-            } if limit == SESSION_LINE_LIMIT_BYTES as u64
-        ));
     }
 
     #[test]

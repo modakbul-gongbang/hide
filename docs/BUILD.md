@@ -188,7 +188,8 @@ The suite runs the focus tests after every other one (`desktop/playwright.config
 A release's macOS app is signed with the team's Developer ID Application certificate and notarized with an App Store Connect team API key.
 Both belong to the Apple Developer Program membership of the team that owns the certificate.
 The account holder keeps the private key, the `.p12` export and the `.p8` key outside the repository, with a backup; the five `release` environment secrets that carry them to CI are listed in [CONTRIBUTING.md](../CONTRIBUTING.md#releases).
-`package.yml`'s macOS job imports the `.p12` into a keychain of its own, requires exactly one `Developer ID Application` identity in it, writes the `.p8` to a temporary file, and deletes both when the job ends.
+`release.yml` passes the five secrets to `package.yml` by name: a called workflow sees an environment secret only when its caller passes it, even though its macOS job names the `release` environment, and one not passed arrives empty without an error ([GitHub, Reuse workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)).
+That job first refuses, naming each one, any of the five that arrived empty, then imports the `.p12` into a keychain of its own, requires exactly one `Developer ID Application` identity in it, writes the `.p8` to a temporary file, and deletes both when the job ends.
 
 ### What expires
 
