@@ -1590,10 +1590,10 @@ pub struct Runtime {
     /// second, so the diagnostic is emitted when the set changes rather than
     /// on every tick.
     unresolved_active_tabs: BTreeSet<String>,
-    /// Panes whose fork has been started and not yet answered. `herdr agent
-    /// new` blocks until the agent has started, so without this a second
-    /// activation during that wait would bill a second session.
-    forks_in_flight: HashSet<String>,
+    /// Panes whose fork has been started and not yet answered, by source
+    /// pane. `agent.start` blocks until the agent has started, so without this
+    /// a second activation during that wait would bill a second session.
+    forks_in_flight: HashMap<String, agents::PendingFork>,
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
@@ -2117,7 +2117,7 @@ impl Runtime {
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
-            forks_in_flight: HashSet::new(),
+            forks_in_flight: HashMap::new(),
             agent_sleep_next_decision_unix_ms: 0,
             node_sleep_next_decision_unix_ms: HashMap::new(),
             node_sleep_shown_tabs: HashMap::new(),
@@ -2637,12 +2637,7 @@ pub fn pane_fork_snapshot(agent: Option<&SidebarAgentSnapshot>) -> PaneForkSnaps
         available,
         reason: (!available && ForkableAgent::parse(&agent.agent_kind).is_some())
             .then(|| "This agent has not reported its conversation yet".to_owned()),
-        // Any child a parent declared has a `spawned_from_pane_id`; only one
-        // that was started as a fork is a fork of it.
-        forked_from_pane_id: agent
-            .started_as_fork
-            .then(|| agent.spawned_from_pane_id.clone())
-            .flatten(),
+        forked_from: agent.forked_from.clone(),
     }
 }
 

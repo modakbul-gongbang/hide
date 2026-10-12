@@ -1,5 +1,6 @@
 use super::workspace_view::with_new_views;
 use super::*;
+use crate::model::InputRequestState;
 
 fn setup() -> (Runtime, String) {
     let (runtime, checkout) = tab_order_runtime("/agent-groups");
@@ -1354,4 +1355,188 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("w-order:t4:p")
     );
+}
+
+fn order(runtime: &Runtime) -> Vec<String> {
+    layout(runtime).tree.areas()[0]
+        .displays
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect()
+}
+
+fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
+    runtime.forks_in_flight.insert(
+        source.into(),
+        super::agents::PendingFork {
+            issued_serial: runtime.control_lane.issued_serial(),
+            tab_id: None,
+            focused: None,
+        },
+    );
+    if let Some(request_id) = request_id {
+        runtime.input_requests.open(
+            request_id,
+            super::terminal_input::InputOrigin::Fork(source.into()),
+        );
+        runtime.sync_input_requests();
+    }
+}
+
+fn input_state(runtime: &Runtime, request_id: &str) -> Option<InputRequestState> {
+    runtime
+        .snapshot
+        .terminal
+        .input_requests
+        .iter()
+        .find(|request| request.request_id == request_id)
+        .map(|request| request.state)
+}
+
+// PRD fork-operator-root B2: `Fork agent` puts the fork's tab right of the
+// source's tab, whether Herdr's session or the worker's answer comes first.
+#[test]
+fn a_fork_tab_lands_right_of_its_source_whichever_answer_comes_first() {
+    let all = ["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"];
+    // The worker's answer first: the tab waits for its place.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t1:p", None);
+    runtime.ingest_fork_pane("w-order:t1:p", Some("w-order:t4"), "w-order:t4:p");
+    ingest(&mut runtime, &all);
+    assert_eq!(
+        order(&runtime),
+        ["w-order:t1", "w-order:t4", "w-order:t2", "w-order:t3"]
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+
+    // Herdr's session first: the appended tab moves next to its source.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t2:p", None);
+    ingest(&mut runtime, &all);
+    assert_eq!(order(&runtime), all);
+    runtime.ingest_fork_pane("w-order:t2:p", Some("w-order:t4"), "w-order:t4:p");
+    assert_eq!(
+        order(&runtime),
+        ["w-order:t1", "w-order:t2", "w-order:t4", "w-order:t3"]
+    );
+
+    // A source whose tab closed meanwhile leaves the tab at the end.
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t9:p", None);
+    runtime.ingest_fork_pane("w-order:t9:p", Some("w-order:t4"), "w-order:t4:p");
+    ingest(&mut runtime, &all);
+    assert_eq!(order(&runtime), all);
+}
+
+// PRD fork-operator-root B1, B4, B5, B7: the fork takes the keyboard when
+// Herdr makes its pane, and what was typed meanwhile reaches its agent once
+// it has started; a view chosen after the press keeps the keyboard, and a
+// failed fork drops the keys, its placement, and gives the source back.
+#[test]
+fn a_fork_takes_the_keyboard_when_its_pane_exists_and_its_keys_when_it_starts() {
+    let source = "w-order:t1:p";
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, source, Some("fork-keys"));
+    runtime.ingest_fork_pane(source, None, "w-order:t3:p");
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t3:p")
+    );
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Pending)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.input_requests[0]
+            .held_for
+            .as_deref(),
+        Some("w-order:t3:p")
+    );
+    runtime.ingest_fork_result(source, Ok("w-order:t3:p".into()), 1);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Ready)
+    );
+    assert!(runtime.forks_in_flight.is_empty());
+
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, source, Some("fork-keys"));
+    runtime.last_view_intent_serial = runtime.control_lane.issued_serial() + 1;
+    let before = runtime.snapshot.focused.pane_id.clone();
+    runtime.ingest_fork_pane(source, None, "w-order:t3:p");
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+    runtime.ingest_fork_result(source, Ok("w-order:t3:p".into()), 1);
+    assert_eq!(runtime.snapshot.focused.pane_id, before);
+
+    let (mut runtime, _) = setup();
+    pending_fork(&mut runtime, "w-order:t2:p", Some("fork-keys"));
+    runtime.ingest_fork_pane("w-order:t2:p", Some("w-order:t4"), "w-order:t4:p");
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t4:p")
+    );
+    runtime.ingest_fork_result("w-order:t2:p", Err("start refused".into()), 1);
+    assert_eq!(
+        input_state(&runtime, "fork-keys"),
+        Some(InputRequestState::Discarded)
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.fork_failed")
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:t2:p")
+    );
+}
+
+// PRD fork-operator-root B6: a second press while the pane's fork is starting,
+// in either placement, is refused by name, and its keys go nowhere.
+#[test]
+fn a_second_fork_of_a_pane_still_forking_is_refused_whichever_item_asked() {
+    let (mut runtime, _) = setup();
+    let mut agents = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+            {"pane_id":"w-order:t1:p","agent":"claude","agent_status":"idle","state_change_seq":1}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    agents[0].session_id = Some("3f2b1c00-0000-4000-8000-000000000001".into());
+    runtime.snapshot.navigator.agents = agents;
+    pending_fork(&mut runtime, "w-order:t1:p", None);
+    runtime.dispatch_json(&explorer_event(
+        "fork_pane",
+        serde_json::json!({"pane_id":"w-order:t1:p","placement":"side","request_id":"second"}),
+    ));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().map(|error| error.kind.as_str()),
+        Some("pane.fork_already_running")
+    );
+    assert_eq!(input_state(&runtime, "second"), Some(InputRequestState::Discarded));
+    assert_eq!(runtime.forks_in_flight.len(), 1);
 }

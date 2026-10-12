@@ -1279,6 +1279,15 @@ impl Runtime {
                 None => {}
             }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
+            // The fork's source is named once the lineage pass has read it.
+            let forked_from = agents
+                .iter()
+                .find(|agent| agent.pane_id == pane.id)
+                .and_then(|agent| agent.forked_from.clone());
+            if pane.fork.forked_from != forked_from {
+                pane.fork.forked_from = forked_from;
+                changed = true;
+            }
             if pane.children != children {
                 pane.children = children;
                 changed = true;
@@ -2042,13 +2051,118 @@ impl Runtime {
                 })
     }
 
+    /// Herdr made the fork's pane, in its own tab (`Fork agent`) or beside
+    /// the source (`Fork agent to the side`). The keyboard goes to it now, as
+    /// to a starting agent tab, unless the operator chose a view after the
+    /// press: that is where they are, and the fork waits where it was put
+    /// (B5, D-10). Keys typed meanwhile wait for the agent's start either way.
+    pub fn ingest_fork_pane(
+        &mut self,
+        source_pane_id: &str,
+        tab_id: Option<&str>,
+        pane_id: &str,
+    ) -> bool {
+        let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) else {
+            return false;
+        };
+        pending.tab_id = tab_id.map(str::to_owned);
+        let chosen_since = self.last_view_intent_serial > pending.issued_serial;
+        pending.focused = (!chosen_since).then(|| pane_id.to_owned());
+        if let Some(tab_id) = tab_id {
+            self.place_fork_tab(source_pane_id, tab_id);
+        }
+        if chosen_since {
+            self.push_diagnostic(
+                "pane.fork.focus_superseded",
+                format!(
+                    "A view was chosen after {source_pane_id} was forked; the fork waits where it was put"
+                ),
+            );
+            self.discard_input_request(
+                &super::terminal_input::InputOrigin::Fork(source_pane_id.to_owned()),
+                "not_shown",
+            );
+        } else {
+            // The shell keeps typing against the request while the fork's
+            // pane has the keyboard, so nothing reaches its shell first.
+            self.hold_input_request_for(
+                &super::terminal_input::InputOrigin::Fork(source_pane_id.to_owned()),
+                pane_id,
+            );
+            self.focus_pane(pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+        }
+        true
+    }
+
+    /// `Fork agent`'s tab goes right of the source's tab in the source's Agent
+    /// area. A source tab that has closed meanwhile leaves the new tab where a
+    /// new tab goes (PRD fork-operator-root B2).
+    fn place_fork_tab(&mut self, source_pane_id: &str, tab_id: &str) {
+        let Some((checkout_path, source_tab)) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find_map(|checkout| {
+                let tab = checkout
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.panes.iter().any(|pane| pane.id == source_pane_id))?;
+                Some((checkout.path.clone(), tab.id.clone()?))
+            })
+        else {
+            return;
+        };
+        // The pane is born in the source's folder, which can sit below the
+        // checkout; the tab is the checkout's (`record_created_tab_checkout`).
+        self.record_created_tab_checkout(tab_id, &checkout_path);
+        let Some(store) = self.workspace_views.as_mut() else {
+            return;
+        };
+        let key = (self.node.as_str().to_owned(), checkout_path);
+        let Some((area, index)) = store.views.get(&key.0, &key.1).and_then(|view| {
+            let area = view.agent_layout.tree.area_of(&source_tab)?;
+            let index = area.displays.iter().position(|tab| tab.id == source_tab)?;
+            Some((area.id.clone(), index + 1))
+        }) else {
+            return;
+        };
+        let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
+        // Herdr's session can carry the tab before this answer does; the
+        // reconcile appended it then, and it moves next to its source now.
+        if layout.tree.display(tab_id).is_some() {
+            let stamp = layout.tree.next_stamp(unix_milliseconds());
+            match layout.tree.move_display(tab_id, &area, index, stamp) {
+                Ok(true) => self.persist_workspace_views(),
+                Ok(false) => {}
+                Err(error) => self.push_diagnostic(
+                    "agent_layout.reconcile_refused",
+                    format!("Forked tab {tab_id}: {error:?}"),
+                ),
+            }
+            return;
+        }
+        if store.agent_placements.len() >= 64 && !store.agent_placements.contains_key(tab_id) {
+            self.push_diagnostic(
+                "agent_layout.placement_limit",
+                "Too many pending Agent tab placements",
+            );
+            return;
+        }
+        store
+            .agent_placements
+            .insert(tab_id.to_owned(), (key, area, Some(index)));
+    }
+
     pub fn ingest_fork_result(
         &mut self,
         parent_pane_id: &str,
         result: Result<String, String>,
         elapsed_ms: u128,
     ) -> bool {
-        self.forks_in_flight.remove(parent_pane_id);
+        let pending = self.forks_in_flight.remove(parent_pane_id);
+        let origin = super::terminal_input::InputOrigin::Fork(parent_pane_id.to_owned());
         // Either outcome leaves the process, because a fork that produced no
         // pane and no message is the report the operator brought: a modal
         // appeared and nothing else happened.
@@ -2065,9 +2179,37 @@ impl Runtime {
                     "forked_pane_id": forked_pane_id,
                     "duration_ms": elapsed_ms,
                 }));
+                // Keys typed since the press reach the fork's agent now that
+                // it has started, never its launch command; a fork that did
+                // not take the keyboard was not where they were going.
+                if pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.focused.is_some())
+                {
+                    self.resolve_input_request(&origin, &forked_pane_id);
+                } else {
+                    self.discard_input_request(&origin, "not_shown");
+                }
                 true
             }
             Err(message) => {
+                self.discard_input_request(&origin, "failed");
+                let (tab_id, focused) = pending
+                    .map(|pending| (pending.tab_id, pending.focused))
+                    .unwrap_or_default();
+                if let Some(tab_id) = tab_id
+                    && let Some(store) = self.workspace_views.as_mut()
+                {
+                    store.agent_placements.remove(&tab_id);
+                }
+                // The worker closed the pane the keyboard went to; it goes
+                // back to the source the operator forked, unless they have
+                // moved on since.
+                if let Some(pane) = focused
+                    && self.snapshot.focused.pane_id.as_deref() == Some(pane.as_str())
+                {
+                    self.focus_pane(parent_pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+                }
                 self.set_error(
                     "pane.fork_failed",
                     format!("Pane {parent_pane_id} could not be forked: {message}"),
@@ -2628,4 +2770,17 @@ fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
         }
     }
     changed
+}
+
+/// A fork the operator asked for, until its worker answers.
+#[derive(Debug)]
+pub(super) struct PendingFork {
+    /// The control lane's last serial at the press. A view chosen after it is
+    /// the operator's, and the fork does not take the keyboard from it.
+    pub(super) issued_serial: u64,
+    /// The fork's tab once Herdr named it, so a fork that fails leaves no
+    /// placement waiting for a tab that was closed.
+    pub(super) tab_id: Option<String>,
+    /// The fork's pane, once Herdr made it and it took the keyboard.
+    pub(super) focused: Option<String>,
 }

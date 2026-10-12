@@ -5607,7 +5607,7 @@ impl Runtime {
     /// already placed the tab under another checkout, the local coordinator is
     /// asked to republish, because nothing else would place it again until an
     /// unrelated change.
-    fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
+    pub(super) fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
         // The same tab acknowledged twice is one record: a second one would
         // start its window again and read an entered folder as a birth value.
         if self.created_tab_checkouts.contains_key(tab_id) {

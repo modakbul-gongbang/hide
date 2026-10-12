@@ -81,6 +81,30 @@ pub enum Ownership {
 /// state up to every one of them, so the descendant badge and the descendant
 /// signals the read record compares are derived on this pass and nowhere
 /// else (PRD B3, B4, B5, D-05).
+/// Names each fork's source (`SidebarAgentSnapshot::forked_from`). A fork is
+/// the operator's root, so its source is provenance that no ownership,
+/// grouping, unread or close rule reads. The source is named only while its
+/// pane still hosts the session the fork was made from, as a parent is.
+fn apply_fork_sources(agents: &mut [SidebarAgentSnapshot], by_pane: &BTreeMap<String, usize>) {
+    for index in 0..agents.len() {
+        let Some((pane, session)) = agents[index].declared_fork.clone() else {
+            agents[index].forked_from = None;
+            continue;
+        };
+        let source = by_pane.get(&pane).copied().filter(|&source| {
+            source != index
+                && crate::wire::session_holds(
+                    session.as_deref(),
+                    agents[source].lineage_session.as_deref(),
+                )
+        });
+        agents[index].forked_from = Some(crate::model::ForkSourceSnapshot {
+            pane_id: source.map(|_| pane),
+            label: source.map(|source| agents[source].identity_label.clone()),
+        });
+    }
+}
+
 pub fn apply_lineage(
     agents: &mut [SidebarAgentSnapshot],
     workspaces: &[crate::model::WorkspaceSnapshot],
@@ -108,6 +132,7 @@ pub fn apply_lineage(
                 })
         })
         .collect::<BTreeMap<_, _>>();
+    apply_fork_sources(agents, &by_pane);
     let mut parents = agents
         .iter()
         .map(|agent| {

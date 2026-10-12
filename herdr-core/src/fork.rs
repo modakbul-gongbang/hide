@@ -77,6 +77,17 @@ impl ForkableAgent {
     }
 }
 
+/// Where the operator put the fork when they chose it (PRD
+/// fork-operator-root D-02): `Fork agent` opens it in a new tab right of the
+/// source's tab, `Fork agent to the side` splits right inside the source's
+/// tab. Every forkable agent takes both.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkPlacement {
+    Tab,
+    Side,
+}
+
 /// Everything the fork needs, gathered before the runtime mutex is released
 /// so the worker thread carries no reference back into runtime state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,6 +102,7 @@ pub struct ForkRequest {
     /// The agent name Herdr will list the fork under, unique per fork and
     /// already inside Herdr's name rule (`fork_name`).
     pub name: String,
+    pub placement: ForkPlacement,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
@@ -238,20 +250,11 @@ pub fn is_forkable(agent_kind: Option<&str>, session_id: Option<&str>) -> bool {
 mod tests {
     use super::*;
 
-    /// A row Herdr lists running `kind` with `session`, under the lineage
-    /// tokens Hide writes for a child of `parent` and, for a fork, the fork mark.
-    fn listed(
-        kind: &str,
-        session: Option<&str>,
-        parent: Option<&str>,
-        fork_mark: bool,
-    ) -> crate::model::SidebarAgentSnapshot {
-        let mut agent = serde_json::json!({
+    /// A row Herdr lists running `kind` with `session`.
+    fn listed(kind: &str, session: Option<&str>) -> crate::model::SidebarAgentSnapshot {
+        let agent = serde_json::json!({
             "id": "w1:p2", "pane_id": "w1:p2", "agent": kind, "agent_status": "idle", "state_change_seq": 1,
-            "spawned_from_pane_id": parent,
-            "tokens": if fork_mark { serde_json::json!({"fork": "1"}) } else { serde_json::json!({}) },
         });
-        agent["spawned_from_pane_id"] = parent.map_or(serde_json::Value::Null, Into::into);
         let mut row = crate::sidebar::project_agents(
             crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [agent]})).unwrap(),
         )
@@ -263,9 +266,7 @@ mod tests {
 
     #[test]
     fn a_forkable_agent_with_a_session_offers_fork_and_one_without_says_why() {
-        let fork = |kind, session| {
-            crate::runtime::pane_fork_snapshot(Some(&listed(kind, session, None, false)))
-        };
+        let fork = |kind, session| crate::runtime::pane_fork_snapshot(Some(&listed(kind, session)));
         let ready = fork("claude", Some("s-1"));
         assert!(ready.available && ready.reason.is_none());
         let waiting = fork("claude", None);
@@ -281,29 +282,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_a_pane_the_fork_marked_says_which_pane_it_was_forked_from() {
-        let forked = listed("claude", Some("s-2"), Some("w1:p1"), true);
-        assert_eq!(
-            crate::runtime::pane_fork_snapshot(Some(&forked))
-                .forked_from_pane_id
-                .as_deref(),
-            Some("w1:p1")
-        );
-        // A delegated child has a parent too, and is not a fork of it.
-        let delegated = listed("claude", Some("s-3"), Some("w1:p1"), false);
-        assert_eq!(
-            crate::runtime::pane_fork_snapshot(Some(&delegated)).forked_from_pane_id,
-            None
-        );
-        // The mark counts only while the pane still declares its parent.
-        let orphan = listed("claude", Some("s-4"), None, true);
-        assert_eq!(
-            crate::runtime::pane_fork_snapshot(Some(&orphan)).forked_from_pane_id,
-            None
-        );
-    }
-
     fn request(agent: ForkableAgent) -> ForkRequest {
         ForkRequest {
             source_reference: None,
@@ -315,6 +293,7 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-w1-p2-abc".to_owned(),
+            placement: ForkPlacement::Tab,
         }
     }
 

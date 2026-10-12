@@ -391,12 +391,53 @@ pub(crate) const CHILD_SESSION_TOKEN: &str = "child_session";
 /// because only there are both rows at hand, on this machine or another.
 pub(crate) const PARENT_SESSION_TOKEN: &str = "parent_session";
 
-/// `"1"` on a pane that hosts a registration Hide's Fork made, written by
-/// `crate::coordination` with the lineage tokens (`AgentRecord::forked`), so a
-/// wake that continues the registration in another pane writes it there too.
-/// It is only read while the lineage tokens hold (the row declares a parent),
-/// so a pane that hosts another agent later is not a fork.
-pub(crate) const FORK_TOKEN: &str = "fork";
+/// The pane a fork was forked from, written by `crate::coordination` on the
+/// pane that hosts a fork's registration (`AgentRecord::forked` with its
+/// `origin`), so a wake that continues the registration in another pane writes
+/// it there too. It is provenance, never responsibility: a fork is the
+/// operator's root, which is why it is not `PARENT_PANE_TOKEN`. Like that
+/// token it is a claim that holds only while `FORK_SESSION_TOKEN` and
+/// `FORK_SOURCE_SESSION_TOKEN` still name the sessions the two panes host.
+pub(crate) const FORK_PANE_TOKEN: &str = "fork_pane";
+
+/// The digest of the fork's own session when the provenance was written. A
+/// pane that hosts another session later is not a fork.
+pub(crate) const FORK_SESSION_TOKEN: &str = "fork_session";
+
+/// The digest of the source's session when the provenance was written. The
+/// source is named only while its pane still hosts it
+/// (`crate::agent_state::apply_fork_sources`).
+pub(crate) const FORK_SOURCE_SESSION_TOKEN: &str = "fork_source_session";
+
+/// The tokens a sleeping fork's row stands in for, as its pane carried them.
+pub(crate) fn fork_tokens(
+    source_pane: &str,
+    own_session: Option<&str>,
+    source_session: Option<&str>,
+) -> std::collections::BTreeMap<String, Value> {
+    [
+        (FORK_PANE_TOKEN, Some(source_pane)),
+        (FORK_SESSION_TOKEN, own_session),
+        (FORK_SOURCE_SESSION_TOKEN, source_session),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Some((key.to_owned(), Value::String(value?.to_owned()))))
+    .collect()
+}
+
+/// What a fork's pane declares about its source: the source's pane and the
+/// session it hosted, read only while the pane still hosts the fork's own
+/// session (`own_session`, its digest).
+pub(crate) fn fork_declaration(
+    tokens: &std::collections::BTreeMap<String, Value>,
+    own_session: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let token = |name: &str| lineage_parent(tokens.get(name).and_then(Value::as_str));
+    if !session_holds(token(FORK_SESSION_TOKEN).as_deref(), own_session) {
+        return None;
+    }
+    Some((token(FORK_PANE_TOKEN)?, token(FORK_SOURCE_SESSION_TOKEN)))
+}
 
 /// How a session is written into a token: the lowercase hex SHA-256 of the
 /// value Herdr reports in `agent_session.value`. Herdr cuts a token value at
@@ -1214,9 +1255,9 @@ pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
             .sum::<usize>()
 }
 
-/// A split that creates the pane a fork will run in. Unlike the operator's
-/// own split it does not take focus: the operator forked the pane they are
-/// reading, and taking focus away from it would undo that.
+/// A split that creates the pane `Fork agent to the side` runs in. It does not
+/// take focus itself: the core moves the keyboard to it, unless the operator
+/// chose another view after the press (`Runtime::ingest_fork_pane`).
 pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Result<Value, String> {
     params(req::PaneSplitParams {
         target_pane_id: Some(parent_pane_id.into()),

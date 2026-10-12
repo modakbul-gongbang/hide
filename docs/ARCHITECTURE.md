@@ -521,7 +521,7 @@ Only the local coordinator does this, as it alone sweeps the records of panes He
 
 A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
 hided is the sole writer of `parent_pane`, optional `parent_machine`, `child_session` and `parent_session` through `pane.report_metadata`; the unchanged value and lifetime contract is described in [status-model.md](status-model.md#where-a-parent-comes-from).
-Fork agent adds one more, `fork`, on the pane it made, so the pane header can say a pane is a fork and a delegated child is not drawn as one.
+A fork is the operator's root, so its pane carries no parent token: hided writes `fork_pane`, `fork_session` and `fork_source_session` instead, which name where it came from without making it anyone's child ([status-model.md](status-model.md#where-a-parent-comes-from)).
 Those tokens die with the pane, not with the agent, so a relationship holds only while both panes still report the sessions it was written for: `wire.rs` compares the child's, `agent_state::apply_lineage` the parent's, and an agent that took over a pane is a root.
 A spawn without `--parent` is an operator handoff: `AgentRecord.parent` is empty and its separate optional `origin` records the spawner.
 Delegated origin is derived from parent, and all CLI agent answers include nullable origin.
@@ -532,6 +532,10 @@ Version-1 receipts lacking mode default to delegation, and legacy `no_watch` fie
 Caller plus intent is still the receipt key, and a mode change is an `intent_conflict` before side effects.
 Both paths create a separate tab without focus, including a tab in an already-open checkout; interactive product tab creation retains its existing focus behavior.
 Hide's fork and delegated `hide agent spawn --parent here|<self id>` register the relationship only after Herdr produces the real pane and agent; a registration failure preserves that pane and records a diagnostic instead of inventing an edge.
+Hide's fork registers the fork with no parent and the source as `origin` (`coordination::link_fork`), which only the source's own live registration may do.
+A fork runs on a worker (`live::run_agent_fork_with_registration`): it makes the pane where the operator asked, a tab in the source's workspace (`tab.create`) or a split right of the source (`pane.split`), both without focus, and hands the pane to the core under the lock (`Runtime::ingest_fork_pane`) before it starts the agent.
+The core then puts a fork tab right of the source's tab in the source's Agent area, through the same `agent_placements` queue a restored tab uses when Herdr's session has not carried the tab yet, and moves the keyboard to the fork with an ordinary operator pane focus, unless a view was chosen on the control lane after the press (`last_view_intent_serial` above the serial at the press), the rule a new tab follows.
+Keys typed from the press until the agent starts are sent against the press's input request (`InputOrigin::Fork`): the row names the fork's pane as `held_for` once it has the keyboard, so the shell keeps marking keys for the request there, and the node holds them under its usual caps until the agent's start resolves the request; a fork that yields the keyboard or fails discards them, and a failure closes the made pane, drops its placement and gives the keyboard back to the source.
 `wire.rs` is the only token conversion boundary.
 The consented helper supplies `hide_platform::host::machine_id` once in its connection greeting; the device worker applies it only to the established connection generation, outside `Mutex<Runtime>`, before resolving machine-qualified lineage.
 A failed identity read logs a lineage diagnostic and leaves the parent unresolved while the helper stays usable; there is no SSH-alias fallback or extra identity SSH command.

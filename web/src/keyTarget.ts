@@ -10,7 +10,9 @@
 // core reports the request discarded, or when the core has no row for it: one
 // it listed and then dropped, or one it never listed within
 // `UNSEEN_REQUEST_LIMIT_MS` (the event never reached it, or the daemon was
-// replaced).
+// replaced). A fork's pane holds the keyboard before its agent has started:
+// the core names it as the row's `held_for`, the mark stays while that pane
+// has the keyboard, and it ends once the request is ready.
 
 import type { InputRequest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -28,6 +30,8 @@ type Armed = {
   armedAt: number;
   /** The core has listed the request. */
   seen: boolean;
+  /** The pane the core said this request's keys wait for. */
+  heldFor?: string;
 };
 
 let armed: Armed | null = null;
@@ -68,7 +72,11 @@ export function keyPayload(paneId: string, bytesBase64: string, now: number = Da
  * where the operator's keys belong.
  */
 export function noteTerminalFocus(paneId: string) {
-  if (armed && paneId !== armed.originPaneId) armed = null;
+  if (!armed || paneId === armed.originPaneId) return;
+  const requestId = armed.requestId;
+  const row = useShellStore.getState().rest?.terminal?.input_requests?.find((request) => request.request_id === requestId);
+  if (row?.state === "pending" && row.held_for === paneId) return;
+  armed = null;
 }
 
 /** The operator pointed at a pane, a tab or an area: they chose where they are. */
@@ -85,5 +93,11 @@ export function observeInputRequests(requests: InputRequest[] | undefined) {
     return;
   }
   if (row.state === "discarded") armed = null;
-  else armed.seen = true;
+  // Keys after a fork's start go to its pane as any keys do; those already
+  // sent against the request reach it first, in order.
+  else if (row.state === "ready" && armed.heldFor) armed = null;
+  else {
+    armed.seen = true;
+    if (row.state === "pending" && row.held_for) armed.heldFor = row.held_for;
+  }
 }

@@ -51,6 +51,7 @@ import {
   type Checkout,
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
+  type ForkPlacement,
   type IssueSettings,
   type KitComponentId,
   type MemoryAction,
@@ -935,9 +936,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_sleep", payload: { pane_id: paneId } });
     },
 
-    /** Fork agent from the pane menu: a new execution of this agent's conversation in its own tab. */
-    forkPane(paneId: string) {
-      dispatch({ schema_version: 2, kind: "fork_pane", payload: { pane_id: paneId } });
+    /**
+     * Fork agent (`tab`) and Fork agent to the side (`side`) from the pane menu: a
+     * new execution of this agent's conversation, the operator's own root, which
+     * takes the keyboard. Keys typed before its agent starts wait for it.
+     */
+    forkPane(paneId: string, placement: ForkPlacement) {
+      const requestId = remoteRequestId();
+      dispatch({ schema_version: 2, kind: "fork_pane", payload: { pane_id: paneId, placement, request_id: requestId } });
+      armKeyTarget(requestId);
     },
 
     /** Wake agent and Retry resume the conversation; Start new session is `fresh` (B12, B14). */

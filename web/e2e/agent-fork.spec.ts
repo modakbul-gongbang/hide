@@ -1,11 +1,14 @@
-// Fork agent from the pane menu on an isolated pinned Herdr and hided (issue
-// 916): the item is offered on an agent pane whose conversation Herdr
-// reported and starts the same conversation again as a new session in a pane
-// of its own, which then wears the fork mark. The disabled item of an agent with no conversation yet is the
-// pane menu unit test's and the core's.
+// Fork agent and Fork agent to the side from the pane menu, on an isolated
+// pinned Herdr and hided (PRD fork-operator-root): each starts the pane's
+// conversation again as a new session, the operator's own root, which takes
+// the keyboard and wears the fork mark naming its source. What is typed
+// between the press and the agent's start reaches the fork's agent, not the
+// shell that starts it. The disabled items of an agent with no conversation
+// yet are the pane menu unit test's and the core's.
 
-import { expect, test } from "@playwright/test";
-import { claudeProjects, setFixtureSession, startHerdr, writeFixtureTranscript } from "./herdr-fixture";
+import { spawnSync } from "node:child_process";
+import { expect, test, type Page } from "@playwright/test";
+import { claudeProjects, herdrHasFocus, setFixtureSession, startHerdr, writeFixtureTranscript, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -13,67 +16,124 @@ test.describe.configure({ timeout: 150_000 });
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const FORKED_SESSION = "66666666-7777-8888-9999-000000000000";
+const LAUNCH = `claude --resume ${SESSION} --fork-session`;
 
-type Listed = { result: { agents: { pane_id: string; name?: string | null; agent: string }[] } };
+type Listed = { result: { agents: { pane_id: string }[] } };
 type ProcessInfo = { result: { process_info: { foreground_processes: { argv?: string[] | null }[] } } };
 
-test("Fork agent from the pane menu starts the pane's conversation again in a new pane", async ({ page }) => {
+/** The source pane runs a Claude conversation Herdr reported; hided serves the page. */
+async function forkStack(page: Page, herdr: HerdrFixture, name: string): Promise<{ daemon: Daemon; forker: string; last: Map<string, Record<string, unknown>> }> {
   await page.setViewportSize({ width: 1440, height: 900 });
+  const [, forker] = herdr.panes;
+  writeFixtureTranscript(claudeProjects(herdr), SESSION, { task: "Agent two" });
+  setFixtureSession(herdr, forker, SESSION);
+  const daemon = await startHided(herdr, name);
+  const last = new Map<string, Record<string, unknown>>();
+  countSent(page, last);
+  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  await page.locator("[data-checkout]").first().click();
+  await expect(page.locator(`[data-pane-view="${forker}"]`)).toBeVisible({ timeout: 20_000 });
+  return { daemon, forker, last };
+}
+
+/**
+ * Presses `item` in the source's pane menu and types a marker as soon as the
+ * fork's terminal has the keyboard. Returns the fork's pane once its agent runs
+ * the clean launch, how long that took, and whether the marker was typed before.
+ */
+async function fork(page: Page, herdr: HerdrFixture, forker: string, item: "fork_agent" | "fork_agent_side", marker: string): Promise<{ forked: string; startMs: number }> {
+  const agents = () => (herdr.run(["agent", "list"]) as Listed).result.agents.map((agent) => agent.pane_id);
+  const before = agents();
+  await page.locator(`[data-pane-menu="${forker}"]`).click();
+  await expect(page.locator('[data-menu-item="fork_agent"]')).toBeEnabled({ timeout: 20_000 });
+  await expect(page.locator('[data-menu-item="fork_agent_side"]')).toBeEnabled();
+  if (item === "fork_agent") await screenshot(page, "agent-fork-menu");
+  const pressed = Date.now();
+  await page.locator(`[data-menu-item="${item}"]`).click();
+  const keyboard = () => page.evaluate(() => document.activeElement?.closest<HTMLElement>("[data-terminal-host]")?.dataset.terminalHost ?? "");
+  let focused = "";
+  await expect.poll(async () => (focused = await keyboard()), { timeout: 30_000 }).not.toMatch(new RegExp(`^(${forker})?$`));
+  const focusMs = Date.now() - pressed;
+  await page.keyboard.type(marker);
+  const launched = () => (herdr.run(["pane", "process-info", "--pane", focused]) as ProcessInfo).result.process_info.foreground_processes.map((process) => process.argv?.join(" "));
+  const typedBeforeStart = !launched().includes(LAUNCH);
+  let forked = "";
+  await expect.poll(() => (forked = agents().find((pane) => !before.includes(pane)) ?? ""), { timeout: 60_000 }).toBe(focused);
+  await expect.poll(launched, { timeout: 30_000 }).toContain(LAUNCH);
+  const startMs = Date.now() - pressed;
+  test.info().annotations.push({ type: `${item} timing`, description: `keyboard on fork ${focusMs} ms, agent started ${startMs} ms, typed before start ${typedBeforeStart}` });
+  console.log(`${item}: keyboard on fork ${focusMs} ms, agent started ${startMs} ms after the press; marker typed before start: ${typedBeforeStart}`);
+  // The official Claude integration reports the fork's own conversation id.
+  setFixtureSession(herdr, forked, FORKED_SESSION);
+  return { forked, startMs };
+}
+
+/** What the fork's agent echoed: the keys typed before it started reach it. */
+function screenOf(herdr: HerdrFixture, pane: string): string {
+  const read = spawnSync(herdr.bin, ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "40", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  return read.status === 0 ? read.stdout : "";
+}
+
+test("Fork agent puts the operator's own fork in a new tab right of the source and moves the keyboard there", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
-    const [, forker] = herdr.panes;
-    // The official Claude integration's report: the conversation id, under
-    // Herdr's own source.
-    writeFixtureTranscript(claudeProjects(herdr), SESSION, { task: "Agent two" });
-    setFixtureSession(herdr, forker, SESSION);
-    const agentPanes = () => (herdr.run(["agent", "list"]) as Listed).result.agents.map((agent) => agent.pane_id);
+    // A tab after the source's, so the fork's tab has to land between them.
+    const after = (herdr.run(["tab", "create", "--workspace", herdr.workspace, "--label", "after", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { tab: { tab_id: string } } }).result.tab.tab_id;
+    const stack = await forkStack(page, herdr, "agent-fork-tab");
+    daemon = stack.daemon;
+    const { forker, last } = stack;
+    const { forked } = await fork(page, herdr, forker, "fork_agent", "typed-before-start");
+    expect(last.get("fork_pane")).toMatchObject({ pane_id: forker, placement: "tab" });
+    await expect(page.locator(`[data-pane-view="${forked}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => herdrHasFocus(herdr, forked), { timeout: 30_000 }).toBe(true);
+    const strip = page.locator("[data-agent-tab-bar] [data-tab]");
+    await expect.poll(async () => (await strip.evaluateAll((tabs) => tabs.map((tab) => (tab as HTMLElement).dataset.tab))).join(" ")).toMatch(new RegExp(`^${herdr.tab} \\S+ ${after}$`));
+    // Its keys reached the fork's agent after the clean launch, not the shell.
+    await expect.poll(() => screenOf(herdr, forked), { timeout: 10_000 }).toContain("typed-before-start");
 
-    daemon = await startHided(herdr, "agent-fork");
-    const last = new Map<string, Record<string, unknown>>();
-    countSent(page, last);
-    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-checkout]").first().click();
-    await expect(page.locator(`[data-pane-view="${forker}"]`)).toBeVisible({ timeout: 20_000 });
-    const before = agentPanes();
-
-    // Fork agent is offered on an agent pane that reported its conversation and
-    // sends one event naming the pane.
-    await page.locator(`[data-pane-menu="${forker}"]`).click();
-    const item = page.locator('[data-menu-item="fork_agent"]');
-    await expect(item).toBeEnabled({ timeout: 20_000 });
-    await screenshot(page, "agent-fork-menu");
-    await item.click();
-    await expect.poll(() => last.get("fork_pane")?.pane_id).toBe(forker);
-
-    // The new execution is a pane of its own that resumes the conversation as
-    // a new session.
-    let forked = "";
-    await expect.poll(() => {
-      forked = agentPanes().find((pane) => !before.includes(pane)) ?? "";
-      return forked;
-    }, { timeout: 60_000 }).not.toBe("");
-    // The official Claude integration reports the new execution's own
-    // conversation id; the fork waits for it to register the lineage.
-    setFixtureSession(herdr, forked, FORKED_SESSION);
-    await expect.poll(
-      () => (herdr.run(["pane", "process-info", "--pane", forked]) as ProcessInfo).result.process_info.foreground_processes.map((process) => process.argv?.join(" ")),
-      { timeout: 30_000 },
-    ).toContain(`claude --resume ${SESSION} --fork-session`);
-
-    // The forked pane says so, and names its source; the source does not.
-    // A fork is the source's descendant, so its sidebar row sits under the
-    // source's folded children.
+    // The fork is the operator's own root: a row of its own with the mark,
+    // the source unmarked and with no child under it.
     const row = page.locator(`nav[data-sidebar] [data-pane="${forked}"]`);
-    const fold = page.getByRole("button", { name: "Show the children of Agent two" });
-    await expect(row.or(fold)).toBeVisible({ timeout: 30_000 });
-    if (await fold.isVisible()) await fold.click();
-    await row.click();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(row).not.toHaveAttribute("data-delegated", "true");
+    await expect(row.locator(`[data-agent-fork="${forked}"]`)).toBeVisible();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${forker}"] [data-agent-fork]`)).toHaveCount(0);
+    await expect(page.locator(`[data-tree-chevron="${forker}"]`)).toHaveCount(0);
     const mark = page.locator(`[data-pane-view="${forked}"] [data-pane-fork]`);
     await expect(mark).toHaveAttribute("data-pane-fork", forker, { timeout: 30_000 });
     await expect(mark).toHaveAccessibleName("Forked from Agent two");
     await expect(page.locator(`[data-pane-view="${forker}"] [data-pane-fork]`)).toHaveCount(0);
-    await screenshot(page, "agent-fork-forked");
+    await screenshot(page, "agent-fork-tab");
+
+    // The header mark opens the source.
+    await mark.click();
+    await expect.poll(() => herdrHasFocus(herdr, forker), { timeout: 30_000 }).toBe(true);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("Fork agent to the side splits the source's tab and moves the keyboard to the fork", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const stack = await forkStack(page, herdr, "agent-fork-side");
+    daemon = stack.daemon;
+    const { forker, last } = stack;
+    const { forked } = await fork(page, herdr, forker, "fork_agent_side", "typed-beside");
+    expect(last.get("fork_pane")).toMatchObject({ pane_id: forker, placement: "side" });
+    await expect.poll(() => herdrHasFocus(herdr, forked), { timeout: 30_000 }).toBe(true);
+    // The fork shares the source's tab, to its right.
+    await expect(page.locator(`[data-pane-view="${forked}"]`)).toBeVisible({ timeout: 30_000 });
+    const source = await page.locator(`[data-pane-view="${forker}"]`).boundingBox();
+    const beside = await page.locator(`[data-pane-view="${forked}"]`).boundingBox();
+    expect(beside!.x).toBeGreaterThan(source!.x);
+    await expect.poll(() => screenOf(herdr, forked), { timeout: 10_000 }).toContain("typed-beside");
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${forked}"] [data-agent-fork="${forked}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-pane-view="${forked}"] [data-pane-fork]`)).toHaveAccessibleName("Forked from Agent two");
+    await screenshot(page, "agent-fork-side");
   } finally {
     daemon?.stop();
     herdr.stop();

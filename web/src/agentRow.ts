@@ -136,5 +136,16 @@ export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, 
   return [agent.identity_label, device, branchChip(agent), agent.agent_kind, statusText(t, agent.status_code), agent.detail].filter(Boolean).join(", ");
 }
 
+/**
+ * What a fork's mark says (PRD fork-operator-root B8, B9): the source by its title
+ * while it still runs the conversation the fork came from, else that it came from
+ * another pane. Null on a row that is not a fork.
+ */
+export function forkLabel(t: TFunction<"translation">, agent: Pick<AgentRow, "forked_from">): string | null {
+  const source = agent.forked_from;
+  if (!source) return null;
+  return source.pane_id && source.label ? t("panes.fork.forkedFrom", { name: source.label }) : t("panes.fork.forked");
+}
+
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */
 export type TreeRow = { agent: AgentRow; device: string | null; depth: number; descendants: number };

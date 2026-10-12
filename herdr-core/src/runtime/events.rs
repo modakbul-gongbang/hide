@@ -356,6 +356,17 @@ pub(super) struct PaneTargetPayload {
     pub(super) pane_id: String,
 }
 
+/// Fork agent from the pane menu: where the fork goes, chosen at the press,
+/// and the shell's key request, which holds what is typed until the fork's
+/// agent has started.
+#[derive(Debug, Deserialize)]
+pub(super) struct ForkPanePayload {
+    pub(super) pane_id: String,
+    pub(super) placement: crate::fork::ForkPlacement,
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoteControlPayload {
     pub(super) target_id: String,
@@ -1295,7 +1306,7 @@ pub(super) enum Event {
     RetryAgentClose(CheckCloseStatusPayload),
     DismissAgentClose(CheckCloseStatusPayload),
     ReopenClosed,
-    ForkPane(PaneTargetPayload),
+    ForkPane(ForkPanePayload),
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
@@ -1514,7 +1525,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
         "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
         "reopen_closed" => Ok(Event::ReopenClosed),
-        "fork_pane" => decode!(PaneTargetPayload, ForkPane),
+        "fork_pane" => decode!(ForkPanePayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
@@ -1655,6 +1666,7 @@ impl Runtime {
             Event::CreateTab(payload) => payload.request_id.clone(),
             Event::CreatePane(payload) => payload.request_id.clone(),
             Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            Event::ForkPane(payload) => payload.request_id.clone(),
             _ => None,
         };
         let mut changed = self.apply_event(event);
@@ -2805,8 +2817,9 @@ impl Runtime {
                 };
                 // A fork blocks until the agent has started, which takes long
                 // enough for a second click to land. Refusing the second one by
-                // name is what keeps one activation from becoming two sessions.
-                if !self.forks_in_flight.insert(pane_id.clone()) {
+                // name is what keeps one activation from becoming two sessions,
+                // whichever placement either asked for.
+                if self.forks_in_flight.contains_key(&pane_id) {
                     self.set_error(
                         "pane.fork_already_running",
                         format!("Pane {pane_id} is already being forked"),
@@ -2814,6 +2827,16 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.forks_in_flight.insert(
+                    pane_id.clone(),
+                    super::agents::PendingFork {
+                        // A view the operator chooses after this press is
+                        // where they are now, and the fork does not take it.
+                        issued_serial: self.control_lane.issued_serial(),
+                        tab_id: None,
+                        focused: None,
+                    },
+                );
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.forks_in_flight.remove(&pane_id);
                     self.set_error(
@@ -2850,8 +2873,19 @@ impl Runtime {
                         .and_then(|facts| facts.native_reference.clone()),
                     cwd,
                     name,
+                    placement: payload.placement,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
+                // Keys typed between the press and the agent's start wait for
+                // the fork's agent rather than reaching the shell that starts
+                // it (B4); `ingest_fork_result` resolves or discards them.
+                if let Some(request_id) = payload.request_id.as_deref() {
+                    self.input_requests.open(
+                        request_id,
+                        super::terminal_input::InputOrigin::Fork(pane_id.clone()),
+                    );
+                    self.sync_input_requests();
+                }
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {
                     // A worker that never started is a fork that failed, and

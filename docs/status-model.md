@@ -223,7 +223,14 @@ The CLI's required `origin` field records the spawner in both modes (null for or
 PR and issue panels still find the independent session through its own branch records without a delegated-by line.
 Herdr records no lineage, so hided writes the four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names its machine when the parent is remote, and `child_session` and `parent_session` are the original session digests.
 The value and lifetime contract is unchanged.
-A pane Hide's Fork agent made carries a fifth token, `fork` set to `1`, which the lineage writer writes with the other four from the registration's `forked` fact (`AgentRecord::forked`), so a wake that continues the registration in another pane writes it there too, and which is read only while the row still declares its parent, so a pane that hosts another agent later is not a fork and a delegated child never is (`SidebarAgentSnapshot.started_as_fork`, `PaneForkSnapshot.forked_from_pane_id`).
+A fork made with Fork agent or Fork agent to the side is the operator's own root, not the source's child: its registration has no parent, names the source as its `origin`, and carries the `forked` fact (`AgentRecord::forked`), so `hide agent show` and `hide agent list` print a null `parent` and the source as `origin` (PRD fork-operator-root B1, B19, D-12).
+Only the source's own live registration can register a parentless fork with itself as origin; any other caller is refused `parent_authority_required`.
+Its pane names the source under three keys of its own, never `parent_pane`, which would make it a child again: `fork_pane` is the source's pane id, `fork_session` the fork's own session digest and `fork_source_session` the source's (`lineage::FORK_KEYS`).
+The lineage writer writes them from the registration as it writes the four above, so a wake that continues the fork in another pane names the source there too, and a hided restart finds them on the pane and in the ledger (B17, B18).
+They are read only while the fork's pane still runs `fork_session`, so a pane that hosts another conversation later is not a fork; `wire::fork_declaration` reads them, and `agent_state::apply_fork_sources` names the source while its pane still runs `fork_source_session` and names none once the source closed or moved on (`SidebarAgentSnapshot.forked_from`, `PaneForkSnapshot.forked_from`, B9, B10).
+Because none of these is a parent token, the fork has no depth, so the source gets no child, unread, Working, descendant mark, child count or subtree close from it, and the fork's own demand and completion enter Needs You and Done (B12, B13, B14).
+A fork of a fork names the fork it was made from, and a fork of a delegated child is still a root (B15, B16).
+A fork made before forks were roots keeps its parent and its old `fork` token, which nothing reads any more: it stays a child and wears no mark (D-09).
 The session tokens are lowercase hexadecimal SHA-256 digests of each original `agent_session.value`; this keeps even a path-valued session inside Herdr's 80-character token limit.
 A same-server relationship omits `parent_machine`.
 A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
@@ -234,7 +241,7 @@ A relationship is accepted only when both panes still report the recorded sessio
 A changed parent session cannot adopt the previous session's children, and an absent parent agent retains the existing orphan presentation.
 A missing or unknown remote machine identity leaves the child a root until its matching device connects.
 The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
-`hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship in the core's coordination ledger.
+`hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship, or for a fork its provenance, in the core's coordination ledger.
 A delegated `hide agent spawn --machine <device id>` child is a remote child of a local parent: its tokens are written on the device's pane and `parent_machine` names the spawner's machine, the same resolution as any cross-machine relationship above.
 The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
 `wire.rs` and `agent_state/axes.rs` remain the readers of this contract.
@@ -249,6 +256,8 @@ A parent whose pane no longer lists an agent is a different case: the child stay
 
 An empty token is a cleared declaration, not a parent named by an empty string.
 The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
+
+Fork regression owners: `a_fork_registers_as_a_root_whose_origin_is_its_source` (`coordination/mod.rs`), `a_fork_names_its_source_under_fork_keys_and_never_as_a_parent` and `a_fork_that_is_woken_in_another_pane_names_its_source_there` (`coordination/lineage.rs`), `a_fork_names_its_source_and_stays_the_operators_own_work` (`runtime/tests/lineage.rs`), and `web/e2e/agent-fork.spec.ts`.
 
 Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_whose_pane_now_hosts_another_session_declares_no_parent` and the `lineage_sessions` tests in `herdr-core/src/session_sync/tests.rs`, `a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_child`, `a_sleeping_child_stays_under_its_parent_only_while_its_record_can_prove_it`, and `web/e2e/lineage-session.spec.ts`.
 
