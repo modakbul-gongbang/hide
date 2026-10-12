@@ -1,5 +1,5 @@
 // The desktop notification controls the wizard's second step and Settings >
-// General share (PRD first-run-onboarding B14-B20, B30): the operator's
+// Notifications share (PRD first-run-onboarding B14-B20, B30): the operator's
 // switch, which the core keeps (`ui_state.desktop_notifications`), and what
 // the system says about Hide's permission, which the desktop host reads.
 // A browser tab has neither (D-14).
@@ -141,7 +141,7 @@ function NotificationAction({ control }: { control: NotificationControl }) {
 }
 
 /**
- * Settings > General's rows (B30): the switch, and while it is on, what macOS
+ * Settings > Notifications' desktop rows (B30): the switch, and while it is on, what macOS
  * allows with the press that answers it, or a test row where the system has
  * nothing to read. Where no notification service answers, the switch is
  * locked off and says why (B48).

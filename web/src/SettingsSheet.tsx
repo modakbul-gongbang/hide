@@ -91,12 +91,12 @@ function SettingsSheet({ actions }: { actions: Actions }) {
                   ))}
                 </div>
               ))}
-              <div className="mt-auto flex flex-col pt-md">
+              <div className="mt-auto flex flex-col pt-xs">
                 <NavItem tab="about" label={t("settings.tabs.about")} />
               </div>
             </TabsList>
           </nav>
-          <TabsContent value={tab} className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex items-center gap-sm px-xl pb-lg pt-lg">
               <div className="flex min-w-0 flex-1 items-center gap-sm">
                 <h2 className="truncate text-headline font-semibold" data-settings-page-title={tab}>{t(`settings.tabs.${tab}`)}</h2>
@@ -115,8 +115,8 @@ function SettingsSheet({ actions }: { actions: Actions }) {
                 </Button>
               </Hint>
             </header>
-            {/* Only the page scrolls; the list stays where it is (B12, B13). */}
-            <div className="min-h-0 flex-1 overflow-auto px-xl pb-xl" data-settings-page={tab}>
+            {/* The page is the tab panel and the one thing that scrolls; the list stays where it is (B12, B13). */}
+            <TabsContent value={tab} className="min-h-0 overflow-auto px-xl pb-xl focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" data-settings-page={tab}>
               {tab === "general" ? <GeneralTab actions={actions} /> : null}
               {tab === "notifications" ? <NotificationsTab actions={actions} /> : null}
               {tab === "devices" ? <DevicesTab actions={actions} /> : null}
@@ -126,8 +126,8 @@ function SettingsSheet({ actions }: { actions: Actions }) {
               {tab === "mobile" ? <MobileTab actions={actions} /> : null}
               {tab === "github" ? <GithubTab actions={actions} /> : null}
               {tab === "about" ? <AboutTab /> : null}
-            </div>
-          </TabsContent>
+            </TabsContent>
+          </div>
         </Tabs>
       </DialogContent>
     </Dialog>

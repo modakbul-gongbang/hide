@@ -116,12 +116,12 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
       T(`${id}-t`, label, {size: 'subhead', weight: current ? '500' : '400', fill: current ? '$--foreground' : '$--subtle-foreground'}),
     ]);
   }
-  function nav(p, L, page) {
+  function nav(p, L, page, machine) {
     const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-md', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
     return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-lg', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       frame(`${p}-nav-h`, 'Title', {width: 'fill_container', padding: [0, '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${p}-nav-ht`, L.settings, {size: 'title', weight: '600'})]),
       ...GROUPS.flatMap(([group, items]) => [
-        groupLabel(`${p}-nav-${group}`, L.groups[group]),
+        groupLabel(`${p}-nav-${group}`, group === 'machine' && machine ? machine : L.groups[group]),
         ...items.map(([key, glyph]) => navItem(`${p}-nav-${key}`, glyph, L.nav[key], page === key)),
       ]),
       frame(`${p}-nav-sp`, 'Spacer', {width: 'fill_container', height: 'fill_container'}, []),
@@ -129,15 +129,18 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     ]);
   }
 
-  /** The sheet with `page` lit in the list and `body(inner)` under its title; `device` is a remote device's chip beside the title (B4). */
-  function settingsFrame(p, {page, lang = 'en', width = SHEET_W, height = 640, device = null, body}) {
+  /**
+   * The sheet with `page` lit in the list and `body(inner)` under its title; `device` is a remote device's chip beside the title (B4),
+   * `machine` what this window's system calls itself (web/src/screenMachine.ts thisMachineKey: This Mac, This PC, This computer).
+   */
+  function settingsFrame(p, {page, lang = 'en', width = SHEET_W, height = 640, device = null, machine = null, body}) {
     const L = COPY[lang];
     const bodyW = width - NAV_W;
     const inner = bodyW - 2 * PAD_X;
     const title = page === 'about' ? L.about : L.nav[page];
     const chip = device ? [frame(`${p}-dev`, device, {height: 18, layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner'}, [T(`${p}-dev-t`, device, {size: 'caption', fill: '$--muted-foreground'})])] : [];
     return frame(`${p}-sheet`, `Settings · ${title}`, {width, height, layout: 'horizontal', cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', clip: true}, [
-      nav(p, L, page),
+      nav(p, L, page, machine),
       frame(`${p}-body`, 'Page', {width: bodyW, height: 'fill_container', layout: 'vertical', gap: '$--spacing-lg', padding: ['$--spacing-lg', PAD_X, PAD_X, PAD_X], clip: true}, [
         frame(`${p}-head`, 'Title', {width: 'fill_container', layout: 'horizontal', alignItems: 'center'}, [
           frame(`${p}-title-g`, 'Title', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [T(`${p}-title`, title, {size: 'headline', weight: '600'}), ...chip]),
@@ -215,11 +218,11 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
         row(`${p}-text`, inner, {label: C.interfaceText, detail: C.density, controls: [slider(`${p}-sl`, 1 / 3), T(`${p}-pt`, C.pt, {mono: true, fill: '$--subtle-foreground'})], controlsWidth: 210}),
       ]})];
     },
-    notifications: (p, _L, inner, {notify = 'on'}) => {
+    notifications: (p, _L, inner, {notify = 'on', machine}) => {
       const C = COPY.en.notifications;
       const sends = notify === 'on' || notify === 'blocked' || notify === 'pc-on';
       return [
-        group(`${p}-desk`, inner, {title: C.desktop, note: sends ? C.sentWhen : null, rows: desktopRows(p, inner, C, notify)}),
+        group(`${p}-desk`, inner, {title: machine ?? C.desktop, note: sends ? C.sentWhen : null, rows: desktopRows(p, inner, C, notify)}),
         group(`${p}-phone`, inner, {title: C.phone, rows: [
           row(`${p}-push`, inner, {label: C.pushTo, detail: C.pushDetail, controls: [select(`${p}-pushv`, C.pushValue, 220)], controlsWidth: 220}),
         ]}),
@@ -276,11 +279,11 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
   };
 
   /** The sheet with `page` open; `theme` picks which Theme item is lit, `lang` the copy, `scale` the interface text, `notify` the desktop notifications' answer. */
-  function settingsSheet(p, {page, theme, lang = 'en', height = 640, width = SHEET_W, device = null, scale = 1, notify}) {
+  function settingsSheet(p, {page, theme, lang = 'en', height = 640, width = SHEET_W, device = null, machine = null, scale = 1, notify}) {
     SCALE = scale;
     const L = COPY[lang];
     try {
-      return settingsFrame(p, {page, lang, width, height, device, body: inner => PAGES[page](p, L, inner, {theme, notify})});
+      return settingsFrame(p, {page, lang, width, height, device, machine, body: inner => PAGES[page](p, L, inner, {theme, notify, machine})});
     } finally {
       SCALE = 1;
     }

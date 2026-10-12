@@ -1,8 +1,9 @@
 import type { Actions } from "../actions";
-import { Group, Note } from "../components/settings-rows";
+import { Group, Note, Row } from "../components/settings-rows";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { hostBridge } from "../host";
 import { useInterfaceTranslation } from "../i18n/client";
-import { PushMode } from "../MobileTab";
+import { PUSH_CHOICES, type PushMode } from "../mobileSettings";
 import { NotificationRows, useNotificationControl, usePermission } from "../NotificationControls";
 import { thisMachineKey } from "../screenMachine";
 import { useShellStore } from "../store";
@@ -40,7 +41,29 @@ function PhoneGroup({ actions }: { actions: Actions }) {
   const mobile = useShellStore((s) => s.mobile);
   return (
     <Group title={t("settings.notifications.phone")} data-settings-group="phone">
-      {mobile ? <PushMode mode={mobile.push_mode} actions={actions} /> : <Note tone="pending">{t("mobileSetup.connecting")}</Note>}
+      {mobile ? <PushModeSelect mode={mobile.push_mode} actions={actions} /> : <Note tone="pending">{t("mobileSetup.connecting")}</Note>}
     </Group>
+  );
+}
+
+/** Push to the phone in one dropdown; only the chosen item's description shows (B59). */
+function PushModeSelect({ mode, actions }: { mode: PushMode; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const chosen = PUSH_CHOICES.find((choice) => choice.id === mode);
+  return (
+    <Row label={t("mobileSetup.pushTo")} detail={chosen ? <Note data-push-detail={chosen.id}>{t(chosen.detail)}</Note> : null}>
+      <Select value={mode} onValueChange={(value) => actions.setPushMode(value as PushMode)}>
+        <SelectTrigger aria-label={t("mobileSetup.push")} data-push-select="true">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {PUSH_CHOICES.map((choice) => (
+            <SelectItem key={choice.id} value={choice.id} data-push-choice={choice.id}>
+              {t(choice.label)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
   );
 }

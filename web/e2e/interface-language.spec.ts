@@ -131,7 +131,9 @@ test("unsupported systems use English, and an invalid stored preference is diagn
     });
     await openSettings(page, daemon);
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await page.locator('[data-settings-tab="about"]').click();
     await expect(page.locator("[data-diagnostics]")).toContainText("ui_state.interface_language_invalid");
+    await page.locator('[data-settings-tab="general"]').click();
     await expect(page.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "en");
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).interface_language).toBe("unsupported");
     // Choosing English repairs an invalid value even though English was already drawn.

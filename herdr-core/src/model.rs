@@ -3030,7 +3030,7 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub first_run: Option<FirstRun>,
     /// Whether the desktop app shows an OS notification when a root agent
-    /// newly needs the operator or finishes (Settings > General, PRD
+    /// newly needs the operator or finishes (Settings > Notifications, PRD
     /// first-run-onboarding D-21). Off until the operator turns it on, so an
     /// existing install starts without it (D-08).
     #[serde(default)]

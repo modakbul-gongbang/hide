@@ -1,6 +1,6 @@
 //! The first-run wizard's progress (PRD first-run-onboarding D-07, B6): the
 //! step it opens on, when its first step's apply has settled, the desktop
-//! notification switch it and Settings > General share (D-21), and the
+//! notification switch it and Settings > Notifications share (D-21), and the
 //! one-time introduction of the Factory screen (B43). The shell
 //! draws the steps; each move is one event here, saved with the UI state.
 
@@ -192,7 +192,7 @@ impl Runtime {
         self.move_first_run(FirstRunStep::Agents, to)
     }
 
-    /// The desktop notification switch (Settings > General, the wizard's
+    /// The desktop notification switch (Settings > Notifications, the wizard's
     /// second step). Whether the system lets Hide show one is the desktop
     /// host's to read; this is only the operator's choice.
     pub(super) fn set_desktop_notifications(&mut self, enabled: bool) -> bool {

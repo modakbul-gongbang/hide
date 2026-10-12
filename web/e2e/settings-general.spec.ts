@@ -174,6 +174,9 @@ test("General and About read without sideways scrolling in Korean and English, l
       await expect.poll(() => panel.evaluate((node) => node.scrollTop + node.clientHeight - node.scrollHeight)).toBeGreaterThanOrEqual(-1);
       expect((await sheet.locator('[role="tablist"]').boundingBox())!.y).toBe(list.y);
       await expect(sheet.locator("[data-copy-diagnostics]")).toBeInViewport();
+      // The whole list fits beside the page, About included, without a scroll of its own.
+      await expect(sheet.locator('[data-settings-tab="about"]')).toBeInViewport({ ratio: 1 });
+      expect(await sheet.locator("nav").evaluate((node) => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(0);
       await screenshot(page, `settings-about-details-${language}-${theme}-narrow`);
     }
   } finally {

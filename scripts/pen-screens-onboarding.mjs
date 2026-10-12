@@ -361,7 +361,9 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
 
   // Settings > Notifications as Screen / Settings draws it, with the desktop rows in each answer (B30).
   const settings = settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch});
-  const settingsSheet = (p, state) => settings.settingsSheet(p, {page: 'notifications', notify: state, height: 480});
+  // Windows calls its machine This PC and Linux This computer, as the list and the desktop group do there.
+  const MACHINE = {'pc-on': 'This PC', 'pc-off': 'This PC', 'no-service': 'This computer'};
+  const settingsSheet = (p, state) => settings.settingsSheet(p, {page: 'notifications', notify: state, height: 480, machine: MACHINE[state] ?? null});
 
   // -- first-visit line (B43) ------------------------------------------------------------
 
@@ -584,8 +586,8 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
     onSystem('win', () => board('b13-settings-notifications-pc', '13 · Settings > Notifications on Windows and Linux',
       'No permission row: the system gives no permission state. On: the switch and a Test notification row with Send a test. Off: the switch only. Third (with board 12): Linux with no notification service, the switch disabled and one quiet line under it.',
       t => [grid(`sp2-${t}`, [[
-        cell(`spo-${t}`, 'Windows or Linux · on', settingsSheet(`spo-${t}`, 'pc-on')),
-        cell(`spf-${t}`, 'Windows or Linux · off', settingsSheet(`spf-${t}`, 'pc-off')),
+        cell(`spo-${t}`, 'Windows · on (Linux reads This computer)', settingsSheet(`spo-${t}`, 'pc-on')),
+        cell(`spf-${t}`, 'Windows · off', settingsSheet(`spf-${t}`, 'pc-off')),
       ], [
         cell(`spn-${t}`, 'Linux · no notification service', settingsSheet(`spn-${t}`, 'no-service')),
       ]])])),
