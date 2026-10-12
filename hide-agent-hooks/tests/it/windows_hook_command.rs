@@ -186,3 +186,235 @@ fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there(
         }
     }
 }
+
+/// The shells Grok and the Cursor CLI pick on Windows, both PowerShell 7
+/// first and Windows PowerShell after it.
+fn powershells() -> Vec<&'static str> {
+    codex_shells()
+}
+
+/// Grok runs a command with spaces in it as `<shell> -NoProfile
+/// -NonInteractive -Command <command>`, the event on stdin and
+/// `GROK_HOOK_EVENT` set (`xai-grok-hooks/src/runner/command.rs`,
+/// `xai-grok-config/src/shell.rs`, Grok 1.0.50).
+fn run_grok(command: &str, shell: &str, home: &Path, payload: &str) -> Output {
+    let mut child = Command::new(shell)
+        .args(["-NoProfile", "-NonInteractive", "-Command", command])
+        .env(hide_platform::host::HOME_VARIABLE, home)
+        .env("HERDR_PANE_ID", "w1:p2")
+        .env("GROK_HOOK_EVENT", "pre_tool_use")
+        .env_remove("HIDE_CAP_REF")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The Cursor CLI 2026.10.01 on Windows writes the event to a file and the
+/// script below to a `.ps1`, which it runs as `<shell> -ExecutionPolicy
+/// Bypass -NonInteractive -File <script>`; a command that starts with `&` is
+/// put into the pipeline as it is (read from its Windows package, `190.index.js`
+/// `executeCommandScript` and `index.js`'s shell executor).
+fn run_cursor(command: &str, shell: &str, home: &Path, scratch: &Path, payload: &str) -> Output {
+    let event = scratch.join("payload.json");
+    std::fs::write(&event, payload).unwrap();
+    let script = scratch.join("ps-script.ps1");
+    std::fs::write(
+        &script,
+        format!(
+            "$OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -LiteralPath '{}' -Raw | & {{ $input | {command} }}",
+            event.display().to_string().replace('\'', "''")
+        ),
+    )
+    .unwrap();
+    Command::new(shell)
+        .args(["-ExecutionPolicy", "Bypass", "-NonInteractive", "-File"])
+        .arg(&script)
+        .env(hide_platform::host::HOME_VARIABLE, home)
+        .env("HERDR_PANE_ID", "w1:p2")
+        .env("CURSOR_VERSION", "2026.10.01")
+        .env_remove("HIDE_CAP_REF")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+/// A launch the spawn guard reads from the event; with no `hide` to ask, the
+/// guard lets it run and writes one `daemon.unreachable` line, which only a
+/// helper that read the event on stdin can write.
+const LAUNCH: &str = "herdr agent start set-g --kind claude";
+
+fn guard_log(home: &Path) -> String {
+    std::fs::read_to_string(
+        home.join(".hide")
+            .join("agent-hooks")
+            .join("spawn-guard.log"),
+    )
+    .unwrap_or_default()
+}
+
+#[test]
+fn grok_and_cursor_run_the_helper_through_the_powershell_they_start_only_while_it_is_there() {
+    use hide_agent_hooks::guidance::{self, GuidanceAgent};
+
+    let root = tempfile::tempdir().unwrap();
+    let helper = root
+        .path()
+        .join("it's [1] $x here")
+        .join(HELPER_BINARY_NAME);
+    let cwd = root.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let grok_event = serde_json::json!({
+        "hookEventName": "pre_tool_use",
+        "hook_event_name": "PreToolUse",
+        "sessionId": "grok-session",
+        "cwd": cwd,
+        "toolName": "run_terminal_command",
+        "toolInput": { "command": LAUNCH },
+    })
+    .to_string();
+    let cursor_event = serde_json::json!({
+        "hook_event_name": "preToolUse",
+        "cursor_version": "2026.10.01",
+        "tool_name": "Shell",
+        "tool_input": { "command": LAUNCH, "working_directory": cwd },
+        "cwd": cwd,
+    })
+    .to_string();
+    let allow: Value = serde_json::json!({ "permission": "allow" });
+
+    // One home per agent and shell, so each guard log line is that run's.
+    let mut homes = 0;
+    let mut home_for = |agent: GuidanceAgent| {
+        homes += 1;
+        let home = root.path().join(format!("home-{homes}"));
+        std::fs::create_dir_all(agent.home_directory(&home)).unwrap();
+        guidance::install(agent, &home, &helper).unwrap();
+        assert_eq!(
+            guidance::installed_helper_path(agent, &home).as_deref(),
+            helper.to_str(),
+            "{agent:?}: the path is read back from the PowerShell guard"
+        );
+        assert!(guidance::matches_install(agent, &home, &helper));
+        home
+    };
+    let grok_command = |home: &Path| -> String {
+        let document: Value = serde_json::from_str(
+            &std::fs::read_to_string(GuidanceAgent::Grok.config_path(home)).unwrap(),
+        )
+        .unwrap();
+        document["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let cursor_command = |home: &Path, event: &str| -> String {
+        let document: Value = serde_json::from_str(
+            &std::fs::read_to_string(GuidanceAgent::Cursor.config_path(home)).unwrap(),
+        )
+        .unwrap();
+        document["hooks"][event][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    // The app was moved away: Grok's hook says nothing, Cursor's permission
+    // hook answers allow itself and its session start says nothing.
+    for shell in powershells() {
+        let home = home_for(GuidanceAgent::Grok);
+        let output = run_grok(&grok_command(&home), shell, &home, &grok_event);
+        assert!(
+            output.status.success() && output.stdout.is_empty(),
+            "Grok under {shell}: {output:?}"
+        );
+        let home = home_for(GuidanceAgent::Cursor);
+        let scratch = tempfile::tempdir().unwrap();
+        let output = run_cursor(
+            &cursor_command(&home, "preToolUse"),
+            shell,
+            &home,
+            scratch.path(),
+            &cursor_event,
+        );
+        assert!(output.status.success(), "Cursor under {shell}: {output:?}");
+        let answer: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("Cursor under {shell}: {error}: {output:?}"));
+        assert_eq!(answer, allow, "Cursor under {shell}");
+        let output = run_cursor(
+            &cursor_command(&home, "sessionStart"),
+            shell,
+            &home,
+            scratch.path(),
+            "{}",
+        );
+        assert!(
+            output.status.success() && output.stdout.is_empty(),
+            "Cursor's session start under {shell}: {output:?}"
+        );
+    }
+
+    std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
+    for shell in powershells() {
+        let home = home_for(GuidanceAgent::Grok);
+        let output = run_grok(&grok_command(&home), shell, &home, &grok_event);
+        assert!(
+            output.status.success() && output.stdout.is_empty(),
+            "Grok under {shell}: {output:?}"
+        );
+        let log = guard_log(&home);
+        assert!(
+            log.contains("\"daemon.unreachable\"") && log.contains("\"runtime\":\"grok\""),
+            "Grok under {shell}: the helper did not read the event: {log:?} {output:?}"
+        );
+
+        let home = home_for(GuidanceAgent::Cursor);
+        let scratch = tempfile::tempdir().unwrap();
+        let output = run_cursor(
+            &cursor_command(&home, "preToolUse"),
+            shell,
+            &home,
+            scratch.path(),
+            &cursor_event,
+        );
+        assert!(output.status.success(), "Cursor under {shell}: {output:?}");
+        let answer: Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("Cursor under {shell}: {error}: {output:?}"));
+        assert_eq!(answer, allow, "Cursor under {shell}");
+        let log = guard_log(&home);
+        assert!(
+            log.contains("\"daemon.unreachable\"") && log.contains("\"runtime\":\"cursor\""),
+            "Cursor under {shell}: the helper did not read the event: {log:?} {output:?}"
+        );
+
+        let output = run_cursor(
+            &cursor_command(&home, "sessionStart"),
+            shell,
+            &home,
+            scratch.path(),
+            "{}",
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.is_ascii(),
+            "Cursor's session start under {shell}: {output:?}"
+        );
+        let answer: Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|error| panic!("Cursor under {shell}: {error}: {stdout}"));
+        assert!(
+            answer["additional_context"]
+                .as_str()
+                .is_some_and(|context| context.starts_with(PURPOSE_CONTEXT)),
+            "Cursor's session start under {shell}: {answer}"
+        );
+    }
+}

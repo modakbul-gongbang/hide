@@ -317,10 +317,10 @@ jobs:
         timeout-minutes: 10
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-kit)'
       - name: Agent hooks, their Windows entries run through PowerShell
-        # The hook file writer, the entries Claude Code and Codex run on
-        # Windows, OpenCode's plugin and Pi's and omp's extension run in
-        # Node, and the helper's stdin deadline. It stands on its own, so
-        # it runs whatever the step above answered.
+        # The hook file writer, the entries Claude Code, Codex, Grok and
+        # Cursor run on Windows, OpenCode's plugin and Pi's and omp's
+        # extension run in Node, and the helper's stdin deadline. It stands
+        # on its own, so it runs whatever the step above answered.
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 15
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks) & (kind(lib) | kind(bin) | test(/^(hook_deadline|windows_hook_command|windows_scripts)::/))'
