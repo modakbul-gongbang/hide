@@ -15,10 +15,6 @@ pub(crate) struct StartedAgent {
     /// registered with, which a later agent in a reused pane does not share.
     pub(crate) pane_id: String,
     pub(crate) session: Option<String>,
-    /// The pane as the machine itself names it, which a connected device's
-    /// pane is qualified from.
-    pub(crate) raw_pane: String,
-    pub(crate) machine: String,
     pub(crate) task: Option<SpawnTask>,
 }
 
@@ -75,8 +71,6 @@ pub(crate) fn hide_started(ledger: &Ledger) -> HideStarted {
         started.agents.push(StartedAgent {
             pane_id: child.actor.pane_id.clone(),
             session: child.actor.session.clone(),
-            raw_pane: child.pane.clone(),
-            machine: child.machine.clone(),
             task: spawn.task.clone(),
         });
     }
@@ -363,5 +357,37 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         assert_eq!(error, "task_reserved");
+    }
+
+    /// A start reserved by a build that kept no task, asked again by one that
+    /// does, is the same spawn and takes the task up; a different task is not.
+    #[test]
+    fn a_spawn_reserved_without_a_task_takes_the_same_intents_task_up() {
+        let mut ledger = hide_started_ledger(NODE, "hide-memory-m72", None, here("p72"));
+        let hide = Actor::hide("memory", NODE);
+        let origin = ledger.agents[0].id.clone();
+        let again = |task| Mutation::Reserve {
+            parent: origin.clone(),
+            command: crate::coordination::Command::Spawn {
+                parent: None,
+                machine: None,
+                name: "child-hide-memory-m72".into(),
+                intent: "intent-hide-memory-m72".into(),
+                kind: "claude".into(),
+                repo: "/repo".into(),
+                branch: "hide-memory-m72".into(),
+                path: None,
+                args: Vec::new(),
+                task,
+            },
+        };
+        apply(&mut ledger, &hide, &again(memory_task("m72")), 1).unwrap();
+        assert_eq!(ledger.spawns.len(), 1);
+        assert_eq!(ledger.spawns[0].task, memory_task("m72"));
+        assert_eq!(
+            apply(&mut ledger, &hide, &again(memory_task("m73")), 1).unwrap_err(),
+            "intent_conflict"
+        );
+        assert_eq!(ledger.spawns[0].task, memory_task("m72"));
     }
 }

@@ -492,9 +492,14 @@ pub(crate) fn apply(
             }
             if let Some(record) = ledger
                 .spawns
-                .iter()
+                .iter_mut()
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
+                // A spawn reserved before tasks existed carries none, and the
+                // same intent asked again with one is the same spawn: it
+                // takes the task up, so a start in flight across an upgrade
+                // converges instead of failing (engineering #11).
+                let task_agrees = record.task == *task || record.task.is_none();
                 if record.machine != *machine
                     || record.name != *name
                     || hide_agent_adapter::canonical_kind(&record.kind)
@@ -504,9 +509,12 @@ pub(crate) fn apply(
                     || record.requested_path != *path
                     || record.mode != mode
                     || record.args != *args
-                    || record.task != *task
+                    || !task_agrees
                 {
                     return Err("intent_conflict".into());
+                }
+                if record.task.is_none() {
+                    record.task.clone_from(task);
                 }
                 return Ok(json!(record));
             }

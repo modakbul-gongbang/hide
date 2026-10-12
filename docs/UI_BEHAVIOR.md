@@ -390,6 +390,7 @@ The group is by who made the checkout and the task line and badge are by who sta
 Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the provider's icon wears an 11 badge of the Hide mark (its 9 mark in a panel-colored ring) on its lower-right corner, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
 The row's accessible name carries `Hide AI` and the task (`Hide AI · Memory 올리기 · m72`), and the head's list is named `Hide AI, N`.
 A connected device's projects get the same group and badges, and they hold across a restart of hided because the ledger is persisted.
+The digits that number agent rows follow the drawn order, so the checkouts Hide AI made are numbered after the operator's.
 Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the badge and the mark), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
 
 ### Subagent count

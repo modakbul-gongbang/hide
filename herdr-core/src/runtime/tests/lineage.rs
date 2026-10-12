@@ -2629,15 +2629,15 @@ fn rows_and_checkouts_hide_started_are_marked_from_the_ledger_alone() {
             .is_none()
     );
 
-    // A device's agent is marked through the machine-to-device mapping, and
-    // a device that is gone leaves no group to draw.
+    // A device's agent is registered under the id the core names its pane by,
+    // and its spawn under the device's own id, as a spawn on a device leaves them.
     let ledger = hide_started_ledger(
         &node,
         "hide-memory-m43",
         memory_task("m43"),
         Child {
-            machine: "machine-mini",
-            pane: "remote-child",
+            machine: "mini",
+            pane: "remote:mini:pane:remote-child",
             session: "s-remote-child",
         },
     );
@@ -2651,9 +2651,6 @@ fn rows_and_checkouts_hide_started_are_marked_from_the_ledger_alone() {
         runtime.snapshot.navigator.hide_ai_checkouts[0].device_id,
         "mini"
     );
-    runtime.device_machine_ids.remove("mini");
-    runtime.refresh_agent_lineage();
-    assert!(runtime.snapshot.navigator.hide_ai_checkouts.is_empty());
 }
 
 /// PRD hide-ai-origin-mark Risks: the new snapshot fields move only when an

@@ -2405,29 +2405,16 @@ impl Runtime {
     /// from a branch or worktree name (PRD hide-ai-origin-mark D-07). A row
     /// matches while its registration is live and its session is the one the
     /// registration holds, so a later agent in a reused pane is not marked.
+    /// A device's pane is registered under the id the core names it by
+    /// (`remote:<device>:pane:<pane>`), so one comparison serves both.
     fn lay_hide_ai(&self, agents: &mut [SidebarAgentSnapshot]) {
-        let machine_targets = self
-            .device_machine_ids
-            .iter()
-            .map(|(target, machine)| (machine.as_str(), target.as_str()))
-            .collect::<BTreeMap<_, _>>();
         for agent in agents {
             agent.hide_ai = self
                 .hide_started
                 .agents
                 .iter()
                 .find(|started| {
-                    let pane = if started.machine == self.node.as_str() {
-                        started.pane_id.clone()
-                    } else {
-                        match machine_targets.get(started.machine.as_str()) {
-                            Some(target) => {
-                                crate::session_sync::remote_pane_id(target, &started.raw_pane)
-                            }
-                            None => return false,
-                        }
-                    };
-                    pane == agent.pane_id
+                    started.pane_id == agent.pane_id
                         && started.session.is_some()
                         && started.session == agent.lineage_session
                 })
@@ -2437,28 +2424,17 @@ impl Runtime {
         }
     }
 
-    /// The checkouts Hide made for the agents it started, by the device the
-    /// shell names. A machine with no connected device has none to name.
+    /// The checkouts Hide made for the agents it started. A spawn's machine
+    /// is the id of the device the shell names its Projects by (this node's
+    /// own id for a local one), so it is the checkout's device as it stands.
     fn hide_ai_checkouts(&self) -> Vec<crate::model::HideAiCheckoutSnapshot> {
-        let machine_targets = self
-            .device_machine_ids
-            .iter()
-            .map(|(target, machine)| (machine.as_str(), target.as_str()))
-            .collect::<BTreeMap<_, _>>();
         self.hide_started
             .checkouts
             .iter()
-            .filter_map(|started| {
-                let device_id = if started.machine == self.node.as_str() {
-                    self.node.to_string()
-                } else {
-                    (*machine_targets.get(started.machine.as_str())?).to_owned()
-                };
-                Some(crate::model::HideAiCheckoutSnapshot {
-                    device_id,
-                    path: started.path.clone(),
-                    task: started.task.clone(),
-                })
+            .map(|started| crate::model::HideAiCheckoutSnapshot {
+                device_id: started.machine.clone(),
+                path: started.path.clone(),
+                task: started.task.clone(),
             })
             .collect()
     }

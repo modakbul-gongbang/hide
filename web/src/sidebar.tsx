@@ -1028,7 +1028,7 @@ function HideAiGroup({ count, children }: { count: number; children: ReactNode }
   const { t } = useInterfaceTranslation();
   return (
     <li data-hide-ai-group="true">
-      <div className="flex min-h-(--size-sidebar-line) items-center gap-xs pt-xs pr-xs text-micro font-medium text-muted-foreground" style={{ paddingLeft: CHECKOUT_COLUMN }} data-hide-ai-head="true">
+      <div className="flex min-h-(--size-sidebar-line) items-center gap-xs pt-xs pr-xs text-micro font-medium text-muted-foreground" style={{ paddingLeft: CHECKOUT_COLUMN }} data-hide-ai-head="true" aria-hidden="true">
         <HideMark className="size-(--size-icon-sm)" />
         <span>{t("hideAi.name")}</span>
         <span data-hide-ai-count={count}>{count}</span>
