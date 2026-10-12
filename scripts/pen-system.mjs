@@ -52,6 +52,7 @@
 
 import {buildAgentTreeParts, PR_STATES} from './pen-agent-tree.mjs';
 import {buildHideAiOrigin} from './pen-hide-ai-origin.mjs';
+import {buildSidebarChrome} from './pen-sidebar-chrome.mjs';
 
 const UI = '$--font-ui';
 const MONO = '$--font-mono';
@@ -949,6 +950,7 @@ export function componentSheets(tokens) {
     {name: 'Component / Agent graph box', build: () => buildAgentGraphBox(tokens), at: {x: 1200, y: 8281}},
     {name: 'Component / Agent tree parts', build: () => buildAgentTreeParts(tokens), at: {x: 8800, y: 7264}},
     {name: 'Component / Hide AI origin', build: () => buildHideAiOrigin(tokens), at: {x: 11200, y: 7264}},
+    {name: 'Component / Sidebar chrome', build: () => buildSidebarChrome(tokens), at: {x: 12000, y: 6421}},
   ];
 }
 
