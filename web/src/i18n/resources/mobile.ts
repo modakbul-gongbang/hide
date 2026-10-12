@@ -82,7 +82,6 @@ export const mobileEnglish = {
   "mobile.start.model": "Model",
   "mobile.start.defaultModel": "Default",
   "mobile.start.targetDisconnected": "Not connected",
-  "mobile.start.defaultTarget": "This Mac · Home",
   "mobile.start.submit": "Start",
 } as const;
 
@@ -167,7 +166,6 @@ const ko = {
   "mobile.start.model": "모델",
   "mobile.start.defaultModel": "기본값",
   "mobile.start.targetDisconnected": "연결 안 됨",
-  "mobile.start.defaultTarget": "이 맥 · 홈",
   "mobile.start.submit": "시작",
 } satisfies Catalog<typeof mobileEnglish>;
 
@@ -252,7 +250,6 @@ const zhCN = {
   "mobile.start.model": "模型",
   "mobile.start.defaultModel": "默认",
   "mobile.start.targetDisconnected": "未连接",
-  "mobile.start.defaultTarget": "此 Mac · 主文件夹",
   "mobile.start.submit": "启动",
 } satisfies Catalog<typeof mobileEnglish>;
 
@@ -337,7 +334,6 @@ const ja = {
   "mobile.start.model": "モデル",
   "mobile.start.defaultModel": "デフォルト",
   "mobile.start.targetDisconnected": "未接続",
-  "mobile.start.defaultTarget": "このMac · ホーム",
   "mobile.start.submit": "開始",
 } satisfies Catalog<typeof mobileEnglish>;
 

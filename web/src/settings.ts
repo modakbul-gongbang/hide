@@ -8,6 +8,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
 import type { AgentRow, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitComponent, RemoteStatus, Workspace } from "./snapshot";
 import { readsHere } from "./devices";
+import { registeredName } from "./screenMachine";
 import { redact } from "./redact";
 
 type Translate = TFunction<"translation">;
@@ -209,7 +210,7 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined, t: 
  */
 export function deviceSubtitle(device: Device, remote: RemoteStatus | undefined, t: Translate): string {
   if (device.kind !== "remote") return t("devices.localAlias");
-  const parts: string[] = [device.ssh_alias ?? device.label];
+  const parts: string[] = [device.ssh_alias ?? registeredName(device)];
   if (device.host?.state === "ready" && device.host.platform) parts.push(device.host.platform);
   if (remote?.herdr_version) parts.push(`Herdr ${remote.herdr_version}`);
   return parts.join(" · ");
@@ -275,7 +276,7 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
  * stay; without one nothing on the device changes.
  */
 export function kitRemovalLine(device: Device, t: Translate): string {
-  const where = device.ssh_alias ?? device.label;
+  const where = device.ssh_alias ?? registeredName(device);
   const sharing = device.kit?.shares_account_with;
   if (sharing) {
     return t("devices.removal.shared", { other: sharing, alias: where });

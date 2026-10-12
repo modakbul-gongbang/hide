@@ -87,7 +87,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
         agent_scope: Default::default(),
         id: "mini".to_owned(),
-        label: "Mac mini".to_owned(),
+        label: Some("Mac mini".to_owned()),
         kind: "remote".to_owned(),
         state: "unavailable".to_owned(),
         message: None,

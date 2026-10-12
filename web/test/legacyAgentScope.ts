@@ -178,7 +178,7 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
     deviceScopes.set(remote.target_id, scope);
   }
   const liveWorkspaces = [...projects, ...remotes.filter((r) => r.state === "connected").flatMap((r) => r.session?.workspaces ?? [])];
-  const localRows = agents.map((a) => ({ ...a, device_id: localId, device_label: rest.navigator?.devices?.find((d) => d.id === localId)?.label }));
+  const localRows = agents.map((a) => ({ ...a, device_id: localId, device_label: rest.navigator?.devices?.find((d) => d.id === localId)?.label ?? undefined }));
   const liveRows = [...localRows, ...remotes.filter((r) => r.state === "connected").flatMap((r) => (r.session?.agents ?? []).map((a) => ({ ...a, device_id: r.target_id, device_label: rest.navigator?.devices?.find((d) => d.id === r.target_id)?.label ?? r.target_id })))];
   for (const project of liveWorkspaces) {
     const trees = beforeCheckoutAgentRows(project, liveRows);
@@ -226,7 +226,7 @@ function foldedScopes(agents: AgentRow[], workspaces: Workspace[]): AgentScope["
   return Object.fromEntries(agents.map((agent) => {
     const value = beforeFoldedLineage(agent, agents, workspaces);
     return [agent.pane_id, {
-      tiers: value.lines.map((line) => [{ key: line.key, candidates: [line.agent.pane_id], branch: line.branch, pull_request: line.pullRequest, device: line.device }]),
+      tiers: value.lines.map((line) => [{ key: line.key, candidates: [line.agent.pane_id], branch: line.branch, pull_request: line.pullRequest, device_id: line.deviceId }]),
       overflow: value.overflow, badge_descendants: value.badgeDescendants, badge_counts: value.badgeCounts, badge_children: value.badgeChildren.map((a) => a.pane_id),
     }];
   }));

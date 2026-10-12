@@ -41,17 +41,26 @@ export function windowDeviceId(devices: readonly Device[] | undefined): string {
   return hashNode() ?? coreRowId(devices);
 }
 
+export type MachineKey = "common.thisMac" | "common.thisPc" | "common.thisComputer";
+
 /**
  * The catalog key that names a machine as its system does: This Mac on
- * macOS, This PC on Windows, This computer on Linux. `platform` is the
- * device row's (`macos aarch64`, `windows x86_64`); with none, the system the
- * shell runs on, which is this window's machine.
+ * macOS, This PC on Windows, This computer on Linux and any system it does
+ * not recognize. `platform` is a device row's `host.platform` (`macos
+ * aarch64`, `windows x86_64`) or the host bridge's `process.platform`.
  */
-export function thisMachineKey(platform: string | null | undefined): "common.thisMac" | "common.thisPc" | "common.thisComputer" {
-  const system = platform ?? hostBridge()?.platform ?? (typeof navigator === "undefined" ? "" : navigator.platform);
-  if (/^(mac|darwin)/i.test(system)) return "common.thisMac";
-  if (/^win/i.test(system)) return "common.thisPc";
+export function systemMachineKey(platform: string): MachineKey {
+  if (/^(mac|darwin)/i.test(platform)) return "common.thisMac";
+  if (/^win/i.test(platform)) return "common.thisPc";
   return "common.thisComputer";
+}
+
+/**
+ * The same for a machine this window can see: with no `platform`, the system
+ * the shell runs on, which is this window's machine.
+ */
+export function thisMachineKey(platform: string | null | undefined): MachineKey {
+  return systemMachineKey(platform ?? hostBridge()?.platform ?? (typeof navigator === "undefined" ? "" : navigator.platform));
 }
 
 /**
@@ -65,7 +74,16 @@ export function machineName(devices: readonly Device[] | undefined, deviceId: st
   const device = devices?.find((row) => row.id === deviceId);
   if (deviceId === windowDeviceId(devices)) return t(thisMachineKey(device?.host?.platform));
   if (!device) return deviceId;
-  return device.kind !== "remote" ? (device.machine_name ?? device.id) : device.label;
+  return device.kind !== "remote" ? (device.machine_name ?? device.id) : (device.label ?? device.id);
+}
+
+/**
+ * A registered device's name, the one the operator gave it, where only an
+ * SSH device or a node can be meant; the core's own row has none and is named
+ * by `machineName`.
+ */
+export function registeredName(device: Pick<Device, "id" | "label">): string {
+  return device.label ?? device.id;
 }
 
 /** The core's machine as this window names it. */

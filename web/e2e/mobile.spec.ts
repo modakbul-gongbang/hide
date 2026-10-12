@@ -22,7 +22,7 @@ import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { DNS, FakeTailscale } from "./fake-tailscale";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { screenshot, THIS_MACHINE } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 240_000 });
@@ -685,7 +685,7 @@ test("the phone's start sheet starts an agent in a checkout and in Home, and kee
     await expect(sheet).toBeVisible();
     const target = sheet.locator('[data-phone-start-target="true"]');
     await expect(target).toHaveValue(`home:${daemon.node}`, { timeout: 20_000 });
-    await expect(target.locator("option:checked")).toHaveText("This Mac · Home");
+    await expect(target.locator("option:checked")).toHaveText(`${THIS_MACHINE} · Home`);
     await expect(sheet.locator('[data-phone-start-kind="true"]')).toHaveValue("claude");
     await expect(sheet.locator('[data-phone-start-submit="true"]')).toBeDisabled();
     // B46: the Korean text and a long checkout name stay inside the phone's width.

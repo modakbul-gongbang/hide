@@ -70,11 +70,11 @@ export function StartSheet() {
             {selection.target ? (
               catalog?.targets.map((target) => (
                 <option key={target.id} value={target.id} disabled={!target.connected}>
-                  {target.connected ? targetText(t, target) : `${targetText(t, target)} · ${t("mobile.start.targetDisconnected")}`}
+                  {target.connected ? targetText(t, target, catalog.core_platform) : `${targetText(t, target, catalog.core_platform)} · ${t("mobile.start.targetDisconnected")}`}
                 </option>
               ))
             ) : (
-              <option value="">{t("mobile.start.defaultTarget")}</option>
+              <option value="">{t("mobile.start.home")}</option>
             )}
           </select>
         </Field>

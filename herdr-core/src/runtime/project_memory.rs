@@ -252,16 +252,7 @@ impl Runtime {
             Err(_) => None,
         };
         let Some(node) = node else {
-            let device_name = self
-                .snapshot
-                .navigator
-                .devices
-                .iter()
-                .find(|device| device.id == workspace.device_id)
-                .map_or_else(
-                    || workspace.device_id.clone(),
-                    |device| device.label.clone(),
-                );
+            let device_name = self.device_name(&workspace.device_id);
             return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
         };
         Ok((node, workspace.path.clone()))

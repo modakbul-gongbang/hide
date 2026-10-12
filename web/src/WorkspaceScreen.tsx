@@ -9,6 +9,7 @@ import { remoteTabView, remoteView } from "./remote";
 import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type Checkout } from "./snapshot";
+import { registeredName } from "./screenMachine";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
@@ -378,7 +379,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
           // The front thing is a remote device's: its color and name lead the toolbar, and the pane border wears the same color (PRD home-device-rail D-15).
           <span className="-ml-sm flex h-full max-w-(--size-recent-location-max) shrink-0 items-center gap-xs bg-device-remote px-sm font-medium text-primary-foreground" data-device-band={device.id}>
             <ServerIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-            <span className="min-w-0 truncate">{device.label}</span>
+            <span className="min-w-0 truncate">{registeredName(device)}</span>
           </span>
         ) : null}
         <nav aria-label={t("panes.workspace.location")} className="flex min-w-0 flex-1 items-center gap-xs">
@@ -388,7 +389,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
           {project && !project.is_home ? (
             <>
               <span aria-hidden="true" className="text-muted-foreground">/</span>
-              <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
+              <Hint label={`${project.label} · ${project.path}${device ? ` · ${registeredName(device)}` : ""}`}>
                 <span className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate px-xs text-subtle-foreground" data-workspace-project={project.id}>
                   {project.label}
                 </span>
@@ -470,15 +471,16 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
   const session = status?.session ?? null;
   const view = useMemo(() => remoteView(session), [session]);
   if (!device) return null;
+  const name = registeredName(device);
   const connected = status?.state === "connected";
   if (!view) {
     const line = deviceLine(device, status ?? undefined, t);
     return (
       <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-subtle-foreground" data-remote-device-surface={device.id} data-remote-state={status?.state ?? "none"}>
         <h2 className="text-title font-semibold text-foreground">
-          {device.label} <span className="font-mono text-caption text-muted-foreground">{device.ssh_alias}</span>
+          {name} <span className="font-mono text-caption text-muted-foreground">{device.ssh_alias}</span>
         </h2>
-        <p>{connected ? t("panes.workspace.connectedEmpty", { device: device.label }) : status?.message ? t("panes.workspace.remoteStateMessage", { device: device.label, state: line.text, message: status.message }) : t("panes.workspace.remoteState", { device: device.label, state: line.text })}</p>
+        <p>{connected ? t("panes.workspace.connectedEmpty", { device: name }) : status?.message ? t("panes.workspace.remoteStateMessage", { device: name, state: line.text, message: status.message }) : t("panes.workspace.remoteState", { device: name, state: line.text })}</p>
         <div className="flex gap-sm">
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
@@ -501,12 +503,12 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           {status?.message ? (
             <Hint label={status.message} reveals>
               <span className="min-w-0 flex-1 truncate">
-                {t("panes.workspace.staleMessage", { device: device.label, message: status.message })}
+                {t("panes.workspace.staleMessage", { device: name, message: status.message })}
               </span>
             </Hint>
           ) : (
             <span className="min-w-0 flex-1 truncate">
-              {t("panes.workspace.stale", { device: device.label })}
+              {t("panes.workspace.stale", { device: name })}
             </span>
           )}
           {canRetryDevice(device, status ?? undefined) ? (

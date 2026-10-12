@@ -18,7 +18,7 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
     // delegation chip, and distinct device IDs retain equal-label context.
     let mut runtime = runtime();
     let local_id = runtime.snapshot.navigator.devices[0].id.clone();
-    runtime.snapshot.navigator.devices[0].label = "mini".into();
+    runtime.snapshot.navigator.devices[0].label = Some("mini".into());
     let mut agents = rows();
     agents[0].identity_label = "Lead".into();
     agents[1].pane_id = "spec".into();
@@ -103,7 +103,7 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
 
     let mut remote_device = crate::workspace::local_device(&crate::node::test_node(), None);
     remote_device.id = "other-device".into();
-    remote_device.label = "mini".into();
+    remote_device.label = Some("mini".into());
     remote_device.kind = "remote".into();
     runtime.snapshot.navigator.devices.push(remote_device);
     let mut remote_project = project("remote-docs", &["remote:other-device:pane:p1"]);

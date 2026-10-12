@@ -42,8 +42,8 @@ pub struct Target {
     /// The place on the device (`project · branch`, or a folder's name);
     /// `None` is the device's Home, which the phone names in its language.
     pub place: Option<String>,
-    /// The device's name; `None` is this Mac, which the phone names in its
-    /// language.
+    /// The device's name; `None` is the core's own machine, which the phone
+    /// names in its language from the catalog's `core_platform`.
     pub device_label: Option<String>,
     pub connected: bool,
 }
@@ -61,6 +61,10 @@ struct Route {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Catalog {
     targets: Vec<Target>,
+    /// The core's machine's system as its device row says it (`macos
+    /// aarch64`), from which the phone says This Mac, This PC or This
+    /// computer in its own language.
+    core_platform: Option<String>,
     kinds: Vec<Value>,
     remembered: Value,
     routes: HashMap<String, Route>,
@@ -90,6 +94,12 @@ impl Catalog {
             ..Self::default()
         };
         let devices = array_of(rest.pointer("/navigator/devices"));
+        catalog.core_platform = devices
+            .iter()
+            .find(|device| str_of(device, "id") == node)
+            .and_then(|device| device.pointer("/host/platform"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let statuses = array_of(rest.pointer("/status/remote"));
         let local_workspaces: Vec<&Value> = array_of(rest.pointer("/navigator/workspaces"))
             .iter()
@@ -208,6 +218,7 @@ impl Catalog {
         json!({
             "type": "start_catalog",
             "targets": self.targets,
+            "core_platform": self.core_platform,
             "kinds": self.kinds,
             "remembered": self.remembered,
         })
@@ -551,7 +562,7 @@ mod tests {
         json!({
             "navigator": {
                 "devices": [
-                    {"id": "local", "label": "This Mac", "kind": "local", "state": "local"},
+                    {"id": "local", "label": null, "kind": "local", "state": "local", "host": {"platform": "windows x86_64"}},
                     {"id": "mini", "label": "mini", "kind": "remote", "state": "ready"},
                     {"id": "off", "label": "off", "kind": "remote", "state": "disabled"},
                 ],
@@ -600,6 +611,8 @@ mod tests {
             ]
         );
         assert_eq!(catalog.targets[0].device_label, None);
+        assert_eq!(catalog.core_platform.as_deref(), Some("windows x86_64"));
+        assert_eq!(catalog.frame()["core_platform"], "windows x86_64");
         assert_eq!(catalog.targets[4].device_label.as_deref(), Some("mini"));
         assert!(catalog.targets.iter().all(|target| target.connected));
     }
