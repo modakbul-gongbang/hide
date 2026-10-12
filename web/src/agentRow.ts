@@ -4,6 +4,7 @@
 // a view draws the sentence and how the mark and badge are coloured, so the
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
+import { hideAiWords } from "./hideAiOrigin";
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
 import { toneClass } from "./lineage";
@@ -133,7 +134,7 @@ export function branchChip(agent: Pick<AgentRow, "state">): string | null {
  * shows has to be here.
  */
 export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, statusText(t, agent.status_code), agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai), agent.detail].filter(Boolean).join(", ");
 }
 
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */
