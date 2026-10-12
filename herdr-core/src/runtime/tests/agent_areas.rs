@@ -1534,9 +1534,17 @@ fn a_second_fork_of_a_pane_still_forking_is_refused_whichever_item_asked() {
         serde_json::json!({"pane_id":"w-order:t1:p","placement":"side","request_id":"second"}),
     ));
     assert_eq!(
-        runtime.snapshot.status.last_error.as_ref().map(|error| error.kind.as_str()),
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
         Some("pane.fork_already_running")
     );
-    assert_eq!(input_state(&runtime, "second"), Some(InputRequestState::Discarded));
+    assert_eq!(
+        input_state(&runtime, "second"),
+        Some(InputRequestState::Discarded)
+    );
     assert_eq!(runtime.forks_in_flight.len(), 1);
 }

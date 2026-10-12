@@ -3007,12 +3007,16 @@ fn run_agent_fork_with_registration(
             if parents.next().is_some() {
                 return Err("Session fork parent has ambiguous workspace ownership".into());
             }
+            let label = request
+                .tab_label
+                .as_deref()
+                .ok_or("Session fork has no checkout to name its tab in")?;
             check()?;
             let tab = create_tab_in(
                 mutation_connector,
                 &parent.workspace_id,
                 cwd,
-                &request.name,
+                label,
                 false,
                 Default::default(),
             )
@@ -3673,6 +3677,8 @@ mod tests {
                         assert_eq!(params["workspace_id"], "w1");
                         assert_eq!(params["cwd"], expected_cwd);
                         assert_eq!(params["focus"], false);
+                        // Named as a new tab, so the strip shows the agent.
+                        assert_eq!(params["label"], "Tab 2");
                         json!({"type":"tab_created",
                             "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
                             "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
@@ -3710,6 +3716,7 @@ mod tests {
                 session_id: "native-pi".into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),
+                tab_label: Some("Tab 2".into()),
                 placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
@@ -3864,6 +3871,7 @@ mod tests {
                 session_id: session.into(),
                 cwd: Some(checkout.clone()),
                 name: "fork-opencode-1".into(),
+                tab_label: Some("Tab 2".into()),
                 placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
@@ -3981,6 +3989,7 @@ mod tests {
                 session_id: id.into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-grok-1".into(),
+                tab_label: Some("Tab 2".into()),
                 placement: ForkPlacement::Tab,
             };
             let result = run_agent_fork_with_registration(
@@ -4049,6 +4058,7 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-parent-pane-1".to_owned(),
+            tab_label: None,
             placement: ForkPlacement::Side,
         };
 

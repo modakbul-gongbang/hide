@@ -102,6 +102,9 @@ pub struct ForkRequest {
     /// The agent name Herdr will list the fork under, unique per fork and
     /// already inside Herdr's name rule (`fork_name`).
     pub name: String,
+    /// The label `Fork agent`'s tab is made with: its checkout's next
+    /// automatic tab label, which the strip replaces with the agent's title.
+    pub tab_label: Option<String>,
     pub placement: ForkPlacement,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
@@ -293,6 +296,7 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-w1-p2-abc".to_owned(),
+            tab_label: Some("Tab 2".to_owned()),
             placement: ForkPlacement::Tab,
         }
     }

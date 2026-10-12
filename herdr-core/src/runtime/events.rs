@@ -2846,16 +2846,23 @@ impl Runtime {
                     );
                     return true;
                 };
-                let cwd = self
+                // A fork's tab is named as a new tab is, so the strip calls it
+                // by its agent rather than by the Herdr name it starts under.
+                let (cwd, tab_label) = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
                     .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .flat_map(|tab| tab.panes.iter())
-                    .find(|pane| pane.id == pane_id)
-                    .map(|pane| pane.cwd.clone());
+                    .find_map(|checkout| {
+                        let pane = checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes.iter())
+                            .find(|pane| pane.id == pane_id)?;
+                        Some((pane.cwd.clone(), checkout.next_tab_label.clone()))
+                    })
+                    .unzip();
                 self.fork_sequence += 1;
                 let name = fork_name(
                     &pane_id,
@@ -2873,6 +2880,7 @@ impl Runtime {
                         .and_then(|facts| facts.native_reference.clone()),
                     cwd,
                     name,
+                    tab_label,
                     placement: payload.placement,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
