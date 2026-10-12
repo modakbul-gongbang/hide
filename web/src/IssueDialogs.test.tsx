@@ -23,6 +23,7 @@ const ai = (over: Partial<BackgroundAi>): BackgroundAi => ({ enabled: true, prov
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
 });
 
 async function open(background: BackgroundAi) {
@@ -70,6 +71,8 @@ it.each([
 });
 
 it("names every row's machine in New issue's list when it spans machines, this window's as This Mac, so two projects at the same name read apart (D-29)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" });
   const devices = [
     { id: "mini-node", kind: "local", state: "local", label: "mini", machine_name: "Mac mini" },
     { id: "macbook-node", kind: "remote", state: "ready", label: "MacBook", dials_in: true },
