@@ -331,6 +331,12 @@ fn unix_agent(herdr: &PrivateHerdr) {
 /// Herdr starts Windows agents through PowerShell: `claude.ps1` is found as
 /// a script, records its folder and arguments, and runs a copy of
 /// `timeout.exe` named `claude.exe`, which Herdr reads as the agent.
+/// Appends a line to a file in the fixture home, again while another pane
+/// holds the file: Windows refuses a second writer, and two panes record at
+/// once.
+#[cfg(windows)]
+const RECORD: &str = "function Record($file, $line) { for ($i = 0; $i -lt 50; $i++) { try { Add-Content -ErrorAction Stop -Path \"$env:USERPROFILE\\$file\" -Value $line; return } catch { Start-Sleep -Milliseconds 100 } }; throw \"$file stayed locked\" }\r\n";
+
 #[cfg(windows)]
 fn windows_agent(herdr: &PrivateHerdr) {
     let agent = herdr.home.join("agent");
@@ -343,7 +349,9 @@ fn windows_agent(herdr: &PrivateHerdr) {
     .unwrap();
     std::fs::write(
         herdr.home.join(r"bin\claude.ps1"),
-        "Add-Content -Path \"$env:USERPROFILE\\claude-args\" -Value ((Split-Path -Leaf (Get-Location).Path) + ' ' + ($args -join ' '))\r\n& \"$env:USERPROFILE\\agent\\claude.exe\" /t 600 /nobreak\r\n",
+        format!(
+            "{RECORD}Record 'claude-args' ((Split-Path -Leaf (Get-Location).Path) + ' ' + ($args -join ' '))\r\n& \"$env:USERPROFILE\\agent\\claude.exe\" /t 600 /nobreak\r\n"
+        ),
     )
     .unwrap();
 }
@@ -416,7 +424,7 @@ fn user_files(herdr: &PrivateHerdr, _shell: &str) {
     std::fs::write(
         &profile,
         format!(
-            "Write-Host -NoNewline '{QUESTION} '\r\n$key = [Console]::ReadKey($true)\r\nAdd-Content -Path \"$env:USERPROFILE\\answers\" -Value ((Split-Path -Leaf (Get-Location).Path) + ' answered [' + $key.KeyChar + ']')\r\n"
+            "{RECORD}Write-Host -NoNewline '{QUESTION} '\r\n$key = [Console]::ReadKey($true)\r\nRecord 'answers' ((Split-Path -Leaf (Get-Location).Path) + ' answered [' + $key.KeyChar + ']')\r\n"
         ),
     )
     .unwrap();
@@ -570,10 +578,23 @@ fn startup_question(shell: &str, variable: &str) {
 
     // The operator answers each question; the same starts then launch, each
     // with its own prompt, under its own name, in its own tab.
-    for pane in [&first, &second] {
+    let answered = || {
+        herdr
+            .file("answers")
+            .lines()
+            .filter(|line| !line.starts_with("plain"))
+            .count()
+    };
+    for (count, pane) in [&first, &second].into_iter().enumerate() {
         herdr.request(
             "pane.send_text",
             wire::pane_send_text_params(pane, "n").unwrap(),
+        );
+        herdr.wait_on(
+            pane,
+            Duration::from_secs(30),
+            "the question is answered",
+            || answered() == count + 1,
         );
     }
     // Windows PowerShell keeps Herdr's own prompt wrapper: the pane's folder
@@ -582,9 +603,6 @@ fn startup_question(shell: &str, variable: &str) {
     {
         let sub = herdr.home.join("m43").join("sub");
         std::fs::create_dir_all(&sub).unwrap();
-        herdr.wait_on(&first, Duration::from_secs(30), "the prompt shows", || {
-            herdr.file("answers").lines().count() == 2
-        });
         herdr.request(
             "pane.send_text",
             wire::pane_send_text_params(&first, "cd sub\r").unwrap(),
