@@ -240,8 +240,8 @@ It never merges, because three Herdr behaviors the core relies on are covered by
 
 ## License of contributions
 
-hide is released under the Fair Core License, Version 1.0, MIT Future License ([LICENSE](LICENSE)).
-By submitting a contribution, you confirm that you have the right to submit it, and you grant Hoyeon Lee a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce, modify, distribute, sublicense and relicense it under any terms, including in versions of hide that are not published as source.
+hide is released under the MIT License ([LICENSE](LICENSE)).
+By submitting a contribution, you confirm that you have the right to submit it and agree that it is licensed under the same MIT License.
 You keep the copyright in your contribution.
 
 ## Commit messages and attribution
