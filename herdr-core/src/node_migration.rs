@@ -63,6 +63,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     LABELS,
     DELIVERY_LEDGER,
     LINKS,
+    hide_kit::layout::USAGE_STORE,
     LOCAL_ISSUES,
     PROJECT_MEMORY,
     FACTORY,
@@ -131,6 +132,12 @@ pub enum Moves {
 /// owner's, a linked node's, a dialed device's), so a store that gains a
 /// machine-bound key must be added here.
 pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
+    (
+        hide_kit::layout::USAGE_STORE,
+        "native node ids in devices, events, daily, cursors and backfills; qualified paths",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         CORE_STATE,
         "/workspace_registrations/*/device_id",

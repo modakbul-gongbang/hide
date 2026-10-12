@@ -753,6 +753,21 @@ The runtime stamps that onto `CheckoutSnapshot.landed` (`runtime/links.rs`, `ass
 `hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]` is read-only and answers the panel's record as one JSON line (the target, the repository, each pull request with its state, issue links and sources, worktrees and whether each was removed, and each session with its ids, device, role, times, request, file path, whether the file is there, and parent).
 It answers through hided's own core without a renderer, scoped by default to the Project of the calling checkout: a target in another Project fails with `other_project` and a hint to pass `--all-projects`, a missing one with `not_found`, an unreadable record with `links_unavailable`, each with a non-zero exit.
 
+## Historical usage accounting
+
+`usage_ledger::store` owns `usage.sqlite3`, named by `hide_kit::layout::usage_store` under the core state directory.
+Normalized usage events contain native call identity, model, time, session, working folder, provider, tokens and recorded cost, with no conversation fields.
+An ingestion transaction adds a new call and its daily `(native node, agent, local day, model)` totals together with the file checkpoint; repeated calls add nothing, and changed completed calls keep the first accounting value and report a count-only conflict.
+The day is assigned in the core's time zone at first ingestion and stays assigned after the time zone changes or the core moves.
+New calls use the current core time zone.
+
+Each agent's first backfill may fill older days within the 400-day retention window, and its event keys stay until that backfill's durable completion marker is written.
+After completion, whole days before the 45-day event horizon are frozen: replayed or late calls before that boundary are counted as skipped and never change those totals.
+The boundary is retained as a monotonic instant so a clock rollback or time-zone change cannot admit a call whose dedup key already expired.
+Maintenance removes at most 512 expired events and 512 expired daily rows per turn; the event bound is one million per native node, the candidate bound 10,000 per agent, the daily-row bound 100,000, the native-node bound 32 and the database bound 512 MiB, with each refusal reported rather than silently growing storage.
+The store uses SQLite WAL and full synchronous commits, refuses a damaged or newer store without rebuilding it, and travels with `MOVES_WITH_CORE` through the existing consistent SQLite copy.
+Native physical node identities and their qualified source paths stay unchanged when the core's owner changes.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
