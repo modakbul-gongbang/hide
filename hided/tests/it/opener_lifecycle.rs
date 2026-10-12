@@ -6,11 +6,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hide_platform::process::{is_alive, start_time};
-use tokio::sync::Notify;
 
 const ROLE: &str = "HIDED_FAKE_OPENER_ROLE";
 const MARKER: &str = "HIDED_FAKE_OPENER_MARKER";
@@ -272,7 +270,8 @@ fn acceptance_timeout_ends_cli_spawned_before_watcher() {
 async fn a_helper_is_handed_the_plain_spelling_of_a_canonical_path() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
-    let handler = handler(&script, Arc::new(Notify::new()));
+    let (_role, ended) = tokio::sync::watch::channel(false);
+    let handler = handler(&script, ended);
     let canonical = std::fs::canonicalize(dir.path()).unwrap().join("canonical");
     let plain = hide_platform::fs::identity::canonical(dir.path())
         .unwrap()
@@ -388,7 +387,10 @@ fn repeated_owned_helpers_are_reaped_between_requests() {
     }
 }
 
-fn handler(script: &Path, shutdown: Arc<Notify>) -> hide_node::opener::OpenHandler {
+fn handler(
+    script: &Path,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> hide_node::opener::OpenHandler {
     hide_node::opener::OpenHandler::new(
         Some(script.to_path_buf()),
         shutdown,
@@ -408,8 +410,8 @@ async fn wait_until_idle(handler: &hide_node::opener::OpenHandler) {
 async fn launch_cap_and_shutdown_reap_owned_children() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
-    let shutdown = Arc::new(Notify::new());
-    let handler = handler(&script, Arc::clone(&shutdown));
+    let (shutdown, ended) = tokio::sync::watch::channel(false);
+    let handler = handler(&script, ended);
     let mut children = Vec::new();
     for index in 0..4 {
         let marker = dir.path().join(format!("open-{index}"));
@@ -422,8 +424,7 @@ async fn launch_cap_and_shutdown_reap_owned_children() {
         handler.launch(&dir.path().join("fifth")),
         Err("over_budget")
     );
-    tokio::task::yield_now().await;
-    shutdown.notify_waiters();
+    shutdown.send_replace(true);
     wait_until_idle(&handler).await;
     for pid in children {
         assert_gone(pid);
@@ -434,7 +435,8 @@ async fn launch_cap_and_shutdown_reap_owned_children() {
 async fn owned_cli_launch_times_out_and_reaps_its_child() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
-    let handler = handler(&script, Arc::new(Notify::new()));
+    let (_role, ended) = tokio::sync::watch::channel(false);
+    let handler = handler(&script, ended);
     let marker = dir.path().join("timeout");
     assert_eq!(handler.launch(&marker), Ok(()));
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
@@ -456,7 +458,8 @@ async fn owned_cli_launch_times_out_and_reaps_its_child() {
 async fn thirteenth_quick_launch_is_over_budget() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake(dir.path(), "quick-opener", "quick");
-    let handler = handler(&script, Arc::new(Notify::new()));
+    let (_role, ended) = tokio::sync::watch::channel(false);
+    let handler = handler(&script, ended);
     for index in 0..12 {
         assert_eq!(
             handler.launch(&dir.path().join(format!("quick-{index}"))),

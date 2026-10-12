@@ -1,26 +1,54 @@
 //! One bounded, nonblocking queue keeps diagnostic I/O out of the runtime lock.
 //! The stderr line and the on-disk line are identical. Files live next to the
 //! app's state in Logs, so a suffixed development instance owns separate logs.
+//! A process drains the queue before it exits ([`drain`]), within a bound, so
+//! the records it wrote last are on disk; a panic out of `main` and a SIGKILL
+//! are not covered, and what was queued then is lost.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(not(test))]
-use std::sync::mpsc;
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 const FILE_LIMIT: u64 = 1024 * 1024;
-#[cfg(not(test))]
 const LINE_LIMIT: usize = 64 * 1024;
+const QUEUE: usize = 512;
+/// How long [`drain`] waits for the writers before the process exits anyway,
+/// so a stalled disk cannot hold the exit.
+const DRAIN_WITHIN: Duration = Duration::from_secs(1);
 static SINK: OnceLock<Mutex<Option<DiagnosticSink>>> = OnceLock::new();
+/// The writers this process started that may still be writing: the current
+/// sink's and those an `install` replaced, which end once they have written
+/// what they hold.
+static WRITERS: OnceLock<Mutex<Vec<WriterEnd>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct DiagnosticSink {
     sender: SyncSender<String>,
     dropped: Arc<AtomicU64>,
+}
+
+/// Disconnects when its writer thread has written its queue and returned,
+/// or unwound.
+struct WriterEnd(mpsc::Receiver<()>);
+
+impl WriterEnd {
+    fn running(&self) -> bool {
+        matches!(self.0.try_recv(), Err(mpsc::TryRecvError::Empty))
+    }
+
+    /// Whether the writer ended by `deadline`.
+    fn ended_by(&self, deadline: Instant) -> bool {
+        matches!(
+            self.0
+                .recv_timeout(deadline.saturating_duration_since(Instant::now())),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        )
+    }
 }
 
 /// Emits one JSON record. The argument is a `serde_json::Value`, so a line
@@ -40,13 +68,69 @@ pub fn install(state_path: &Path) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::other("state path has no parent"))?
         .join("Logs");
+    let (sink, end) = start_writer(directory)?;
+    {
+        let mut writers = lock(writer_ends());
+        writers.retain(WriterEnd::running);
+        writers.push(end);
+    }
+    // A process normally owns one core. Replacing the active sink also makes
+    // destroy-and-create cycles bind diagnostics to the new core's state path
+    // instead of keeping the first path for the rest of the process lifetime.
+    // The sink replaced here is dropped, so its writer ends once it has
+    // written what it holds.
+    *lock(sink_slot()) = Some(sink);
+    Ok(())
+}
+
+/// Ends every writer this process started, once each has written what it
+/// holds, within [`DRAIN_WITHIN`]; answers whether all ended. Called once,
+/// just before the process exits: a record after it goes to stderr at once,
+/// as before [`install`]. A writer still running at the bound is named by
+/// one `diagnostics.drain_timed_out` line on stderr, and the exit goes on.
+pub fn drain() -> bool {
+    let sink = lock(sink_slot()).take();
+    let writers = std::mem::take(&mut *lock(writer_ends()));
+    let running = end_writers(sink, &writers, DRAIN_WITHIN);
+    if running > 0 {
+        write_stderr_line(
+            &serde_json::json!({
+                "kind": "diagnostics.drain_timed_out",
+                "writers": running,
+                "within_ms": DRAIN_WITHIN.as_millis() as u64,
+            })
+            .to_string(),
+        );
+    }
+    running == 0
+}
+
+/// Drops `sink` and waits for `writers` until one deadline `within` from
+/// now; answers how many were still running at it.
+fn end_writers(sink: Option<DiagnosticSink>, writers: &[WriterEnd], within: Duration) -> usize {
+    drop(sink);
+    let deadline = Instant::now() + within;
+    writers
+        .iter()
+        .filter(|writer| !writer.ended_by(deadline))
+        .count()
+}
+
+/// A writer thread appending each queued record to `directory`'s log, and
+/// the end it reports once its queue's last sender is dropped and it has
+/// written what the queue held.
+fn start_writer(directory: PathBuf) -> io::Result<(DiagnosticSink, WriterEnd)> {
     let writer = RotatingLog::open(directory, FILE_LIMIT)?;
-    let (sender, receiver) = mpsc::sync_channel::<String>(512);
+    let (sender, receiver) = mpsc::sync_channel::<String>(QUEUE);
+    let (ended, end) = mpsc::channel::<()>();
     let dropped = Arc::new(AtomicU64::new(0));
     let writer_dropped = Arc::clone(&dropped);
     std::thread::Builder::new()
         .name("diagnostics".into())
         .spawn(move || {
+            // Dropped when this thread returns or unwinds, which is the end
+            // `drain` waits for.
+            let _ended = ended;
             let mut writer = writer;
             let mut write_failed = false;
             for message in receiver {
@@ -81,14 +165,7 @@ pub fn install(state_path: &Path) -> io::Result<()> {
                 }
             }
         })?;
-    // A process normally owns one core. Replacing the active sink also makes
-    // destroy-and-create cycles bind diagnostics to the new core's state path
-    // instead of keeping the first path for the rest of the process lifetime.
-    *sink_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-        Some(DiagnosticSink { sender, dropped });
-    Ok(())
+    Ok((DiagnosticSink { sender, dropped }, WriterEnd(end)))
 }
 
 #[cfg(test)]
@@ -120,10 +197,7 @@ pub fn emit(record: serde_json::Value) {
         }
     });
     let message = record.to_string();
-    let sink = sink_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
+    let sink = lock(sink_slot()).clone();
     if let Some(sink) = sink {
         if sink.sender.try_send(message).is_err() {
             sink.dropped.fetch_add(1, Ordering::Relaxed);
@@ -135,8 +209,8 @@ pub fn emit(record: serde_json::Value) {
 
 /// Writes one record to the Logs file beside `state_path` at once, before
 /// any core exists: a daemon that refuses to start leaves its reason where
-/// its operator reads, since a detached daemon's stderr goes nowhere and the
-/// process ends before a queued record would be written.
+/// its operator reads, since a detached daemon's stderr goes nowhere, and a
+/// record written this way is on disk even when [`drain`] ran out of time.
 pub fn record_now(state_path: &Path, record: serde_json::Value) -> io::Result<()> {
     let line = record.to_string();
     write_stderr_line(&line);
@@ -162,6 +236,16 @@ pub fn newest_record(
 
 fn sink_slot() -> &'static Mutex<Option<DiagnosticSink>> {
     SINK.get_or_init(|| Mutex::new(None))
+}
+
+fn writer_ends() -> &'static Mutex<Vec<WriterEnd>> {
+    WRITERS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn write_stderr_line(message: &str) {
@@ -240,5 +324,42 @@ mod tests {
                 .unwrap()
                 .contains("99")
         );
+    }
+
+    #[test]
+    fn a_drain_returns_once_every_writer_wrote_all_it_held() {
+        let folders = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        // The first sink is replaced, as a second `install` replaces it; the
+        // second is the current one. Each holds a full queue.
+        let (replaced, replaced_end) = start_writer(folders[0].path().to_path_buf()).unwrap();
+        let (current, current_end) = start_writer(folders[1].path().to_path_buf()).unwrap();
+        for sink in [&replaced, &current] {
+            for n in 0..QUEUE {
+                sink.sender
+                    .try_send(serde_json::json!({"kind": "test", "n": n}).to_string())
+                    .unwrap();
+            }
+        }
+        assert!(replaced_end.running() && current_end.running());
+        drop(replaced);
+        let writers = [replaced_end, current_end];
+        // Only a hang guard: the drain answers once both writers ended.
+        assert_eq!(
+            end_writers(Some(current), &writers, Duration::from_secs(10)),
+            0
+        );
+        assert!(writers.iter().all(|writer| !writer.running()));
+        for folder in &folders {
+            let written: Vec<u64> = fs::read_to_string(folder.path().join("core.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).unwrap()["n"]
+                        .as_u64()
+                        .unwrap()
+                })
+                .collect();
+            assert_eq!(written, (0..QUEUE as u64).collect::<Vec<_>>());
+        }
     }
 }

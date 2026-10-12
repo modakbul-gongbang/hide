@@ -55,6 +55,13 @@ pub enum CommandKind {
         session: String,
         runtime: String,
     },
+    /// `hide workspace memory`: a hook's Project Memory from the core, with
+    /// the prompt on stdin (PRD core-host-node-move B14).
+    WorkspaceMemory {
+        event: String,
+        runtime: String,
+        session: String,
+    },
     WorkspaceInfo,
     ViewList,
     ViewStatus {
@@ -80,6 +87,22 @@ const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [
 /// The version this build reports: `HIDE_VERSION` when it was built (a
 /// package passes the version it ships), else the crate's own.
 pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
+
+/// This build's place in main's history (`HIDE_BUILD_ORDER`, its
+/// first-parent commit count), which orders two builds of one release
+/// (`build_order`); 0 for a build no package numbered.
+pub const ORDER: u64 = count(env!("HIDE_BUILD_ORDER"));
+
+/// A count `build.rs` checked is digits only.
+const fn count(digits: &str) -> u64 {
+    let digits = digits.as_bytes();
+    let (mut value, mut index) = (0_u64, 0);
+    while index < digits.len() {
+        value = value * 10 + (digits[index] - b'0') as u64;
+        index += 1;
+    }
+    value
+}
 
 /// The commit this build was made from, when it was built from a checkout.
 pub const COMMIT: Option<&str> = match env!("HIDE_BUILD_COMMIT").as_bytes() {
@@ -137,6 +160,10 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                         Ok(CommandKind::FactoryQuestionGuard { session: (*session).to_owned(), runtime: (*runtime).to_owned() }),
                     _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex|opencode|omp>".into()),
                 }
+            }
+            Some("memory") => {
+                let words: Vec<&str> = iter.map(String::as_str).collect();
+                parse_workspace_memory(&words)
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
             Some("info") if iter.next().is_none() => Ok(CommandKind::WorkspaceInfo),
@@ -445,7 +472,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory on the machine that runs Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | outdated <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps for the Projects of its own machine and of a node that dials in."
         );
         return Ok(());
     }
@@ -461,6 +488,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 &kind,
                 CommandKind::WorkspaceBootstrap
                     | CommandKind::FactoryQuestionGuard { .. }
+                    | CommandKind::WorkspaceMemory { .. }
                     | CommandKind::Delivery(_)
                     | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
@@ -536,6 +564,31 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             )?;
             println!("{answer}");
             Ok(())
+        }
+        CommandKind::WorkspaceMemory {
+            event,
+            runtime,
+            session,
+        } => {
+            const NEXT: &str = "Continue without Project Memory";
+            let prompt = crate::workspace_cli::read_memory_prompt(std::io::stdin().lock())
+                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            let credential = crate::workspace_cli::Credential::acquire(&env)
+                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            let answer = crate::workspace_cli::request_memory_hook(
+                &credential,
+                json_memory_hook_ask(&event, &runtime, &session, &prompt),
+            )
+            .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            println!("{answer}");
+            if answer["ok"] == true {
+                Ok(())
+            } else {
+                Err(answer["reason"]
+                    .as_str()
+                    .unwrap_or("memory_unavailable")
+                    .to_owned())
+            }
         }
         CommandKind::ViewList => workspace_query(&env, "view_list"),
         CommandKind::ViewStatus { view_id } => view_status(&env, &view_id),
@@ -670,6 +723,41 @@ fn memory_text(
                 .collect()
         }
     }
+}
+
+const WORKSPACE_MEMORY_USAGE: &str = "usage: hide workspace memory --event <SessionStart|UserPromptSubmit> --runtime <runtime> --session <id> < prompt";
+
+fn parse_workspace_memory(words: &[&str]) -> Result<CommandKind, String> {
+    let ["--event", event, "--runtime", runtime, "--session", session] = words else {
+        return Err(WORKSPACE_MEMORY_USAGE.to_owned());
+    };
+    if !matches!(*event, "SessionStart" | "UserPromptSubmit")
+        || runtime.is_empty()
+        || runtime.chars().any(char::is_control)
+        || !herdr_core::delivery::valid_session(session)
+    {
+        return Err(WORKSPACE_MEMORY_USAGE.to_owned());
+    }
+    Ok(CommandKind::WorkspaceMemory {
+        event: (*event).to_owned(),
+        runtime: (*runtime).to_owned(),
+        session: (*session).to_owned(),
+    })
+}
+
+/// The `memory_hook` request's own fields; the prompt goes only when there
+/// is one.
+fn json_memory_hook_ask(
+    event: &str,
+    runtime: &str,
+    session: &str,
+    prompt: &str,
+) -> serde_json::Value {
+    let mut ask = serde_json::json!({"event": event, "runtime": runtime, "session": session});
+    if !prompt.is_empty() {
+        ask["prompt"] = serde_json::json!(prompt);
+    }
+    ask
 }
 
 /// Prints the record's answer as one line; a refusal prints its reason and
@@ -1112,6 +1200,26 @@ pub enum ConnectError {
     /// The daemon stopped because a stored file could not be made this
     /// machine's (PRD core-host-node B2); the host names the file.
     StateRefused { file: String, detail: String },
+    /// The core runs a newer build than this app's (PRD core-host-node-move
+    /// B11): the core is left as it is, and the host shows both builds and
+    /// asks for this app to be updated.
+    CoreNewer(CoreBuilds),
+    /// This connection's update of the core to this app's build failed and
+    /// the core runs its previous build (B10): the host shows both builds,
+    /// Retry (the next connection's one attempt) and updating on the core's
+    /// machine.
+    UpdateFailed(CoreBuilds),
+}
+
+/// The core's machine and the two builds `hide connect` names to the host,
+/// as the node's `/health` gives them (`builds`).
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct CoreBuilds {
+    /// The core machine's name.
+    pub machine: String,
+    /// The core's build and this app's, as `build_order::Release::shown`.
+    pub core: String,
+    pub app: String,
 }
 
 impl ConnectError {
@@ -1121,15 +1229,25 @@ impl ConnectError {
             ConnectError::NoResponse(_) => "no_response",
             ConnectError::OtherBuild(_) => "other_build",
             ConnectError::StateRefused { .. } => "state_refused",
+            ConnectError::CoreNewer(_) => "core_newer",
+            ConnectError::UpdateFailed(_) => "update_failed",
         }
     }
 
-    fn detail(&self) -> &str {
+    fn detail(&self) -> String {
         match self {
             ConnectError::StartFailed(detail)
             | ConnectError::NoResponse(detail)
             | ConnectError::OtherBuild(detail)
-            | ConnectError::StateRefused { detail, .. } => detail,
+            | ConnectError::StateRefused { detail, .. } => detail.clone(),
+            ConnectError::CoreNewer(newer) => format!(
+                "the core on {} runs {}, newer than this app's {}",
+                newer.machine, newer.core, newer.app
+            ),
+            ConnectError::UpdateFailed(failed) => format!(
+                "the core on {} could not be updated to {} and runs {}",
+                failed.machine, failed.app, failed.core
+            ),
         }
     }
 }
@@ -1169,15 +1287,21 @@ const CORE_LINK_WITHIN: Duration = Duration::from_secs(20);
 
 /// A daemon in the node role (PRD core-host-node-remote-core D-08, D-23)
 /// attaches the host once its first attempt to link to its core ended: a
-/// live link, or a core that is not running or cannot be reached, which
-/// the window shows as its reconnecting state. A core of another build
-/// refuses the node, and the host shows the failure it shows for a local
-/// daemon of another build. Past [`CORE_LINK_WITHIN`] the host attaches
-/// and the window shows the same reconnecting state. A daemon that is its
-/// own core answers at once.
+/// live link, a core it is updating to this build (PRD core-host-node-move
+/// B10), a core that is not running or cannot be reached, which the
+/// window shows as its reconnecting state, or a link the operator ended
+/// from this machine's window, which the window offers to restore (B16).
+/// This connection first gives a core update that failed on the last one
+/// its attempt (B20). A core of
+/// another build refuses the node, and the host shows the failure it shows
+/// for a local daemon of another build; a newer core or a failed update is
+/// named with both builds. Past [`CORE_LINK_WITHIN`] the host attaches and
+/// the window shows the same reconnecting state. A daemon that is its own
+/// core answers at once.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
     let deadline = std::time::Instant::now() + CORE_LINK_WITHIN;
+    let mut connected = false;
     loop {
         let Ok(health) = health_json(state.port, HEALTH_REQUEST) else {
             return Ok(());
@@ -1185,9 +1309,38 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
         if health["role"] != "node" {
             return Ok(());
         }
+        if !connected {
+            connected = true;
+            connect_again(state).map_err(ConnectError::NoResponse)?;
+            continue;
+        }
         if health["core_link"] == "connecting" && std::time::Instant::now() < deadline {
             std::thread::sleep(HEALTH_PAUSE);
             continue;
+        }
+        let builds = || {
+            serde_json::from_value::<CoreBuilds>(health["builds"].clone()).map_err(|error| {
+                ConnectError::StartFailed(format!("the node's health names no builds: {error}"))
+            })
+        };
+        let named = |kind: &str, builds: &CoreBuilds| {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": kind, "pid": state.pid,
+                    "core": builds.core, "app": builds.app,
+                })
+            );
+        };
+        if health["core_link_reason"] == "core_newer" {
+            let newer = builds()?;
+            named("core.newer_refused", &newer);
+            return Err(ConnectError::CoreNewer(newer));
+        }
+        if health["core_link_reason"] == "update_failed" {
+            let failed = builds()?;
+            named("core.update_failed", &failed);
+            return Err(ConnectError::UpdateFailed(failed));
         }
         if health["core_link_reason"] == "other_build" {
             eprintln!(
@@ -1204,6 +1357,25 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
         }
         return Ok(());
     }
+}
+
+/// Tells the node daemon a window connects, which gives a core update
+/// that failed on the last connection this one's attempt.
+fn connect_again(state: &DaemonState) -> Result<(), String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(HEALTH_REQUEST))
+        .proxy(None)
+        .build()
+        .into();
+    agent
+        .post(&format!(
+            "http://127.0.0.1:{}/core-link/connect",
+            state.port
+        ))
+        .header("Authorization", &format!("Bearer {}", state.token))
+        .send_empty()
+        .map(|_| ())
+        .map_err(|error| format!("the node did not take this connection: {error}"))
 }
 
 /// The daemon of this state folder, replaced or started as [`connect`]
@@ -1243,6 +1415,10 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
                 running.unwrap_or("unknown"),
             )));
         }
+        if let Some(program) = health["starter"]["program"].as_str() {
+            let program = std::path::PathBuf::from(program);
+            return update_started_core(env, (state, health), &build, &program);
+        }
         eprintln!(
             "{}",
             serde_json::json!({
@@ -1264,6 +1440,134 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     // The daemon outlives this command; nothing waits for it.
     std::mem::forget(daemon);
     started
+}
+
+/// How long an updated core has to answer `/health` once its update said
+/// it takes links.
+const UPDATED_CORE_ANSWERS_WITHIN: Duration = Duration::from_secs(10);
+
+/// A core of another build that its starter runs here, the core a move
+/// placed on this machine (PRD core-host-node-move Q13), is never stopped
+/// for this app's own: its login item would start that build again at the
+/// next login beside this one. This app, when newer, updates it through
+/// the updater a node runs (B10): this build goes into a version folder
+/// beside the core's, and its own `hided core-update` replaces the core
+/// through the starter, or goes back to the build it ran. Each connection
+/// is one attempt (B20). An older app is told to update; a build neither
+/// orders is refused as another build.
+fn update_started_core(
+    env: &Env,
+    (state, health): Healthy,
+    build: &str,
+    program: &Path,
+) -> Result<Healthy, ConnectError> {
+    use crate::build_order::{Release, Standing};
+    let core: Release = serde_json::from_value(health["release"].clone()).map_err(|error| {
+        ConnectError::StartFailed(format!("the core's health names no release: {error}"))
+    })?;
+    let running = health["build"]
+        .as_str()
+        .ok_or_else(|| ConnectError::StartFailed("the core's health names no build".to_owned()))?;
+    let ours = Release::of_this_build();
+    let builds = CoreBuilds {
+        machine: crate::host_name().ok_or_else(|| {
+            ConnectError::StartFailed("this machine would not say its name".to_owned())
+        })?,
+        core: core.shown(),
+        app: ours.shown(),
+    };
+    let log = |kind: &str, fields: serde_json::Value| {
+        let mut record = serde_json::json!({
+            "component": "hide", "kind": kind, "pid": state.pid,
+            "core": builds.core, "app": builds.app,
+        });
+        if let (Some(record), serde_json::Value::Object(fields)) = (record.as_object_mut(), fields)
+        {
+            record.extend(fields);
+        }
+        eprintln!("{record}");
+    };
+    match crate::build_order::standing((build, &ours), (running, &core)) {
+        Standing::Same => return Ok((state, health)),
+        Standing::Older => {
+            log("core.newer_refused", serde_json::json!({}));
+            return Err(ConnectError::CoreNewer(builds));
+        }
+        Standing::Unordered => {
+            log("core.other_build_refused", serde_json::json!({}));
+            return Err(ConnectError::OtherBuild(format!(
+                "the core its login item runs here is build {running}, which this app's build {build} neither updates nor replaces"
+            )));
+        }
+        Standing::Newer => {}
+    }
+    let intent = crate::core_update::new_intent();
+    log("core.update_started", serde_json::json!({"intent": intent}));
+    let failed = |reason: String| {
+        log(
+            "core.update_failed",
+            serde_json::json!({"intent": intent, "reason": reason}),
+        );
+        ConnectError::UpdateFailed(builds.clone())
+    };
+    // Only a build's own place is installed beside: a program anywhere else
+    // names no install root.
+    let root = hide_platform::path::to_wire(program)
+        .map_err(|error| format!("{}: {error}", program.display()))
+        .and_then(|wire| hide_kit::build_of(&wire))
+        .and_then(|place| {
+            hide_platform::path::from_wire(&place.root)
+                .map_err(|error| format!("{}: {error}", place.root))
+        })
+        .map_err(failed)?;
+    let packages = daemon_binary()
+        .map(|hided| {
+            hide_node::ssh::host::HelperPackages::new(hided.parent().map(Path::to_path_buf))
+        })
+        .map_err(failed)?;
+    let new = packages.install_here(&root).map_err(failed)?;
+    let mut command = std::process::Command::new(&new);
+    command
+        .arg("core-update")
+        .arg("--state-dir")
+        .arg(&env.state_dir)
+        .arg("--previous")
+        .arg(program)
+        .args(["--intent", &intent]);
+    // Its own process group, so a host that gives up on this connect and
+    // kills it never cuts the update short.
+    let finished = hide_platform::process::run_to_end(
+        &mut command,
+        crate::core_update::WITHIN,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .map_err(|error| failed(format!("core-update: {error:?}")))?;
+    let exit = finished
+        .code
+        .map_or_else(|| "on a signal".to_owned(), |code| code.to_string());
+    crate::core_update::outcome(&finished.stdout, &exit, &finished.stderr).map_err(failed)?;
+    log("core.updated", serde_json::json!({"intent": intent}));
+    wait_for_build(env, build)
+}
+
+/// The daemon of this state folder once it runs `build` and answers.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn wait_for_build(env: &Env, build: &str) -> Result<Healthy, ConnectError> {
+    let deadline = std::time::Instant::now() + UPDATED_CORE_ANSWERS_WITHIN;
+    loop {
+        if let Some((state, health)) = healthy_daemon(env)
+            && health["build"] == build
+        {
+            return Ok((state, health));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(ConnectError::NoResponse(format!(
+                "the core updated to build {build} did not answer within {}s",
+                UPDATED_CORE_ANSWERS_WITHIN.as_secs()
+            )));
+        }
+        std::thread::sleep(HEALTH_PAUSE);
+    }
 }
 
 /// Moves the legacy default state folder into place before anything looks
@@ -1320,7 +1624,7 @@ fn proven_daemon(
 }
 
 fn open(env: &Env) -> Result<(), String> {
-    let (state, health) = connect(env).map_err(|error| error.detail().to_owned())?;
+    let (state, health) = connect(env).map_err(|error| error.detail())?;
     open_browser(&state, &health)
 }
 
@@ -1342,6 +1646,16 @@ fn connect_json(env: &Env) -> Result<(), String> {
                         "detail": error.detail(),
                         "file": file,
                     }),
+                    ConnectError::CoreNewer(builds) | ConnectError::UpdateFailed(builds) => {
+                        serde_json::json!({
+                            "ok": false,
+                            "reason": error.reason(),
+                            "detail": error.detail(),
+                            "machine": builds.machine,
+                            "core": builds.core,
+                            "app": builds.app,
+                        })
+                    }
                     _ => serde_json::json!({
                         "ok": false,
                         "reason": error.reason(),
@@ -1465,10 +1779,10 @@ fn stop(state_dir: &Path) -> Result<(), String> {
 /// ended but that its starter has not reaped yet is gone too, although Linux
 /// still lists its start time.
 fn still_the_daemon(state: &DaemonState) -> bool {
-    process::is_alive(state.pid)
-        && state
-            .pid_started
-            .is_none_or(|recorded| process::start_time(state.pid).is_ok_and(|now| now == recorded))
+    match state.pid_started {
+        Some(_) => state.is_proven_running(),
+        None => process::is_alive(state.pid),
+    }
 }
 
 /// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
@@ -1996,6 +2310,109 @@ mod tests {
         assert_eq!(
             parse_args(&args).unwrap(),
             CommandKind::Serve { keep_alive: true }
+        );
+    }
+
+    #[test]
+    fn workspace_memory_takes_an_event_runtime_and_session() {
+        let parse = |args: &[&str]| {
+            let mut words = vec!["hide", "workspace", "memory"];
+            words.extend(args);
+            parse_args(
+                &words
+                    .iter()
+                    .map(|word| (*word).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            parse(&[
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "s-1"
+            ])
+            .unwrap(),
+            CommandKind::WorkspaceMemory {
+                event: "SessionStart".into(),
+                runtime: "codex".into(),
+                session: "s-1".into(),
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "--event",
+                "UserPromptSubmit",
+                "--runtime",
+                "pi",
+                "--session",
+                "/sessions/a.jsonl",
+            ])
+            .unwrap(),
+            CommandKind::WorkspaceMemory {
+                event: "UserPromptSubmit".into(),
+                runtime: "pi".into(),
+                session: "/sessions/a.jsonl".into(),
+            }
+        );
+        for args in [
+            vec![],
+            vec!["--event", "Stop", "--runtime", "codex", "--session", "s-1"],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "-x",
+            ],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "",
+                "--session",
+                "s-1",
+            ],
+            vec![
+                "--runtime",
+                "codex",
+                "--event",
+                "SessionStart",
+                "--session",
+                "s-1",
+            ],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "s-1",
+                "--cwd",
+                "/work/project",
+            ],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn workspace_memory_reads_at_most_the_prompt_limit_and_keeps_whole_characters() {
+        let limit = herdr_core::memory_hook::PROMPT_LIMIT_BYTES;
+        let long = "가".repeat(limit);
+        let read = crate::workspace_cli::read_memory_prompt(long.as_bytes()).unwrap();
+        assert!(
+            read.len() <= limit && long.starts_with(&read),
+            "{}",
+            read.len()
+        );
+        assert!(read.len() > limit - 3);
+        assert_eq!(
+            crate::workspace_cli::read_memory_prompt("keep going".as_bytes()).unwrap(),
+            "keep going"
         );
     }
 

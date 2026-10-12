@@ -3,8 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot, THIS_MACHINE } from "./wire";
+import { enterWorkspace, screenshot } from "./wire";
 import { chord } from "./chords";
+
+/** The window's own machine as its system names itself, in each language (PRD core-host-node-move B2). */
+const THIS_MACHINE: Record<string, string> =
+  process.platform === "darwin"
+    ? { en: "This Mac", ko: "이 Mac", "zh-CN": "此 Mac", ja: "この Mac" }
+    : process.platform === "win32"
+      ? { en: "This PC", ko: "내 PC", "zh-CN": "此电脑", ja: "PC" }
+      : { en: "This computer", ko: "이 컴퓨터", "zh-CN": "此计算机", ja: "このコンピューター" };
 
 async function openSettings(page: Page, daemon: Daemon) {
   // A hash-only navigation after restart does not remount the connection.
@@ -50,8 +58,9 @@ test("one confirmed choice follows every window, persists, and resets to each sy
         await expect(page.locator("[data-settings] h2")).toHaveText(heading!);
         await expect(page.locator('[data-settings-tab="general"]')).toHaveText(general!);
       }
-      // User-owned names and paths remain byte-for-byte unchanged.
-      await expect(left.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
+      // The window's own machine is product copy and follows the language
+      // (PRD core-host-node-move B2); paths remain byte-for-byte unchanged.
+      await expect(left.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE[language!]!);
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
       await expect(left.locator("[data-sidebar-mode]")).toHaveCount(0);
       await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);

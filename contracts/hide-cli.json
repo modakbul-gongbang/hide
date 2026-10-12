@@ -587,6 +587,16 @@
                         "id": {
                             "type": "string"
                         },
+                        "intake_from": {
+                            "default": null,
+                            "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
                         "intent": {
                             "type": "string"
                         },
@@ -642,7 +652,8 @@
                         "human_notified",
                         "watch_warning",
                         "answer_wait_ended",
-                        "bell_line"
+                        "bell_line",
+                        "intake_from"
                     ],
                     "type": "object"
                 },
@@ -880,6 +891,16 @@
                 "id": {
                     "type": "string"
                 },
+                "intake_from": {
+                    "default": null,
+                    "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
                 "intent": {
                     "type": "string"
                 },
@@ -935,7 +956,8 @@
                 "human_notified",
                 "watch_warning",
                 "answer_wait_ended",
-                "bell_line"
+                "bell_line",
+                "intake_from"
             ],
             "title": "Letter",
             "type": "object"
@@ -1757,7 +1779,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:94a1aeed0785e375f702da6e72704f2bad5a6d060d187e6cd38a18855e19347f",
+    "digest": "sha256:2a707fc42f87ed42d8b1caf94072b2a18940ccacea4f57f3bd850bf752e89443",
     "envelopes": {
         "agent": {
             "answer": "value",

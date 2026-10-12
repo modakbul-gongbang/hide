@@ -89,14 +89,27 @@ pub struct NodeState {
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     pub build: Option<Arc<str>>,
+    /// The seat this role is mounted on; `/health` names its instance.
+    pub seat: crate::seat::SeatParts,
     pub hub: Arc<TerminalHub>,
     pub terminals: Arc<ScreenTerminals>,
     pub live: watch::Receiver<Option<Arc<LiveLink>>>,
     pub phase: Arc<dyn Fn() -> Phase + Send + Sync>,
+    /// The phase as it changes, which a held screen is told.
+    pub phases: watch::Receiver<Phase>,
+    /// The SSH alias this machine dials its core by, which a held screen
+    /// names until the core's hello names its machine.
+    pub core_alias: Arc<str>,
+    /// Gives a failed core update this connection's attempt
+    /// (`NodeRole::connect_again`).
+    pub connect_again: Arc<dyn Fn() + Send + Sync>,
+    /// Ends or restores the link at the operator's word from this
+    /// machine's window (B16), recorded in the placement first.
+    pub link_control: Arc<dyn Fn(LinkAction) -> Result<(), String> + Send + Sync>,
     pub clients: Arc<AtomicUsize>,
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: crate::ending::Ending,
     /// Frames screens sent while the link was down, dropped.
     pub held_frames: Arc<AtomicU64>,
     /// This machine's paths a screen may read without the core: the
@@ -112,6 +125,15 @@ pub struct NodeState {
     pub attachments: Arc<Attachments>,
     /// This machine's desktop windows' browser gateways (`node_browser`).
     pub browser: Arc<NodeBrowser>,
+}
+
+/// What the operator asks of the link from this machine's window (PRD
+/// core-host-node-move B16): a `core_link` event {action}.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkAction {
+    Disconnect,
+    Reconnect,
 }
 
 /// The node role, running: its link and its screen server.
@@ -131,11 +153,13 @@ impl NodeDaemon {
         placement: Placement,
         identity: NodeIdentity,
         server: ServerParts,
+        updates: Option<crate::node_role::Updates>,
     ) -> Result<Self, String> {
         let hub = TerminalHub::new();
         let own_prefix = device_pane_prefix(&identity.node);
         let screen_node = identity.node.clone();
         let core_node = placement.node.clone();
+        let core_alias: Arc<str> = placement.alias.as_str().into();
         let boundary = Arc::new(Boundary::for_node(
             home,
             herdr_core::node::NodeId::parse(&identity.node)?,
@@ -151,6 +175,7 @@ impl NodeDaemon {
             }),
             Some(Arc::clone(&browser)),
             Some(roots_follow(Arc::clone(&boundary))),
+            updates,
         )?);
         let live = role.live();
         let follow = browser.spawn_follow(live.clone());
@@ -173,6 +198,37 @@ impl NodeDaemon {
                 )
             }) as Arc<dyn Fn() -> Phase + Send + Sync>
         };
+        let connect_again = {
+            let role = Arc::downgrade(&role);
+            Arc::new(move || {
+                if let Some(role) = role.upgrade() {
+                    role.connect_again();
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let link_control = {
+            let role = Arc::downgrade(&role);
+            let state_dir = server.state_dir.clone();
+            let own_node = screen_node.clone();
+            Arc::new(move |action: LinkAction| {
+                let role = role.upgrade().ok_or("the node is stopping")?;
+                let disconnected = action == LinkAction::Disconnect;
+                // Recorded first, so a restart keeps what the operator chose.
+                let recorded = crate::placement::update(&state_dir, &own_node, |placement| {
+                    placement.disconnected = disconnected;
+                })?;
+                if !recorded {
+                    return Err("the placement record is gone".to_owned());
+                }
+                if disconnected {
+                    role.disconnect();
+                } else {
+                    role.reconnect();
+                }
+                Ok(())
+            }) as Arc<dyn Fn(LinkAction) -> Result<(), String> + Send + Sync>
+        };
+        let phases = role.phases();
         let browser_routes = BrowserRoutes::new(Arc::new(NodePages::new(
             screen_node,
             core_node,
@@ -181,7 +237,7 @@ impl NodeDaemon {
         )));
         let desktop_screens = Arc::new(AtomicUsize::new(0));
         let reaper =
-            browser_routes.spawn_reaper(Arc::clone(&desktop_screens), Arc::clone(&server.shutdown));
+            browser_routes.spawn_reaper(Arc::clone(&desktop_screens), server.shutdown.clone());
         Ok(Self {
             state: NodeState {
                 token: server.token,
@@ -189,10 +245,15 @@ impl NodeDaemon {
                 ui_dir: server.ui_dir,
                 version: server.version,
                 build: server.build,
+                seat: server.seat,
                 hub,
                 terminals,
                 live,
                 phase,
+                phases,
+                core_alias,
+                connect_again,
+                link_control,
                 clients: Arc::new(AtomicUsize::new(0)),
                 connections: Arc::new(AtomicU64::new(0)),
                 last_client_gone: Arc::new(Mutex::new(Instant::now())),
@@ -215,6 +276,11 @@ impl NodeDaemon {
     pub fn role(&self) -> &NodeRole {
         &self.role
     }
+
+    /// The link's phase, for a caller that waits on it off this task.
+    pub fn role_handle(&self) -> Arc<NodeRole> {
+        Arc::clone(&self.role)
+    }
 }
 
 impl Drop for NodeDaemon {
@@ -232,7 +298,8 @@ pub struct ServerParts {
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     pub build: Option<Arc<str>>,
-    pub shutdown: Arc<Notify>,
+    pub seat: crate::seat::SeatParts,
+    pub shutdown: crate::ending::Ending,
     /// This machine's state folder, where its screens' uploads are staged.
     pub state_dir: PathBuf,
     /// The loopback port the browser relay listens on alone
@@ -243,6 +310,7 @@ pub struct ServerParts {
 pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/core-link/connect", post(connect_again))
         .route("/ws", get(ws_upgrade))
         .route(
             "/browser-route",
@@ -281,7 +349,26 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
     let (link, reason) = match &phase {
         Phase::Connecting => ("connecting", None),
         Phase::Live(_) => ("live", None),
+        Phase::Updating { .. } => ("updating", None),
         Phase::Waiting { reason } => ("waiting", Some(reason.to_string())),
+        Phase::Disconnected => ("disconnected", None),
+    };
+    // The core's machine and both builds, which the window names when this
+    // app is the one to update (B11) or its update of the core failed (B10).
+    let builds = match &phase {
+        Phase::Waiting {
+            reason:
+                crate::node_role::LinkFailure::CoreNewer {
+                    machine,
+                    release: core,
+                }
+                | crate::node_role::LinkFailure::UpdateFailed { machine, core, .. },
+        } => Some(json!({
+            "machine": machine,
+            "core": core.shown(),
+            "app": crate::build_order::Release::of_this_build().shown(),
+        })),
+        _ => None,
     };
     axum::Json(json!({
         "pid": std::process::id(),
@@ -292,10 +379,23 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "open_handlers_in_flight": 0,
         "idle_remaining_secs": Value::Null,
         "role": "node",
+        "instance": state.seat.instance(),
         "node": state.boundary.node().as_str(),
         "core_link": link,
         "core_link_reason": reason,
+        "release": crate::build_order::Release::of_this_build(),
+        "builds": builds,
     }))
+}
+
+/// A window connects to this node (`hide connect`): a core update that
+/// failed on the last connection gets this one's attempt (B10, B20).
+async fn connect_again(State(state): State<NodeState>, headers: HeaderMap) -> StatusCode {
+    if !crate::server::bearer_matches(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    (state.connect_again)();
+    StatusCode::NO_CONTENT
 }
 
 async fn resolve_browser_route(

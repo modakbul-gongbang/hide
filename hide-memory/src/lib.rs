@@ -6,6 +6,7 @@
 
 mod engine;
 mod evidence;
+pub mod hook;
 mod matcher;
 mod redaction;
 mod store;
@@ -39,8 +40,8 @@ pub use verify::{
 /// The Memory store's file name inside a state folder.
 pub const DATABASE_FILE: &str = "project-memory.sqlite3";
 
-/// The one place the store's location is spelled: the core writes it and the
-/// hooks read it, each from the state folder it resolves.
+/// The one place the store's location is spelled, in the core's state
+/// folder; the core alone opens it, and a hook asks the core ([`hook`]).
 pub fn database_path(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join(DATABASE_FILE)
 }
@@ -72,6 +73,7 @@ pub const RECEIPT_LIMIT: usize = 20_000;
 pub const RECEIPT_STALE_AFTER_MS: u64 = 30 * 86_400_000;
 /// Analysis calls one machine makes in a UTC day (D-10 a).
 pub const DAILY_ANALYSIS_CALL_LIMIT: u64 = 1_000;
+/// The most one retrieval spends in the store, inside the hook's wait.
 pub const HOOK_DEADLINE_MS: u64 = 100;
 /// The bar a rule or lesson card crosses to be suggested for a repository
 /// file (PRD memory-card-quality D-09, D-10): the operator's words in this
@@ -101,8 +103,3 @@ pub const REVERIFY_PER_PASS: usize = 4;
 /// store full of cards to check cannot use the cap analysis shares with them.
 pub const MAINTENANCE_CALL_LIMIT: u64 = DAILY_ANALYSIS_CALL_LIMIT / 2;
 pub const PROMOTION_CHECKS_PER_PASS: usize = 3;
-/// Budget available after the helper reaches Rust code.
-///
-/// The public hook contract measures from process launch, so production keeps
-/// startup, scheduling, stdout flush, and teardown inside the remaining 25 ms.
-pub const HOOK_PROCESS_BUDGET_MS: u64 = 75;

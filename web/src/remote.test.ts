@@ -2,7 +2,7 @@ import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { deviceCatalogLine, herdrPaneId, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
+import { deviceCatalogLine, herdrPaneId, remoteTabView, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
 import { queueBuffer, tabBufferKey } from "./buffers";
 import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
 import { useShellStore, type DaemonInfo } from "./store";
@@ -182,6 +182,18 @@ describe("remote view", () => {
     const view = remoteView(session({ focused_tab_id: null, focused_pane_id: "remote:studio:pane:w9:gone" }));
     expect(view?.tab?.id).toBe("remote:studio:tab:w9:t1");
     expect(view?.focusedPaneId).toBe(PANE_A);
+  });
+
+  it("draws another Agent area's tab of a node with its own panes and layout, the keyboard left on the front tab", () => {
+    const second = { workspace_id: "remote:studio:workspace:w9", tab_id: "remote:studio:tab:w9:t2", focused_pane_id: "remote:studio:pane:w9:p3", zoomed: false, frames: [{ pane_id: "remote:studio:pane:w9:p3", x: 0, y: 0, width: 1, height: 1 }] };
+    const host = session({ pane_layouts: [...session().pane_layouts, second] });
+    const front = remoteView(host)!;
+    expect(remoteTabView(host, front, null)).toBe(front);
+    expect(remoteTabView(host, front, "remote:studio:tab:w9:t1")).toBe(front);
+    const beside = remoteTabView(host, front, "remote:studio:tab:w9:t2");
+    expect(beside.tab?.panes.map((pane) => pane.id)).toEqual(["remote:studio:pane:w9:p3"]);
+    expect(beside.layout).toEqual(second);
+    expect(beside.focusedPaneId).toBeNull();
   });
 
   it("names a pane's host by its scoped id and never a similar target", () => {

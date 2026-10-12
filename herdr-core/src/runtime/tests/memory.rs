@@ -269,10 +269,11 @@ fn a_session_its_pane_let_go_is_analyzed_by_the_next_pass_at_once() {
         receipts: Vec::new(),
         live_sessions: Some(live.iter().map(|id| session(id)).collect()),
     };
-    runtime.take_memory_handoff(handoff(&["a", "b"]));
+    let own = runtime.node.as_str().to_owned();
+    runtime.take_memory_handoff(&own, handoff(&["a", "b"]));
     runtime.memory_work.next_pass_unix_ms = u64::MAX;
 
-    runtime.take_memory_handoff(handoff(&["a"]));
+    runtime.take_memory_handoff(&own, handoff(&["a"]));
 
     assert_eq!(
         runtime
@@ -561,6 +562,21 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     );
     project.device_id = "mini".into();
     project.remote_target_id = Some("mini".into());
+    // A device the core dials keeps no Memory, connected or not (PRD
+    // core-host-node-move Q20); only a node that dials in has it.
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: "mini".into(),
+            label: "mini".into(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "mini-host".into(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".into(),
         state: "connected".into(),
@@ -576,6 +592,8 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
             focused_pane_id: None,
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

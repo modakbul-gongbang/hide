@@ -1,12 +1,13 @@
 import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { StartIssueDialog } from "./IssueDialogs";
-import type { BackgroundAi, Task, Workspace } from "./snapshot";
+import { translate } from "./i18n/client";
+import { issuePlaces, NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
+import type { BackgroundAi, Device, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -22,6 +23,7 @@ const ai = (over: Partial<BackgroundAi>): BackgroundAi => ({ enabled: true, prov
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
 });
 
 async function open(background: BackgroundAi) {
@@ -66,4 +68,54 @@ it.each([
   expect(kinds(events)).not.toContain("worktree_name_suggest");
   expect(q("[data-name-state]")).toBeNull();
   await unmount();
+});
+
+it("names every row's machine in New issue's list when it spans machines, this window's as This Mac, so two projects at the same name read apart (D-29)", () => {
+  // This window runs on a Mac, whatever system runs the test: this machine is named by its system.
+  vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" });
+  const devices = [
+    { id: "mini-node", kind: "local", state: "local", label: "mini", machine_name: "Mac mini" },
+    { id: "macbook-node", kind: "remote", state: "ready", label: "MacBook", dials_in: true },
+  ] as unknown as Device[];
+  const source = { kind: "local", label: "Local", name: null } as never;
+  const own = { id: "ws-own", label: "herdr-ide", device_id: "mini-node", remote_target_id: null, tasks: { source } } as unknown as Workspace;
+  const node = { ...own, id: "ws-node", device_id: "macbook-node", remote_target_id: "macbook-node" } as Workspace;
+  const rows = () => [...issuePlaces([own, node], devices, translate).values()];
+  // The core's window.
+  expect(rows()).toEqual(["herdr-ide · Local · This Mac", "herdr-ide · Local · MacBook"]);
+  // The MacBook's window after the move: the core's row is the mini's.
+  window.location.hash = "#token=t&node=macbook-node";
+  expect(rows()).toEqual(["herdr-ide · Local · Mac mini", "herdr-ide · Local · This Mac"]);
+  window.location.hash = "";
+  // One machine's list names none.
+  expect([...issuePlaces([own], devices, translate).values()]).toEqual(["herdr-ide · Local"]);
+});
+
+it("draws New issue again for a project change, not for a snapshot change it does not read", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  const own = { ...workspace, label: "herdr-ide", remote_target_id: null } as Workspace;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const saved = useShellStore.getState();
+  let draws = 0;
+  await act(async () => {
+    useShellStore.setState({ connection: "live", rest: { navigator: { workspaces: [own], devices: [] }, status: {} } } as never);
+    root.render(
+      <Profiler id="new-issue" onRender={() => { draws += 1; }}>
+        <TooltipProvider>
+          <NewIssueDialog actions={createActions(() => true)} workspace={own} onClose={() => {}} />
+        </TooltipProvider>
+      </Profiler>,
+    );
+  });
+  const settled = draws;
+  const rest = useShellStore.getState().rest!;
+  await act(async () => { useShellStore.setState({ rest: { ...rest, task_operation: { phase: "working" } } } as never); });
+  expect(draws).toBe(settled);
+  await act(async () => { useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...own, label: "renamed" }] } } } as never); });
+  expect(draws).toBeGreaterThan(settled);
+  await act(async () => root.unmount());
+  useShellStore.setState(saved, true);
 });

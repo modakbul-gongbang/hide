@@ -323,6 +323,8 @@ fn parse_init(rest: &[&str], cwd: &Path) -> Option<Command> {
     };
     Some(Command::Init {
         project: absolute(cwd, project),
+        // The core names the caller's machine.
+        device: None,
         verification,
         merge_mode: match merge {
             Some(value) => Some(merge_mode(&value)?),

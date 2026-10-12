@@ -35,8 +35,9 @@ pub(crate) const LOCAL_DEVICE_LABEL: &str = if cfg!(target_os = "macos") {
 };
 
 /// The row for the machine the core runs on. Its id is the node id; its
-/// `kind` stays `local`, the role "the core's own machine", not a name.
-pub fn local_device(node: &NodeId) -> DeviceSnapshot {
+/// `kind` stays `local`, the role "the core's own machine", not a name, and
+/// `machine_name` is what that machine calls itself.
+pub fn local_device(node: &NodeId, machine_name: Option<&str>) -> DeviceSnapshot {
     DeviceSnapshot {
         agent_scope: Default::default(),
         id: node.to_string(),
@@ -60,14 +61,20 @@ pub fn local_device(node: &NodeId) -> DeviceSnapshot {
             ..Default::default()
         },
         kit: crate::model::KitSnapshot::default(),
+        machine_name: machine_name.map(str::to_owned),
+        dials_in: false,
     }
 }
 
 /// This Mac, then each device the operator registered. A remote device
 /// starts `unavailable`; `Runtime::refresh_device_snapshots` reads its state
 /// off the remote status once the connection has reported.
-pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
-    let mut result = vec![local_device(node)];
+pub fn devices(
+    node: &NodeId,
+    machine_name: Option<&str>,
+    registrations: &[DeviceRegistration],
+) -> Vec<DeviceSnapshot> {
+    let mut result = vec![local_device(node, machine_name)];
     let mut seen = HashSet::from([node.to_string()]);
 
     for registration in registrations {
@@ -86,6 +93,8 @@ pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<Devic
                 test: None,
                 host: crate::model::DeviceHostSnapshot::default(),
                 kit: crate::model::KitSnapshot::default(),
+                machine_name: None,
+                dials_in: registration.origin == crate::model::LinkOrigin::Inbound,
             });
         }
     }
@@ -384,6 +393,12 @@ impl PathIndex {
     /// no note.
     fn note(&self, main_root: &str, branch: &str) -> Option<&BranchNote> {
         self.notes.get(main_root)?.as_ref().ok()?.get(branch)
+    }
+
+    /// Every branch note of the repository holding `path`; none when the
+    /// node did not place it or could not read its config.
+    pub(crate) fn branch_notes(&self, path: &str) -> Option<&BTreeMap<String, BranchNote>> {
+        self.notes.get(&self.place(path)?.main_root)?.as_ref().ok()
     }
 
     /// Every path a catalog of `registrations`, `spaces` and `worktrees`

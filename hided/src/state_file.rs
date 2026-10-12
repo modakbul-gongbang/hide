@@ -23,6 +23,19 @@ pub struct DaemonState {
     pub pid_started: Option<u64>,
 }
 
+impl DaemonState {
+    /// Whether the pid is still the daemon that recorded it, by the start
+    /// the kernel reports for that pid now. A state that recorded no start
+    /// proves nothing: the instance lock, which a live daemon holds, is the
+    /// arbiter then.
+    pub fn is_proven_running(&self) -> bool {
+        self.pid_started.is_some_and(|recorded| {
+            hide_platform::process::is_alive(self.pid)
+                && hide_platform::process::start_time(self.pid).is_ok_and(|now| now == recorded)
+        })
+    }
+}
+
 /// The state folder, and any parent made with it such as `~/.hide`, is made
 /// private: it holds the daemon's token. An existing folder keeps its mode.
 fn create_private_dir(dir: &Path) -> io::Result<()> {

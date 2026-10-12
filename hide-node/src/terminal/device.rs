@@ -574,10 +574,13 @@ impl hide_host::serve::Terminals for NodeTerminals {
 
     fn stop(&self) {
         self.uplink.stop();
-        // Dropped outside the lock: ending each session releases it and
-        // ends its attach child.
-        let service = lock(&self.service).take();
-        drop(service);
+        // Closed outside the lock, and only then is the link's end done:
+        // each session is released and its attach child has exited, so a
+        // core that starts in this process next (a move back) attaches
+        // these panes in control rather than meeting a child still leaving.
+        if let Some(service) = lock(&self.service).take() {
+            service.close();
+        }
     }
 }
 

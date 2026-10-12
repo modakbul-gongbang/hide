@@ -1,5 +1,6 @@
-//! The Factory's machine work, done by the core's own node over its link
-//! (PRD core-host-node D-01, `hide_node_link::factory`), and the reading of
+//! The Factory's machine work, done by the node of the machine that holds
+//! its project over that node's link (PRD core-host-node D-01,
+//! core-host-node-move Q17, `hide_node_link::factory`), and the reading of
 //! a failed run into the structured environment signals (D-31 rule 2). The
 //! node runs each command with a deadline and capped output; tests answer
 //! the link with a fake.
@@ -112,6 +113,22 @@ impl Machine {
             Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
         )
         .map_err(|error| Failure::task(stage, error.to_string()))
+    }
+}
+
+/// The machines Factories' projects live on, by node id; `None` is the
+/// core's own (`Factory::node`).
+pub trait Machines: Send + Sync {
+    /// The machine `node` names, or why its work waits: a node that is not
+    /// linked to the core answers `EnvSignal::NodeLink`.
+    fn on(&self, node: Option<&str>) -> Result<Machine, Failure>;
+}
+
+/// One machine that answers for every node: a core with no other machine,
+/// and the tests.
+impl Machines for Machine {
+    fn on(&self, _node: Option<&str>) -> Result<Machine, Failure> {
+        Ok(self.clone())
     }
 }
 

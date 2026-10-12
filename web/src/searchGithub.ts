@@ -6,10 +6,10 @@
 // browser.
 
 import type { TFunction } from "i18next";
-import { frontDeviceId, localDeviceId } from "./devices";
+import { readsHere } from "./devices";
 import type { InterfaceLanguage } from "./i18n/locale";
 import { ageWords } from "./overviewLens";
-import type { Checkout, GithubSearch, SnapshotRest, Workspace } from "./snapshot";
+import { catalogWorkspaces, type Checkout, type GithubSearch, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The age words the detail and the failure tooltip use, from the shared elapsed-time words. */
 function readAge(at: number | null | undefined, now: number, t: TFunction<"translation">, language: InterfaceLanguage): string | null {
@@ -27,16 +27,18 @@ function answered(workspace: Workspace): boolean {
 }
 
 /**
- * The project ⌘K reads when it opens (B8, D-12): the local project in front,
+ * The project ⌘K reads when it opens (B8, D-12): the project in front whose
+ * GitHub the core reads (its own, or a node's that dials it, `readsHere`),
  * once per app run, when no screen has asked for it. A project the core has
- * answered, one already asked for here, and a device's project are left alone.
+ * answered, one already asked for here, and a dialed device's project are
+ * left alone.
  * `source.reading` alone is not "in flight": a project nobody asked for
  * reports it forever (tasks.rs), so it is never read as a request.
  */
 export function projectToRead(rest: SnapshotRest | null, frontCheckout: Checkout | null, asked: ReadonlySet<string>): Workspace | null {
-  if (!rest || !frontCheckout || frontDeviceId(rest) !== localDeviceId(rest)) return null;
-  const workspace = rest.navigator?.workspaces?.find((row) => row.id === frontCheckout.workspace_id);
-  if (!workspace || workspace.is_home || workspace.remote_target_id || !workspace.is_git) return null;
+  if (!rest || !frontCheckout) return null;
+  const workspace = catalogWorkspaces(rest).find((row) => row.id === frontCheckout.workspace_id);
+  if (!workspace || workspace.is_home || !workspace.is_git || !readsHere(workspace, rest.navigator?.devices)) return null;
   if (asked.has(workspace.id) || answered(workspace)) return null;
   return workspace;
 }
@@ -68,9 +70,9 @@ export function lastReadWords(workspace: Workspace, now: number, t: TFunction<"t
   return age ? t("search.lastRead", { age }) : null;
 }
 
-/** Whether this Mac has a project a GitHub search could look in (B16). */
+/** Whether the core has a project a GitHub search could look in (B16): its own or a node's, by the source it publishes. */
 export function hasGithubProject(rest: SnapshotRest | null): boolean {
-  return (rest?.navigator?.workspaces ?? []).some((workspace) => !workspace.is_home && !workspace.remote_target_id && workspace.is_git && workspace.tasks?.source?.kind === "github");
+  return catalogWorkspaces(rest).some((workspace) => !workspace.is_home && workspace.is_git && workspace.tasks?.source?.kind === "github");
 }
 
 /** The state of the `Search GitHub for "…"` row. */

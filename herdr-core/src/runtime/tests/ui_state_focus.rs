@@ -62,6 +62,8 @@ fn fixture() -> Runtime {
         test: None,
         host: Default::default(),
         kit: Default::default(),
+        machine_name: None,
+        dials_in: false,
     });
     runtime.snapshot.navigator.focused_device_id = Some(crate::node::TEST_NODE.to_owned());
     runtime.snapshot.navigator.focused_workspace_id = Some("workspace-a".to_owned());

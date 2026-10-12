@@ -15,7 +15,7 @@ import { useShellStore } from "../store";
 import type { SnapshotRest } from "../snapshot";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
 import type { DispatchFn } from "../ws";
-import { InitFailure } from "./CreateSheet";
+import { InitFailure, factoryMachines } from "./CreateSheet";
 import { FactoryScreen } from "./FactoryScreen";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./request";
 import type { CardView, DecisionView, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState } from "./model";
@@ -210,6 +210,12 @@ it("shows where a project check failed and the engine's next action, a logged-ou
   await act(async () => root!.render(<InitFailure state={state} />));
   expect(container.querySelector("[data-factory-create-stage]")!.textContent).toBe(english["factory.create.failedStage"].replace("{{stage}}", english["factory.create.stage.probe"]));
   expect(container.querySelector("[data-factory-create-next]")!.textContent).toContain("gh auth login");
+});
+
+it("offers a Factory on this machine and on a node that dials the core, never on a device the core dials (Q17)", () => {
+  const device = (id: string, kind: string, dials_in: boolean) => ({ id, kind, dials_in });
+  const rest = { navigator: { devices: [device("core-node", "local", false), device("macbook-node", "remote", true), device("studio", "remote", false)] } } as unknown as SnapshotRest;
+  expect([...factoryMachines(rest)].sort()).toEqual(["core-node", "macbook-node"]);
 });
 
 function sentVerbs(events: Parameters<DispatchFn>[0][]): string[] {

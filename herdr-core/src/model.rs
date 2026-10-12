@@ -47,6 +47,16 @@ pub struct CoreOptions {
     /// Absent keeps them in memory for the session only, as a test core does.
     #[serde(default)]
     pub local_issues_path: Option<String>,
+    /// The core starts on a move's copy whose link has not committed it:
+    /// it acts on nothing outside the machine until the embedder calls
+    /// `Core::release_effects` (`effects.rs`).
+    #[serde(default)]
+    pub effects_held: bool,
+    /// What the machine this core runs on calls itself, which a window on
+    /// another machine shows for the core's row (PRD core-host-node-move
+    /// B2); absent where the system names none.
+    #[serde(default)]
+    pub machine_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -249,7 +259,10 @@ pub struct WorkspaceViewSnapshot {
     /// (D-11).
     pub resumed: bool,
     pub layout: ViewLayoutSnapshot,
-    pub agent_layout: AgentLayoutSnapshot,
+    /// The Agent areas, for a Workspace whose tabs the core arranges (this
+    /// machine's and a node's that dialed in); `None` on a device this core
+    /// dials, whose Herdr shows one tab.
+    pub agent_layout: Option<AgentLayoutSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -630,6 +643,14 @@ pub struct DeviceSnapshot {
     /// B7): the same parts, in the same order, on This Mac and on every
     /// device.
     pub kit: KitSnapshot,
+    /// On the core's row only: what its machine calls itself, which a window
+    /// on another machine shows in place of "This Mac" (PRD
+    /// core-host-node-move B2).
+    pub machine_name: Option<String>,
+    /// A node that dials this core, which the core never dials: it has no
+    /// SSH alias, connection test or helper consent here (PRD
+    /// core-host-node-remote-core D-04).
+    pub dials_in: bool,
 }
 
 /// One machine's install kit as Settings shows it (PRD device-parity B7, B8).
@@ -2951,6 +2972,13 @@ pub struct UiStateSnapshot {
     pub sessions_expanded_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
+    /// Set by a core move's rekey (`node_migration::reown`): the machine the
+    /// core now runs on kept its selection only in its own Herdr while the
+    /// other core ran, so the first local session opens on Herdr's focus
+    /// (`consume_restore_hint`). Core only, and kept in the store until that
+    /// session takes it.
+    #[serde(skip)]
+    pub focus_from_herdr: bool,
     pub shortcut_bindings: BTreeMap<String, String>,
     /// Whether `shortcut_bindings` was already brought across from the removed
     /// native app's state. Persisted, never on the wire: once the import ran, an
@@ -3477,6 +3505,7 @@ impl Default for UiStateSnapshot {
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
+            focus_from_herdr: false,
             shortcut_bindings: BTreeMap::new(),
             shortcut_bindings_imported: false,
             browser_shortcut_bindings: BTreeMap::new(),
@@ -4758,6 +4787,18 @@ pub struct RemoteSessionSnapshot {
     /// (`Runtime::derive_device_session`), so they are not sent to the shell.
     #[serde(skip)]
     pub pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
+    /// The issue tokens of the device's Herdr: a workspace's by its Herdr
+    /// id, a pane's by its remote pane id. The core reads a node checkout's
+    /// issue link from them (`Runtime::project_node_issues`), so they are not
+    /// sent to the shell either.
+    #[serde(skip)]
+    pub issue_tokens: crate::wire::IssueTokens,
+    /// The GitHub issues a node project's checkouts link to, by project
+    /// root, made with its rows (`Runtime::project_node_issues`) for the
+    /// node's GitHub read to bring the ones its open list leaves out; empty
+    /// in a raw session. Not sent to the shell.
+    #[serde(skip)]
+    pub issue_links: BTreeMap<String, Vec<crate::issues::IssueReference>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4814,7 +4855,10 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![crate::workspace::local_device(&options.node_id)],
+                devices: vec![crate::workspace::local_device(
+                    &options.node_id,
+                    options.machine_name.as_deref(),
+                )],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),

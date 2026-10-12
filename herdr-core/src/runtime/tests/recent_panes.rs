@@ -59,6 +59,8 @@ pub(super) fn restart(path: &str) -> Runtime {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
+            effects_held: false,
+            machine_name: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -168,6 +170,8 @@ fn only_a_listed_pane_is_recorded_on_this_machine_or_a_device() {
             focused_pane_id: None,
             pane_layouts: Vec::new(),
             pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

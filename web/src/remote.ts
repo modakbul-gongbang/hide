@@ -86,6 +86,19 @@ export function remoteView(session: RemoteSession | null): RemoteView | null {
 }
 
 /**
+ * The view of `tabId` beside `view`'s: an Agent area of a node that dialed in
+ * shows a tab other than the one its Herdr has in front, and the core attaches
+ * that tab's panes too (`node_shown_agent_tabs`). The keyboard stays on the
+ * front tab's pane, so no pane of another tab is drawn focused.
+ */
+export function remoteTabView(session: RemoteSession, view: RemoteView, tabId: string | null): RemoteView {
+  if (!tabId || tabId === view.tab?.id) return view;
+  const tab = view.checkout.tabs.find((row) => row.id === tabId) ?? null;
+  const layout = tab ? (session.pane_layouts.find((row) => row.tab_id === tabId) ?? null) : null;
+  return { ...view, tab, layout, focusedPaneId: null };
+}
+
+/**
  * The target a pane id belongs to, read from the core's connection rows: a
  * remote pane id is `remote:<target>:pane:<id>` for a target the core knows.
  * Null means the pane is this machine's.

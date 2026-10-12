@@ -57,6 +57,10 @@ mod lineage;
 mod links;
 #[path = "tests/memory.rs"]
 mod memory;
+#[path = "tests/node_agent_areas.rs"]
+mod node_agent_areas;
+#[path = "tests/node_issues.rs"]
+mod node_issues;
 #[path = "tests/operator_focus.rs"]
 mod operator_focus;
 mod pane_geometry;
@@ -457,6 +461,8 @@ pub(super) fn runtime() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        effects_held: false,
+        machine_name: None,
     };
     let mut runtime = Runtime::new(
         options,

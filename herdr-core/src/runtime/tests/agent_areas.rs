@@ -289,6 +289,8 @@ fn authoritative_overflow_waits_without_hidden_focus_and_admits_when_a_slot_open
             .as_ref()
             .unwrap()
             .agent_layout
+            .as_ref()
+            .expect("this machine's Agent areas")
             .waiting,
         1
     );
@@ -830,6 +832,8 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
             focused_pane_id: None,
             pane_layouts: vec![],
             pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
         };
             runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
                 target_id: "mini".into(),
@@ -960,6 +964,8 @@ fn drawn(runtime: &mut Runtime) -> Vec<(Option<String>, Vec<String>)> {
             .as_ref()
             .expect("the front Workspace's view")
             .agent_layout
+            .as_ref()
+            .expect("this machine's Agent areas")
             .root,
         &mut areas,
     );

@@ -2,7 +2,9 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, Dia
 import { Row, Value } from "../components/settings-rows";
 import { useInterfaceTranslation } from "../i18n/client";
 import { hostLine } from "../settings";
+import { machineName } from "../screenMachine";
 import type { Device } from "../snapshot";
+import { useShellStore } from "../store";
 import { KitParts } from "./MachineKit";
 
 /**
@@ -14,13 +16,14 @@ import { KitParts } from "./MachineKit";
 export function DeviceDetails({ device, onClose }: { device: Device; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const host = device.host;
+  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, device.id, t));
   const remote = device.kind === "remote";
   const helper = remote ? hostLine(host, t) : null;
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent data-device-details-dialog={device.id}>
         <DialogHeader>
-          <DialogTitle>{t("devices.detailsTitle", { name: device.label })}</DialogTitle>
+          <DialogTitle>{t("devices.detailsTitle", { name })}</DialogTitle>
           <DialogDescription>{t("devices.detailsDescription")}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-md">

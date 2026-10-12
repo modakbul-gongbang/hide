@@ -55,7 +55,7 @@ The probe does not need a pane id: the daemon binds a caller inside a Herdr pane
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
 The hook starts nothing and installs nothing; when the CLI does not answer within its two-second bound the session starts without Workspace guidance and the next one tries again (B26).
-A device session gets no Project Memory index: the Memory database is this Mac's and is never copied to a device, so the device's `UserPromptSubmit` omits Memory context (B25).
+A session on a device the core dials gets no Project Memory index: the core answers Memory only for its own machine's panes and those of a node that dials in (PRD core-host-node-move Q20), and the Memory store is never copied to a device, so that device's `UserPromptSubmit` omits Memory context (B25).
 A connected device pane can still receive pending letters through its sibling `hide` CLI and the return route within the same two-second caller budget; [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns that intake and confirmation contract.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
 A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
@@ -79,12 +79,12 @@ A repeated SessionStart in the same attested pane reuses its live persistent ref
 The SSH bridge tracks every reference it issues and revokes the corresponding daemon token when its file disappears, its unclaimed period expires, its eight-hour lifetime ends, its pane shell exits, or its one-shot caller exits.
 A failed bootstrap reply revokes only a newly issued reference; it leaves a reused live reference intact.
 Late bridge replies are matched by request ID so one timed-out attestation cannot poison the next bootstrap.
-On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
+On `UserPromptSubmit`, it parses at most 256 KiB of runtime input and asks the core for Memory (`hide workspace memory`, below) with the session and the prompt's first 8 KiB on stdin; the core resolves the Project of the caller's checkout through that checkout's node and performs a read-only lookup against the materialized active projection of the one store it owns.
 The prompt text is the search input only; the original prompt is never replaced.
 A card is eligible only when `hide_memory::matcher` scores it above its minimum: a whole word, a stem with its Korean particle taken off, an alias, or enough two-syllable Hangul pieces ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory)); extraction confidence never stands in for relevance and only breaks ties after it (B11, B12).
 At most three whole cards and 600 estimated tokens are returned in the same `additionalContext` envelope, leaving out the cards waiting to be checked against the repository and the cards the session was already given in full, by an earlier prompt or by `hide memory show`, as its recorded receipts say.
 Only a body injection carries a receipt; the session-start index carries none, because an index line is no delivery.
-The helper authenticates the receipt with the Project-scoped key in the same SQLite store, binding the runtime, session, hook event, and exact ordered card revisions without creating another persistence surface.
+The core authenticates the receipt with the Project-scoped key in the same SQLite store, binding the runtime, session, hook event, and exact ordered card revisions without creating another persistence surface.
 The core accepts it only from provider-owned transcript records, including Claude Code's `hook_additional_context` attachment and actual Codex developer messages, and verifies the authentication tag before recording it.
 A receipt not yet recorded when the next prompt arrives can repeat a card once; the session goes on either way, and no sidecar or second store is written.
 When a Project's receipts are at their cap and the session has none recorded, its prompts get no Memory rather than repeating cards; the cap is logged ([ARCHITECTURE.md](ARCHITECTURE.md#project-sessions-and-memory), B26).
@@ -92,21 +92,24 @@ Claude Code and Codex currently accept the same envelope, but the installed runt
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
 This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
 
-For local and connected device agent delivery, `UserPromptSubmit` reads the submitted prompt from the runtime payload (waiting at most 0.5 seconds for it) and sends its SHA-256 and the native session it runs in to `hide inbox --hook --prompt-digest <sha256> --session <id>`; the core decides from that digest whether the prompt is the line its doorbell typed ([delivery.md: Recognizing the bell](delivery.md#recognizing-the-bell)), and the prompt text never leaves the hook.
+For local and connected device agent delivery, `UserPromptSubmit` reads the submitted prompt from the runtime payload (waiting at most 0.5 seconds for it) and sends its SHA-256 and the native session it runs in to `hide inbox --hook --prompt-digest <sha256> --session <id>`; the core decides from that digest whether the prompt is the line its doorbell typed ([delivery.md: Recognizing the bell](delivery.md#recognizing-the-bell)), and the letter intake never sends the prompt text; only Memory's request carries the prompt's first 8 KiB, as a search input.
 The session id goes to `hide inbox --hook --session`, which is how the hook counts as a submission only in its own pane; an unreadable or truncated payload has none, so that hook clears no draft.
 The bell turn pulls at most five pending letters and 8 KiB of letter context from the sibling `hide` CLI within one total two-second budget; any other prompt receives only a one-line count of waiting letters.
 Only a successful stdout flush permits confirmation, so pre-confirm interruption can repeat an ID and confirmed letters do not repeat.
 The session guidance says that a prompt beginning with `🔔` is Hide's bell and that `hide inbox` shows the letter when the prompt did not bring it, and a Codex bell names `hide inbox` itself ([delivery.md: The bell line](delivery.md#the-bell-line)); a missing or failed hook leaves pending letters available through `hide inbox` and `hide request show`.
-This delivery path has its own bounded private diagnostics and does not extend Memory's in-process budget described below.
+This delivery path has its own bounded private diagnostics; Memory's request runs beside it and ends where it does.
 [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns these intake, failure and confirmation rules.
 
-The Memory lookup itself performs no provider or embedding call, transcript scan, child-process launch, or database write.
-It opens the store the core writes, `~/.hide/state/project-memory.sqlite3` ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory) says why a relocated state folder is not followed), from the home alone; a test that points a hook at another file does so through the testing override, which a production hook ignores.
-Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
-The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
-The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.
-Stdin is read through a nonblocking descriptor until EOF, the size cap, or the absolute deadline, and SQLite receives the same deadline through its progress handler.
-Windows has no nonblocking read of a pipe, so there a reader thread collects stdin and the helper stops waiting for it at the same deadline.
+Memory has one store, `project-memory.sqlite3` in the core's state folder, which only the core opens, whichever machine the agent runs on (PRD core-host-node-move D-12, B14).
+The hook asks for it through `hide workspace memory --event <event> --runtime <runtime> --session <id>`, the same pane credential and node link its letters come by, on its own thread beside the letter pull; on another machine the request goes through that machine's node to the core.
+The core takes the Project from the caller's attested checkout, read by that checkout's own node, never from anything the hook sends.
+The lookup performs no provider or embedding call, transcript scan, child-process launch, or database write, and runs off the core's runtime lock.
+Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context, and the hook still exits zero.
+The hook waits for the answer until 1,250 ms after it starts, where the letter pull ends too, so Memory never makes a turn wait longer; the core spends at most 1 s on it once admitted, and candidate, item, and token counts are hard bounded.
+A node whose link to the core is down refuses at once with `hide_unavailable`; the hook then records `memory.unavailable`, or `memory.deadline` for an answer that did not come in time, at most once per ten minutes in its private diagnostics, and the turn goes on without Memory.
+A panic on the thread that asks is recorded the same way as `memory.panicked`.
+Stdin is read through a nonblocking descriptor until EOF, the size cap, or the 500 ms payload wait.
+Windows has no nonblocking read of a pipe, so there a reader thread collects stdin and the helper stops waiting for it at the same point.
 Current Claude Code and Codex `UserPromptSubmit` input and output shapes are fixed by sanitized fixtures in `hide-agent-hooks/tests/fixtures/`.
 The app probes the installed runtime binaries with a 750 ms bounded version check and currently requires Claude Code 2.1.278 or Codex 0.155.1 for Memory injection.
 A runtime below that capability is diagnosed as `Update required` without disabling a supported installed runtime or Sessions browsing.
@@ -181,7 +184,7 @@ The snapshot-rate work is a comparison of the tokens each listed agent already c
 The only file read and the only `pane.report_metadata` call are on the worker, at most 256 panes in one batch, one batch in flight and one waiting, a failed pane tried three times for a connection, and each failure is a `hook_tokens` diagnostic naming the pane (`restore.failed`, `restore.gave_up`, `restore.batch`, `restore.deferred`).
 
 The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
-A producer that never closes stdin is released at the same absolute Memory deadline.
+A producer that never closes stdin is released after the 500 ms payload wait.
 A hook that fails must never be what breaks the operator's agent.
 
 Exiting zero is not the same as saying nothing.
@@ -201,7 +204,7 @@ The ordinary launch mode remains unchanged.
 Environment, display name, cwd, descendants and a historical registration alone confer no worker authority.
 An ended registration retained across cancel/revive counts only when its accepted spawn still joins the current independently attested native execution.
 Missing identity, an unopened Factory, a changed connection, overload, timeout or any other unavailable proof allows the tool call and records a bounded diagnostic.
-Factory starts currently belong to the core's own node; foreign-device callers cannot borrow its worker identity, while a device running its own Factory uses the same local route.
+Factory workers run on the core's machine and on the nodes that dial the core; a caller on a device the core dials cannot borrow a worker identity, while a device running its own Factory uses the same local route.
 This read starts no Factory, judgment, tick or store write and publishes no snapshot.
 
 ## The spawn guard
@@ -618,11 +621,11 @@ The forms follow what each runtime documents or, where its documentation is sile
 On that runner the first Windows PowerShell 5.1 start of a fresh machine took 2.4 seconds to write the event, past the guard's 500 ms read budget, and the guard then lets the call run; later starts wrote it within 70 ms.
 - A Cursor CLI started from Git Bash, or with `MSYSTEM` or `EXEPATH` in its environment, evaluates that PowerShell wrapper with bash, which exits 2, and Cursor then refuses every tool call of a session with any hook in `hooks.json`, Hide's or another's (Cursor's forum, thread 168129, open with staff confirmation). Hide's entry cannot change the wrapper Cursor builds, and Herdr's own Cursor integration, which the kit installs with Hide's hook, puts a PowerShell `sessionStart` entry into the same file on Windows (`powershell -NoProfile -ExecutionPolicy Bypass -File <herdr-agent-state.ps1> session`, observed from the pinned Herdr 0.9.3's `integration install cursor` on a Windows runner), so Hide's entry adds no case Herdr's does not already have.
 
-PowerShell starts before the helper on every Windows hook, which Codex does for any hook there; the 100 ms Memory deadline above counts from the helper's own launch.
+PowerShell starts before the helper on every Windows hook, which Codex does for any hook there; the 1,250 ms Memory wait above counts from the helper's own start.
 PowerShell can read what the helper prints in the console code page and write it out again (no runtime documents whether it does, and Windows PowerShell 5.1 does when the helper's output crosses a pipe inside Cursor's wrapper, as the runner test showed), so on Windows the helper prints every hook's JSON in ASCII, every other character as a `\u` escape that decodes to the same text.
 The marker is looked for in an entry's `command` and in each of its `args`, where Claude Code's Windows entry carries it, so a second install on Windows recognises its entries and converges as it does elsewhere.
 The marker stays at version 6: the macOS and Linux bytes are the ones version 6 wrote (`the_posix_entry_is_exactly_what_macos_and_linux_have_installed` pins them), and no earlier build installed anything on Windows.
-`hide-agent-hooks/tests/it/windows_hook_command.rs` runs the Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, in the `windows check` lane: Claude Code's and Codex's prove stdin reached the helper by the Memory receipt only the session it read can produce, and Grok's and Cursor's by the spawn guard's `daemon.unreachable` line, which the helper writes only after reading a launch from the event; Cursor's runs inside the script its CLI writes, and its answers parse as JSON.
+`hide-agent-hooks/tests/it/windows_hook_command.rs` runs the Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, in the `windows check` lane: Claude Code's and Codex's prove stdin reached the helper by the Memory request only the session it read makes (with no `hide` beside it, recorded as `memory_unavailable`), and Grok's and Cursor's by the spawn guard's `daemon.unreachable` line, which the helper writes only after reading a launch from the event; Cursor's runs inside the script its CLI writes, and its answers parse as JSON.
 Version 6 is the first guarded command, so an older entry reads outdated and the next launch or connection replaces it.
 The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on macOS, the unpacked package's `resources` on Windows/Linux, and the helper root's `current` link on a device, which each new build of the helper points at itself.
 
@@ -667,5 +670,6 @@ OpenCode's plugin is tested at three layers, none of which runs the operator's O
 
 Pi's and omp's extension is tested at the same three layers, none of which runs the operator's Pi or omp.
 `hide-agent-hooks/src/plugin/tests.rs` holds the file tests for all three script files, and `tests/it/pi_extension.rs` pins both files' bytes and runs `tests/pi-extension/extension.test.mjs` in Node once per agent, which loads the generated file and replays the event and context shapes captured from Pi 1.0.4 and omp 18.7.0 (`tests/fixtures/pi-extension/`) against a stand-in helper: what stays out, the hidden message, confirmation after the reply and once across omp's re-entry, the budgets, omp's counts and `ask`, and that no handler throws.
-Which session a Memory receipt is signed for (Pi's and omp's host id, never the session file; OpenCode's own id) and which Memory context (the index with the first prompt, cards after) a prompt asks for are tested in process by the helper's own unit test in `hide-agent-hooks/src/plugin/helper.rs`, with room for Memory; `tests/it/opencode_helper.rs` checks through the built helper only the outcomes that do not hang on its 75 ms Memory budget.
+`tests/it/opencode_helper.rs` checks through the built helper, beside a stand-in `hide`, which session Memory is asked for (Pi's and omp's host id, never the session file; OpenCode's own id), which Memory context a prompt asks for (the index with the first prompt, cards after), its prompt on stdin, and that the letters ride whatever Memory answers.
+Which session a receipt is signed for and what the core answers are `hide-memory`'s tests (`src/hook.rs`) and the core's (`herdr-core/src/memory_hook.rs`, `hided/tests/it/remote_core.rs`).
 `web/e2e/pi-omp-extension.spec.ts` lets the kit write both files into a private `HOME`, runs a Pi stand-in and an omp stand-in (`web/e2e/pi-omp-host.ts`) in the two panes of the pinned Herdr, reporting the session file the way Herdr's integrations do, and checks a letter in each direction on the next prompt and its confirmation once written, the spawn guard's refusal in both, and omp's subagent counts with a subagent prompt that takes no letter.

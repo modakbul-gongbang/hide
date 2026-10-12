@@ -1,0 +1,603 @@
+//! What one agent hook gets from Project Memory (PRD core-host-node-move
+//! D-12, B14): the core answers it from the store it owns, for the Project of
+//! the checkout the hook's pane is attested to, so the store is read on the
+//! core's machine whichever machine's agent asks. Bounded by the caller's
+//! expiry and failing open: any missing part answers with no Memory.
+
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{Injection, InjectionKind, InjectionOutcome, MemoryStore, RetrievalQuery};
+
+/// The most of a prompt a hook sends the core to rank Memory by: its start,
+/// which names the task, and few enough bytes that the request stays one
+/// small message whichever machine the core runs on.
+pub const PROMPT_LIMIT_BYTES: usize = 8 * 1024;
+
+/// `prompt`'s first [`PROMPT_LIMIT_BYTES`] bytes at most, cut on a character
+/// boundary.
+pub fn prompt_prefix(prompt: &str) -> &str {
+    prefix(prompt, PROMPT_LIMIT_BYTES)
+}
+
+/// `text`'s first `bytes` bytes at most, cut on a character boundary.
+pub fn prefix(text: &str, bytes: usize) -> &str {
+    let mut end = bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// The two events Memory answers.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum HookEvent {
+    SessionStart,
+    UserPromptSubmit,
+}
+
+impl HookEvent {
+    /// The event's name as receipts carry it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SessionStart => "SessionStart",
+            Self::UserPromptSubmit => "UserPromptSubmit",
+        }
+    }
+}
+
+/// How a hook's Memory read ended, for the hook's own record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum HookOutcome {
+    Provided { count: usize },
+    Empty,
+    Disabled,
+    Unavailable,
+    Deadline,
+    ProjectUnresolved,
+}
+
+/// What one hook asks for.
+pub struct HookRequest<'a> {
+    /// The provider id Memory keys sessions and receipts by: `claude`,
+    /// `codex`, `opencode`, `pi` or `omp`.
+    pub runtime_id: &'a str,
+    pub event: HookEvent,
+    pub session_id: &'a str,
+    pub prompt: Option<&'a str>,
+}
+
+/// The Memory context for one hook, with its receipt, or none.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HookContext {
+    pub context: Option<String>,
+    #[serde(flatten)]
+    pub outcome: HookOutcome,
+}
+
+impl HookContext {
+    fn without(outcome: HookOutcome) -> Self {
+        Self {
+            context: None,
+            outcome,
+        }
+    }
+}
+
+/// The context `store_path`'s Memory gives `request` for `project`, or none
+/// with why; `expired` bounds every step.
+pub fn context_for<E>(
+    store_path: &Path,
+    project: &hide_project::ProjectIdentity,
+    request: HookRequest<'_>,
+    expired: E,
+) -> HookContext
+where
+    E: Fn() -> bool + Clone + Send + 'static,
+{
+    let base = || HookContext::without(HookOutcome::Unavailable);
+    let deadline = || HookContext::without(HookOutcome::Deadline);
+    let Ok(store) = MemoryStore::open_hook_read_only_with_expiry(store_path, expired.clone())
+    else {
+        if expired() {
+            return deadline();
+        }
+        return base();
+    };
+    if expired() {
+        return deadline();
+    }
+    if request.session_id.is_empty() {
+        return base();
+    }
+    let query = match request.event {
+        HookEvent::SessionStart => RetrievalQuery::session_start(&project.id),
+        HookEvent::UserPromptSubmit => {
+            let excluded = match store.session_given_ids(
+                &project.id,
+                request.runtime_id,
+                request.session_id,
+            ) {
+                Ok(Some(items)) => items,
+                // A new session while the Project's receipts are full: nothing
+                // could record what it is given, so it gets none (B26).
+                Ok(None) | Err(_) => return base(),
+            };
+            RetrievalQuery::prompt(&project.id, request.prompt.unwrap_or_default(), excluded)
+        }
+    };
+    if expired() {
+        return deadline();
+    }
+    let Ok(injection) = store.retrieve_with_expiry(&query, &expired) else {
+        if expired() {
+            return deadline();
+        }
+        return base();
+    };
+    // The index is not a delivery and leaves no receipt; only cards given in
+    // full are recorded, so a session's prompts do not repeat them (B12).
+    let receipt_auth = match injection.kind {
+        InjectionKind::Index => None,
+        InjectionKind::Bodies => match store.receipt_auth_tag(
+            &project.id,
+            request.runtime_id,
+            request.session_id,
+            request.event.name(),
+            &injection.item_key(),
+        ) {
+            Ok(tag) => Some(tag),
+            Err(_) => return base(),
+        },
+    };
+    render(request.event, injection, receipt_auth.as_deref(), &expired)
+}
+
+fn render(
+    event: HookEvent,
+    injection: Injection,
+    receipt_auth: Option<&str>,
+    expired: &impl Fn() -> bool,
+) -> HookContext {
+    if expired() {
+        return HookContext::without(HookOutcome::Deadline);
+    }
+    let outcome = match injection.outcome {
+        InjectionOutcome::Provided => HookOutcome::Provided {
+            count: injection.items.len(),
+        },
+        InjectionOutcome::Empty => HookOutcome::Empty,
+        InjectionOutcome::Disabled => HookOutcome::Disabled,
+        InjectionOutcome::Deadline => HookOutcome::Deadline,
+        InjectionOutcome::Unavailable | InjectionOutcome::Stale => HookOutcome::Unavailable,
+    };
+    let Some(mut context) = injection.context() else {
+        return HookContext::without(outcome);
+    };
+    if let Some(auth) = receipt_auth {
+        context.push_str(&format!(
+            "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" auth=\"{}\" />\n",
+            event.name(),
+            injection.items.len(),
+            injection.item_key(),
+            auth,
+        ));
+    }
+    HookContext {
+        context: Some(context),
+        outcome,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    const NODE: &str = "node-a";
+
+    /// A clock that moves only when the test moves it, ending at the store's
+    /// own hook deadline.
+    fn invocation_clock() -> (Arc<AtomicU64>, impl Fn() -> bool + Clone + Send + 'static) {
+        let anchor = Instant::now();
+        let end = anchor + Duration::from_millis(crate::HOOK_DEADLINE_MS);
+        let elapsed = Arc::new(AtomicU64::new(0));
+        let clock = Arc::clone(&elapsed);
+        let expired = move || anchor + Duration::from_millis(clock.load(Ordering::SeqCst)) >= end;
+        (elapsed, expired)
+    }
+
+    fn frozen() -> impl Fn() -> bool + Clone + Send + 'static {
+        invocation_clock().1
+    }
+
+    fn rule(text: &str, salience: f64) -> Candidate {
+        Candidate {
+            text: text.into(),
+            title: String::new(),
+            aliases: Vec::new(),
+            kind: CandidateKind::Rule,
+            confidence: 0.9,
+            salience,
+            source_offsets: vec![1],
+            human_offsets: vec![1],
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
+            relation: CandidateRelation::New,
+        }
+    }
+
+    /// A store at `root` holding the enabled Project at `checkout`, with
+    /// `cards`.
+    fn enabled_store(
+        root: &Path,
+        checkout: &Path,
+        cards: &[Candidate],
+    ) -> (PathBuf, hide_project::ProjectIdentity) {
+        fs::create_dir_all(checkout).unwrap();
+        let project = hide_project::resolve(checkout, NODE).unwrap();
+        let path = crate::database_path(root);
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, NODE)
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        if !cards.is_empty() {
+            store
+                .apply_candidates(
+                    &AnalysisBatch {
+                        id: "fixture-batch".into(),
+                        project_id: project.id.clone(),
+                        provider: "codex".into(),
+                        analysis_provider: "codex".into(),
+                        session_id: "source-session".into(),
+                        content_hash: "fixture-hash".into(),
+                        created_at_unix_ms: 1,
+                    },
+                    cards,
+                )
+                .unwrap();
+        }
+        (path, project)
+    }
+
+    fn ask<'a>(event: HookEvent, session: &'a str, prompt: Option<&'a str>) -> HookRequest<'a> {
+        HookRequest {
+            runtime_id: "codex",
+            event,
+            session_id: session,
+            prompt,
+        }
+    }
+
+    #[test]
+    fn a_prompt_sharing_no_word_or_alias_gets_no_memory() {
+        // B12
+        let temp = tempfile::tempdir().unwrap();
+        let (path, project) = enabled_store(
+            temp.path(),
+            &temp.path().join("project-memory"),
+            &[rule(
+                "Project Memory provider work uses a bounded queue",
+                0.9,
+            )],
+        );
+        let prompt = |text| {
+            context_for(
+                &path,
+                &project,
+                ask(HookEvent::UserPromptSubmit, "unrelated-session", Some(text)),
+                frozen(),
+            )
+        };
+
+        let result = prompt("오늘 점심 메뉴 추천해줘");
+        assert_eq!(result.outcome, HookOutcome::Empty);
+        assert!(result.context.is_none());
+        let result = prompt("the provider queue is stuck");
+        assert_eq!(result.outcome, HookOutcome::Provided { count: 1 });
+    }
+
+    #[test]
+    fn a_prompt_omits_cards_the_session_was_already_given_in_full() {
+        // B12: a card given at an earlier prompt is not given again.
+        let temp = tempfile::tempdir().unwrap();
+        let cards = (0..6)
+            .map(|index| rule(&format!("Rule {index} about durable hooks"), 0.9))
+            .collect::<Vec<_>>();
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &cards);
+        MemoryStore::open(&path)
+            .unwrap()
+            .record_receipt(
+                &project.id,
+                "codex",
+                "fixture-session",
+                "event:9",
+                "m1@1",
+                2,
+            )
+            .unwrap();
+
+        let result = context_for(
+            &path,
+            &project,
+            ask(
+                HookEvent::UserPromptSubmit,
+                "fixture-session",
+                Some("durable hooks"),
+            ),
+            frozen(),
+        );
+
+        assert_eq!(result.outcome, HookOutcome::Provided { count: 3 });
+        let context = result.context.unwrap();
+        assert!(!context.contains("Rule 0 "), "{context}");
+        assert!(
+            context.contains("m2@1"),
+            "the receipt names cards by number: {context}"
+        );
+    }
+
+    #[test]
+    fn session_start_gives_the_index_without_a_receipt_and_the_first_prompt_gets_memory() {
+        // B10, B13: the index is not a delivery, so it records nothing and
+        // the first prompt does not wait for it.
+        let temp = tempfile::tempdir().unwrap();
+        let mut cards = (0..22)
+            .map(|index| {
+                rule(
+                    &format!("Race rule {index} about durable hooks"),
+                    1.0 - f64::from(index) / 100.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        cards.push(Candidate {
+            kind: CandidateKind::Fact,
+            ..rule("A fact about durable hooks", 1.0)
+        });
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &cards);
+        let session = "immediate-session";
+
+        let start = context_for(
+            &path,
+            &project,
+            ask(HookEvent::SessionStart, session, None),
+            frozen(),
+        );
+        assert_eq!(start.outcome, HookOutcome::Provided { count: 20 });
+        let start = start.context.unwrap();
+        assert!(start.contains("hide memory show"));
+        assert!(start.contains("m1 Race rule 0 about durable hooks"));
+        assert!(!start.contains("A fact about"));
+        assert!(!start.contains("Race rule 21 "));
+        assert!(!start.contains("hide-memory-receipt"));
+
+        let prompt = context_for(
+            &path,
+            &project,
+            ask(HookEvent::UserPromptSubmit, session, Some("durable hooks")),
+            frozen(),
+        );
+        assert_eq!(prompt.outcome, HookOutcome::Provided { count: 3 });
+        assert!(prompt.context.unwrap().contains("hide-memory-receipt"));
+    }
+
+    #[test]
+    fn a_linked_worktree_checkout_reaches_its_main_checkouts_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let main = temp.path().join("main");
+        let linked = temp.path().join("linked");
+        fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&main)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {args:?}"
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        fs::write(main.join("README.md"), "fixture\n").unwrap();
+        git(&["add", "."]);
+        git(&["-c", "commit.gpgsign=false", "commit", "-qm", "init"]);
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ]);
+
+        // The pane's checkout names the Project, whose root is the main one.
+        let (path, project) = enabled_store(
+            temp.path(),
+            &linked,
+            &[rule("Keep the local projection bounded", 0.9)],
+        );
+        assert_eq!(project.checkout_root, fs::canonicalize(&linked).unwrap());
+        assert_eq!(project.root, fs::canonicalize(&main).unwrap());
+
+        let result = context_for(
+            &path,
+            &project,
+            ask(
+                HookEvent::UserPromptSubmit,
+                "linked-session",
+                Some("projection 정리"),
+            ),
+            frozen(),
+        );
+
+        assert_eq!(result.outcome, HookOutcome::Provided { count: 1 });
+        assert!(
+            result
+                .context
+                .unwrap()
+                .contains("Keep the local projection bounded")
+        );
+    }
+
+    #[test]
+    fn an_empty_session_start_adds_nothing() {
+        // B10: no card for the index, no index.
+        let result = render(
+            HookEvent::SessionStart,
+            Injection {
+                outcome: InjectionOutcome::Empty,
+                kind: InjectionKind::Index,
+                items: Vec::new(),
+                token_count: 0,
+            },
+            None,
+            &frozen(),
+        );
+
+        assert_eq!(result.outcome, HookOutcome::Empty);
+        assert_eq!(result.context, None);
+    }
+
+    #[test]
+    fn an_expired_ask_answers_deadline_before_opening_a_missing_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("project");
+        fs::create_dir_all(&checkout).unwrap();
+        let project = hide_project::resolve(&checkout, NODE).unwrap();
+        let path = crate::database_path(temp.path());
+        let (elapsed, expired) = invocation_clock();
+        elapsed.fetch_add(100, Ordering::SeqCst);
+
+        let result = context_for(
+            &path,
+            &project,
+            ask(HookEvent::SessionStart, "s", None),
+            expired,
+        );
+
+        assert_eq!(result.outcome, HookOutcome::Deadline);
+        assert!(result.context.is_none());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_render_at_the_deadline_carries_neither_the_capsule_nor_its_receipt() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = "Keep the invocation deadline through rendering";
+        let (path, project) = enabled_store(
+            temp.path(),
+            &temp.path().join("project"),
+            &[rule(body, 0.9)],
+        );
+
+        let (elapsed, expired) = invocation_clock();
+        let reader = MemoryStore::open_hook_read_only_with_expiry(&path, expired.clone()).unwrap();
+        elapsed.fetch_add(99, Ordering::SeqCst);
+        let injection = reader
+            .retrieve_with_expiry(
+                &RetrievalQuery::prompt(&project.id, "invocation deadline", Vec::new()),
+                &expired,
+            )
+            .unwrap();
+        assert_eq!(injection.outcome, InjectionOutcome::Provided);
+        assert_eq!(injection.items[0].text, body);
+        let item_key = injection.item_key();
+        let auth = reader
+            .receipt_auth_tag(
+                &project.id,
+                "codex",
+                "render-session",
+                "UserPromptSubmit",
+                &item_key,
+            )
+            .unwrap();
+        assert!(
+            reader
+                .verify_receipt_auth(
+                    &project.id,
+                    "codex",
+                    "render-session",
+                    "UserPromptSubmit",
+                    &item_key,
+                    &auth
+                )
+                .unwrap()
+        );
+        elapsed.fetch_add(1, Ordering::SeqCst);
+
+        let result = render(
+            HookEvent::UserPromptSubmit,
+            injection,
+            Some(&auth),
+            &expired,
+        );
+
+        assert_eq!(result.outcome, HookOutcome::Deadline);
+        assert_eq!(result.context, None);
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_store_answers_unavailable_for_both_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("project");
+        fs::create_dir_all(&checkout).unwrap();
+        let project = hide_project::resolve(&checkout, NODE).unwrap();
+        let path = crate::database_path(temp.path());
+        for event in [HookEvent::SessionStart, HookEvent::UserPromptSubmit] {
+            let missing = context_for(
+                &path,
+                &project,
+                ask(event, "s", Some("keep going")),
+                frozen(),
+            );
+            assert_eq!(missing.outcome, HookOutcome::Unavailable, "{event:?}");
+            assert!(missing.context.is_none());
+        }
+        fs::write(&path, b"not a sqlite database").unwrap();
+        let corrupt = context_for(
+            &path,
+            &project,
+            ask(HookEvent::UserPromptSubmit, "s", Some("keep going")),
+            frozen(),
+        );
+        assert_eq!(corrupt.outcome, HookOutcome::Unavailable);
+        assert!(corrupt.context.is_none());
+    }
+
+    #[test]
+    fn a_locked_store_answers_unavailable_without_waiting_for_the_writer() {
+        let temp = tempfile::tempdir().unwrap();
+        let (path, project) = enabled_store(temp.path(), &temp.path().join("project"), &[]);
+
+        let lock = rusqlite::Connection::open(&path).unwrap();
+        lock.pragma_update(None, "journal_mode", "DELETE").unwrap();
+        lock.pragma_update(None, "locking_mode", "EXCLUSIVE")
+            .unwrap();
+        lock.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let started = Instant::now();
+        // The lock decides the outcome; the frozen clock never expires, and
+        // the elapsed bound below catches a wait for the writer.
+        let result = context_for(
+            &path,
+            &project,
+            ask(HookEvent::UserPromptSubmit, "s", Some("keep going")),
+            frozen(),
+        );
+        assert_eq!(result.outcome, HookOutcome::Unavailable);
+        assert!(result.context.is_none());
+        assert!(started.elapsed() < Duration::from_millis(crate::HOOK_DEADLINE_MS));
+        lock.execute_batch("ROLLBACK").unwrap();
+    }
+}

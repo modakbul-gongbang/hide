@@ -6,7 +6,7 @@
 // cannot yet (#315).
 #![cfg(unix)]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -16,109 +16,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 
+use crate::support::fake_tailscale::{DNS, FakeTailscale};
+
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-const DNS: &str = "mac.tailnet-name.ts.net";
-
-/// A `tailscale` that answers from files under `state`: `status.json`,
-/// `serve.json`; `fail-serve` makes every serve change fail, `fail-remove`
-/// only removals, and `apply-then-fail` applies an add and then fails it
-/// (a `serve --bg` that timed out after it took); with `funnel` a removal
-/// leaves the Funnel flag in place; every call is appended to `calls.log`.
-struct FakeTailscale {
-    state: PathBuf,
-    bin: PathBuf,
-}
-
-impl FakeTailscale {
-    fn new(root: &Path) -> Self {
-        let state = root.join("tailscale-state");
-        std::fs::create_dir_all(&state).unwrap();
-        let bin = root.join("tailscale");
-        let script = format!(
-            r#"#!/bin/sh
-S='{state}'
-echo "$*" >> "$S/calls.log"
-case "$1" in
-  status) cat "$S/status.json" ;;
-  serve)
-    shift
-    if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{{}}'; exit 0; fi
-    if [ -e "$S/fail-serve" ]; then echo "serve config denied: access denied" >&2; exit 1; fi
-    last=""; for a in "$@"; do last="$a"; done
-    if [ "$last" = off ] && [ -e "$S/fail-remove" ]; then echo "remove denied" >&2; exit 1; fi
-    if [ "$last" = off ] && [ -e "$S/funnel" ]; then echo '{{"AllowFunnel":{{"{dns}:443":true}}}}' > "$S/serve.json"; exit 0; fi
-    if [ "$last" = off ]; then echo '{{}}' > "$S/serve.json"; exit 0; fi
-    printf '{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{dns}:443":{{"Handlers":{{"/":{{"Proxy":"%s"}}}}}}}}}}' "$last" > "$S/serve.json"
-    if [ -e "$S/apply-then-fail" ]; then echo "timed out" >&2; exit 1; fi
-    ;;
-  *) exit 2 ;;
-esac
-"#,
-            state = state.display(),
-            dns = DNS,
-        );
-        std::fs::write(&bin, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { state, bin }
-    }
-
-    fn status(&self, value: Value) {
-        std::fs::write(self.state.join("status.json"), value.to_string()).unwrap();
-    }
-
-    fn logged_out(&self) {
-        self.status(
-            json!({"BackendState": "NeedsLogin", "Self": {"DNSName": "", "HostName": "mac"}}),
-        );
-    }
-
-    fn https_off(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
-            "CurrentTailnet": {"MagicDNSEnabled": true}}));
-    }
-
-    fn ready(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
-            "CurrentTailnet": {"MagicDNSEnabled": true}, "CertDomains": [DNS]}));
-    }
-
-    fn serve(&self) -> Value {
-        std::fs::read_to_string(self.state.join("serve.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(json!({}))
-    }
-
-    fn set_serve(&self, value: Value) {
-        std::fs::write(self.state.join("serve.json"), value.to_string()).unwrap();
-    }
-
-    fn calls(&self) -> String {
-        std::fs::read_to_string(self.state.join("calls.log")).unwrap_or_default()
-    }
-
-    fn proxy(&self) -> Option<String> {
-        self.serve()
-            .pointer(&format!("/Web/{DNS}:443/Handlers/~1/Proxy"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    }
-
-    /// Switch-off shows `off` at once and removes the entry right after it.
-    async fn wait_until_removed(&self) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while self.proxy().is_some() {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "hide's serve entry was never removed"
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    }
-}
 
 fn env(dir: &Path, tailscale: &Path) -> Env {
     Env {
@@ -132,6 +33,7 @@ fn env(dir: &Path, tailscale: &Path) -> Env {
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
         build: None,
+        starter_program: None,
         open_command: None,
         host_helper_root: None,
         host_cli_dir: None,
@@ -216,6 +118,10 @@ async fn event(socket: &mut Socket, kind: &str, payload: Value) {
 }
 
 fn pair_code(qr: &str) -> String {
+    pair_code_at(qr, DNS)
+}
+
+fn pair_code_at(qr: &str, dns: &str) -> String {
     use base64::Engine;
     let encoded = qr.split("#pair=").nth(1).unwrap();
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -223,7 +129,7 @@ fn pair_code(qr: &str) -> String {
         .unwrap();
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["v"], 1);
-    assert_eq!(value["endpoint"], format!("https://{DNS}"));
+    assert_eq!(value["endpoint"], format!("https://{dns}"));
     value["code"].as_str().unwrap().to_owned()
 }
 
@@ -242,7 +148,11 @@ async fn pair(port: u16, origin: &str, code: &str) -> (Socket, Value) {
 }
 
 async fn phone(port: u16, credential: &str) -> (Socket, Value) {
-    let mut socket = connect(port, &format!("https://{DNS}")).await;
+    phone_at(port, DNS, credential).await
+}
+
+async fn phone_at(port: u16, dns: &str, credential: &str) -> (Socket, Value) {
+    let mut socket = connect(port, &format!("https://{dns}")).await;
     socket
         .send(Message::Text(
             json!({"client_kind": "phone", "token": credential, "schema_version": 2})
@@ -507,6 +417,86 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
     // A graceful stop removes hide's entry (B8).
     running.mobile.shutdown().await;
     assert!(fake.proxy().is_none());
+    running.stop();
+}
+
+/// Pairs a phone with the core `running` exposes at `dns`, where `paired`
+/// phones are listed already, and answers its credential.
+async fn pair_at(
+    running: &hided::RunningDaemon,
+    shell: &mut Socket,
+    dns: &str,
+    paired: usize,
+) -> String {
+    event(shell, "mobile_show_code", json!({})).await;
+    // A frame published before the last pairing can still be unread and
+    // carries the code that pairing spent; the pairing that spent it also
+    // listed its phone, so the code shown for this one is the first beside
+    // `paired` phones.
+    let shown = mobile_frame(shell, |frame| {
+        frame["qr"].is_string()
+            && frame["phones"]
+                .as_array()
+                .is_some_and(|phones| phones.len() == paired)
+    })
+    .await;
+    let code = pair_code_at(shown["qr"].as_str().unwrap(), dns);
+    let (_paired, answer) = pair(running.port, &loopback(running.port), &code).await;
+    answer["credential"].as_str().unwrap().to_owned()
+}
+
+/// The state folder moved to a machine with another tailnet name lets in
+/// only the phones paired there: one paired where the core ran before is
+/// told the core is unreachable and stays paired, the Settings list and the
+/// four-phone limit leave it out, and a move back lets it in again (PRD
+/// core-host-node-move B17).
+#[tokio::test]
+async fn a_moved_core_lets_in_only_the_phones_paired_at_its_address() {
+    const MINI: &str = "mini.tailnet-name.ts.net";
+    let dir = tempfile::tempdir().unwrap();
+    let mac = FakeTailscale::new(&dir.path().join("mac"));
+    let mini = FakeTailscale::named(&dir.path().join("mini"), MINI);
+    mac.ready();
+    mini.ready();
+    let start = |fake: &FakeTailscale| hided::start_daemon(env(dir.path(), &fake.bin));
+    let exposed = |frame: &Value| frame["exposure"] == "exposed";
+
+    let running = start(&mac).await.unwrap();
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(&mut shell, exposed).await;
+    let at_mac = pair_at(&running, &mut shell, DNS, 0).await;
+    running.mobile.shutdown().await;
+    running.stop();
+    drop((shell, running));
+
+    let running = start(&mini).await.unwrap();
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    let frame = mobile_frame(&mut shell, exposed).await;
+    assert_eq!(frame["phones"], json!([]), "{frame}");
+    let (_socket, answer) = phone_at(running.port, MINI, &at_mac).await;
+    assert_eq!(answer, json!({"type": "refused", "reason": "mobile_off"}));
+    for paired in 0..4 {
+        pair_at(&running, &mut shell, MINI, paired).await;
+    }
+    let frame = mobile_frame(&mut shell, |frame| {
+        frame["phones"]
+            .as_array()
+            .is_some_and(|phones| phones.len() == 4)
+    })
+    .await;
+    assert_eq!(frame["max_phones"], 4);
+    running.mobile.shutdown().await;
+    running.stop();
+    drop((shell, running));
+
+    let running = start(&mac).await.unwrap();
+    let mut shell = renderer(&running).await;
+    mobile_frame(&mut shell, exposed).await;
+    let (_socket, hello) = phone(running.port, &at_mac).await;
+    assert_eq!(hello["type"], "hello", "{hello}");
     running.stop();
 }
 

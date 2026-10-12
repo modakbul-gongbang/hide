@@ -1062,6 +1062,10 @@ export type Device = {
   host?: DeviceHost;
   /** What Hide's install kit has put on this machine (`KitSnapshot`). */
   kit?: Kit;
+  /** The machine's own name, when the core knows it (`DeviceSnapshot::machine_name`). */
+  machine_name?: string | null;
+  /** A node that dials the core rather than a device the core dials (`DeviceSnapshot::dials_in`). */
+  dials_in?: boolean;
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
@@ -1755,10 +1759,12 @@ export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
  * scoped, so one id never names checkouts on two machines.
  */
 export function catalogWorkspaces(rest: SnapshotRest | null): Workspace[] {
-  return [
-    ...(rest?.navigator?.workspaces ?? []),
-    ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.workspaces ?? []),
-  ];
+  return catalogOf(rest?.navigator?.workspaces, rest?.status?.remote);
+}
+
+/** `catalogWorkspaces` from the two fields it reads, for a component that subscribes to those alone. */
+export function catalogOf(workspaces: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
+  return [...(workspaces ?? []), ...(remote ?? []).flatMap((row) => row.session?.workspaces ?? [])];
 }
 
 export function checkoutById(rest: SnapshotRest | null, id: string): Checkout | null {

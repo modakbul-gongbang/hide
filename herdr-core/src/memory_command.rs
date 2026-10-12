@@ -117,8 +117,12 @@ pub fn parse_card(value: &str) -> Option<u64> {
 /// What one command needs, taken under the core's lock.
 pub struct PreparedMemory {
     pub(crate) command: MemoryCommand,
+    /// The machine holding the caller's checkout, with the link that reads
+    /// its files.
     pub(crate) node: NodeId,
     pub(crate) sessions_node: Arc<dyn NodeLink>,
+    /// The core's own node, which asks the provider for an `add`.
+    pub(crate) ai_node: Arc<dyn NodeLink>,
     pub(crate) database: PathBuf,
     pub(crate) checkout_path: String,
     /// The calling agent's Memory provider and session, when the caller is
@@ -137,7 +141,7 @@ impl PreparedMemory {
     /// Runs the command: the answer's `result`, or a refusal code
     /// [`next_action`] explains.
     pub fn run(self) -> Result<Value, String> {
-        let node = Arc::clone(&self.sessions_node);
+        let node = Arc::clone(&self.ai_node);
         self.run_with(|settings| crate::ai::memory_add_router(&node, settings))
     }
 
@@ -517,7 +521,7 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
 pub fn next_action(code: &str) -> &'static str {
     match code {
         "memory_device_unsupported" => {
-            "Run hide memory on the machine that runs Hide; a connected device has no Project Memory"
+            "Run hide memory on the machine that runs Hide or on a computer that connects to it; a device Hide connects to has no Project Memory"
         }
         "memory_off" => "Memory is off for this Project; only the operator can turn it on in Hide",
         "memory_ai_off" => "Turn Hide AI on and choose an agent in Hide's Settings",
@@ -666,6 +670,7 @@ mod tests {
                 command,
                 node: crate::node::test_node(),
                 sessions_node: Arc::clone(&self.node),
+                ai_node: Arc::clone(&self.node),
                 database: self.database.clone(),
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),

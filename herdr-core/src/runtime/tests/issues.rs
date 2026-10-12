@@ -104,7 +104,11 @@ fn missing_issue_details_never_fabricate_a_chip() {
 #[test]
 fn successful_manual_issue_is_immediate_even_before_first_project_read() {
     let mut runtime = issue_runtime();
-    runtime.issue_write_pending = Some((7, "c".into(), "acme/project#3".into()));
+    runtime.issue_write_pending = Some(crate::runtime::issues::IssueWritePending {
+        id: 7,
+        checkout_id: "c".into(),
+        node: None,
+    });
     let request = crate::live::PurposeTaskRequest {
         id: 7,
         checkout_id: "c".into(),
@@ -184,7 +188,11 @@ fn issue_validation_failure_keeps_the_previously_saved_manual_override() {
     let mut runtime = manual_issue_runtime();
     assert_eq!(linked_number(&runtime), 1);
     let request = manual_request(1);
-    runtime.issue_write_pending = Some((7, "c".into(), request.purpose.clone()));
+    runtime.issue_write_pending = Some(crate::runtime::issues::IssueWritePending {
+        id: 7,
+        checkout_id: "c".into(),
+        node: None,
+    });
     runtime.ingest_issue_operation_result(
         &request,
         Err(crate::live::IssueWriteFailure::unchanged(
@@ -199,7 +207,11 @@ fn issue_validation_failure_keeps_the_previously_saved_manual_override() {
 fn issue_uncertain_write_is_suppressed_even_when_metadata_arrives_later() {
     let mut runtime = manual_issue_runtime();
     let request = manual_request(3);
-    runtime.issue_write_pending = Some((7, "c".into(), request.purpose.clone()));
+    runtime.issue_write_pending = Some(crate::runtime::issues::IssueWritePending {
+        id: 7,
+        checkout_id: "c".into(),
+        node: None,
+    });
     runtime.ingest_issue_operation_result(
         &request,
         Err(crate::live::IssueWriteFailure {
@@ -415,7 +427,7 @@ fn a_project_without_github_reads_local_issues_and_links_by_branch_number() {
     // Closing it keeps it as a closed task.
     assert!(runtime.dispatch_json(&event(
         "issue_set_open",
-        serde_json::json!({"task_key": "local:/repo#1", "open": false}),
+        serde_json::json!({"workspace_id": "w", "task_key": "local:/repo#1", "open": false}),
     )));
     assert!(!runtime.snapshot().navigator.workspaces[0].tasks.tasks[0].open);
 }
@@ -658,7 +670,7 @@ fn a_local_issue_edit_changes_its_title_and_body_and_answers_the_request() {
     let mut runtime = local_issue_runtime();
     assert!(runtime.dispatch_json(&event(
         "local_issue_update",
-        serde_json::json!({"request_id": "r1", "task_key": "local:/repo#1", "title": "  고친 제목 ", "body": "고친 본문"}),
+        serde_json::json!({"request_id": "r1", "workspace_id": "w", "task_key": "local:/repo#1", "title": "  고친 제목 ", "body": "고친 본문"}),
     )));
     let update = runtime.snapshot().issue_work.update.clone().unwrap();
     assert_eq!(
@@ -695,7 +707,7 @@ fn a_refused_issue_edit_keeps_the_issue_and_says_why() {
     let mut runtime = local_issue_runtime();
     assert!(runtime.dispatch_json(&event(
         "local_issue_update",
-        serde_json::json!({"request_id": "r2", "task_key": "local:/repo#1", "title": "  ", "body": "x"}),
+        serde_json::json!({"request_id": "r2", "workspace_id": "w", "task_key": "local:/repo#1", "title": "  ", "body": "x"}),
     )));
     let update = runtime.snapshot().issue_work.update.clone().unwrap();
     assert_eq!(
@@ -710,7 +722,7 @@ fn a_refused_issue_edit_keeps_the_issue_and_says_why() {
 
     assert!(runtime.dispatch_json(&event(
         "local_issue_update",
-        serde_json::json!({"request_id": "r3", "task_key": "local:/repo#9", "title": "없음"}),
+        serde_json::json!({"request_id": "r3", "workspace_id": "w", "task_key": "local:/repo#9", "title": "없음"}),
     )));
     assert_eq!(
         runtime.snapshot().issue_work.update.as_ref().unwrap().phase,
@@ -719,7 +731,7 @@ fn a_refused_issue_edit_keeps_the_issue_and_says_why() {
 
     assert!(runtime.dispatch_json(&event(
         "local_issue_update",
-        serde_json::json!({"request_id": "r4", "task_key": "github:acme/project#2", "title": "GitHub"}),
+        serde_json::json!({"request_id": "r4", "workspace_id": "w", "task_key": "github:acme/project#2", "title": "GitHub"}),
     )));
     let update = runtime.snapshot().issue_work.update.clone().unwrap();
     assert_eq!(

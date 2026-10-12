@@ -158,7 +158,7 @@ impl HelperPackages {
     /// which the device cannot do without, and the kit's parts, each found by
     /// the same rule as the helper. A part this build does not carry is left out and named, and
     /// the kit on the device reports it as missing from the build.
-    fn payload(&self, os: &str, arch: &str) -> Result<Payload, EstablishError> {
+    pub(super) fn payload(&self, os: &str, arch: &str) -> Result<Payload, EstablishError> {
         let helper = self.find(os, arch).map_err(EstablishError::Unsupported)?;
         let helper = read_package(HELPER_NAME, &helper).map_err(EstablishError::Install)?;
         let mut payload = Payload {
@@ -205,7 +205,7 @@ struct Package {
 }
 
 /// What a build puts on one device.
-struct Payload {
+pub(super) struct Payload {
     /// The helper first, then the kit's parts.
     files: Vec<Package>,
     /// Why a kit part is not among them.
@@ -273,7 +273,7 @@ fn platform_label(os: &str) -> &str {
 }
 
 /// `uname -s -m` in Rust's platform names.
-fn platform_of(uname: &str) -> Result<(String, String), String> {
+pub(super) fn platform_of(uname: &str) -> Result<(String, String), String> {
     let mut parts = uname.split_whitespace();
     let (Some(system), Some(machine)) = (parts.next(), parts.next()) else {
         return Err(format!(
@@ -1355,8 +1355,8 @@ fn sftp_failure(what: &str, error: impl fmt::Display) -> EstablishError {
 }
 
 /// Where an install left things.
-struct Installed {
-    helper_path: String,
+pub(super) struct Installed {
+    pub(super) helper_path: String,
     /// Whether the helper itself was written on this connection.
     fresh: bool,
     upload: Upload,
@@ -1384,6 +1384,87 @@ async fn install(
     raw.init()
         .await
         .map_err(|error| sftp_failure("SFTP did not start", error))?;
+    let (home, owner, root) = private_root_spelling(raw, helper_root).await?;
+    // No folders, staging files or current link have changed at this point.
+    tokio::time::timeout(
+        SSH_OPERATION_TIMEOUT,
+        retirement::preflight(raw, &home, owner, retirement_projects, locations),
+    ).await.map_err(|_| EstablishError::Install(
+        "The device retirement preflight timed out; inspect its run and request state and retry; no helper was uploaded".into()
+    ))??;
+    place_payload(raw, &home, owner, &root, payload).await
+}
+
+/// Puts this build in a version folder under `helper_root` on a machine
+/// that already runs a build of Hide's, without the device's first-install
+/// checks: a core update (PRD core-host-node-move B10) on the machine
+/// running the core, whose helper root the move already made. Answers where
+/// the build's `hided` is. `raw` has started.
+pub(super) async fn install_build(
+    raw: &RawSftpSession,
+    packages: &HelperPackages,
+    os: &str,
+    arch: &str,
+    helper_root: &str,
+) -> Result<Installed, EstablishError> {
+    let payload = packages.payload(os, arch)?;
+    if !payload.missing.is_empty() {
+        return Err(EstablishError::Install(format!(
+            "This build cannot update a core without all of its parts: {}",
+            payload.missing.join("; ")
+        )));
+    }
+    let (home, owner, root) = private_root_spelling(raw, helper_root).await?;
+    place_payload(raw, &home, owner, &root, &payload).await
+}
+
+impl HelperPackages {
+    /// [`install_build`] on this machine: this build in its version folder
+    /// under `root`, the folder a remote install of it would name, for a
+    /// core update run where the core runs (PRD core-host-node-move Q13).
+    /// A file already there is kept only when its bytes are this build's;
+    /// any other is replaced whole. Answers where the build's `hided` is.
+    pub fn install_here(&self, root: &Path) -> Result<PathBuf, String> {
+        use hide_platform::fs::{Access, atomic, private};
+        let payload = self
+            .payload(std::env::consts::OS, std::env::consts::ARCH)
+            .map_err(|error| error.to_string())?;
+        if !payload.missing.is_empty() {
+            return Err(format!(
+                "This build cannot update a core without all of its parts: {}",
+                payload.missing.join("; ")
+            ));
+        }
+        let version_dir = root.join(&payload.version()[..16]);
+        private::create_dir_all(&version_dir).map_err(|error| {
+            format!(
+                "The build folder {} could not be made: {error}",
+                version_dir.display()
+            )
+        })?;
+        for file in &payload.files {
+            let path = version_dir.join(&file.relative);
+            if std::fs::read(&path).is_ok_and(|bytes| hex_digest(&bytes) == file.digest) {
+                continue;
+            }
+            let access = if file.executable {
+                Access::PrivateExecutable
+            } else {
+                Access::Private
+            };
+            atomic::write_file_durable(&path, &file.bytes, access)
+                .map_err(|error| format!("{} could not be written: {error}", path.display()))?;
+        }
+        Ok(version_dir.join(HELPER_NAME))
+    }
+}
+
+/// The account's home as SFTP reports it, its owner, and `helper_root`
+/// spelled under it, checked to be a plain path.
+async fn private_root_spelling(
+    raw: &RawSftpSession,
+    helper_root: &str,
+) -> Result<(String, u32, String), EstablishError> {
     let home = raw
         .realpath(".")
         .await
@@ -1423,17 +1504,21 @@ async fn install(
             "The helper install root is not a plain path".to_owned(),
         ));
     }
-    // No folders, staging files or current link have changed at this point.
-    tokio::time::timeout(
-        SSH_OPERATION_TIMEOUT,
-        retirement::preflight(raw, &home, owner, retirement_projects, locations),
-    ).await.map_err(|_| EstablishError::Install(
-        "The device retirement preflight timed out; inspect its run and request state and retry; no helper was uploaded".into()
-    ))??;
+    Ok((home, owner, root))
+}
+
+/// Puts `payload` in its version folder under `root` (see [`install`]).
+async fn place_payload(
+    raw: &RawSftpSession,
+    home: &str,
+    owner: u32,
+    root: &str,
+    payload: &Payload,
+) -> Result<Installed, EstablishError> {
     // Everything from here goes through the path the check resolved, whose
     // every folder was checked and none is a link, so a link on the spelled
     // path cannot be swapped between the check and the launch.
-    let root = ensure_private_dirs(raw, &home, &root, owner).await?;
+    let root = ensure_private_dirs(raw, home, root, owner).await?;
     let version = payload.version();
     let version_dir = format!("{root}/{}", &version[..16]);
     ensure_private_dir(raw, &version_dir, owner).await?;
@@ -1514,13 +1599,7 @@ async fn install(
 /// name.
 static NEXT_UPLOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// How much of a file one SFTP request carries, and how many requests an
-/// upload or a read-back keeps in flight. One request at a time made each
-/// 32 KiB wait a round trip, so a 41 MB helper took about two minutes at a
-/// 78 ms link and never finished inside `INSTALL_TIMEOUT`; sixteen in flight
-/// is 512 KiB per round trip.
-const TRANSFER_CHUNK: usize = 32 * 1024;
-const TRANSFERS_IN_FLIGHT: usize = 16;
+use super::transfer::{TRANSFER_CHUNK, TRANSFERS_IN_FLIGHT};
 
 /// Staging names this process made whose upload ended before it removed
 /// them: an install that times out drops its upload mid-write, where no
@@ -1617,22 +1696,11 @@ async fn place_file(
         .await
         .map_err(|error| sftp_failure(&format!("The {what} could not be uploaded"), error))?
         .handle;
-    // Each write names its own offset, so the order they land in does not
-    // matter; every one's answer is checked, and the read-back below checks
-    // the whole file.
-    let written = stream::iter(package.bytes.chunks(TRANSFER_CHUNK).enumerate())
-        .map(|(index, chunk)| {
-            let handle = handle.clone();
-            async move {
-                raw.write(handle, (index * TRANSFER_CHUNK) as u64, chunk.to_vec())
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| sftp_failure(&format!("The {what} upload failed"), error))
-            }
-        })
-        .buffer_unordered(TRANSFERS_IN_FLIGHT)
-        .try_collect::<()>()
-        .await;
+    // The read-back below checks the whole file.
+    let written = super::transfer::write_bytes(raw, &handle, &package.bytes, |error| {
+        sftp_failure(&format!("The {what} upload failed"), error)
+    })
+    .await;
     let closed = raw.close(handle).await;
     let verified = match (written, closed) {
         (Ok(()), Ok(_)) => match remote_digest(raw, &staging, package.bytes.len(), what).await {
@@ -1946,33 +2014,14 @@ async fn remote_digest(
         .handle;
     let mut hasher = Sha256::new();
     let mut offset = 0usize;
-    // Several reads in flight, hashed in file order; a read may answer
-    // short, so each one asks again for the rest of its range. A file that
-    // ends early answers nothing more and is incomplete below.
+    // Several reads in flight, hashed in file order. A file that ends early
+    // answers nothing more and is incomplete below.
     let read_range = |start: usize, end: usize| {
         let handle = handle.clone();
         async move {
-            let mut bytes = Vec::with_capacity(end - start);
-            while start + bytes.len() < end {
-                let at = start + bytes.len();
-                let data = match raw.read(handle.clone(), at as u64, (end - at) as u32).await {
-                    Ok(data) => data.data,
-                    Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {
-                        Vec::new()
-                    }
-                    Err(error) => {
-                        return Err(sftp_failure(
-                            &format!("The {what} could not be read back"),
-                            error,
-                        ));
-                    }
-                };
-                if data.is_empty() {
-                    break;
-                }
-                bytes.extend_from_slice(&data);
-            }
-            Ok(bytes)
+            super::transfer::read_range(raw, &handle, start as u64, end as u64)
+                .await
+                .map_err(|error| sftp_failure(&format!("The {what} could not be read back"), error))
         }
     };
     let result = stream::iter((0..length).step_by(TRANSFER_CHUNK))

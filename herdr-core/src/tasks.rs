@@ -576,10 +576,10 @@ mod tests {
     #[test]
     fn local_issues_are_tasks_keyed_by_project_newest_first() {
         let mut store = crate::local_issues::LocalIssueStore::default();
-        store.create("/p", "첫 이슈", "", 1).unwrap();
-        store.create("/p", "둘째", "", 2).unwrap();
-        store.set_open("/p", 1, false, 3);
-        let tasks = local_tasks("/p", LocalRead::Ready(store.project("/p")), true);
+        store.create(None, "/p", "첫 이슈", "", 1).unwrap();
+        store.create(None, "/p", "둘째", "", 2).unwrap();
+        store.set_open(None, "/p", 1, false, 3);
+        let tasks = local_tasks("/p", LocalRead::Ready(store.project(None, "/p")), true);
         let source = tasks.source.expect("local");
         assert_eq!(
             (source.kind.as_str(), source.chosen, source.reading),
