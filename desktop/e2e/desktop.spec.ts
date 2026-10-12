@@ -70,7 +70,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notificationPermission", "notify", "onCommand", "onNotificationOpen", "openNotificationSettings", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath", "withdrawNotifications"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notificationPermission", "notify", "onCommand", "onNotificationOpen", "openNotificationSettings", "openPath", "pickFolder", "platform", "probePaths", "reportBadge", "reportBindings", "reportLanguage", "revealPath", "withdrawNotifications"], kind: "electron" });
 
   // B9: the app's New tab chord is one create_tab here; the browser's is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();

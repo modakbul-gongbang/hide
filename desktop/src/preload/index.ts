@@ -3,14 +3,14 @@
 // the host's OS, a file or folder to show in the OS file manager, a folder the operator picks to add as a project,
 // the paths a terminal link names and handing one to macOS, and the pages of
 // browser displays (issue 155), and the Factory's and agents' notifications with their clicks,
-// withdrawals and the system's permission for them.
+// withdrawals, the system's permission for them and the app icon's count.
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
 import type { NotificationPermission, ProbedPath } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld("hideHost", {
   },
   openNotificationSettings(): void {
     ipcRenderer.send(NOTIFY_SETTINGS_CHANNEL);
+  },
+  reportBadge(count: number): void {
+    ipcRenderer.send(NOTIFY_BADGE_CHANNEL, count);
   },
   onNotificationOpen(listener: (id: string) => void): () => void {
     const handler = (_event: IpcRendererEvent, id: unknown) => {

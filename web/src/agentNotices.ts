@@ -4,7 +4,8 @@
 // `agent_notice` frame while it asks for them; this window words each one in
 // the interface language and hands it to the desktop host, which drops it
 // while a Hide window has the keyboard. A click opens that agent's pane, and
-// an agent the operator has seen takes its notification back.
+// an agent the operator has seen takes its notification back. The app icon
+// counts the root agents that need the operator under the same switch.
 
 import { useEffect } from "react";
 import type { Actions } from "./actions";
@@ -12,6 +13,7 @@ import { AGENT_NOTICE_PREFIX } from "./firstRun";
 import type { AgentNotice } from "./generated/hided-ws";
 import { hostBridge } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
+import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 
 type Listener = (notice: AgentNotice) => void;
@@ -30,13 +32,39 @@ function cut(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
 }
 
-/** Shows agent notifications through the desktop host while the switch is on, and opens what a click names. */
+/**
+ * The agents the app icon counts: the sidebar's Needs You group of every
+ * device the window shows, the root agents the notifications announce.
+ * Each device's scope carries that group as its `raised` `needs_you` entry
+ * (unresolved, not delegated, in a pane the device draws), so adding the
+ * devices up counts the whole desktop whichever device the sidebar shows;
+ * the navigator's own scope has no such group. Done is not counted.
+ */
+export function needsYouCount(rest: SnapshotRest | null): number {
+  let count = 0;
+  for (const device of rest?.navigator?.devices ?? []) {
+    const group = device.agent_scope.raised.find((raised) => raised.group === "needs_you");
+    if (group) count += group.shown.length + group.more.length;
+  }
+  return count;
+}
+
+/**
+ * Shows agent notifications through the desktop host while the switch is on,
+ * opens what a click names, and keeps the app icon's count, which the switch
+ * also governs, so turning it off makes Hide quiet.
+ */
 export function useAgentNotifications(actions: Actions) {
   const { t } = useInterfaceTranslation();
   const bridge = hostBridge();
   const live = useShellStore((s) => s.connection === "live");
   const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
   const wanted = bridge !== null && live && enabled;
+  // Null until the page is live: the first count is also the host's sign that a click can be opened here.
+  const badge = useShellStore((s) => (s.connection !== "live" ? null : s.rest?.ui_state?.desktop_notifications === true ? needsYouCount(s.rest) : 0));
+  useEffect(() => {
+    if (bridge && badge !== null) bridge.reportBadge(badge);
+  }, [bridge, badge]);
   // A reconnect is a new connection whose demand starts empty, so it is said again each time the page is live.
   useEffect(() => {
     if (!wanted) return;
