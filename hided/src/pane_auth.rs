@@ -1,5 +1,6 @@
 //! Bootstrap of short-lived Workspace credentials. This local socket does
-//! only kernel peer attestation and credential issuance; commands use `/ws`.
+//! kernel peer attestation and credential issuance, and the bounded hook
+//! reads; other commands use `/ws`.
 //!
 //! A caller is bound one of two ways. A process descending from the shell
 //! Herdr runs for the named pane gets a pane-bound capability that records
@@ -17,7 +18,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
@@ -898,6 +899,7 @@ pub async fn serve(
     herdr_socket: Option<PathBuf>,
     port: u16,
     shutdown: crate::ending::Ending,
+    desktop_renderers: Arc<AtomicUsize>,
 ) {
     use tokio::sync::Semaphore;
     // Closed however this future ends, a drop included, so the accept
@@ -962,9 +964,17 @@ pub async fn serve(
         let registry = Arc::clone(&registry);
         let core = Arc::clone(&core);
         let herdr_socket = herdr_socket.clone();
+        let desktop_renderers = Arc::clone(&desktop_renderers);
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            answer_bootstrap(stream, &registry, &core, herdr_socket.as_deref(), port);
+            answer_bootstrap(
+                stream,
+                &registry,
+                &core,
+                herdr_socket.as_deref(),
+                port,
+                desktop_renderers.load(Ordering::SeqCst) > 0,
+            );
         });
     }
 }
@@ -1001,6 +1011,7 @@ fn answer_bootstrap(
     core: &CoreHandle,
     herdr_socket: Option<&Path>,
     port: u16,
+    desktop: bool,
 ) {
     use std::io::{BufRead, BufReader};
     let Some(peer) = stream
@@ -1030,17 +1041,18 @@ fn answer_bootstrap(
                 serde_json::from_value(value.clone()).map_err(|_| "invalid_request")?;
             let hook: hide_node_link::panes::HookRequest =
                 serde_json::from_value(value["hook"].clone()).map_err(|_| "invalid_request")?;
-            if !request.one_shot || !crate::hook_request::valid(&hook) {
+            if request.one_shot != hook.command.one_shot() || !crate::hook_request::valid(&hook) {
                 return Err("invalid_request");
             }
             let (attestation, _) = attest_bootstrap(peer, &request, herdr_socket, core)?;
-            let (_, _, token) = registry.issue_with_token(
-                &attestation,
-                &request.nonce,
-                port,
-                Some((peer, process_start(peer).ok_or("caller_unavailable")?)),
-            )?;
-            let token = crate::hook_request::Token(registry, token);
+            let holder = if request.one_shot {
+                Some((peer, process_start(peer).ok_or("caller_unavailable")?))
+            } else {
+                None
+            };
+            let (path, issued_new, token) =
+                registry.issue_with_token(&attestation, &request.nonce, port, holder)?;
+            let token = crate::hook_request::Token(registry, token, issued_new);
             let cap = registry.validate(&token.1, herdr_socket, core, None)?;
             if let Some(named) = hook.token.as_deref()
                 && registry.get(named).is_some()
@@ -1050,15 +1062,32 @@ fn answer_bootstrap(
                     return Err("pane_changed");
                 }
             }
-            Ok(crate::hook_request::answer(core, &cap, &hook))
-        })();
-        let answer = match result {
-            Ok(answer) => answer,
-            Err(reason) => {
-                json!({"ok":false,"reason":reason,"next_action":refusal_next_action(reason)})
+            let mut answer = crate::hook_request::answer(core, &cap, &hook, desktop);
+            if !request.one_shot && answer["ok"] == true {
+                answer["reference"] = json!(
+                    hide_platform::path::to_wire(&path).map_err(|_| "reference_unavailable")?
+                );
+                if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                    return Err("response_too_large");
+                }
+                Ok((answer, Some(token)))
+            } else {
+                Ok((answer, None))
             }
+        })();
+        let (answer, persistent) = match result {
+            Ok(answer) => answer,
+            Err(reason) => (
+                json!({"ok":false,"reason":reason,"next_action":refusal_next_action(reason)}),
+                None,
+            ),
         };
-        let _ = writeln!(stream, "{answer}");
+        if writeln!(stream, "{answer}").is_ok()
+            && let Some(token) = persistent
+            && registry.claim(&token.1).is_ok()
+        {
+            token.keep();
+        }
         return;
     }
     let result = read
@@ -1214,7 +1243,7 @@ mod tests {
                 .unwrap();
             let held = token.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _request = crate::hook_request::Token(&registry, held);
+                let _request = crate::hook_request::Token(&registry, held, true);
                 assert!(registry.vouched(&token, "node-a", &link).is_some());
                 if unwind {
                     panic!("request unwound");

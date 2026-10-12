@@ -108,7 +108,15 @@ impl hide_node::ssh::PaneEvents for Events {
             ..
         } = &event
         {
-            let answer = if let Some(hook) = hook {
+            let answer = if let Some(hook) = hook
+                && !hook.command.one_shot()
+            {
+                ProofAnswer::WorkspaceInfo {
+                    token: TOKEN.to_owned(),
+                    issued_new: true,
+                    answer: json!({"ok":true,"request_id":hook.request_id,"result":{"context":{"device_id":"fixture"},"capabilities":["workspace.info"]}}),
+                }
+            } else if let Some(hook) = hook {
                 ProofAnswer::Hook {
                     answer: json!({"ok":true,"request_id":hook.request_id,"result":{"context":null,"outcome":"empty"}}),
                 }
@@ -1397,4 +1405,73 @@ fn a_hook_proof_answers_once_and_never_hands_out_a_reference() {
     BufReader::new(stream).read_line(&mut answer).unwrap();
     assert_eq!(serde_json::from_str::<Value>(&answer).unwrap()["ok"], false);
     assert!(!device.events.heard.lock().unwrap().iter().any(|event| matches!(event, NodeEvent::PaneProof { pane_id, hook: Some(_), .. } if pane_id == "w1:p999")));
+}
+
+#[test]
+fn workspace_guidance_gets_one_reusable_reference_and_rejects_writes() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let device = Device::start();
+    let sockets = pane_sockets(&device.state);
+    let ask = |request: &Value| {
+        let mut stream = UnixStream::connect(&sockets[0]).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        answer
+    };
+    let request = json!({"pane_id":PROVED_PANE,"nonce":"cd".repeat(16),"one_shot":false,"hook":{
+        "request_id":"guidance","token":null,"command":{"kind":"workspace_info"}
+    }});
+    let answer = ask(&request);
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["result"]["capabilities"], json!(["workspace.info"]));
+    assert!(answer.get("token").is_none());
+    let reference = std::path::PathBuf::from(answer["reference"].as_str().unwrap());
+    assert!(reference.is_file());
+    assert!(reference.with_extension("claimed").is_file());
+    let mut repeated = request.clone();
+    repeated["nonce"] = json!("de".repeat(16));
+    assert_eq!(ask(&repeated)["reference"], answer["reference"]);
+    for invalid in [
+        json!({"kind":"workspace_info","command":{"type":"close_pane"}}),
+        json!({"kind":"workspace_action","command":{"type":"close_pane"}}),
+        json!({"kind":"letter_confirm","ids":["letter-1"]}),
+    ] {
+        let mut refused = request.clone();
+        refused["hook"]["command"] = invalid;
+        assert_eq!(ask(&refused)["reason"], "invalid_request");
+    }
+    let mut wrong_lifetime = request.clone();
+    wrong_lifetime["one_shot"] = json!(true);
+    assert_eq!(ask(&wrong_lifetime)["reason"], "invalid_request");
+    let mut other_pane = request;
+    other_pane["pane_id"] = json!("w1:p999");
+    assert_eq!(ask(&other_pane)["ok"], false);
+    assert!(
+        reference.is_file(),
+        "a refusal cannot revoke the previous reference"
+    );
+    let accepted: bool = call_as(
+        device.link.as_ref(),
+        Call::PaneProofAnswer {
+            request: u64::MAX,
+            answer: ProofAnswer::WorkspaceInfo {
+                token: TOKEN.to_owned(),
+                issued_new: false,
+                answer: json!({"ok":true}),
+            },
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert!(
+        !accepted,
+        "a late answer cannot claim an undelivered reference"
+    );
 }

@@ -50,7 +50,7 @@ A card whose promotion merged into the repository keeps its index line but point
 The instruction explains supervised delegation (`hide agent spawn --parent here …`, with an automatic watch) and independent operator handoff (`hide agent spawn …`, without parent or automatic watch); both preserve focus and record origin.
 It also says that `--machine <device id>`, used from the machine that runs Hide, starts the agent on a connected device (an agent on a device is refused with `machine_not_permitted`), where the id is the `device_id` `hide workspace info` shows and the `machine` `hide agent list` shows for agents there, and that `--repo` and `--path` are then that device's paths.
 It also tells the agent to run `hide factory add` to put work into a Factory instead of adding a GitHub label (see [factory.md](factory.md)).
-The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a renderer-connected Workspace for the caller and report its actual capabilities.
+The same envelope adds Workspace commands only after `hide workspace info --hook` confirms a renderer-connected Workspace for the caller and report its actual capabilities.
 The probe does not need a pane id: the daemon binds a caller inside a Herdr pane to that pane, and any other local caller, such as a tool shell or hook inside Codex's shared app-server daemon or a plain terminal, to the registered checkout holding its cwd (`docs/ARCHITECTURE.md`, the Workspace CLI).
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
@@ -72,7 +72,7 @@ Every Codex Hide starts passes `--no-daemon`, so a Codex Hide starts runs its ho
 The kit no longer turns the daemon off on its own: it only reads whether the machine's Codex has the setting, for that flag, and a machine where an earlier Hide turned it off keeps it off.
 `src/codex_daemon.rs` is the one place that changes the setting or stops the daemon, through `codex features disable daemon_auto_start` and `codex app-server daemon stop`, and only for the operator's own confirmed request from a not connected Codex pane's popover (`docs/ARCHITECTURE.md`, The install kit; `docs/status-model.md`, Not connected, and what fixes it).
 The kit reads the setting with the capability (`KitReport.codex_daemon_on`) and whether a daemon answers (`KitReport.codex_daemon_running`), which is what tells a Codex session on the shared server from one that started before the hook.
-The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes (`workspace bootstrap`, then `workspace info`), which it asks beside Memory rather than after it; a failed probe leaves the existing purpose and Memory context intact.
+The SessionStart command hook has an eight-second timeout, including one bounded two-second CLI probe (`workspace info --hook`), which it asks beside Memory; a failed probe leaves the existing purpose and Memory context intact.
 A persistent credential (the reference SessionStart hands the session as `HIDE_CAP_REF`) remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
 A one-shot Workspace command is never claimed: the daemon revokes its credential when the command's connection ends, and the CLI removes its reference; a `hide browser` relay claims its credential, one-shot or not, because the daemon starts a relay only for a claimed one.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
@@ -103,10 +103,12 @@ This delivery path has its own bounded private diagnostics; Memory's request run
 
 Memory has one store, `project-memory.sqlite3` in the core's state folder, which only the core opens, whichever machine the agent runs on (PRD core-host-node-move D-12, B14).
 The hook asks for it through `hide workspace memory --event <event> --runtime <runtime> --session <id>`, the same pane credential and node link its letters come by, on its own thread beside the letter pull; on another machine the request goes through that machine's node to the core.
-Both hook commands now use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 30).
-The service accepts only the `LetterPull` and `Memory` variants of `HookCommand`, never Workspace control or letter confirmation, and reuses the ordinary core executors after credential validation.
-Its one-shot token stays inside the core and is revoked before the answer is sent, even if the caller ended or the request unwound; no reusable credential is returned to the hook.
-A live `HIDE_CAP_REF` must agree with the fresh proof and, on a node, its own link; a hook read does not claim or extend that persistent reference.
+These reads and SessionStart guidance use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 30).
+The service accepts only the `LetterPull`, `Memory` and read-only `WorkspaceInfo` variants of `HookCommand`, never Workspace actions or letter confirmation, and reuses the ordinary core executors after credential validation.
+A letter or Memory one-shot token stays inside the core and is revoked before the answer is sent, even if the caller ended or the request unwound; no reusable credential is returned by those two reads.
+The guidance read returns the same persistent reference and scoped capabilities that bootstrap followed by info returned, in one child and one proof exchange.
+The node owns that reference file; a failed answer removes only a newly issued reference, and the core claims a guidance credential only after its proof answer is accepted.
+A live `HIDE_CAP_REF` must agree with the fresh proof and, on a node, its own link; a letter or Memory read does not claim or extend that persistent reference.
 The selected route receives one request with no retry through another transport; ambiguous node bridges are refused before any command is sent.
 Requests and responses are capped at 16 KiB and 64 KiB, and the existing bootstrap and node proof worker caps still apply.
 The letter and Memory children still run independently and in parallel with the same deadlines and fail-open outcomes.

@@ -608,7 +608,7 @@ pub fn request_hook(
             command: command.clone(),
             token: token.clone(),
         };
-        let request = json!({"pane_id":env.pane_id.as_deref().unwrap_or(""),"nonce":hex::encode(nonce),"one_shot":true,"hook":hook});
+        let request = json!({"pane_id":env.pane_id.as_deref().unwrap_or(""),"nonce":hex::encode(nonce),"one_shot":command.one_shot(),"hook":hook});
         let line = request.to_string();
         if line.len() < HOOK_REQUEST_LIMIT {
             break line;

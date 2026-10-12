@@ -63,6 +63,7 @@ pub enum CommandKind {
         session: String,
     },
     WorkspaceInfo,
+    WorkspaceHookInfo,
     ViewList,
     ViewStatus {
         view_id: String,
@@ -166,7 +167,11 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                 parse_workspace_memory(&words)
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
-            Some("info") if iter.next().is_none() => Ok(CommandKind::WorkspaceInfo),
+            Some("info") => match (iter.next().map(String::as_str), iter.next()) {
+                (None, None) => Ok(CommandKind::WorkspaceInfo),
+                (Some("--hook"), None) => Ok(CommandKind::WorkspaceHookInfo),
+                _ => Err("usage: hide workspace info [--hook]".to_owned()),
+            },
             _ => Err("usage: hide workspace info".to_owned()),
         },
         Some("file") => parse_open(iter, true),
@@ -492,6 +497,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::Delivery(_)
                     | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
+                    | CommandKind::WorkspaceHookInfo
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
                     | CommandKind::BrowserOpen { .. }
@@ -555,6 +561,14 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             Ok(())
         }
         CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
+        CommandKind::WorkspaceHookInfo => {
+            let answer = crate::workspace_cli::request_hook(
+                &env,
+                hide_node_link::panes::HookCommand::WorkspaceInfo {},
+            )?;
+            println!("{answer}");
+            Ok(())
+        }
         CommandKind::FactoryQuestionGuard { session, runtime } => {
             let credential = crate::workspace_cli::Credential::acquire(&env)?;
             let answer = crate::workspace_cli::request_factory_question_guard(

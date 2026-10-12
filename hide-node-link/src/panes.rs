@@ -41,6 +41,7 @@ pub struct PaneIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HookCommand {
+    WorkspaceInfo {},
     LetterPull {
         prompt_digest: Option<String>,
         session: Option<String>,
@@ -52,6 +53,13 @@ pub enum HookCommand {
         #[serde(default)]
         prompt: String,
     },
+}
+
+impl HookCommand {
+    /// Only session guidance keeps a reference for the commands it advertises.
+    pub fn one_shot(&self) -> bool {
+        !matches!(self, Self::WorkspaceInfo {})
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -151,6 +159,11 @@ pub struct StreamCaller {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ProofAnswer {
+    WorkspaceInfo {
+        token: String,
+        issued_new: bool,
+        answer: serde_json::Value,
+    },
     Hook {
         answer: serde_json::Value,
     },

@@ -109,7 +109,10 @@ impl NodePanes {
             let _permit = permit;
             let answer = match panes.state.get() {
                 Some(state) => match hook {
-                    Some(hook) if one_shot && crate::hook_request::valid(&hook) => {
+                    Some(hook)
+                        if one_shot == hook.command.one_shot()
+                            && crate::hook_request::valid(&hook) =>
+                    {
                         answer_hook(state, &node, &link, proof, hook, received)
                     }
                     Some(_) => refused("invalid_request"),
@@ -120,7 +123,22 @@ impl NodePanes {
             if let ProofAnswer::Refused { reason } = &answer {
                 record_refusal(&node, named.as_deref(), reason, "core");
             }
-            send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
+            let persistent = match &answer {
+                ProofAnswer::WorkspaceInfo {
+                    token, issued_new, ..
+                } => Some((token.clone(), *issued_new)),
+                _ => None,
+            };
+            let delivered = send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
+            if let Some((token, issued_new)) = persistent
+                && let Some(state) = panes.state.get()
+            {
+                if delivered {
+                    let _ = state.pane_capabilities.claim(&token);
+                } else if issued_new {
+                    state.pane_capabilities.revoke(&token);
+                }
+            }
         });
     }
 
@@ -331,11 +349,12 @@ fn answer_hook(
         }),
         Proof::Checkout { .. } => None,
     };
-    let issued = issue(state, node, link, proof, true);
-    let ProofAnswer::Issued { token, .. } = issued else {
+    let one_shot = hook.command.one_shot();
+    let issued = issue(state, node, link, proof, one_shot);
+    let ProofAnswer::Issued { token, issued_new } = issued else {
         return issued;
     };
-    let token = crate::hook_request::Token(&state.pane_capabilities, token);
+    let token = crate::hook_request::Token(&state.pane_capabilities, token, issued_new);
     let result = (|| {
         let cap = state.pane_capabilities.validate(
             &token.1,
@@ -362,9 +381,26 @@ fn answer_hook(
         if link.closed_reason().is_some() {
             return Err("remote_unavailable");
         }
-        Ok(crate::hook_request::answer(&state.core, &cap, &hook))
+        Ok(crate::hook_request::answer(
+            &state.core,
+            &cap,
+            &hook,
+            state
+                .desktop_renderers
+                .load(std::sync::atomic::Ordering::SeqCst)
+                > 0,
+        ))
     })();
     match result {
+        Ok(answer) if !one_shot && answer["ok"] == true => {
+            let answer = ProofAnswer::WorkspaceInfo {
+                token: token.1.clone(),
+                issued_new,
+                answer,
+            };
+            token.keep();
+            answer
+        }
         Ok(answer) => ProofAnswer::Hook { answer },
         Err(reason) => refused(reason),
     }
@@ -445,10 +481,29 @@ fn refused(reason: &str) -> ProofAnswer {
     }
 }
 
-fn send_reply(node: &str, link: &RemoteHost, call: Call) {
-    if link.call(call, CALL_TIMEOUT).is_err() {
-        record_refusal(node, None, "control_unanswered", "core");
-        link.close("pane control reply unanswered");
+fn send_reply(node: &str, link: &RemoteHost, call: Call) -> bool {
+    let guidance = matches!(
+        &call,
+        Call::PaneProofAnswer {
+            answer: ProofAnswer::WorkspaceInfo { .. },
+            ..
+        }
+    );
+    match link.call(call, CALL_TIMEOUT) {
+        Ok(answer) if guidance => match answer {
+            hide_node_link::link::LinkAnswer::Parsed(value) => {
+                value == serde_json::Value::Bool(true)
+            }
+            hide_node_link::link::LinkAnswer::Raw(value) => {
+                serde_json::from_str::<bool>(value.get()).unwrap_or(false)
+            }
+        },
+        Ok(_) => true,
+        Err(_) => {
+            record_refusal(node, None, "control_unanswered", "core");
+            link.close("pane control reply unanswered");
+            false
+        }
     }
 }
 

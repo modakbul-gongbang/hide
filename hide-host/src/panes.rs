@@ -82,7 +82,7 @@ struct Bootstrap {
 
 #[derive(Clone)]
 enum BootstrapAnswer {
-    Reference(PathBuf),
+    Reference { path: PathBuf, info: Option<Value> },
     Hook(Value),
 }
 
@@ -247,10 +247,16 @@ impl Panes {
     /// Hands the core's answer to the request waiting for it; one nobody
     /// waits for any more (its caller left, or it timed out) is dropped.
     pub fn answer_proof(&self, request: u64, answer: ProofAnswer) -> HostResult<Value> {
-        if let Some(waiting) = lock(&self.proofs).remove(&request) {
-            let _ = waiting.try_send(answer);
-        }
-        Ok(Value::Null)
+        let persistent_info = matches!(answer, ProofAnswer::WorkspaceInfo { .. });
+        let accepted = lock(&self.proofs)
+            .remove(&request)
+            .is_some_and(|waiting| waiting.try_send(answer).is_ok());
+        // A late guidance answer must not claim a reference no caller got.
+        Ok(if persistent_info {
+            json!(accepted)
+        } else {
+            Value::Null
+        })
     }
 
     /// `pane_id`'s identity now, from the Herdr this service was started for.
@@ -400,7 +406,7 @@ impl Panes {
         let mut core_refused = false;
         let mut issued_token = None;
         let mut token_new = false;
-        let mut reference_new = false;
+        let mut created_reference = None;
         let result: Result<BootstrapAnswer, String> = (|| {
             let peer = stream
                 .peer_pid()
@@ -414,7 +420,11 @@ impl Panes {
             {
                 return Err("invalid_nonce".to_owned());
             }
-            if request.hook.is_some() && !request.one_shot {
+            if request
+                .hook
+                .as_ref()
+                .is_some_and(|hook| request.one_shot != hook.command.one_shot())
+            {
                 return Err("invalid_request".to_owned());
             }
             let pane =
@@ -467,14 +477,38 @@ impl Panes {
                 .ok()
                 .and_then(|()| answer.recv_timeout(CLIENT_TIMEOUT).ok());
             lock(&self.proofs).remove(&id);
+            let mut info = None;
             let token = match answer.ok_or("bridge_unavailable")? {
-                ProofAnswer::Hook { answer } if request.hook.is_some() => {
+                ProofAnswer::Hook { answer }
+                    if request.hook.is_some() && (request.one_shot || answer["ok"] != true) =>
+                {
                     if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
                         return Err("invalid_response".to_owned());
                     }
                     return Ok(BootstrapAnswer::Hook(answer));
                 }
                 ProofAnswer::Hook { .. } => return Err("invalid_response".to_owned()),
+                ProofAnswer::WorkspaceInfo {
+                    token,
+                    issued_new,
+                    answer,
+                } => {
+                    token_new = issued_new;
+                    issued_token = Some(token.clone());
+                    if !request
+                        .hook
+                        .as_ref()
+                        .is_some_and(|hook| !hook.command.one_shot())
+                        || answer["ok"] != true
+                        || answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT
+                        || token.len() != 64
+                        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err("invalid_response".to_owned());
+                    }
+                    info = Some(answer);
+                    token
+                }
                 ProofAnswer::Refused { reason } => {
                     core_refused = true;
                     return Err(reason);
@@ -498,7 +532,14 @@ impl Panes {
                     reference.token == token && path.is_file() && reference.holder.is_none()
                 })
             {
-                return Ok(BootstrapAnswer::Reference(path.clone()));
+                if info.is_some() && !path.with_extension("claimed").is_file() {
+                    private::create_new_file(&path.with_extension("claimed"))
+                        .map_err(|_| "reference_unavailable")?;
+                }
+                return Ok(BootstrapAnswer::Reference {
+                    path: path.clone(),
+                    info,
+                });
             }
             let path = started.folder.join(format!("{}.json", request.nonce));
             let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
@@ -533,8 +574,12 @@ impl Panes {
                     },
                 },
             );
-            reference_new = true;
-            Ok(BootstrapAnswer::Reference(path))
+            created_reference = Some(path.clone());
+            if info.is_some() {
+                private::create_new_file(&path.with_extension("claimed"))
+                    .map_err(|_| "reference_unavailable")?;
+            }
+            Ok(BootstrapAnswer::Reference { path, info })
         })();
         let delivered = answer_client(&mut stream, result.clone()).is_ok();
         // The core records the refusals it answered itself.
@@ -544,8 +589,9 @@ impl Panes {
             report_refusal(output, named, reason);
         }
         if !delivered || result.is_err() {
-            if reference_new && let Ok(BootstrapAnswer::Reference(path)) = result {
+            if let Some(path) = created_reference {
                 let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(path.with_extension("claimed"));
                 lock(&self.issued).remove(&path);
             }
             if token_new && let Some(token) = issued_token {
@@ -772,9 +818,14 @@ fn answer_client(
     result: Result<BootstrapAnswer, String>,
 ) -> io::Result<()> {
     let answer = match result {
-        Ok(BootstrapAnswer::Reference(reference)) => {
-            let reference = hide_platform::path::to_wire(&reference).map_err(io::Error::other)?;
-            json!({"ok":true,"reference":reference})
+        Ok(BootstrapAnswer::Reference { path, info }) => {
+            let reference = hide_platform::path::to_wire(&path).map_err(io::Error::other)?;
+            let mut answer = info.unwrap_or_else(|| json!({"ok":true}));
+            answer["reference"] = json!(reference);
+            if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                return Err(io::Error::other("hook response too large"));
+            }
+            answer
         }
         Ok(BootstrapAnswer::Hook(answer)) => answer,
         Err(reason) => json!({"ok":false,"reason":reason}),
