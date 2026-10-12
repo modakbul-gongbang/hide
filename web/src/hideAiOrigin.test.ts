@@ -10,7 +10,7 @@ const device = { device_id: "mac" };
 const checkout = (path: string) => ({ id: path, path }) as unknown as Checkout;
 
 describe("what Hide AI started is named from the core's codes (PRD hide-ai-origin-mark D-02, B10)", () => {
-  it("words a known task in the interface language and a task the build does not know as its code", async () => {
+  it("words a known task in the interface language, and shows a task kind this build does not know as its code (version skew)", async () => {
     const ko = (await createInterfaceI18n("ko")).t;
     const en = (await createInterfaceI18n("en")).t;
     expect(taskLine(ko, MEMORY)).toBe("Memory 올리기 · m72");

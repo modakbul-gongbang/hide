@@ -89,7 +89,7 @@ pub(crate) mod tests {
 
     const NODE: &str = "node-1";
 
-    fn pane_on(machine: &str, name: &str, session: &str) -> Actor {
+    pub(crate) fn pane_on(machine: &str, name: &str, session: &str) -> Actor {
         Actor {
             pane_id: name.into(),
             name: name.into(),
@@ -122,7 +122,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn register(ledger: &mut Ledger, actor: &Actor) -> String {
+    pub(crate) fn register(ledger: &mut Ledger, actor: &Actor) -> String {
         apply(
             ledger,
             actor,

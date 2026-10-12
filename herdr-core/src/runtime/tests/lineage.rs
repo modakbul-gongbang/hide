@@ -2655,3 +2655,66 @@ fn rows_and_checkouts_hide_started_are_marked_from_the_ledger_alone() {
     runtime.refresh_agent_lineage();
     assert!(runtime.snapshot.navigator.hide_ai_checkouts.is_empty());
 }
+
+/// PRD hide-ai-origin-mark Risks: the new snapshot fields move only when an
+/// agent or checkout Hide started appears or ends. A ledger publish that
+/// moves neither (here another agent registering) stamps no new revision.
+#[test]
+fn publishing_the_ledger_moves_the_snapshot_only_when_what_hide_started_moves() {
+    use crate::coordination::started::tests::{
+        Child, hide_started_ledger, memory_task, pane_on, register,
+    };
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    runtime.refresh_agent_lineage();
+    let node = runtime.node.to_string();
+    let mut revision = runtime.snapshot_delta_payload(0).revision;
+    let mut moved = |runtime: &mut Runtime| {
+        let next = runtime.snapshot_delta_payload(revision);
+        let moved = next.rest.is_some();
+        revision = next.revision;
+        moved
+    };
+
+    let mut ledger = hide_started_ledger(
+        &node,
+        "hide-memory-m72",
+        memory_task("m72"),
+        Child {
+            machine: &node,
+            pane: "local-child",
+            session: "s-local-child",
+        },
+    );
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(moved(&mut runtime), "an agent Hide started appears once");
+
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(!moved(&mut runtime), "the same ledger again moves nothing");
+
+    let other = pane_on(&node, "someone-else", "other");
+    register(&mut ledger, &other);
+    runtime.publish_delivery(Arc::new(ledger.clone()), false);
+    assert!(
+        !moved(&mut runtime),
+        "another agent registering moves nothing Hide started"
+    );
+
+    for record in &mut ledger.agents {
+        if record.origin.is_some() {
+            record.ended = true;
+        }
+    }
+    runtime.publish_delivery(Arc::new(ledger), false);
+    assert!(moved(&mut runtime), "the agent ending publishes once");
+    assert!(
+        local_lineage_agent(&runtime, "local-child")
+            .hide_ai
+            .is_none()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.hide_ai_checkouts.len(),
+        1,
+        "its checkout stays listed after the agent ends"
+    );
+}
