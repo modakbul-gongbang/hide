@@ -2130,7 +2130,17 @@ impl MemoryStore {
         cards
             .into_iter()
             .map(
-                |(item_id, number, revision, kind, title, body, aliases, cited, outdated_reason)| {
+                |(
+                    item_id,
+                    number,
+                    revision,
+                    kind,
+                    title,
+                    body,
+                    aliases,
+                    cited,
+                    outdated_reason,
+                )| {
                     Ok(PendingCard {
                         evidence: evidence_rows(&self.connection, &item_id, revision)?,
                         item_id,
@@ -4825,9 +4835,15 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 .unwrap()
                 .verifying
         );
-        assert!(store.mark_outdated(&project, 1, &attempt, "stale", 50).unwrap());
         assert!(
-            !store.mark_outdated(&project, 1, &attempt, "stale", 51).unwrap(),
+            store
+                .mark_outdated(&project, 1, &attempt, "stale", 50)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .mark_outdated(&project, 1, &attempt, "stale", 51)
+                .unwrap(),
             "the attempt already ended"
         );
         assert!(

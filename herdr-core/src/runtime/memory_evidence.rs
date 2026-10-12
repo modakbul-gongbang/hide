@@ -140,22 +140,20 @@ impl<'a> CheckoutFacts<'a> {
         rows.iter()
             .map(|row| match row.kind {
                 EvidenceKind::Command => self.name_fact(&row.value),
-                EvidenceKind::Path | EvidenceKind::File => {
-                    match states.next().flatten() {
-                        None | Some(PathState::Unreadable { .. }) => EvidenceFact::Unknown,
-                        Some(PathState::Missing) => EvidenceFact::Missing,
-                        Some(PathState::Real { .. }) if row.kind == EvidenceKind::Path => {
-                            EvidenceFact::Found { fingerprint: None }
-                        }
-                        Some(PathState::Real { .. }) => match self.revision(&row.value) {
-                            Revision::Found(revision) => EvidenceFact::Found {
-                                fingerprint: Some(revision),
-                            },
-                            Revision::Missing => EvidenceFact::Missing,
-                            Revision::Unreadable => EvidenceFact::Unknown,
-                        },
+                EvidenceKind::Path | EvidenceKind::File => match states.next().flatten() {
+                    None | Some(PathState::Unreadable { .. }) => EvidenceFact::Unknown,
+                    Some(PathState::Missing) => EvidenceFact::Missing,
+                    Some(PathState::Real { .. }) if row.kind == EvidenceKind::Path => {
+                        EvidenceFact::Found { fingerprint: None }
                     }
-                }
+                    Some(PathState::Real { .. }) => match self.revision(&row.value) {
+                        Revision::Found(revision) => EvidenceFact::Found {
+                            fingerprint: Some(revision),
+                        },
+                        Revision::Missing => EvidenceFact::Missing,
+                        Revision::Unreadable => EvidenceFact::Unknown,
+                    },
+                },
             })
             .collect()
     }
@@ -173,11 +171,8 @@ impl<'a> CheckoutFacts<'a> {
                 .iter()
                 .map(|path| format!("{}/{path}", self.root.trim_end_matches('/'))),
         );
-        let states = call_as::<Vec<PathState>>(
-            self.node,
-            Call::RealPaths { paths },
-            SESSION_CALL_TIMEOUT,
-        );
+        let states =
+            call_as::<Vec<PathState>>(self.node, Call::RealPaths { paths }, SESSION_CALL_TIMEOUT);
         let unknown = || vec![None; relative.len()];
         let Ok(states) = states else {
             return unknown();
@@ -228,8 +223,9 @@ impl<'a> CheckoutFacts<'a> {
     /// Whether the checkout has a file with this name anywhere the index
     /// lists, one walk per `CheckoutFacts`.
     fn name_fact(&mut self, name: &str) -> EvidenceFact {
-        let names = self.names.get_or_insert_with(|| {
-            match index_root(self.node, self.root) {
+        let names = self
+            .names
+            .get_or_insert_with(|| match index_root(self.node, self.root) {
                 Ok(walked) => {
                     let set = walked
                         .paths
@@ -244,12 +240,9 @@ impl<'a> CheckoutFacts<'a> {
                     }
                 }
                 Err(_) => Names::Unreadable,
-            }
-        });
+            });
         match names {
-            Names::Complete(set) if set.contains(name) => {
-                EvidenceFact::Found { fingerprint: None }
-            }
+            Names::Complete(set) if set.contains(name) => EvidenceFact::Found { fingerprint: None },
             Names::Complete(_) => EvidenceFact::Missing,
             Names::Truncated(set) if set.contains(name) => {
                 EvidenceFact::Found { fingerprint: None }
@@ -412,7 +405,13 @@ mod tests {
 
         let described = rows
             .iter()
-            .map(|row| (row.kind.as_str(), row.value.as_str(), row.fingerprint.is_some()))
+            .map(|row| {
+                (
+                    row.kind.as_str(),
+                    row.value.as_str(),
+                    row.fingerprint.is_some(),
+                )
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             described,

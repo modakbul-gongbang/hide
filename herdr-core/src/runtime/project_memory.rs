@@ -1104,9 +1104,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        store
-            .mark_promotion_checked(&identity.id, 1, 1)
-            .unwrap();
+        store.mark_promotion_checked(&identity.id, 1, 1).unwrap();
         let promotion = |state, pr_number| Promotion {
             state,
             revision: 1,

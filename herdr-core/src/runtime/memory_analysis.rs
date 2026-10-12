@@ -19,17 +19,17 @@ use super::memory::{
     MemoryReceipt, SESSION_CALL_TIMEOUT, digest, now_ms, project_identity, project_sessions,
     session_chunk, session_stat, trusted_memory_receipt,
 };
+use super::memory_evidence::{CheckoutFacts, check_evidence};
+use super::memory_verify::{check_before_suggestion, reverify_pending};
 use super::*;
 use crate::labels::worker::{MemoryHandoff, MemorySession, SightedMemoryReceipt};
 use crate::model::MemoryAnalysisState;
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
-use super::memory_evidence::{CheckoutFacts, check_evidence};
-use super::memory_verify::{check_before_suggestion, reverify_pending};
 use hide_memory::{
-    AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateRelation, CursorReader, HideNativeAnalyzer, MemoryStore,
-    ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
+    AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateRelation, CursorReader,
+    HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
@@ -128,7 +128,9 @@ enum PassReport {
     /// Cards of the Project were checked against the repository and some
     /// changed state (`확인 중` came or went, a card was corrected or
     /// forgotten): the open screen reads them again, and nothing else moves.
-    Checked { project_id: String },
+    Checked {
+        project_id: String,
+    },
 }
 
 /// What a whole pass tells the runtime when it ends.
@@ -985,14 +987,7 @@ fn walk_project(
         }
     }
     maintain_cards(
-        input,
-        store,
-        &mut facts,
-        project_id,
-        root,
-        deferred,
-        tally,
-        outcome,
+        input, store, &mut facts, project_id, root, deferred, tally, outcome,
     );
     Ok(())
 }
@@ -1001,6 +996,7 @@ fn walk_project(
 /// be suggested (D-07, D-11), after its sessions were analyzed, under the
 /// same call cap, weekly deferral and provider-failure stop. Quiet: the
 /// Project never turns "analyzing" for it (D-13).
+#[allow(clippy::too_many_arguments)] // one Project's pass input, store, evidence facts and tallies
 fn maintain_cards(
     input: &PassInput,
     store: &mut MemoryStore,
@@ -1409,6 +1405,7 @@ fn record_sighted_receipts(
 /// Analyzes the session's conversation past the analysis cursor, one
 /// provider call per bounded group, and moves the cursor only when every
 /// group was written. Answers how many cards it created or replaced.
+#[allow(clippy::too_many_arguments)] // one session: its store, node, provider, Project, delegation and limits
 fn analyze_session(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
@@ -2844,7 +2841,9 @@ mod tests {
                     human_offsets: vec![1],
                     source_times: Default::default(),
                     cited_paths: Vec::new(),
-                    relation: CandidateRelation::Same { target_id: seeded.id },
+                    relation: CandidateRelation::Same {
+                        target_id: seeded.id,
+                    },
                 }],
             )
             .unwrap();

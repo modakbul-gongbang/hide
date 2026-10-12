@@ -117,9 +117,7 @@ pub(super) fn reverify_pending(
             Verification::Outdated(correction) => {
                 revise(store, facts, project_id, &card, correction, root, node)
             }
-            Verification::Gone => store
-                .forget(project_id, &card.item_id)
-                .map(|_| true),
+            Verification::Gone => store.forget(project_id, &card.item_id).map(|_| true),
         }
         .map_err(|error| local(error.to_string()))?;
         if applied {

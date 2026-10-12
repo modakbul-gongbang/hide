@@ -13,7 +13,7 @@ use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
 use crate::{
-    ANALYSIS_INPUT_LIMIT_BYTES, ALIAS_LIMIT, ALIAS_LIMIT_CHARS, Evidence, EvidenceFact,
+    ALIAS_LIMIT, ALIAS_LIMIT_CHARS, ANALYSIS_INPUT_LIMIT_BYTES, Evidence, EvidenceFact,
     EvidenceKind, MEMORY_BODY_LIMIT_CHARS, PendingCard, TITLE_LIMIT_CHARS, card_name, redact,
     repository_path,
 };
@@ -83,7 +83,9 @@ pub enum VerifyError {
 impl Display for VerifyError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InputTooLarge { measured } => write!(formatter, "verify_input_over_cap:{measured}"),
+            Self::InputTooLarge { measured } => {
+                write!(formatter, "verify_input_over_cap:{measured}")
+            }
             Self::InvalidShape(reason) => write!(formatter, "verify_output_invalid:{reason}"),
         }
     }
@@ -118,12 +120,7 @@ pub fn fact_states(evidence: &[Evidence], facts: &[EvidenceFact]) -> Vec<Value> 
 
 /// A verified card's repository documents change the facts' words, so the
 /// kinds are spelled once.
-fn card_json(
-    number: u64,
-    kind: crate::CandidateKind,
-    title: &str,
-    body: &str,
-) -> Value {
+fn card_json(number: u64, kind: crate::CandidateKind, title: &str, body: &str) -> Value {
     json!({
         "id": card_name(number),
         "kind": kind.as_str(),
@@ -261,7 +258,9 @@ pub enum PromoteCheck {
     Propose,
     Outdated(Correction),
     /// The document that already says it, as one of those given.
-    InDocs { document: String },
+    InDocs {
+        document: String,
+    },
 }
 
 fn correction(value: &Value) -> Result<Correction, VerifyError> {
@@ -277,7 +276,13 @@ fn correction(value: &Value) -> Result<Correction, VerifyError> {
     }
     let title = value["title"]
         .as_str()
-        .map(|title| title.trim().chars().take(TITLE_LIMIT_CHARS).collect::<String>())
+        .map(|title| {
+            title
+                .trim()
+                .chars()
+                .take(TITLE_LIMIT_CHARS)
+                .collect::<String>()
+        })
         .unwrap_or_default();
     let aliases = value["aliases"]
         .as_array()
@@ -311,7 +316,10 @@ pub fn parse_verification(value: &Value) -> Result<Verification, VerifyError> {
 /// Reads the answer of the check before a suggestion. `documents` are the
 /// paths it was given: an `in_docs` answer naming any other is refused, so the
 /// model can only point at a file it was shown.
-pub fn parse_promote_check(value: &Value, documents: &[String]) -> Result<PromoteCheck, VerifyError> {
+pub fn parse_promote_check(
+    value: &Value,
+    documents: &[String],
+) -> Result<PromoteCheck, VerifyError> {
     match value["verdict"].as_str() {
         Some("propose") => Ok(PromoteCheck::Propose),
         Some("outdated") => correction(value).map(PromoteCheck::Outdated),
@@ -422,9 +430,7 @@ mod tests {
     #[test]
     fn a_card_already_in_a_document_points_only_at_a_document_it_was_shown() {
         let documents = vec!["AGENTS.md".to_owned(), "docs/BUILD.md".to_owned()];
-        let answer = |document: &str| {
-            json!({"verdict": "in_docs", "text": null, "title": null, "aliases": [], "document": document})
-        };
+        let answer = |document: &str| json!({"verdict": "in_docs", "text": null, "title": null, "aliases": [], "document": document});
         assert_eq!(
             parse_promote_check(&answer("docs/BUILD.md"), &documents).unwrap(),
             PromoteCheck::InDocs {
