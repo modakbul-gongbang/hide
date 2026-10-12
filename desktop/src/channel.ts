@@ -20,12 +20,22 @@ export const PROBE_PATHS_CHANNEL = "hide:probe-paths";
 export const OPEN_PATH_CHANNEL = "hide:open-path";
 
 /**
- * Factory notifications (PRD factory-observer D-50): the shell asks for a
- * macOS notification about one item (renderer -> main), and a click on it
- * hands that item's id back (main -> renderer).
+ * System notifications (PRD factory-observer D-50, first-run-onboarding
+ * D-10): the shell asks for a notification about one Factory item or agent
+ * (renderer -> main), and a click on it hands that id back (main -> renderer).
  */
 export const NOTIFY_CHANNEL = "hide:notify";
 export const NOTIFY_OPEN_CHANNEL = "hide:notify-open";
+
+/**
+ * Agent notifications (PRD first-run-onboarding D-10, D-12): the shell
+ * withdraws notifications about agents the operator has seen
+ * (renderer -> main), asks whether macOS lets Hide show any (invoke), and
+ * opens Hide's page of the system's notification settings (renderer -> main).
+ */
+export const NOTIFY_WITHDRAW_CHANNEL = "hide:notify-withdraw";
+export const NOTIFY_PERMISSION_CHANNEL = "hide:notify-permission";
+export const NOTIFY_SETTINGS_CHANNEL = "hide:notify-settings";
 
 /** Add a project's Browse folder: the native folder picker, answered with the chosen folder or null (invoke). */
 export const PICK_FOLDER_CHANNEL = "hide:pick-folder";

@@ -21,7 +21,8 @@ import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, 
 import type { Actions } from "./actions";
 import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
-import { browserBridge, hostBridge, hostKind, keySystem } from "./host";
+import { browserBridge, hostBridge, hostKind, keySystem, SETUP_COMMAND } from "./host";
+import { useSetupWalk } from "./FirstRunWizard";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
@@ -492,6 +493,11 @@ export function installKeyboard(actions: Actions): () => void {
     }
   });
   const unsubscribeMenu = bridge?.onCommand((id) => {
+    // Help > Set up Hide, the host's own item outside the registry (PRD first-run-onboarding B45).
+    if (id === SETUP_COMMAND) {
+      useSetupWalk.getState().open();
+      return;
+    }
     const command = REGISTRY.find((row) => row.id === id);
     if (command) {
       run(command.id, null);

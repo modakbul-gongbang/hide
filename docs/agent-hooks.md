@@ -304,11 +304,12 @@ The kit row reads the file as it reads OpenCode's plugin, and Settings names the
 
 ## Other agents: skill and guidance hook
 
-On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice.
+On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run).
 The hold records both default-on agents off explicitly, whether or not they are installed (operator decision D7): an agent installed later appears in Settings, Agents off and is never turned on by a pass, and the operator switches it on there.
 An explicit agent choice in the same pass wins over the hold, and any explicit choice (a scope that names an agent, which the first-run answer always does, naming the unchosen default agents off) clears the mark; an existing install, a record without the field, is never held.
 The mark lives in the same record as the choices, so it outlasts a quit between the hold and the answer, and `held_for_onboarding` in the report reads it on every pass.
 The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
+The same step reopened from Help > Set up Hide, once the question is answered, sends only the agents whose switch it changed, as Settings > Agents does, so it never rewrites an agent the operator left alone.
 
 Claude Code and Codex are the agents the kit has always had a hook for; OpenCode has Hide's plugin, and Pi and omp Hide's extension.
 Hide supports seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order.

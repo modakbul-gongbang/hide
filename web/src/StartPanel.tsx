@@ -1,7 +1,7 @@
 import { FolderIcon, HomeIcon, ServerIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, selectKind, type AgentSelection } from "./agentPicker";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
@@ -15,6 +15,8 @@ import { useShellStore } from "./store";
 import { restoreFocus } from "./terminals";
 import { useUiStore } from "./ui";
 import { useInterfaceTranslation } from "./i18n/client";
+import { notSignedIn } from "./firstRun";
+import { Status } from "./components/settings-rows";
 
 // The start panel (PRD home-device-rail D-17..D-21, B23-B31): ⌘K's position
 // and width, no backdrop, the keyboard in the text box. What is written is the
@@ -112,11 +114,16 @@ function StartPanel({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const screen = useUiStore((s) => s.screen);
   const overSettings = useStartPanel((s) => s.overSettings);
+  const preset = useStartPanel((s) => s.preset);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const overviewProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const frontProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const overviewProjectId = preset?.projectId ?? frontProjectId;
   const targets = useMemo(() => startTargets(rest, screen, t, overSettings, overviewProjectId), [rest, screen, t, overSettings, overviewProjectId]);
   const target = resolveTarget(targets, chosen);
-  const [selection, setSelection] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
+  const [selection, setSelection] = useState<AgentSelection>(() => {
+    const start = useShellStore.getState().rest?.ui_state?.agent_start;
+    return preset ? selectKind(preset.kind, start) : rememberedSelection(start);
+  });
   const surface = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const previous = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -209,7 +216,20 @@ function StartPanel({ actions }: { actions: Actions }) {
             ))}
           </SelectContent>
         </Select>
-        <AgentPicker actions={actions} value={selection} onChange={setSelection} disabled={working} />
+        <AgentPicker
+          actions={actions}
+          value={selection}
+          onChange={setSelection}
+          disabled={working}
+          kindNote={
+            // The chosen agent would start signed out (B23).
+            notSignedIn(selection.kind, rest?.status?.background_ai?.providers) ? (
+              <span className="flex shrink-0 items-center [&>span]:text-caption" data-start-not-signed-in={selection.kind}>
+                <Status tone="warn">{t("firstRun.tile.notSignedIn")}</Status>
+              </span>
+            ) : null
+          }
+        />
         <Kbd aria-hidden="true">⏎</Kbd>
         <Button size="default" disabled={!canStart} onClick={start} data-start-submit="true">
           {working ? t("shell.starting") : t("common.start")}

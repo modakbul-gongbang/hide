@@ -664,6 +664,8 @@ The shared Overview's project lens keeps its filter, selected box and folds for 
 The line `실행 중인 에이전트가 없습니다` stands only when there is no box to draw and no fold line, and no filter is set; a project with no agents but with worktrees shows its fold lines alone, and the primary checkout's box stands as its head alone.
 When the device cannot answer, Overview's project scope shows the reason above the graph and nothing where it was, and never says there are no agents; the last drawing is not left standing.
 
+The Home with no agent to draw shows the next step in its place instead of the graph (PRD first-run-onboarding D-16): with no project, `Add a project to start an agent.` and Add project with its chord (⇧⌘N), which a browser tab, unable to pick a folder, shows as the sentence alone; with projects, `No agents are running.` and Start an agent with ⌘N, which opens the start panel (B27-B29).
+
 On the Overview of every project the graph is drawn once per project, under a header line with the project's name and its device when it is not this Mac, the projects ordered by attention (the one with an agent whose turn it is first, then the most recently active), and the filter applies to all of them.
 A project whose boxes all rest is its header line and its fold lines.
 No box is selected there until a cross-project chip selects one, and choosing another view clears that selection, and a device that cannot answer is a notice above the graph for that device alone.
@@ -824,7 +826,7 @@ An edit confined to a working-tree file is reflected when the Overview opens aga
 Each issue card and List row shows its creation age in the same compact relative-time form used for activity, or no age when its source did not provide creation time; the backlog remains sorted by latest update.
 The Home Overview keeps its tab row, `Agents · Tasks · Projects`: Agents is the same graph over the device's projects with the project's name on a header line above each project's boxes, the Tasks board mixes their issues, and Projects is the device's registered projects; the device's Home folder is none of them.
 Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
-Its title row carries Add project in the desktop app and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
+Its title row carries 새 이슈 (for the project in front, else the first one with a source) and no Add project, which is the sidebar's (B52), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
@@ -1029,7 +1031,8 @@ Delegated children are reached through their root's tree, including work in anot
 The same root-only sidebar and Sessions rules apply while an SSH device is in front.
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project by its row or chevron, or using a checkout chevron changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
-Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and in the desktop app a local Projects list with no registered project offers Add project.
+Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project says so in a line with no button of its own.
+In the desktop app the Projects section title (`Projects · Recent activity · N`) ends in a + that opens Add a project, drawn whether or not a project is registered, with the hint `Add project ⇧⌘N` (`Alt+Shift+N` off macOS) on pointer or keyboard focus; it is the sidebar's one Add project (PRD first-run-onboarding D-27, B51, B52).
 The Home row stands for the device's Home (see Home) at every device count (PRD home-device-rail D-13): the house glyph, `Home`, and `N projects`, the device's registered projects with its Home not among them (no count before the first snapshot), in the project row's height, font and focus ring.
 It opens the shared Overview at All projects by click, Enter or Space; the shared Overview row owns selection while that page is in front.
 Home is drawn before the device has a Home folder, since the count comes from the registrations.
@@ -1044,7 +1047,7 @@ Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored wit
 A device that is not connected shows the top line and its reconnect view with no tab strip.
 The list shows the device's Needs You and Done, Home and projects with their operator-owned roots.
 Choosing a tile keeps each device's list apart, and ⌥n numbers its visible root rows in physical order.
-Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
+Search, the top line's one button, opens the ⌘K palette on this machine or a selected SSH device alike; Add project sits on the Projects title instead (see Adding a project), and there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
 The web Projects list is the scope picker, starting at its first project.
 The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; Home and project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
@@ -1150,7 +1153,8 @@ Hover, filter and checkbox changes are local: they dispatch no core event and st
 ### Adding a project
 
 Web owner: `web/src/AddProjectDialog.tsx`, `web/src/addProject.ts`; desktop owner: the `hide:pick-folder` channel in `desktop/src/main/host.ts`.
-Add project opens one centered `Add a project` dialog from each of its entry points: the sidebar strip's +, the Overview's title row and empty state, the empty local Projects list, ⌘⇧N and the File menu; Escape and × close it.
+Add project opens one centered `Add a project` dialog from each of its entry points: the + on the sidebar's Projects title, the empty Home's center button (B27), ⌘⇧N and the File menu; Escape and × close it.
+With projects registered the Projects title's + is the only one on screen; with none it and the empty Home's button are the two (PRD first-run-onboarding B51, B52).
 Only the desktop app offers it, because the native folder picker is how a local project is added: a plain browser tab draws none of those entry points and has no chord for it.
 The Host selector lists this Mac and every registered device, and starts on the focused device.
 On this Mac the primary `Browse folder` row holds the keyboard, so Enter activates it; it opens macOS's own folder picker as a sheet on the window, which can also make a new folder, and a cancelled pick leaves the dialog as it was.
@@ -1188,6 +1192,38 @@ Once a device has a Home, registering a project there adds its link and removing
 A link whose project folder moved away is dropped at the next sync with nothing on screen, only a diagnostic line.
 A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel or under the Home row for its `+`, with what to do.
 A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its row stays under the Home row.
+
+## First run
+
+Core owner: `herdr-core/src/runtime/first_run.rs`, `herdr-core/src/runtime/kit.rs` (`apply_agent_onboarding`). Web owner: `web/src/FirstRunWizard.tsx`, `web/src/firstRun.ts`, `web/src/NotificationControls.tsx`, `web/src/agentNotices.ts`, `web/src/ScreenIntro.tsx`. Desktop owner: `desktop/src/main/notify.ts`, `desktop/src/main/notificationPermission.ts`, `desktop/static/status.html`.
+
+The desktop app shows `Starting Hide…` while it reaches Hide, and never the word hided; a failure shows its reason in one line with Retry and `Copy diagnostics`, which copies the app's build, the reason code and where the host log is, and shows the same text to select by hand when the clipboard refuses it (PRD first-run-onboarding B1, B2).
+On a Mac whose kit has never run, the first-run wizard opens over the shell: a three-part progress bar with `1 of 3`, then the agents, the notifications and the first project (D-01, B3).
+Nothing but each step's own buttons moves it: Escape, a click outside and a close button do nothing, and the step on screen is the core's (`ui_state.first_run`), so quitting, reloading or a failed save reopens the step not yet finished, and the wizard never returns once its last step is done or skipped (B5, B6).
+Each step's main button sits at the footer's right with its keycap, `⌘↵` (`Ctrl+Enter` off macOS), which presses it from anywhere in the step; Enter on the step itself presses it too, while tiles, links and buttons keep their own keys; while macOS blocks Hide with the switch off that button is `Turn on notifications` (B40).
+The agents step is the first-run agent choice (Settings: each machine's install kit, below); the core moves the wizard on once this Mac's kit pass for it has landed with every chosen agent in place.
+Its What changes opens a list with one row per place Hide writes, the path in mono with the agents it is for and the piece (`Codex, OpenCode, Pi · Skill`), so a skill folder agents share is one row, and the `hide` command's link last (B11).
+A chosen agent that did not go in keeps the step with `<agent> was not set up: <reason>` and Try again (B12).
+A pass that could not run (the kit link failed, or the pass listed no agent) keeps the step, says `Hide could not set up agents on this Mac:` with the reason, leaves the choice unanswered, and reads the agents again; the step says the same whenever the kit could not run here, as after a relaunch, and never that no agent is installed; `Try again` then records nothing and only has the agents read again, and once they are back Continue sends the choice anew; the walk Help reopens does the same, staying on the agents step with that line and no banner (B12, B44).
+The notifications step's description names the system that shows the notification (macOS, Windows, or `your desktop`), and its footer offers `Not now` and `Turn on notifications` at the right, with `Also on your phone →` at the left.
+Turning them on stores the switch and sends one test notification, `Notifications work`, which is what makes macOS ask; while macOS's dialog waits the step says `Waiting for your answer…` and holds `Turn on notifications`, an allowed answer shows `Notifications are on` with `Send a test`, and a refusal shows `macOS is blocking Hide's notifications` with `Open System Settings`, which opens Hide's page of the system's notification settings; once answered the footer offers Continue, drawn as a secondary button while macOS blocks, and a blocked state is not counted as on (B14, B15).
+The step reads macOS's permission every two seconds while it is open, one read at a time, so a change in System Settings shows within seconds; an already allowed Mac shows `Notifications are on` at once, with Continue, which turns the switch on with the step; nothing is said before the first read; a permission Hide cannot read shows `Hide can't read the notification setting` with `Send a test`, and the reason goes to the host log (B16-B18).
+On Windows and Linux the step has no permission to show: turning on stores the switch and sends the test once (B19).
+A desktop with no notification service (Electron says notifications are not supported, as on a Linux desktop without one) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > General shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
+Settings > General's Notifications group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front.` (B30).
+`Not now` goes on with the switch off, even after `Turn on notifications` was pressed while macOS still asks, in the same event that leaves the step, and `Also on your phone →` opens Settings > Mobile over the wizard, which returns to the step when it closes (B21).
+The project step is Add a project under `Add your first project`, with its Host select, Browse folder, Clone from URL and Create new project, its refusals and its clone progress, and `Skip for now` (B22, B25); its Host list has no Add device, which would take the wizard's place, and only a project on the chosen host counts as the one added.
+The first project added ends the wizard and opens the start panel once, on that project, with the first agent that is on and signed in (in the order Claude Code, Codex, Grok, Pi), else the first agent that is on, and the keyboard in its text box; with no agent on it opens no panel and the wizard closes to the empty Home, whose Start an agent is the way on; a later project opens nothing (D-15, B23, B24).
+The start panel says `! Not signed in` right after its agent menu whenever that agent is one whose sign-in Hide checks and its last read was signed out (B23, D-06).
+A browser tab shows the agents step alone, with no progress bar, and Continue there ends the wizard; the notifications and project steps are the desktop app's (D-14, B26).
+The desktop app's Help > Set up Hide opens the same steps from the first as this window's own walk: the agents step starts from the agents switched on now and its Continue switches only the agents whose switch changed, the way Settings > Agents does; Escape and the close button end it, and a step not continued changes nothing (B45, B46).
+
+With the switch on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error) or newly finishes, while no Hide window has the keyboard: its title is the task name (the agent's name when there is none) and its body `Needs you · <project>` or `Done · <project>` in the interface language (D-09 to D-11, B31, B39).
+hided judges the changes with the phone push's rules (status-model.md, Row presentation and phone notifications), so a child's raise arrives on its root, the same state never notifies twice, an agent back within ten minutes is not announced again, and nothing already waiting when the app opened is announced (B32, B33).
+A click brings Hide forward and opens that agent's pane, on a device too; an agent the operator has seen takes its notification back, and a newer one for the same agent replaces it (B34, B35).
+With the switch off nothing is sent, and the phone's push follows its own settings whatever this switch says (B36, B38).
+
+The Factory screen shows one line under its title the first time it opens, saying what the screen does and its first step, and never again (`ui_state.screen_intros_seen`); it counts as seen once it has been drawn, so a visit that only showed loading or a Task page leaves it for the next; Settings > Devices keeps its own description instead, and both empty states are unchanged (D-18, B43).
 
 ## Factory
 
@@ -1548,7 +1584,8 @@ While a remote device is selected, a small device chip beside the tab descriptio
 
 ### General
 
-General holds three groups: Appearance, Connections and About.
+General holds three groups, Appearance, Connections and About, and in the desktop app a Notifications group between Appearance and Connections.
+Notifications has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front.` (PRD first-run-onboarding D-21, B30; First run above).
 Appearance is one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes.
 Connections has the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects.
 Hide has no GitHub sign-in of its own, so there is no connect or reconnect action beyond that read.
@@ -1592,6 +1629,7 @@ Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Grok
 With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.
 A device that cannot be reached shows one line and Try again in place of its list; a machine whose kit cannot run says why above a list it may still have.
 `Installed N` lists the agents whose program is found on the machine ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)), or that are on and whose program went away, so they can still be switched off; a folder an agent creates does not count.
+An agent installed where Hide has nothing to attach to on that machine's system yet is listed here too, with `Not on Windows yet` (that system's name) in place of its switch (PRD first-run-onboarding D-25, B49).
 `↻ Check again` at its right asks the kit to read the machines again, reads `Checking…` while it runs and rests again after a moment, since a read that changes nothing sends no frame; a failed read leaves the list as it was and shows its reason in one line.
 `Not installed N` is a folded list of the rest, each with its official mark, its name and `Install ↗`, which opens the vendor's installation guide (`web/src/settings/agentRows.ts`); an agent with no program has no switch.
 A row is the agent's official mark (the same in light and dark), its name and a switch, with no line about what the switch puts there; `Docs ↗` to the kit's skills page for the agent shows only while the row is hovered or has keyboard focus, and always on a screen with no hover.
@@ -1624,17 +1662,21 @@ A switch-off whose removal did not finish keeps the row from reading Off and say
 There is no row or switch for Codex per pane, no per-agent CLI group (that is Hide AI's) and no hooks diagnosis list: the row statuses are the diagnosis.
 Idle agents (`Sleep after`) and Starting work (`Link the issue in pull requests`) follow the list.
 
-The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
-It lists the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
-Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
-`Apply` is the only button and the only way out: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Apply installs nothing and ends the question.
-The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Apply has saved.
-The tiles are drawn from the live availability plus the operator's own flips, so an agent that becomes installed while the dialog is open appears on, and Apply sends exactly what is shown.
+The first-run agent choice is the first step of the first-run wizard (see First run below), PRD agent-adapters-onboarding and PRD first-run-onboarding, shown when this Mac's kit has never run.
+It lists the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed, has no switch and links its official install page (`Install ↗`), an agent installed on a system where Hide has nothing to attach to yet (the kit's `unsupported_system`) is dimmed and says `Not on Windows yet` with that system's name, with no switch, no install link and no entry under `What changes` (D-25, B49), and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Continue` installs what is left on.
+Under each name the tile says what Hide knows: `Checking…`, then `Ready` or `Not signed in` for the agents whose sign-in Hide checks (Claude Code, Codex, Grok and Pi), and `Installed` for OpenCode, omp and Cursor, whose sign-in Hide cannot read (`tileStatus` in `web/src/firstRun.ts`).
+With no agent installed, one line says so and links Claude Code's and Codex's install pages, and Continue still goes on.
+One sentence above the tiles says that Hide adds its own entries to each agent turned on and changes nothing before Continue, and `What changes` opens the list of what Continue writes for each agent left on (its hook file, skill, plugin or extension, and Herdr integration, at the places the kit reports, with the account home written as `~` on every system) and the `hide` command's link; the list follows each flip (B11, D-26).
+`Continue` is the only button and the only way on: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Continue installs nothing and moves on.
+Continue holds, reading `Applying…`, from the press until this Mac's kit pass lands, and a second press meanwhile changes nothing; a chosen agent whose piece failed keeps the step on screen with the agent and the kit's reason in one line, and the button reads `Try again`.
+The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Continue has saved.
+The tiles are drawn from the live availability plus the operator's own flips, so an agent that becomes installed while the step is open appears on, and Continue sends exactly what is shown.
 A Mac whose kit has already run (an existing install) never sees it, and nothing is held back from it.
-Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Apply or for Settings, Agents.
-A device whose own record waits gets the saved choice once per run, by what is installed there, as soon as it reports (also after it was not connected when Apply was pressed); with nothing chosen it is told that, so its record stops waiting, and nothing is installed for agents.
+Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Continue or for Settings, Agents.
+A device whose own record waits gets the saved choice once per run, by what is installed there, as soon as it reports (also after it was not connected when Continue was pressed); with nothing chosen it is told that, so its record stops waiting, and nothing is installed for agents.
 A device that still waits after it was sent the choice is logged once (`first_run_choice.unanswered`) and not sent it again until it reconnects.
-Under `Apply`, one line names the agent Hide AI will use: the first agent in that fixed order that is switched on in the dialog and signed in (`firstRunAgent` in `web/src/hideAi.ts`, "Hide AI uses Claude Code"; in Korean the name takes 를, or 을 after Grok, whose reading ends in a consonant, `hideAiFirstRunKey` in `web/src/agentOnboardingRules.ts`), read from `status.background_ai.providers[].state`, which the dialog asks the core to probe while it is open; with no such agent the line is absent, and it follows each flip of a tile (PRD settings-cleanup D-18, B45, B46).
+Under `Continue`, one line names the agent Hide AI will use: the first agent in that fixed order that is switched on in the step and signed in (`firstRunAgent` in `web/src/hideAi.ts`, "Hide AI uses Claude Code"; in Korean the name takes 를, or 을 after Grok, whose reading ends in a consonant, `hideAiFirstRunKey` in `web/src/agentOnboardingRules.ts`), read from `status.background_ai.providers[].state`, which the step asks the core to probe while it is open; with no such agent the line is absent, and it follows each flip of a tile (PRD settings-cleanup D-18, B45, B46).
 An agent installed later appears in these rows off and is never turned on by a pass.
 
 ### Hide AI

@@ -8,15 +8,32 @@ import { requireInterfaceLanguage } from "../i18n/locale";
 import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdrLine, herdrProtocolText, shownIn } from "../settings";
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
+import { hostBridge } from "../host";
+import { NotificationRows, useNotificationControl, usePermission } from "../NotificationControls";
 
-/** Language and look, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
+/** Language and look, the desktop app's notifications, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
 export function GeneralTab({ actions }: { actions: Actions }) {
   return (
     <>
       <AppearanceGroup actions={actions} />
+      {/* Desktop notifications are the desktop app's (PRD first-run-onboarding D-14, D-21). */}
+      {hostBridge() ? <NotificationsGroup actions={actions} /> : null}
       <ConnectionsGroup actions={actions} />
       <AboutGroup />
     </>
+  );
+}
+
+/** Notify me when an agent needs me, and what macOS allows, read while this tab is open (B18, B30). */
+function NotificationsGroup({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const control = useNotificationControl(actions, "settings", usePermission());
+  if (!control) return null;
+  const sends = control.enabled && control.state !== "no_service";
+  return (
+    <Group title={t("firstRun.settings.group")} note={sends ? t("firstRun.settings.sentWhen") : undefined} data-settings-group="notifications">
+      <NotificationRows control={control} />
+    </Group>
   );
 }
 

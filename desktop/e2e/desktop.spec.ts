@@ -58,8 +58,9 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
 
   // B11: no Node API in the page; the bridge is the host kind and OS, the menu
   // channel, the pane-chord report, the file manager reveal, Add a project's folder
-  // picker, the browser displays' views (issue 155) and the Factory's macOS
-  // notification with its click back.
+  // picker, the browser displays' views (issue 155), the Factory's and the
+  // agents' system notifications with their click back and withdrawal, and
+  // macOS's notification permission with its settings page.
   expect(
     await page.evaluate(() => ({
       require: typeof (globalThis as { require?: unknown }).require,
@@ -67,7 +68,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notify", "onCommand", "onNotificationOpen", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notificationPermission", "notify", "onCommand", "onNotificationOpen", "openNotificationSettings", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath", "withdrawNotifications"], kind: "electron" });
 
   // B9: the app's New tab chord is one create_tab here; the browser's is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();
@@ -218,6 +219,27 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await screenshot(page, "desktop-cli-missing");
   expect(hostLog(run.env).find((line) => line.event === "cli.missing")?.tried).toBe(cli);
+  // PRD first-run-onboarding B2: Copy diagnostics puts the build, the reason and the log's place on the clipboard and says so,
+  // or, when the clipboard refused, shows that text to select by hand.
+  // The clipboard is the machine's, so what it held is put back.
+  const held = await app.evaluate(({ clipboard }) => clipboard.readText());
+  try {
+    await page.getByRole("button", { name: "Copy diagnostics" }).click();
+    await expect(page.getByRole("button", { name: "Copied" }).or(page.locator("#diagnostics", { hasText: "reason: cli_missing" }))).toBeVisible();
+    const copied = hostLog(run.env).find((line) => line.event === "status.diagnostics_copied" || line.event === "status.diagnostics_copy_failed");
+    expect(copied?.reason).toBe("cli_missing");
+    if (copied?.event === "status.diagnostics_copied") expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toMatch(/^hide .+\nreason: cli_missing\nlog: .+desktop\.log$/);
+  } finally {
+    await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), held);
+  }
+  // The refused form and the connecting line (B1) are what the page draws from its address, read here without a second launch.
+  await page.evaluate(() => (location.hash = "failed=cli_missing&diagnostics=reason%3A+cli_missing"));
+  await expect(page.locator("#diagnostics")).toHaveText("reason: cli_missing");
+  await expect(page.getByRole("button", { name: "Copy diagnostics" })).toBeVisible();
+  await page.evaluate(() => (location.hash = "connecting"));
+  await expect(page.locator("#connecting")).toHaveText("Starting Hide…");
+  await expect(page.locator("#failed")).toBeHidden();
+  await page.evaluate(() => (location.hash = "failed=cli_missing"));
   fs.mkdirSync(path.dirname(cli), { recursive: true });
   if (process.platform === "win32") {
     // A link needs a privilege the account may lack, and `hide connect` starts the `hided` beside it, so both programs are copied.

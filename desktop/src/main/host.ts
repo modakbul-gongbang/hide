@@ -12,9 +12,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { SETUP_COMMAND } from "../../../web/src/host";
+import type { MenuCommand } from "./menu";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
@@ -43,7 +44,8 @@ import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
-import { KeptNotifications, notifyRequest } from "./notify";
+import { KeptNotifications, notifyRequest, withdrawRequest } from "./notify";
+import { NOTIFICATION_SETTINGS_URL, NotificationPermissionReader } from "./notificationPermission";
 import { fromPage, toPage, WirePathError } from "./wirePath";
 
 declare const __HIDE_BACKGROUND__: string;
@@ -122,8 +124,9 @@ export class DesktopHost {
   private browserControlFlight: Promise<void> | null = null;
   private browserControlShutdown: Promise<void> | null = null;
   private browserControlClosed = false;
-  /** Shown Factory notifications, kept so their click still reaches the shell. */
+  /** Shown Factory and agent notifications, kept so their click still reaches the shell. */
   private readonly notifications = new KeptNotifications<Notification>();
+  private readonly permission: NotificationPermissionReader;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -132,7 +135,9 @@ export class DesktopHost {
     private readonly showInactive: boolean,
     /** The language the host's own words are drawn in. */
     private readonly language: HostLanguage,
-  ) {}
+  ) {
+    this.permission = new NotificationPermissionReader(process.platform, path.dirname(process.execPath), log, () => Notification.isSupported());
+  }
 
   // --- lifecycle ------------------------------------------------------------
 
@@ -177,6 +182,7 @@ export class DesktopHost {
     this.quitting = true;
     this.stopWatch();
     this.runner.stop();
+    this.permission.stop();
     // Revoke sockets and debugger leases immediately; hold quit only for
     // the bounded authenticated unregister, never for the operator daemon.
     const close = this.browserCdp?.close() ?? Promise.resolve();
@@ -269,6 +275,18 @@ export class DesktopHost {
         this.log.event("notify.unsupported", {});
         return;
       }
+      // An agent's notification waits for the operator to look away (D-10);
+      // a Hide popup window with the keyboard counts as Hide.
+      if (request.unlessFocused && BrowserWindow.getFocusedWindow() !== null) {
+        this.log.event("notify.suppressed", { reason: "focused" });
+        return;
+      }
+      // A newer notification for the same id replaces the one shown (B35).
+      const replaced = this.notifications.take(request.id);
+      if (replaced) {
+        replaced.removeAllListeners();
+        replaced.close();
+      }
       const shown = new Notification({ title: request.title, body: request.body });
       shown.on("click", () => {
         this.notifications.forget(request.id);
@@ -281,7 +299,45 @@ export class DesktopHost {
       shown.on("close", () => this.notifications.forget(request.id));
       this.notifications.keep(request.id, shown)?.removeAllListeners("click");
       shown.show();
-      this.log.event("notify.shown", {});
+      this.log.event("notify.shown", { replaced: replaced !== null });
+    });
+    ipcMain.on(NOTIFY_WITHDRAW_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("notify.withdraw_refused", { reason: "sender" });
+        return;
+      }
+      const ids = withdrawRequest(reported);
+      if ("refused" in ids) {
+        this.log.event("notify.withdraw_refused", { reason: ids.refused });
+        return;
+      }
+      let closed = 0;
+      for (const id of ids) {
+        const shown = this.notifications.take(id);
+        if (!shown) continue;
+        shown.removeAllListeners();
+        shown.close();
+        closed += 1;
+      }
+      this.log.event("notify.withdrawn", { asked: ids.length, closed });
+    });
+    ipcMain.handle(NOTIFY_PERMISSION_CHANNEL, (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event)) {
+        this.log.event("notify.permission_refused", { reason: "sender" });
+        return "unknown";
+      }
+      return this.permission.read();
+    });
+    ipcMain.on(NOTIFY_SETTINGS_CHANNEL, (event: IpcMainEvent) => {
+      if (!this.fromShell(event)) {
+        this.log.event("notify.settings_refused", { reason: "sender" });
+        return;
+      }
+      if (process.platform !== "darwin") return;
+      shell.openExternal(NOTIFICATION_SETTINGS_URL).then(
+        () => this.log.event("notify.settings_opened", {}),
+        (error: unknown) => this.log.event("notify.settings_failed", { detail: String(error) }),
+      );
     });
   }
 
@@ -375,13 +431,14 @@ export class DesktopHost {
   }
 
   /** An app-menu click, delivered to the shell only while it is loaded. */
-  sendCommand(id: CommandId): void {
+  sendCommand(id: MenuCommand): void {
+    const command = id === SETUP_COMMAND ? null : id;
     // A page's popup window holding the keyboard answers the command itself,
     // whatever the shell's state.
-    if (this.browsers?.popupCommand(id)) return;
+    if (command && this.browsers?.popupCommand(command)) return;
     if (!this.window || (this.state.kind !== "attached" && this.state.kind !== "lost")) return;
     // Text size in a page is the page's zoom, and the page keeps the keyboard.
-    if (this.browsers?.zoomFocused(id)) return;
+    if (command && this.browsers?.zoomFocused(command)) return;
     // A chord the page of a browser display left unhandled reaches the menu;
     // the command's surface (the palette, a dialog) needs the keyboard.
     if (this.browsers?.hasFocus()) this.window.webContents.focus();
@@ -771,6 +828,8 @@ export class DesktopHost {
       connecting: t("native.status.connecting"),
       failed: t("native.status.failed"),
       retry: t("common.retry"),
+      copy: t("native.status.copyDiagnostics"),
+      copied: t("native.status.copied"),
       cli_missing: t("native.status.cliMissing"),
       start_failed: t("native.status.startFailed"),
       no_response: t("native.status.noResponse"),
@@ -778,6 +837,36 @@ export class DesktopHost {
       state_refused: t("native.status.stateRefused"),
     };
     return { query, lang: query.lang };
+  }
+
+  /**
+   * The failed status page's Copy diagnostics (PRD first-run-onboarding B2):
+   * the app build, the reason code and where the host log is, written to
+   * the clipboard here, since the page has no bridge. The page then says it
+   * was copied or, when the clipboard refused it, shows the same text to
+   * select by hand.
+   */
+  private copyDiagnostics(contents: Electron.WebContents, hash: URLSearchParams): void {
+    const reason = this.state.kind === "failed" ? this.state.reason : "none";
+    const text = [`hide ${app.getVersion()} (${process.platform} ${process.arch}, Electron ${process.versions.electron})`, `reason: ${reason}`, `log: ${path.join(app.getPath("logs"), "desktop.log")}`].join("\n");
+    hash.delete("copy");
+    const answer = (key: "copied" | "diagnostics", value: string) => {
+      hash.set(key, value);
+      if (!contents.isDestroyed()) this.load(contents.executeJavaScript(`location.hash = ${JSON.stringify(hash.toString())}`), this.state.kind);
+    };
+    void (async () => {
+      await clipboard.writeText(text);
+      if ((await clipboard.readText()) !== text) throw new Error("the clipboard kept other text");
+    })().then(
+      () => {
+        this.log.event("status.diagnostics_copied", { reason });
+        answer("copied", "1");
+      },
+      (error: unknown) => {
+        this.log.event("status.diagnostics_copy_failed", { reason, detail: String(error) });
+        answer("diagnostics", text);
+      },
+    );
   }
 
   /** Draws the status page again in the language now in effect; the daemon's page follows the core itself and is left alone. */
@@ -946,9 +1035,13 @@ export class DesktopHost {
       else this.log.event("window_open.refused", { reason: "daemon_origin" });
       return { action: "deny" };
     });
-    // The status page asks for Retry by moving its own hash; it has no bridge.
+    // The status page asks for Retry and Copy diagnostics by moving its own
+    // hash; it has no bridge.
     contents.on("did-navigate-in-page", (_event, url) => {
-      if (url.startsWith("file:") && new URL(url).hash === "#retry") void this.discover("retry");
+      if (!url.startsWith("file:")) return;
+      const hash = new URL(url).hash;
+      if (hash === "#retry") void this.discover("retry");
+      else if (new URLSearchParams(hash.slice(1)).has("copy")) this.copyDiagnostics(contents, new URLSearchParams(hash.slice(1)));
     });
   }
 
