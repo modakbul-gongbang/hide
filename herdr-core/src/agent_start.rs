@@ -32,15 +32,16 @@
 //! a startup file that asks a question (oh-my-zsh's `[Y/n]` update prompt
 //! reads one key with `read -k 1`) leaves the shell alone in the foreground
 //! too, and a start typed then answers the question with the command's first
-//! letter and runs the rest. A pane Hide makes for a start is therefore
-//! started with Hide's shell integration (`hide_host::shell_integration`,
-//! reached through Herdr's `env`), whose zsh and fish startup files mark the
-//! shell's first prompt on the pane, and a start in such a pane
-//! ([`ShellStart::Integrated`]) waits for that mark too. A shell that never
-//! shows it within the bound, stopped at a question, is a start that did not
-//! happen, and the screen's last line says what it waits for. Other shells
-//! (bash, sh, PowerShell, cmd) take no startup file through the environment;
-//! a start there is confirmed after it was typed, by its spawn
+//! letter and runs the rest. A pane Hide makes for a start therefore runs
+//! the account's shell from Hide's own command (`hide_host::shell_integration`,
+//! through Herdr's `layout.apply`), which marks the shell's first prompt on
+//! the pane once the user's own startup files are done, and a start in such
+//! a pane ([`ShellStart::Integrated`]) waits for that mark too. A shell that
+//! never shows it within the bound, stopped at a question, is a start that
+//! did not happen, and the screen's last line says what it waits for. A
+//! shell the integration does not reach (sh, nu, cmd), or a pane made
+//! another way (a split), is started on the shell holding the terminal, and
+//! the start is confirmed after it was typed, by its spawn
 //! (`coordination::executor`).
 //!
 //! Every call here runs on a worker thread, never under `Mutex<Runtime>`.
@@ -52,7 +53,7 @@ use hide_herdr_client::{
     ApiConnector, ApiError, request_with_connector, request_with_correlation_id,
 };
 use hide_node_link::process::LineInput;
-use hide_node_link::protocol::Call;
+use hide_node_link::protocol::{Call, ShellLaunch};
 use serde_json::Value;
 
 use crate::node_access::NodeLink;
@@ -84,9 +85,9 @@ pub(crate) const NAME_RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// then the screen's last line after [`crate::coordination::DETAIL`] when it
 /// could be read.
 pub(crate) const SHELL_STARTING: &str = "shell_starting";
-/// The shells Hide's shell integration reaches, which therefore mark their
+/// The shells Hide's shell integration starts, which therefore mark their
 /// first prompt, by program name without `.exe`.
-const MARKING_SHELLS: [&str; 6] = ["zsh", "fish", "bash", "pwsh", "powershell", "cmd"];
+const MARKING_SHELLS: [&str; 4] = ["zsh", "fish", "bash", "powershell"];
 /// The pane token the integration's first prompt reports
 /// (`hide_host::shell_integration::PROMPT_TOKEN`).
 const PROMPT_TOKEN: &str = "hide_prompt";
@@ -96,9 +97,8 @@ const SCREEN_LINE_CHARS: usize = 120;
 /// What says a pane's shell has finished starting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShellStart {
-    /// The caller made the pane with Hide's shell integration in its
-    /// environment: a zsh or fish shell marks its first prompt, and the start
-    /// waits for that mark.
+    /// The caller made the pane run Hide's [`ShellLaunch`], whose shell
+    /// marks its first prompt, and the start waits for that mark.
     Integrated,
     /// No mark is coming (a pane made before, by someone else, or where the
     /// integration could not be written): the shell holding the terminal is
@@ -120,17 +120,17 @@ pub(crate) enum StartError {
     Herdr(ApiError),
 }
 
-/// The environment a pane Hide makes for a start is created with, and how
-/// its shell will say it has finished starting: Hide's shell integration,
-/// written by `node`, the node of the machine that will run the pane. A
-/// node that cannot be reached or cannot write it leaves the pane
-/// [`ShellStart::Plain`], logged, and the start is confirmed after typing.
-pub(crate) fn shell_environment(
+/// How a pane Hide makes for a start runs the account's shell so that it
+/// marks its first prompt, written by `node`, the node of the machine that
+/// will run the pane. `None` for a shell the integration does not reach,
+/// and, logged, for a node that cannot be reached or cannot write it: the
+/// pane then starts as any other and the start is confirmed after typing.
+pub(crate) fn shell_launch(
     node: Option<&dyn NodeLink>,
     correlation_id: &str,
-) -> (std::collections::BTreeMap<String, String>, ShellStart) {
+) -> Option<ShellLaunch> {
     let answer = match node {
-        Some(node) => crate::node_access::call_as::<std::collections::BTreeMap<String, String>>(
+        Some(node) => crate::node_access::call_as::<Option<ShellLaunch>>(
             node,
             Call::ShellIntegration,
             READ_TIMEOUT,
@@ -138,19 +138,17 @@ pub(crate) fn shell_environment(
         .map_err(|error| error.to_string()),
         None => Err("the machine that runs the pane cannot be reached".to_owned()),
     };
-    match answer {
-        Ok(env) if !env.is_empty() => (env, ShellStart::Integrated),
-        Ok(env) => (env, ShellStart::Plain),
-        Err(reason) => {
+    answer
+        .inspect_err(|reason| {
             crate::diagnostic!(serde_json::json!({
                 "component": "agent_start",
                 "kind": "shell_integration.unavailable",
                 "request": correlation_id,
                 "reason": reason,
             }));
-            (Default::default(), ShellStart::Plain)
-        }
-    }
+        })
+        .ok()
+        .flatten()
 }
 
 /// What an operator reads for a start whose shell had not finished starting,
@@ -507,11 +505,8 @@ impl Shell<'_> {
     }
 }
 
-#[cfg(all(test, unix))]
-mod real_herdr_tests;
-
 #[cfg(test)]
-mod argv_shell_tests;
+mod real_herdr_tests;
 
 #[cfg(test)]
 mod tests {

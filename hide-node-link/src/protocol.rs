@@ -109,6 +109,16 @@ use crate::error::HostError;
 /// startup question, so it is refused at Hello and reinstalled.
 pub const PROTOCOL_VERSION: u32 = 29;
 
+/// How a pane's shell is started so that it marks its first prompt
+/// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
+/// its integration arguments, and the environment it is given.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellLaunch {
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
 /// What a link stream the core opens on a node that dialed it reaches on
 /// the node's machine ([`Call::LinkOpen`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,9 +450,10 @@ pub enum Call {
         name: String,
     },
     /// Writes Hide's shell integration under the node's home once and
-    /// answers the environment a pane Hide makes for an agent is started
-    /// with (`hide_host::shell_integration`), as a map of names to values;
-    /// empty where no shell can take it.
+    /// answers how a pane Hide makes for an agent starts the account's
+    /// shell so it marks its first prompt (`hide_host::shell_integration`),
+    /// a [`ShellLaunch`], or `null` for a shell the integration does not
+    /// reach.
     ShellIntegration,
     /// The start time and program of each pid, in order
     /// (`process::ProcessStart`).

@@ -1151,6 +1151,48 @@ pub(crate) fn layout_apply_params(
     })
 }
 
+/// A tab whose one pane runs `command` with `env` in `cwd` (a shell started
+/// with Hide's integration), new in `workspace_id`, or in place of the tab
+/// `replace` names, which Herdr then closes.
+#[allow(clippy::too_many_arguments)] // one layout.apply request: its target, tab and pane
+pub(crate) fn launched_tab_params(
+    workspace_id: &str,
+    replace: Option<&str>,
+    label: &str,
+    focus: bool,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+    command: &[String],
+) -> Result<Value, String> {
+    params(req::LayoutApplyParams {
+        focus,
+        root: req::LayoutNode::Pane {
+            pane_id: None,
+            label: None,
+            cwd: Some(herdr_param(cwd)),
+            command: Some(command.to_vec()),
+            env: env.into_iter().collect(),
+        },
+        tab_id: replace.map(str::to_owned),
+        tab_label: Some(label.into()),
+        // Herdr takes either a tab to replace or a workspace to add to.
+        workspace_id: replace.is_none().then(|| workspace_id.into()),
+    })
+}
+
+/// The tab and the one pane `layout.apply` made for
+/// [`launched_tab_params`].
+pub(crate) fn launched_tab(value: Value) -> Result<(String, String), String> {
+    let layout = applied_layout(value)?;
+    match layout.root {
+        ClosedLayoutNode::Pane {
+            pane_id: Some(pane_id),
+            ..
+        } => Ok((layout.tab_id, pane_id)),
+        _ => Err("layout.apply answered no single pane for a launched tab".into()),
+    }
+}
+
 /// Every agent start Hide makes; a Codex with the shared daemon gets
 /// `--no-daemon` here, so no start path can leave it out (PRD
 /// overview-request-view D-20).

@@ -681,9 +681,10 @@ fn native_fork_current_journey(kind: &'static str) {
                         "panes":[{"pane_id":parent,"focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}]
                 }})
             }
-            "tab.create" => serde_json::json!({"type":"tab_created",
-                "tab":{"tab_id":"w-order:t2","workspace_id":"w-order","number":2,"label":"fork","focused":false,"pane_count":1,"agent_status":"idle"},
-                "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w-order","tab_id":"w-order:t2","focused":false,"agent_status":"idle","revision":1}}),
+            // The fork's tab runs the node's shell with the integration.
+            "layout.apply" => serde_json::json!({"type":"layout_apply","layout":{
+                "workspace_id":"w-order","tab_id":"w-order:t2","zoomed":false,
+                "focused_pane_id":"child-pane","root":{"type":"pane","pane_id":"child-pane"}}}),
             "pane.process_info" => {
                 if case == "during-start-connect" {
                     arm_connect.store(true, Ordering::SeqCst);
@@ -751,7 +752,7 @@ fn native_fork_current_journey(kind: &'static str) {
             match case {
                 "current" => vec![
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
                     "pane.get",
                     "agent.start"
@@ -759,7 +760,7 @@ fn native_fork_current_journey(kind: &'static str) {
                 "during-tab-connect" => vec!["session.snapshot"],
                 _ => vec![
                     "session.snapshot",
-                    "tab.create",
+                    "layout.apply",
                     "pane.process_info",
                     "pane.close"
                 ],

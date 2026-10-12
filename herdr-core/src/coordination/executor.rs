@@ -8,7 +8,6 @@ use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -683,26 +682,23 @@ fn spawn(
                 let pane = match existing_pane {
                     Some(pane) => pane,
                     None => {
-                        let (env, integration) =
-                            crate::agent_start::shell_environment(node.as_deref(), &reserved.id);
+                        let launch =
+                            crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
                         let tab = crate::live::open_owner_tab(
                             connector.as_ref(),
                             &owner,
                             &existing,
                             &label,
                             false,
-                            env.clone(),
+                            launch
+                                .as_ref()
+                                .map(|launch| launch.env.clone())
+                                .unwrap_or_default(),
+                            launch.as_ref().map(|launch| launch.command.as_slice()),
                         )
                         .map_err(|error| format!("{error:?}"))?;
-                        let (pane, started) = integrated_pane(
-                            connector.as_ref(),
-                            &reserved.id,
-                            &existing,
-                            tab,
-                            (env, integration),
-                        );
-                        shell = started;
-                        pane
+                        shell = launched_shell(&tab, launch.as_ref());
+                        tab.pane_id
                     }
                 };
                 (existing, pane)
@@ -720,20 +716,26 @@ fn spawn(
                 )
                 .map_err(|error| format!("{error}"))?;
                 let created = crate::wire::created_worktree(result)?;
-                let (pane, started) = integrated_pane(
+                let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
+                let tab = crate::live::replace_tab(
                     connector.as_ref(),
-                    &reserved.id,
-                    &created.path,
                     crate::live::OwnedTab {
                         workspace_id: created.workspace_id,
                         tab_id: created.tab_id,
                         pane_id: created.pane_id,
-                        with_env: false,
+                        launched: false,
                     },
-                    crate::agent_start::shell_environment(node.as_deref(), &reserved.id),
+                    &created.path,
+                    &format!("hide:{}", reserved.id),
+                    false,
+                    launch
+                        .as_ref()
+                        .map(|launch| launch.env.clone())
+                        .unwrap_or_default(),
+                    launch.as_ref().map(|launch| launch.command.as_slice()),
                 );
-                shell = started;
-                (created.path, pane)
+                shell = launched_shell(&tab, launch.as_ref());
+                (created.path, tab.pane_id)
             };
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
@@ -868,52 +870,16 @@ fn spawn(
     })
 }
 
-/// The pane the spawn's agent starts in, and how its shell will say it has
-/// finished starting. Herdr's `worktree.create` and `worktree.open` make a
-/// workspace's first pane with no environment, so when Hide's shell
-/// integration was had (`agent_start::shell_environment`), a tab carrying it
-/// is made in that workspace, labelled for the spawn so an interrupted retry
-/// finds it, and the first pane is closed. When that tab cannot be made, the
-/// first pane is kept and its shell is started plain.
-fn integrated_pane(
-    connector: &dyn ApiConnector,
-    spawn: &str,
-    cwd: &str,
-    tab: crate::live::OwnedTab,
-    (env, integration): (BTreeMap<String, String>, ShellStart),
-) -> (String, ShellStart) {
-    if tab.with_env || integration == ShellStart::Plain {
-        return (
-            tab.pane_id,
-            if tab.with_env {
-                integration
-            } else {
-                ShellStart::Plain
-            },
-        );
-    }
-    let label = format!("hide:{spawn}");
-    match crate::live::create_tab_in(connector, &tab.workspace_id, cwd, &label, false, env) {
-        Ok(integrated) => {
-            let closed = crate::wire::pane_target_params(&tab.pane_id).and_then(|params| {
-                request_with_connector(connector, "pane.close", params, Duration::from_secs(5))
-                    .map(drop)
-                    .map_err(|error| error.to_string())
-            });
-            crate::diagnostic!(json!({
-                "component": "spawn", "kind": "integrated_pane.opened", "spawn": spawn,
-                "pane_id": integrated.pane_id, "replaced": tab.pane_id,
-                "closed": closed.is_ok(), "reason": closed.err(),
-            }));
-            (integrated.pane_id, ShellStart::Integrated)
-        }
-        Err(error) => {
-            crate::diagnostic!(json!({
-                "component": "spawn", "kind": "integrated_pane.failed", "spawn": spawn,
-                "pane_id": tab.pane_id, "reason": error.message(),
-            }));
-            (tab.pane_id, ShellStart::Plain)
-        }
+/// How the shell of a tab Hide made for a spawn says it has finished
+/// starting: by its mark when the tab runs the integration's launch.
+fn launched_shell(
+    tab: &crate::live::OwnedTab,
+    launch: Option<&hide_node_link::protocol::ShellLaunch>,
+) -> ShellStart {
+    if tab.launched && launch.is_some() {
+        ShellStart::Integrated
+    } else {
+        ShellStart::Plain
     }
 }
 

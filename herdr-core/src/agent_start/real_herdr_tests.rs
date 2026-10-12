@@ -1,61 +1,33 @@
-//! The start against the pinned Herdr itself, in zsh and fish panes whose
-//! startup file asks a one-key question, as oh-my-zsh's update prompt does
-//! with `read -k 1`. In the incident this replays, the start typed into that
+//! The start against the pinned Herdr itself, in a tab Hide makes the way
+//! the product does (`shell_launch`, then `live::create_tab_in`, which runs
+//! the launch through `layout.apply`), whose shell's own startup files ask a
+//! one-key question first, as oh-my-zsh's update prompt does with
+//! `read -k 1`. In the incident this replays, the start typed into that
 //! question: its first letter answered it and the shell ran the rest.
 //!
-//! It needs the pinned binary and the shells, so it is ignored by default;
-//! run it with `--ignored` and the binaries named in `HIDE_E2E_HERDR_BIN`,
-//! `HIDE_TEST_ZSH_BIN` and `HIDE_TEST_FISH_BIN`. The server it starts is
-//! private: its own socket, session, config and home, none of the operator's.
+//! Each shell is its own test and needs its binary in its variable
+//! (`HIDE_TEST_<SHELL>_BIN`) and the pinned Herdr in `HIDE_E2E_HERDR_BIN`,
+//! so they are ignored by default. On Windows the question is in Windows
+//! PowerShell's profile under the test's own home.
+//!
+//! The server is private: its own socket, session, config and home.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use hide_herdr_client::LocalSocketConnector;
 use hide_host::shell_integration::UserShell;
+use serde_json::json;
 
 use super::*;
 
-/// A shell Herdr runs in its panes, and the user's own startup file for it:
-/// it asks the question, and `claude` records the arguments it was started
-/// with and becomes a long-running process of that name, which Herdr reads
-/// as the agent (`~/bin/claude` runs as `claude`).
-struct Fixture {
-    variable: &'static str,
-    rc: &'static str,
-    text: &'static str,
-}
-
-const ZSH: Fixture = Fixture {
-    variable: "HIDE_TEST_ZSH_BIN",
-    rc: ".zshrc",
-    text: r#"PS1='fixture %# '
-claude() { print -r -- "${PWD:t} $*" >> ~/claude-args; exec -a claude ~/bin/claude 600 }
-read -k 1 'answer?Update the framework now? [Y/n] '
-print -r -- "${PWD:t} answered [$answer]" >> ~/answers
-"#,
-};
-
-const FISH: Fixture = Fixture {
-    variable: "HIDE_TEST_FISH_BIN",
-    // Herdr gives its panes its own XDG_CONFIG_HOME.
-    rc: "xdg-config/fish/config.fish",
-    text: r#"function fish_prompt; echo -n 'fixture> '; end
-function claude
-    echo (basename $PWD)" $argv" >> ~/claude-args
-    exec /bin/bash -c 'exec -a claude "$HOME/bin/claude" 600'
-end
-read -n 1 -P 'Update the framework now? [Y/n] ' answer
-echo (basename $PWD)" answered [$answer]" >> ~/answers
-"#,
-};
-
 const QUESTION: &str = "Update the framework now? [Y/n]";
 
-/// The pane's node: it writes the integration for the fixture's shell.
+/// The pane's node: it writes the integration for `shell` as the product's
+/// node does.
 struct Node {
     home: PathBuf,
-    shell: PathBuf,
+    shell: Option<String>,
 }
 
 impl NodeLink for Node {
@@ -68,91 +40,99 @@ impl NodeLink for Node {
             panic!("unexpected {call:?}");
         };
         let user = UserShell {
-            shell: Some(self.shell.display().to_string()),
+            shell: self.shell.clone(),
             ..Default::default()
         };
-        let env = hide_host::shell_integration::install(&self.home, &user).unwrap();
+        let launch = hide_host::shell_integration::install(&self.home, &user).unwrap();
         Ok(crate::node_access::LinkAnswer::Parsed(
-            serde_json::to_value(env).unwrap(),
+            serde_json::to_value(launch).unwrap(),
         ))
     }
 }
 
-fn pinned_version() -> String {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/herdr-bundle.json");
-    let manifest: Value = serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();
-    manifest["version"].as_str().unwrap().to_owned()
-}
-
 struct PrivateHerdr {
+    shell: Option<String>,
     bin: PathBuf,
-    shell: PathBuf,
     home: PathBuf,
     socket: PathBuf,
     config: PathBuf,
+    log: PathBuf,
     server: Option<Child>,
-    // Dropped last: it holds every path above.
     _root: tempfile::TempDir,
 }
 
 impl PrivateHerdr {
-    fn start(bin: PathBuf, fixture: &Fixture) -> Self {
-        let shell = PathBuf::from(
-            std::env::var_os(fixture.variable)
-                .unwrap_or_else(|| panic!("{} names the shell", fixture.variable)),
+    /// A server whose own shell, on unix, is `shell`.
+    fn new(shell: Option<String>) -> Self {
+        let bin = PathBuf::from(
+            std::env::var_os("HIDE_E2E_HERDR_BIN")
+                .expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
         );
-        let version = Command::new(&bin).arg("--version").output().unwrap().stdout;
-        let version = String::from_utf8(version).unwrap();
-        assert_eq!(
-            version.split_whitespace().last(),
-            Some(pinned_version().as_str()),
-            "{} is not the pinned Herdr",
-            bin.display()
-        );
-        // A Unix socket path is limited to about a hundred bytes.
-        let root = tempfile::Builder::new()
-            .prefix("hq")
-            .tempdir_in("/tmp")
-            .unwrap();
+        let root = if cfg!(unix) {
+            // A Unix socket path is limited to about a hundred bytes.
+            tempfile::Builder::new()
+                .prefix("ha")
+                .tempdir_in("/tmp")
+                .unwrap()
+        } else {
+            tempfile::tempdir().unwrap()
+        };
         let home = root.path().join("home");
         std::fs::create_dir_all(home.join("bin")).unwrap();
-        // fish generates completions from man pages in the background the
-        // first time it reads input, in the shell's own foreground group,
-        // unless this folder exists; its run would hold the terminal beside
-        // the shell and keep the plain start below from being typed.
-        std::fs::create_dir_all(home.join(".local/share/fish/generated_completions")).unwrap();
-        let rc = home.join(fixture.rc);
-        std::fs::create_dir_all(rc.parent().unwrap()).unwrap();
-        std::fs::write(rc, fixture.text).unwrap();
-        // Linux names a process after the file it runs, so `sleep` is copied
-        // under the agent's name there. macOS kills a copy of a system binary
-        // run from elsewhere, and names the process by its first argument.
-        let sleep = which("sleep");
-        if cfg!(target_os = "macos") {
-            std::os::unix::fs::symlink(&sleep, home.join("bin/claude")).unwrap();
-        } else {
-            std::fs::copy(&sleep, home.join("bin/claude")).unwrap();
-        }
         let config = root.path().join("herdr-config.toml");
         std::fs::write(
             &config,
             "[update]\nversion_check = false\nmanifest_check = false\n",
         )
         .unwrap();
-        let socket = root.path().join("h.sock");
-        let log = std::fs::File::create(root.path().join("server.log")).unwrap();
         let mut herdr = Self {
-            server: None,
-            bin,
             shell,
+            bin,
+            socket: root.path().join("h.sock"),
+            log: root.path().join("server.log"),
             home,
-            socket,
             config,
+            server: None,
             _root: root,
         };
-        herdr.server = Some(
-            herdr
-                .command()
+        herdr.start();
+        herdr
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.bin);
+        for (key, _) in std::env::vars_os() {
+            let key = key.to_string_lossy().to_uppercase();
+            if key.starts_with("HERDR_") || key.starts_with("HIDE_") {
+                command.env_remove(key);
+            }
+        }
+        command
+            .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
+            .env("TERM", "xterm-256color")
+            .env("XDG_CONFIG_HOME", self.home.join("xdg-config"))
+            .env("XDG_STATE_HOME", self.home.join("xdg-state"))
+            .env("HERDR_SESSION", "hide-argv-shell")
+            .env("HERDR_SOCKET_PATH", &self.socket)
+            .env("HERDR_CONFIG_PATH", &self.config)
+            .env("HERDR_DISABLE_SOUND", "1");
+        if cfg!(unix)
+            && let Some(shell) = &self.shell
+        {
+            command.env("SHELL", shell);
+        }
+        command
+    }
+
+    fn start(&mut self) {
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log)
+            .unwrap();
+        self.server = Some(
+            self.command()
                 .arg("server")
                 .stdin(Stdio::null())
                 .stdout(log.try_clone().unwrap())
@@ -160,33 +140,34 @@ impl PrivateHerdr {
                 .spawn()
                 .expect("herdr server starts"),
         );
-        herdr.wait_for(Duration::from_secs(60), "the server answers ping", || {
-            hide_herdr_client::request_with_timeout(
-                &herdr.socket,
-                "ping",
-                serde_json::json!({}),
-                Duration::from_secs(2),
-            )
-            .is_ok()
-        });
-        herdr
+        self.wait_until(
+            Duration::from_secs(60),
+            || {
+                hide_herdr_client::request_with_timeout(
+                    &self.socket,
+                    "ping",
+                    json!({}),
+                    Duration::from_secs(2),
+                )
+                .is_ok()
+            },
+            || format!("the server answers ping; log:\n{}", self.server_log()),
+        );
     }
 
-    fn command(&self) -> Command {
-        let mut command = Command::new(&self.bin);
-        command.env_clear();
-        command
-            .env("HOME", &self.home)
-            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-            .env("SHELL", &self.shell)
-            .env("TERM", "xterm-256color")
-            .env("XDG_CONFIG_HOME", self.home.join("xdg-config"))
-            .env("XDG_STATE_HOME", self.home.join("xdg-state"))
-            .env("HERDR_SESSION", "hide-startup-question")
-            .env("HERDR_SOCKET_PATH", &self.socket)
-            .env("HERDR_CONFIG_PATH", &self.config)
-            .env("HERDR_DISABLE_SOUND", "1");
-        command
+    fn stop(&mut self) {
+        let _ = self.command().args(["server", "stop"]).output();
+        if let Some(mut server) = self.server.take() {
+            self.wait_until(
+                Duration::from_secs(30),
+                || server.try_wait().is_ok_and(|status| status.is_some()),
+                || "the server stops".into(),
+            );
+        }
+    }
+
+    fn server_log(&self) -> String {
+        std::fs::read_to_string(&self.log).unwrap_or_default()
     }
 
     fn connector(&self) -> LocalSocketConnector {
@@ -198,22 +179,6 @@ impl PrivateHerdr {
             .unwrap_or_else(|error| panic!("{method}: {error}"))
     }
 
-    /// A workspace in `folder` whose pane runs the shell with `env`.
-    fn pane(&self, folder: &str, env: &std::collections::BTreeMap<String, String>) -> String {
-        let cwd = self.home.join(folder);
-        std::fs::create_dir_all(&cwd).unwrap();
-        let params = wire::workspace_create_with_env_params(
-            cwd.to_str().unwrap(),
-            folder,
-            false,
-            env.clone(),
-        )
-        .unwrap();
-        wire::created_workspace(self.request("workspace.create", params))
-            .unwrap()
-            .2
-    }
-
     fn screen(&self, pane: &str) -> String {
         let params = wire::pane_read_params(pane, "visible", 40).unwrap();
         wire::pane_text(self.request("pane.read", params))
@@ -221,38 +186,44 @@ impl PrivateHerdr {
             .text
     }
 
+    fn processes(&self, pane: &str) -> Value {
+        self.request("pane.process_info", json!({"pane_id": pane}))
+    }
+
     fn file(&self, name: &str) -> String {
-        std::fs::read_to_string(self.home.join(name)).unwrap_or_default()
+        std::fs::read_to_string(self.home.join(name))
+            .unwrap_or_default()
+            .replace("\r\n", "\n")
     }
 
-    fn wait_for(&self, within: Duration, what: &str, done: impl FnMut() -> bool) {
-        self.wait_until(within, done, || {
-            format!(
-                "{what}; server log:\n{}",
-                std::fs::read_to_string(self.socket.with_file_name("server.log"))
-                    .unwrap_or_default()
-            )
-        });
+    /// A new unfocused tab in `workspace`, made as the product makes an
+    /// agent's tab: running `launch` when there is one, Herdr's own shell
+    /// otherwise.
+    fn tab(&self, workspace: &str, label: &str, launch: Option<&ShellLaunch>) -> String {
+        let cwd = self.home.join(label);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let mut env = launch.map(|launch| launch.env.clone()).unwrap_or_default();
+        env.insert("PATH".into(), pane_path(self));
+        let tab = crate::live::create_tab_in(
+            &self.connector(),
+            workspace,
+            cwd.to_str().unwrap(),
+            label,
+            false,
+            env,
+            launch.map(|launch| launch.command.as_slice()),
+        )
+        .unwrap_or_else(|failure| panic!("{label}: {}", failure.message()));
+        assert!(tab.launched);
+        tab.pane_id
     }
 
-    /// [`Self::wait_for`] a state of `pane`, whose screen and processes the
-    /// failure shows.
     fn wait_on(&self, pane: &str, within: Duration, what: &str, done: impl FnMut() -> bool) {
         self.wait_until(within, done, || {
-            let processes = wire::pane_process_info_params(pane)
-                .map_err(|error| error.to_string())
-                .and_then(|params| {
-                    request_with_connector(
-                        &self.connector(),
-                        "pane.process_info",
-                        params,
-                        READ_TIMEOUT,
-                    )
-                    .map_err(|error| error.to_string())
-                });
             format!(
-                "{what}; pane {pane} shows:\n{}\nprocesses: {processes:?}",
-                self.screen(pane)
+                "{what}; pane {pane} shows:\n{}\nprocesses: {}",
+                self.screen(pane),
+                self.processes(pane)
             )
         });
     }
@@ -284,20 +255,140 @@ impl Drop for PrivateHerdr {
     }
 }
 
-fn which(program: &str) -> PathBuf {
-    ["/bin", "/usr/bin"]
-        .iter()
-        .map(|folder| Path::new(folder).join(program))
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| panic!("{program} is not installed"))
+/// The pane's PATH: the stand-in agent first.
+fn pane_path(herdr: &PrivateHerdr) -> String {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(
+        std::iter::once(herdr.home.join("bin")).chain(std::env::split_paths(&inherited)),
+    )
+    .unwrap()
+    .into_string()
+    .unwrap()
+}
+
+/// `claude` on unix: records the folder it started in and its arguments,
+/// then runs as a long-lived process of that name, which Herdr reads as the
+/// agent. Linux names a process after its file, macOS after its first
+/// argument.
+#[cfg(unix)]
+fn unix_agent(herdr: &PrivateHerdr) {
+    let agent = herdr.home.join("agent");
+    std::fs::create_dir_all(&agent).unwrap();
+    let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .unwrap();
+    if cfg!(target_os = "macos") {
+        std::os::unix::fs::symlink(sleep, agent.join("claude")).unwrap();
+    } else {
+        std::fs::copy(sleep, agent.join("claude")).unwrap();
+    }
+    let script = herdr.home.join("bin/claude");
+    std::fs::write(
+        &script,
+        "#!/bin/bash\nprintf '%s\\n' \"${PWD##*/} $*\" >> \"$HOME/claude-args\"\nexec -a claude \"$HOME/agent/claude\" 600\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+}
+
+/// Herdr starts Windows agents through PowerShell: `claude.ps1` is found as
+/// a script, records its folder and arguments, and runs a copy of
+/// `timeout.exe` named `claude.exe`, which Herdr reads as the agent.
+#[cfg(windows)]
+fn windows_agent(herdr: &PrivateHerdr) {
+    let agent = herdr.home.join("agent");
+    std::fs::create_dir_all(&agent).unwrap();
+    let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    std::fs::copy(
+        Path::new(&system).join(r"System32\timeout.exe"),
+        agent.join("claude.exe"),
+    )
+    .unwrap();
+    std::fs::write(
+        herdr.home.join(r"bin\claude.ps1"),
+        "Add-Content -Path \"$env:USERPROFILE\\claude-args\" -Value ((Split-Path -Leaf (Get-Location).Path) + ' ' + ($args -join ' '))\r\n& \"$env:USERPROFILE\\agent\\claude.exe\" /t 600 /nobreak\r\n",
+    )
+    .unwrap();
+}
+
+/// What the user's own startup files hold for `shell`: the question, and
+/// the answer recorded with the folder it was asked in.
+#[cfg(unix)]
+fn user_files(herdr: &PrivateHerdr, shell: &str) {
+    let (file, text) = match shell {
+        "zsh" => (
+            ".zshrc",
+            format!(
+                "PS1='fixture %# '\nread -k 1 'answer?{QUESTION} '\nprint -r -- \"${{PWD:t}} answered [$answer]\" >> ~/answers\n"
+            ),
+        ),
+        "bash" => (
+            ".bashrc",
+            format!(
+                "PS1='fixture$ '\nread -n 1 -p '{QUESTION} ' answer; echo\nprintf '%s\\n' \"${{PWD##*/}} answered [$answer]\" >> ~/answers\n"
+            ),
+        ),
+        "fish" => (
+            // Herdr gives its panes its own XDG_CONFIG_HOME.
+            "xdg-config/fish/config.fish",
+            format!(
+                "function fish_prompt; echo -n 'fixture> '; end\nread -n 1 -P '{QUESTION} ' answer\necho (basename $PWD)\" answered [$answer]\" >> ~/answers\n"
+            ),
+        ),
+        _ => unreachable!(),
+    };
+    let path = herdr.home.join(file);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+    // Ubuntu's /etc/zsh/zshrc runs compinit, which asks a question of its
+    // own about folders a CI runner leaves group-writable; Ubuntu's own
+    // setting skips it, so only this test's question is asked.
+    std::fs::write(herdr.home.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
+    // A login bash reads ~/.bashrc only through the login file, as most do.
+    std::fs::write(
+        herdr.home.join(".bash_profile"),
+        "[ -r ~/.bashrc ] && . ~/.bashrc\n",
+    )
+    .unwrap();
+    // fish generates completions from man pages in the background, in the
+    // shell's own foreground group, the first time it reads input unless
+    // this folder exists.
+    std::fs::create_dir_all(herdr.home.join(".local/share/fish/generated_completions")).unwrap();
+}
+
+/// The Windows PowerShell profile asks the question. The profile lives in
+/// the Documents folder, which follows `USERPROFILE`, so with the server's
+/// home it is the test's own file, not the account's.
+#[cfg(windows)]
+fn user_files(herdr: &PrivateHerdr, _shell: &str) {
+    let profile = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "$PROFILE.CurrentUserCurrentHost"])
+        .env("USERPROFILE", &herdr.home)
+        .env("HOME", &herdr.home)
+        .output()
+        .unwrap();
+    let profile = PathBuf::from(String::from_utf8(profile.stdout).unwrap().trim());
+    assert!(
+        profile.starts_with(&herdr.home),
+        "the profile {} is the account's, not the test's",
+        profile.display()
+    );
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::fs::write(
+        &profile,
+        format!(
+            "Write-Host -NoNewline '{QUESTION} '\r\n$key = [Console]::ReadKey($true)\r\nAdd-Content -Path \"$env:USERPROFILE\\answers\" -Value ((Split-Path -Leaf (Get-Location).Path) + ' answered [' + $key.KeyChar + ']')\r\n"
+        ),
+    )
+    .unwrap();
 }
 
 fn start(
     herdr: &PrivateHerdr,
-    node: &dyn NodeLink,
     pane: &str,
-    shell: ShellStart,
     name: &str,
+    shell: ShellStart,
     wait: Duration,
 ) -> Result<Value, StartError> {
     let params = wire::agent_start_params(
@@ -310,7 +401,7 @@ fn start(
     .unwrap();
     start_within(
         &herdr.connector(),
-        Some(node),
+        None,
         name,
         pane,
         shell,
@@ -341,38 +432,39 @@ fn agent_pane(herdr: &PrivateHerdr, name: &str) -> Option<String> {
     agent["pane_id"].as_str().map(str::to_owned)
 }
 
-#[test]
-#[ignore = "needs the pinned Herdr and zsh: set HIDE_E2E_HERDR_BIN and HIDE_TEST_ZSH_BIN and run with --ignored"]
-fn a_zsh_startup_question_is_never_answered_by_a_start_and_each_pane_runs_its_own_prompt() {
-    startup_question(&ZSH);
-}
-
-#[test]
-#[ignore = "needs the pinned Herdr and fish: set HIDE_E2E_HERDR_BIN and HIDE_TEST_FISH_BIN and run with --ignored"]
-fn a_fish_startup_question_is_never_answered_by_a_start_and_each_pane_runs_its_own_prompt() {
-    startup_question(&FISH);
-}
-
-fn startup_question(fixture: &Fixture) {
-    let bin = PathBuf::from(
-        std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
-    );
-    let herdr = PrivateHerdr::start(bin, fixture);
+/// The scenario every shell runs. Two tabs back to back, each held by the
+/// question with nothing typed; the operator's tab keeps the focus. The
+/// incident, where Herdr's own shell takes a start into the question. The
+/// questions answered, each start runs its own prompt under its own name.
+/// After a server restart the tabs come back with their labels.
+fn startup_question(shell: &str, variable: &str) {
+    let mut herdr = PrivateHerdr::new(std::env::var(variable).ok());
+    #[cfg(unix)]
+    unix_agent(&herdr);
+    #[cfg(windows)]
+    windows_agent(&herdr);
+    user_files(&herdr, shell);
     let node = Node {
         home: herdr.home.clone(),
-        shell: herdr.shell.clone(),
+        shell: std::env::var(variable).ok(),
     };
-    let (env, shell) = shell_environment(Some(&node), "real-herdr");
-    assert_eq!(shell, ShellStart::Integrated);
+    let launch = shell_launch(Some(&node), "real-herdr").expect("the shell is integrated");
+    let created = herdr.request(
+        "workspace.create",
+        json!({"cwd": herdr.home, "label": "agents", "focus": false}),
+    );
+    let workspace = created["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let operator_tab = created["tab"]["tab_id"].as_str().unwrap().to_owned();
 
-    // Two starts back to back, each in its own new pane, both shells held by
-    // the question.
-    let first = herdr.pane("m43", &env);
-    let second = herdr.pane("m72", &env);
+    let first = herdr.tab(&workspace, "m43", Some(&launch));
+    let second = herdr.tab(&workspace, "m72", Some(&launch));
     for pane in [&first, &second] {
         herdr.wait_on(
             pane,
-            Duration::from_secs(20),
+            Duration::from_secs(30),
             "the question is asked",
             || herdr.screen(pane).contains(QUESTION),
         );
@@ -380,13 +472,16 @@ fn startup_question(fixture: &Fixture) {
     for (pane, name) in [(&first, "m43"), (&second, "m72")] {
         let Err(StartError::ShellStarting(line)) = start(
             &herdr,
-            &node,
             pane,
-            ShellStart::Integrated,
             name,
+            ShellStart::Integrated,
             Duration::from_secs(2),
         ) else {
-            panic!("a shell held by its question is not a start");
+            panic!(
+                "{name}: a shell held by its question is not a start; pane shows:\n{}\nprocesses: {}",
+                herdr.screen(pane),
+                herdr.processes(pane)
+            );
         };
         assert!(
             line.as_deref().is_some_and(|line| line.contains(QUESTION)),
@@ -395,55 +490,88 @@ fn startup_question(fixture: &Fixture) {
     }
     assert_eq!(herdr.file("answers"), "", "no start answered the question");
     assert_eq!(herdr.file("claude-args"), "", "nothing was typed");
+    let workspace_now = herdr.request("workspace.get", json!({"workspace_id": workspace}));
+    assert_eq!(
+        workspace_now["workspace"]["active_tab_id"].as_str(),
+        Some(operator_tab.as_str()),
+        "an unfocused tab leaves the operator's tab active"
+    );
 
     // The incident: a start that only waits for the shell to hold the
     // terminal types into the question, whose one key is the command's first
-    // letter, and the shell runs the rest.
-    let plain = herdr.pane("plain", &Default::default());
-    herdr.wait_on(
-        &plain,
-        Duration::from_secs(20),
-        "the question is asked",
-        || herdr.screen(&plain).contains(QUESTION),
-    );
-    start(
-        &herdr,
-        &node,
-        &plain,
-        ShellStart::Plain,
-        "plain",
-        Duration::from_secs(2),
-    )
-    .expect("Herdr types the start");
-    herdr.wait_for(Duration::from_secs(20), "the question is answered", || {
-        herdr.file("answers").contains("plain answered [c]")
-    });
-    herdr.wait_on(&plain, Duration::from_secs(20), "the rest runs", || {
-        herdr.screen(&plain).contains("laude")
-    });
-    assert_eq!(herdr.file("claude-args"), "", "no agent ran");
+    // letter, and the shell runs the rest. Herdr's own shell is the server's
+    // `SHELL`, the test's shell, on unix.
+    #[cfg(unix)]
+    {
+        let plain = herdr.tab(&workspace, "plain", None);
+        herdr.wait_on(
+            &plain,
+            Duration::from_secs(30),
+            "the question is asked",
+            || herdr.screen(&plain).contains(QUESTION),
+        );
+        start(
+            &herdr,
+            &plain,
+            "plain",
+            ShellStart::Plain,
+            Duration::from_secs(2),
+        )
+        .expect("Herdr types the start");
+        herdr.wait_on(
+            &plain,
+            Duration::from_secs(30),
+            "the question is answered",
+            || herdr.file("answers").contains("plain answered [c]"),
+        );
+        assert_eq!(herdr.file("claude-args"), "", "no agent ran");
+    }
 
     // The operator answers each question; the same starts then launch, each
-    // with its own prompt, under its own name, in its own pane.
+    // with its own prompt, under its own name, in its own tab.
     for pane in [&first, &second] {
         herdr.request(
             "pane.send_text",
             wire::pane_send_text_params(pane, "n").unwrap(),
         );
     }
+    // Windows PowerShell keeps Herdr's own prompt wrapper: the pane's folder
+    // follows a `cd`, as in Herdr's own PowerShell panes.
+    #[cfg(windows)]
+    {
+        let sub = herdr.home.join("m43").join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        herdr.wait_on(&first, Duration::from_secs(30), "the prompt shows", || {
+            herdr.file("answers").lines().count() == 2
+        });
+        herdr.request(
+            "pane.send_text",
+            wire::pane_send_text_params(&first, "cd sub\r").unwrap(),
+        );
+        herdr.wait_on(
+            &first,
+            Duration::from_secs(30),
+            "the pane's folder follows",
+            || {
+                let pane = herdr.request("pane.get", json!({"pane_id": first}));
+                pane["pane"]["cwd"]
+                    .as_str()
+                    .is_some_and(|cwd| cwd.trim_end_matches('\\').ends_with("sub"))
+            },
+        );
+    }
     for (pane, name) in [(&first, "m43"), (&second, "m72")] {
         start(
             &herdr,
-            &node,
             pane,
-            ShellStart::Integrated,
             name,
-            Duration::from_secs(20),
+            ShellStart::Integrated,
+            Duration::from_secs(30),
         )
         .unwrap_or_else(|error| panic!("{name}: {error:?}"));
     }
     for (pane, name) in [(&first, "m43"), (&second, "m72")] {
-        herdr.wait_for(Duration::from_secs(20), "the agent shows", || {
+        herdr.wait_on(pane, Duration::from_secs(30), "the agent shows", || {
             agent_pane(&herdr, name).as_deref() == Some(pane.as_str())
         });
     }
@@ -458,8 +586,57 @@ fn startup_question(fixture: &Fixture) {
     let mut args: Vec<_> = herdr
         .file("claude-args")
         .lines()
-        .map(str::to_owned)
+        .map(|line| line.replace("-- ", ""))
         .collect();
     args.sort();
-    assert_eq!(args, ["m43 -- promote m43", "m72 -- promote m72"]);
+    let first_folder = if cfg!(windows) { "sub" } else { "m43" };
+    assert_eq!(
+        args,
+        [
+            format!("{first_folder} promote m43"),
+            "m72 promote m72".to_owned()
+        ]
+    );
+
+    // A server restart brings the tabs back with their labels, running
+    // Herdr's own shell; the launch is not run again.
+    herdr.stop();
+    herdr.start();
+    let tabs = herdr.request("tab.list", json!({"workspace_id": workspace}));
+    let labels: Vec<_> = tabs["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tab| tab["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"m43") && labels.contains(&"m72"), "{tabs}");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the pinned Herdr and zsh: HIDE_E2E_HERDR_BIN, HIDE_TEST_ZSH_BIN"]
+fn a_zsh_startup_question_is_never_answered_by_a_start_and_each_tab_runs_its_own_prompt() {
+    startup_question("zsh", "HIDE_TEST_ZSH_BIN");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the pinned Herdr and bash: HIDE_E2E_HERDR_BIN, HIDE_TEST_BASH_BIN"]
+fn a_bash_startup_question_is_never_answered_by_a_start_and_each_tab_runs_its_own_prompt() {
+    startup_question("bash", "HIDE_TEST_BASH_BIN");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the pinned Herdr and fish: HIDE_E2E_HERDR_BIN, HIDE_TEST_FISH_BIN"]
+fn a_fish_startup_question_is_never_answered_by_a_start_and_each_tab_runs_its_own_prompt() {
+    startup_question("fish", "HIDE_TEST_FISH_BIN");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "needs the pinned Herdr: HIDE_E2E_HERDR_BIN"]
+fn a_windows_powershell_startup_question_is_never_answered_by_a_start_and_each_tab_runs_its_own_prompt()
+ {
+    startup_question("powershell", "HIDE_TEST_POWERSHELL_BIN");
 }

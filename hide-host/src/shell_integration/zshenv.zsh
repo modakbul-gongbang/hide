@@ -1,28 +1,17 @@
-# Hide's shell integration for zsh. Hide starts a pane's shell with ZDOTDIR
+# Hide's shell integration for zsh. Hide starts a pane's zsh with ZDOTDIR
 # naming this folder, so zsh reads its startup files from here. Each file here
 # reads the user's own file of the same name from where zsh would have, with
 # ZDOTDIR as the user has it, and the last one of the run gives ZDOTDIR back
 # for good. At the first prompt the shell tells Herdr it has finished
 # starting, which is when Hide may type.
 #
-# What the user had before Hide's values replaced them comes in
-# HIDE_SHELL_ZDOTDIR and HIDE_SHELL_XDG_DATA_DIRS, each absent when the user
-# had none. A user's file is read at the top level, never inside a function,
-# so what it declares stays global.
+# What the user had before Hide's value replaced it comes in
+# HIDE_SHELL_ZDOTDIR, absent when the user had none. A user's file is read at
+# the top level, never inside a function, so what it declares stays global.
 typeset -g __hide_zdotdir=$ZDOTDIR
-
-# Hide put its fish folder first in XDG_DATA_DIRS for a fish shell; a zsh
-# gives it back before anything of the user's runs.
-if [[ ${XDG_DATA_DIRS-} == ${__hide_zdotdir:h}/fish-data:* ]]; then
-  if (( ${+HIDE_SHELL_XDG_DATA_DIRS} )); then
-    export XDG_DATA_DIRS=$HIDE_SHELL_XDG_DATA_DIRS
-  else
-    builtin unset XDG_DATA_DIRS
-  fi
-fi
 typeset -g __hide_user_set=${+HIDE_SHELL_ZDOTDIR} __hide_user_zdotdir=${HIDE_SHELL_ZDOTDIR-}
 typeset -g __hide_user_type=scalar-export
-builtin unset HIDE_SHELL_ZDOTDIR HIDE_SHELL_XDG_DATA_DIRS
+builtin unset HIDE_SHELL_ZDOTDIR
 
 # ZDOTDIR as the user has it, unset included, for their next file.
 __hide_give() {

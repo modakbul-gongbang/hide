@@ -1299,7 +1299,7 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         .runtime
         .upgrade()
         .and_then(|runtime| task_pane_node(&runtime, request.id).ok());
-    let shell = crate::agent_start::shell_environment(
+    let launch = crate::agent_start::shell_launch(
         node.as_deref(),
         &format!("herdr-core:task:{}:tab", request.id),
     );
@@ -1336,10 +1336,10 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
                     current: &current,
                 },
                 request,
-                shell.clone(),
+                launch.as_ref(),
             );
         }
-        create_checkout_tab(target.connector.as_ref(), request, shell)
+        create_checkout_tab(target.connector.as_ref(), request, launch.as_ref())
     })();
     let Some(runtime) = target.runtime.upgrade() else {
         return;
@@ -1488,11 +1488,10 @@ fn sync_home(
 fn create_checkout_tab(
     connector: &dyn ApiConnector,
     request: &CheckoutTabRequest,
-    (env, shell): (
-        std::collections::BTreeMap<String, String>,
-        crate::agent_start::ShellStart,
-    ),
+    launch: Option<&hide_node_link::protocol::ShellLaunch>,
 ) -> Result<WorktreeTaskOutcome, String> {
+    let env = launch.map(|launch| launch.env.clone()).unwrap_or_default();
+    let command = launch.map(|launch| launch.command.as_slice());
     let tab = match &request.host {
         crate::checkout_owner::TabHost::Workspace(workspace_id) => super::create_tab_in(
             connector,
@@ -1501,6 +1500,7 @@ fn create_checkout_tab(
             &request.label,
             true,
             env,
+            command,
         ),
         crate::checkout_owner::TabHost::Open(owner) => super::open_owner_tab(
             connector,
@@ -1509,13 +1509,14 @@ fn create_checkout_tab(
             &request.label,
             true,
             env,
+            command,
         ),
     }
     .map_err(|failure| failure.message().to_owned())?;
-    // An owner workspace that already existed answers its own tab, made
-    // before this request and without the environment.
-    let shell = if tab.with_env {
-        shell
+    // A tab that does not run the launch (Herdr's own shell, or no launch
+    // for this shell) gives no mark.
+    let shell = if tab.launched && launch.is_some() {
+        crate::agent_start::ShellStart::Integrated
     } else {
         crate::agent_start::ShellStart::Plain
     };

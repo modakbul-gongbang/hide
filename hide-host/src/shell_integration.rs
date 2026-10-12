@@ -1,36 +1,47 @@
-//! Hide's shell integration: the startup files that let a pane's shell say
-//! when it has finished starting, after the user's own startup files and
-//! anything they asked at the keyboard (a `[Y/n]` update question), so Hide
-//! types an agent's command only then.
+//! Hide's shell integration: how a pane Hide makes for an agent starts the
+//! account's shell so the shell says when it has finished starting, after
+//! the user's own startup files and anything they asked at the keyboard (a
+//! `[Y/n]` update question), and Hide types an agent's command only then.
 //!
-//! It is VS Code's terminal shell integration, reached through the
-//! environment alone, because Herdr starts a pane's shell itself and takes
-//! only an `env` from Hide: zsh reads its startup files from `ZDOTDIR`, and
-//! fish reads the `vendor_conf.d` of each folder in `XDG_DATA_DIRS`. Each file
-//! here reads the user's own files where and in the order the shell would,
-//! and gives both variables back as the user had them, unset included, which
-//! the environment carries in `HIDE_SHELL_ZDOTDIR` and
-//! `HIDE_SHELL_XDG_DATA_DIRS`. The first prompt reports a Herdr pane token,
-//! `hide_prompt`, which is the mark Hide reads (Herdr does not parse OSC 133
-//! prompt marks). bash, sh, PowerShell and cmd take their startup file only
-//! as an argument, so for an account whose shell is one of those nothing is
-//! added to the environment, and a start there is confirmed after the fact
-//! instead (`herdr-core`'s `agent_start`).
+//! It is VS Code's terminal shell integration: the pane runs the shell with
+//! Hide's arguments (Herdr's `layout.apply` takes a pane's command), and the
+//! shell reads the user's own files where and in the order it would have,
+//! then reports a Herdr pane token, `hide_prompt`, which is the mark Hide
+//! reads (Herdr does not parse OSC 133 prompt marks).
+//!
+//! - zsh reads its startup files from `ZDOTDIR`, which names files here that
+//!   read the user's own with `ZDOTDIR` as the user has it and give it back,
+//!   unset included, before the first prompt marks; the user's own value
+//!   comes in `HIDE_SHELL_ZDOTDIR`.
+//! - bash reads one file, `--init-file`, which reads the user's files in
+//!   bash's own order and then marks. bash cannot read it as a login shell,
+//!   so the login file reads the login shell's files itself and
+//!   `shopt login_shell` stays off.
+//! - fish runs its `-C` command after its configuration: the mark.
+//! - Windows PowerShell runs its `-Command` after the user's profile: the
+//!   prompt wrapper Herdr gives its own PowerShell panes, then the mark. It
+//!   is passed inline as Herdr passes its own, because a script file would
+//!   need an execution policy that allows scripts.
+//!
+//! A shell starts as Herdr starts its own by default (Herdr's `auto` mode):
+//! a login shell on macOS and not on Linux. Any other shell (sh, nu, cmd)
+//! gets no launch, and a start there is confirmed after the fact instead
+//! (`herdr-core`'s `agent_start`).
 //!
 //! The files live under the node's account home
 //! (`hide_kit::layout::shell_integration`), one folder per version of their
 //! text, written once and never rewritten. A shell reads them only while it
-//! starts; the first prompt has given the environment back, so nothing in the
-//! pane, or anything it starts later, refers to them again. Another build's
-//! folder is removed once no pane has been started with it for an hour.
+//! starts. Another build's folder is removed once no pane has been started
+//! with it for an hour.
 
-use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::time::{Duration, SystemTime};
+
+pub use hide_node_link::protocol::ShellLaunch;
 
 /// The token the first prompt reports on the pane, and the value it reports.
 pub const PROMPT_TOKEN: &str = "hide_prompt";
@@ -42,18 +53,29 @@ const ZSH: [(&str, &str); 4] = [
     (".zshrc", include_str!("shell_integration/zshrc.zsh")),
     (".zlogin", include_str!("shell_integration/zlogin.zsh")),
 ];
+/// bash's init files, by whether the shell stands for a login shell.
 #[cfg(unix)]
-const FISH: &str = include_str!("shell_integration/hide.fish");
-/// Where fish finds the file under the data folder Hide puts first.
+const BASH: [(&str, &str); 2] = [
+    ("login.bash", include_str!("shell_integration/login.bash")),
+    (
+        "interactive.bash",
+        include_str!("shell_integration/interactive.bash"),
+    ),
+];
+/// fish's `-C` command, run after its configuration.
 #[cfg(unix)]
-const FISH_FILE: &str = "fish/vendor_conf.d/hide.fish";
-/// The data folders a program reads when `XDG_DATA_DIRS` is unset (XDG Base
-/// Directory specification), which the fish file leaves in place.
-#[cfg(unix)]
-const XDG_DATA_DIRS_DEFAULT: &str = "/usr/local/share:/usr/share";
-/// The shells whose startup files the environment reaches.
-#[cfg(unix)]
-const SHELLS: [&str; 2] = ["zsh", "fish"];
+const FISH_MARK: &str = "if set -q HERDR_BIN_PATH HERDR_PANE_ID; $HERDR_BIN_PATH pane report-metadata $HERDR_PANE_ID --source hide:shell --token hide_prompt=1 >/dev/null 2>&1; end";
+/// Windows PowerShell's `-Command`, run after the user's profile: Herdr
+/// 0.9.3's own prompt wrapper for its PowerShell panes
+/// (`WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND` in its `src/pane.rs`),
+/// which reports the folder as OSC 9;9 at each prompt, then the mark. Like
+/// Herdr's, it holds no double quote, which powershell.exe's own command
+/// line parsing would corrupt.
+#[cfg(windows)]
+const POWERSHELL_COMMAND: &str = concat!(
+    r"if ($null -eq $global:__HerdrOriginalPrompt) { $global:__HerdrOriginalPrompt = $function:prompt; function global:prompt { $out = @(& $global:__HerdrOriginalPrompt) -join ' '; $loc = $ExecutionContext.SessionState.Path.CurrentLocation; if ($loc.Provider.Name -eq 'FileSystem') { try { [Environment]::CurrentDirectory = $loc.ProviderPath } catch {}; $esc = [string][char]27; $out += $esc + ']9;9;' + $loc.ProviderPath + $esc + '\' }; $out } }",
+    r"; if ($env:HERDR_BIN_PATH -and $env:HERDR_PANE_ID) { & $env:HERDR_BIN_PATH pane report-metadata $env:HERDR_PANE_ID --source hide:shell --token hide_prompt=1 *> $null }"
+);
 /// How long another build's folder stays after a pane was last started
 /// with it. A shell reads its later startup files only once a question in
 /// an earlier one is answered, which can be long after a start stopped
@@ -62,14 +84,12 @@ const SHELLS: [&str; 2] = ["zsh", "fish"];
 #[cfg(unix)]
 const UNUSED_FOR: Duration = Duration::from_secs(60 * 60);
 
-/// What the node's account starts a pane's shell with, which Hide's values
-/// replace: the shell, and the user's own `ZDOTDIR` and `XDG_DATA_DIRS`,
-/// `None` where unset.
+/// The account's shell, which a pane Hide makes runs, and the user's own
+/// `ZDOTDIR`, which Hide's value replaces, `None` where unset.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UserShell {
     pub shell: Option<String>,
     pub zdotdir: Option<String>,
-    pub data_dirs: Option<String>,
 }
 
 impl UserShell {
@@ -79,64 +99,86 @@ impl UserShell {
         Self {
             shell: std::env::var("SHELL").ok(),
             zdotdir: std::env::var("ZDOTDIR").ok(),
-            data_dirs: std::env::var("XDG_DATA_DIRS").ok(),
         }
     }
 }
 
-/// Writes the integration under `home` once and answers the environment a
-/// pane's shell is started with. Empty when `user`'s shell is not one the
-/// environment reaches, and on Windows, where no shell can take it: nothing
-/// of Hide's then reaches the pane.
+/// Writes the integration under `home` once and answers how a pane starts
+/// `user`'s shell with it; `None` for a shell it does not reach.
 #[cfg(unix)]
-pub fn install(home: &Path, user: &UserShell) -> io::Result<BTreeMap<String, String>> {
-    let reached = user
+pub fn install(home: &Path, user: &UserShell) -> io::Result<Option<ShellLaunch>> {
+    let Some(shell) = user
         .shell
         .as_deref()
-        .and_then(|shell| Path::new(shell).file_name())
+        .filter(|shell| Path::new(shell).is_absolute())
+    else {
+        return Ok(None);
+    };
+    let name = Path::new(shell)
+        .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| SHELLS.contains(&name));
-    if !reached {
-        return Ok(BTreeMap::new());
-    }
-    let folder = version_folder(home)?;
+        .unwrap_or_default();
+    // Herdr's `auto` mode.
+    let login = cfg!(target_os = "macos");
     let with = |path: PathBuf| path.to_string_lossy().into_owned();
-    let inherited = user
-        .data_dirs
-        .as_deref()
-        .filter(|dirs| !dirs.is_empty())
-        .unwrap_or(XDG_DATA_DIRS_DEFAULT);
-    let mut env = BTreeMap::from([
-        ("ZDOTDIR".to_owned(), with(folder.join("zsh"))),
-        (
-            "XDG_DATA_DIRS".to_owned(),
-            format!("{}:{inherited}", with(folder.join("fish-data"))),
-        ),
-    ]);
-    // What the files give back; absent stays absent.
-    for (name, value) in [
-        ("HIDE_SHELL_ZDOTDIR", &user.zdotdir),
-        ("HIDE_SHELL_XDG_DATA_DIRS", &user.data_dirs),
-    ] {
-        if let Some(value) = value {
-            env.insert(name.to_owned(), value.clone());
+    let mut command = vec![shell.to_owned()];
+    let mut env = std::collections::BTreeMap::new();
+    match name {
+        "zsh" => {
+            if login {
+                command.push("-l".into());
+            }
+            env.insert("ZDOTDIR".into(), with(version_folder(home)?.join("zsh")));
+            if let Some(zdotdir) = &user.zdotdir {
+                env.insert("HIDE_SHELL_ZDOTDIR".into(), zdotdir.clone());
+            }
         }
+        "bash" => {
+            let file = if login { BASH[0].0 } else { BASH[1].0 };
+            command.push("--init-file".into());
+            command.push(with(version_folder(home)?.join("bash").join(file)));
+        }
+        "fish" => {
+            if login {
+                command.push("-l".into());
+            }
+            command.extend(["-C".into(), FISH_MARK.into()]);
+        }
+        _ => return Ok(None),
     }
-    Ok(env)
+    Ok(Some(ShellLaunch { command, env }))
 }
 
+/// Herdr's own shell for a Windows pane, Windows PowerShell, with the
+/// prompt wrapper Herdr gives it and the mark.
 #[cfg(windows)]
-pub fn install(_home: &Path, _user: &UserShell) -> io::Result<BTreeMap<String, String>> {
-    Ok(BTreeMap::new())
+pub fn install(_home: &Path, _user: &UserShell) -> io::Result<Option<ShellLaunch>> {
+    Ok(Some(ShellLaunch {
+        command: vec![
+            "powershell.exe".into(),
+            "-NoExit".into(),
+            "-Command".into(),
+            POWERSHELL_COMMAND.into(),
+        ],
+        env: Default::default(),
+    }))
 }
 
 /// The folder of this build's files, written whole when it is missing.
 #[cfg(unix)]
 fn version_folder(home: &Path) -> io::Result<PathBuf> {
     use sha2::{Digest, Sha256};
+    let files = || {
+        ZSH.iter()
+            .map(|(name, text)| (Path::new("zsh").join(name), *text))
+            .chain(
+                BASH.iter()
+                    .map(|(name, text)| (Path::new("bash").join(name), *text)),
+            )
+    };
     let mut digest = Sha256::new();
-    for (name, text) in ZSH.iter().chain(&[(FISH_FILE, FISH)]) {
-        digest.update(name.as_bytes());
+    for (path, text) in files() {
+        digest.update(path.to_string_lossy().as_bytes());
         digest.update([0]);
         digest.update(text.as_bytes());
         digest.update([0]);
@@ -156,19 +198,14 @@ fn version_folder(home: &Path) -> io::Result<PathBuf> {
     let staging = tempfile::Builder::new()
         .prefix(".staging-")
         .tempdir_in(&root)?;
-    let written = (|| {
-        let zsh = staging.path().join("zsh");
-        std::fs::create_dir(&zsh)?;
-        for (name, text) in ZSH {
-            std::fs::write(zsh.join(name), text)?;
-        }
-        let fish = staging.path().join("fish-data").join(FISH_FILE);
+    let written = files().try_for_each(|(path, text)| {
+        let path = staging.path().join(path);
         std::fs::create_dir_all(
-            fish.parent()
-                .ok_or_else(|| io::Error::other("no fish folder"))?,
+            path.parent()
+                .ok_or_else(|| io::Error::other("no folder for a startup file"))?,
         )?;
-        std::fs::write(&fish, FISH)
-    })();
+        std::fs::write(path, text)
+    });
     // A writer of the same text may have finished first.
     if let Err(error) = written {
         return if folder.is_dir() {
@@ -217,39 +254,51 @@ mod real_shell_tests;
 mod tests {
     use super::*;
 
-    fn zsh_user() -> UserShell {
+    fn user(shell: &str) -> UserShell {
         UserShell {
-            shell: Some("/bin/zsh".into()),
+            shell: Some(shell.into()),
             ..Default::default()
         }
     }
 
+    fn launch(home: &Path, shell: &str) -> ShellLaunch {
+        install(home, &user(shell)).unwrap().unwrap()
+    }
+
+    /// Herdr's `auto` mode: a login shell on macOS, not on Linux.
+    fn login() -> bool {
+        cfg!(target_os = "macos")
+    }
+
     #[test]
-    fn the_environment_names_files_that_read_the_users_own_first() {
+    fn zsh_starts_with_zdotdir_naming_files_that_read_the_users_own_first() {
         let home = tempfile::tempdir().unwrap();
-        let env = install(home.path(), &zsh_user()).unwrap();
-        let zsh = Path::new(&env["ZDOTDIR"]);
-        for (name, _) in ZSH {
-            assert!(zsh.join(name).is_file(), "{name}");
-        }
-        let (data, rest) = env["XDG_DATA_DIRS"].split_once(':').unwrap();
-        assert_eq!(rest, XDG_DATA_DIRS_DEFAULT);
-        assert!(Path::new(data).join(FISH_FILE).is_file());
-        assert!(zsh.starts_with(hide_kit::layout::shell_integration(home.path())));
-        assert!(!env.contains_key("HIDE_SHELL_ZDOTDIR"), "the user had none");
-        assert!(!env.contains_key("HIDE_SHELL_XDG_DATA_DIRS"));
-        // The user's own values follow, and a second install answers the
-        // same folder without writing it again.
-        let user = UserShell {
-            shell: Some("/opt/homebrew/bin/fish".into()),
-            zdotdir: Some("/home/me/.config/zsh".into()),
-            data_dirs: Some("/opt/share".into()),
+        let zsh = launch(home.path(), "/bin/zsh");
+        let expected: &[&str] = if login() {
+            &["/bin/zsh", "-l"]
+        } else {
+            &["/bin/zsh"]
         };
-        let again = install(home.path(), &user).unwrap();
-        assert_eq!(again["ZDOTDIR"], env["ZDOTDIR"]);
-        assert_eq!(again["XDG_DATA_DIRS"], format!("{data}:/opt/share"));
-        assert_eq!(again["HIDE_SHELL_ZDOTDIR"], "/home/me/.config/zsh");
-        assert_eq!(again["HIDE_SHELL_XDG_DATA_DIRS"], "/opt/share");
+        assert_eq!(zsh.command, expected);
+        let folder = Path::new(&zsh.env["ZDOTDIR"]);
+        for (name, _) in ZSH {
+            assert!(folder.join(name).is_file(), "{name}");
+        }
+        assert!(folder.starts_with(hide_kit::layout::shell_integration(home.path())));
+        assert_eq!(zsh.env.len(), 1, "the user had no ZDOTDIR: {:?}", zsh.env);
+        // The user's own ZDOTDIR follows, and a second install answers the
+        // same folder without writing it again.
+        let again = install(
+            home.path(),
+            &UserShell {
+                shell: Some("/opt/homebrew/bin/zsh".into()),
+                zdotdir: Some("/home/me/.config/zsh".into()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(again.env["ZDOTDIR"], zsh.env["ZDOTDIR"]);
+        assert_eq!(again.env["HIDE_SHELL_ZDOTDIR"], "/home/me/.config/zsh");
         let entries = std::fs::read_dir(hide_kit::layout::shell_integration(home.path()))
             .unwrap()
             .count();
@@ -257,14 +306,46 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_the_environment_does_not_reach_gets_nothing_of_hides() {
+    fn bash_starts_with_the_init_file_for_how_herdr_would_have_started_it() {
         let home = tempfile::tempdir().unwrap();
-        for shell in [Some("/bin/bash"), Some("/bin/sh"), None] {
+        let bash = launch(home.path(), "/bin/bash");
+        assert_eq!(bash.command[..2], ["/bin/bash", "--init-file"]);
+        let init = Path::new(&bash.command[2]);
+        assert!(init.is_file());
+        assert_eq!(
+            init.file_name().unwrap(),
+            if login() {
+                "login.bash"
+            } else {
+                "interactive.bash"
+            }
+        );
+        assert!(bash.env.is_empty(), "bash's environment is the user's");
+    }
+
+    #[test]
+    fn fish_marks_through_its_init_command_and_needs_no_file() {
+        let home = tempfile::tempdir().unwrap();
+        let fish = launch(home.path(), "/usr/bin/fish");
+        let mut expected = vec!["/usr/bin/fish"];
+        if login() {
+            expected.push("-l");
+        }
+        expected.extend(["-C", FISH_MARK]);
+        assert_eq!(fish.command, expected);
+        assert!(fish.env.is_empty());
+        assert!(!hide_kit::layout::shell_integration(home.path()).exists());
+    }
+
+    #[test]
+    fn a_shell_the_integration_does_not_reach_gets_no_launch() {
+        let home = tempfile::tempdir().unwrap();
+        for shell in [Some("/bin/sh"), Some("/usr/bin/nu"), Some("zsh"), None] {
             let user = UserShell {
                 shell: shell.map(str::to_owned),
                 ..Default::default()
             };
-            assert_eq!(install(home.path(), &user).unwrap(), BTreeMap::new());
+            assert_eq!(install(home.path(), &user).unwrap(), None, "{shell:?}");
         }
         assert!(!hide_kit::layout::shell_integration(home.path()).exists());
     }
@@ -285,8 +366,8 @@ mod tests {
         let recent = aged("0123456789abcdef", UNUSED_FOR - Duration::from_secs(60));
         let unused = aged("fedcba9876543210", UNUSED_FOR + Duration::from_secs(60));
         let left = aged(".staging-left", UNUSED_FOR + Duration::from_secs(60));
-        let env = install(home.path(), &zsh_user()).unwrap();
-        let ours = Path::new(&env["ZDOTDIR"]).parent().unwrap().to_owned();
+        let zsh = launch(home.path(), "/bin/zsh");
+        let ours = Path::new(&zsh.env["ZDOTDIR"]).parent().unwrap().to_owned();
         assert!(recent.is_dir(), "a pane may still be reading it");
         assert!(!unused.exists() && !left.exists());
         // This build's folder counts as used each time a pane is started
@@ -295,7 +376,7 @@ mod tests {
             .unwrap()
             .set_modified(SystemTime::now() - UNUSED_FOR * 2)
             .unwrap();
-        install(home.path(), &zsh_user()).unwrap();
+        launch(home.path(), "/bin/bash");
         let age = SystemTime::now()
             .duration_since(std::fs::metadata(&ours).unwrap().modified().unwrap())
             .unwrap();
