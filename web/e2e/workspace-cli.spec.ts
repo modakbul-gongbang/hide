@@ -5,7 +5,7 @@ import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace } from "./wire";
+import { enterWorkspace, showProjectRow } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
@@ -105,7 +105,7 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) {
       await page.screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "workspace-cli-background.png") });
     }
-    const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
+    const firstRow = await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first());
     await firstRow.click();
     // Opens without --reveal leave the Workspace's File Views as it was: off.
     const workspace = page.locator("[data-workspace-screen]");

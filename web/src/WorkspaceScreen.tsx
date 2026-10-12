@@ -22,12 +22,14 @@ import { workspaceKey } from "./viewLayout";
 import { bodyStep, columnFrame, dividerLanding, slotsForStep, workspaceViewOf, type BodyStep, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
 import { commandLabel } from "./shortcutLabels";
+import { cn } from "./lib/utils";
 import { useInterfaceTranslation } from "./i18n/client";
 import "./columnCalls";
 
 // A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD three-column-panel D-01,
-// D-02, D-04, D-07, D-12): one checkout's toolbar across the whole body, and
-// under it three docked columns, left to right Agent Views (its Herdr tabs
+// D-02, D-04, D-07, D-12): one checkout's path and column icons in the
+// window's top row (PRD sidebar-titlebar-refresh D-15, `WorkspaceTitle`), and
+// in the body three docked columns, left to right Agent Views (its Herdr tabs
 // and their panes), File Views (its files, diffs and pages) and Tools (the
 // Explorer or History). No column is drawn over another. Whether File Views
 // and Tools are on, the tool and the two widths are the core's, per
@@ -125,7 +127,6 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
       data-tools={toolsShown ? "shown" : view.tools ? "hidden" : "off"}
       data-workspace-body={frame.step}
     >
-      <WorkspaceToolbar checkout={checkout} view={view} viewsShown={viewsShown} toolsShown={toolsShown} actions={actions} />
       <ColumnRow view={view} frame={frame} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
     </section>
   );
@@ -347,18 +348,32 @@ function DividerGrip({ className = "" }: { className?: string }) {
 }
 
 /**
- * The toolbar across the whole body (B6): the path back on the left, and at
- * the right end, icons only, Open server, File Views and Tools (D-04).
+ * The Workspace's part of the window's top row (PRD sidebar-titlebar-refresh
+ * D-15, D-16, B17, B18): a remote device's band, the `project / checkout`
+ * path, and at the right end, icons only, Overview, Open server, File Views
+ * and Tools. The project opens its Overview; a right-click on the path opens
+ * the Workspace's menu. Nothing while a Workspace is not the screen in front.
  */
-function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: { checkout: Checkout; view: WorkspaceView; viewsShown: boolean; toolsShown: boolean; actions: Actions }) {
+export function WorkspaceTitle({ actions }: { actions: Actions }) {
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
+  const checkout = useShellStore((s) => frontCheckout(s.rest));
+  const view = useShellStore((s) => workspaceViewOf(s.rest));
+  if (!workspaceScreen || !checkout || !view) return null;
+  return <WorkspaceTitleBar checkout={checkout} view={view} actions={actions} />;
+}
+
+function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; view: WorkspaceView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
+  // The icons say what the body draws now, which a narrow body decides (`columnFrame`).
+  const viewsShown = useUiStore((s) => s.shownColumns.views);
+  const toolsShown = useUiStore((s) => s.shownColumns.tools);
   // The chords as bound, so a rebound one shows as bound (B7).
   const viewsChord = useShellStore((s) => commandLabel("toggle_right_panel", s.rest?.ui_state));
   const toolsChord = useShellStore((s) => commandLabel("toggle_explorer", s.rest?.ui_state));
   const name = checkout.branch ?? checkout.label;
-  // What the toolbar acts on is this Workspace: its columns, its path and
+  // What the menu acts on is this Workspace: its columns, its path and
   // its Project (B15). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
     { id: "views", label: viewsShown ? t("panes.workspace.hideFileViews") : t("panes.workspace.showFileViews"), unavailable: null },
@@ -372,69 +387,72 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   };
   const count = viewsShown ? 0 : (view.layout?.display_count ?? 0);
   const viewsOpen = count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined;
+  const home = project?.is_home === true;
   return (
-    <EntryContextMenu label={t("panes.workspace.aria", { name })} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
-        {device ? (
-          // The front thing is a remote device's: its color and name lead the toolbar, and the pane border wears the same color (PRD home-device-rail D-15).
-          <span className="-ml-sm flex h-full max-w-(--size-recent-location-max) shrink-0 items-center gap-xs bg-device-remote px-sm font-medium text-primary-foreground" data-device-band={device.id}>
-            <ServerIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-            <span className="min-w-0 truncate">{registeredName(device)}</span>
-          </span>
-        ) : null}
-        <nav aria-label={t("panes.workspace.location")} className="flex min-w-0 flex-1 items-center gap-xs">
-          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => actions.openHome()}>
-            {t("common.home")}
-          </button>
-          {project && !project.is_home ? (
+    <div className="flex h-full min-w-0 flex-1 items-center gap-sm pr-sm text-caption" data-workspace-toolbar="true">
+      {device ? (
+        // The front thing is a remote device's: its color and name lead the path, and the pane border wears the same color (PRD home-device-rail D-15).
+        <span className="flex h-full max-w-(--size-recent-location-max) shrink-0 items-center gap-xs bg-device-remote px-sm font-medium text-primary-foreground" data-device-band={device.id}>
+          <ServerIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span className="min-w-0 truncate">{registeredName(device)}</span>
+        </span>
+      ) : null}
+      <EntryContextMenu label={t("panes.workspace.aria", { name })} items={menuItems} onSelect={select} className={cn("flex min-w-0 flex-1 self-stretch items-center", !device && "pl-sm")} data-workspace-menu="true">
+        <nav aria-label={t("panes.workspace.location")} className="flex min-w-0 items-center gap-xs">
+          {project && !home ? (
             <>
-              <span aria-hidden="true" className="text-muted-foreground">/</span>
               <Hint label={`${project.label} · ${project.path}${device ? ` · ${registeredName(device)}` : ""}`}>
-                <span className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate px-xs text-subtle-foreground" data-workspace-project={project.id}>
+                <button
+                  type="button"
+                  className="min-w-0 max-w-(--size-recent-location-max) shrink truncate rounded-xs px-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+                  data-workspace-project={project.id}
+                  onClick={() => actions.openOverview(project.device_id, project.id)}
+                >
                   {project.label}
-                </span>
+                </button>
               </Hint>
+              <span aria-hidden="true" className="text-muted-foreground">/</span>
             </>
           ) : null}
-          <span aria-hidden="true" className="text-muted-foreground">/</span>
-          {/* Home is no project (B16): its tab is `Home / ~/hide`, the folder every device keeps it in (D-03). */}
-          <Hint label={`${project?.is_home ? HOME_FOLDER : name} · ${checkout.path}`}>
-            <span className="min-w-0 truncate text-foreground" aria-current="page" data-workspace-location={project?.is_home ? "home" : "checkout"}>
-              {project?.is_home ? HOME_FOLDER : name}
+          {/* Home is no project (B16): its path is the folder every device keeps it in (D-03).
+              Not a drag handle: its hint and the path menu need the pointer (B18, B19). */}
+          <Hint label={`${home ? HOME_FOLDER : name} · ${checkout.path}`}>
+            <span className="min-w-0 truncate px-xs text-foreground" aria-current="page" data-workspace-location={home ? "home" : "checkout"} data-window-control="true">
+              {home ? HOME_FOLDER : name}
             </span>
           </Hint>
         </nav>
-        <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label={t("panes.workspace.columns")} data-column-toggles="true">
-          <OverviewButton actions={actions} />
-          <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
-          {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
-          <Hint label={t("panes.workspace.fileViews")} shortcut={viewsChord}>
-            <Button
-              variant={viewsShown ? "secondary" : "ghost"}
-              size="icon-sm"
-              className="relative"
-              aria-pressed={viewsShown}
-              aria-label={t("panes.workspace.fileViews")}
-              aria-description={viewsOpen}
-              data-column-toggle="views"
-              onClick={() => actions.toggleFileViews()}
-            >
-              <FilesIcon />
-              {count > 0 ? (
-                <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-column-badge={count}>
-                  {count}
-                </span>
-              ) : null}
-            </Button>
-          </Hint>
-          <Hint label={t("panes.workspace.tools")} shortcut={toolsChord}>
-            <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label={t("panes.workspace.tools")} data-column-toggle="tools" onClick={() => actions.toggleTools()}>
-              <PanelRightIcon />
-            </Button>
-          </Hint>
-        </div>
+      </EntryContextMenu>
+      <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label={t("panes.workspace.columns")} data-column-toggles="true">
+        <OverviewButton actions={actions} />
+        <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
+        {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
+        <Hint label={t("panes.workspace.fileViews")} shortcut={viewsChord}>
+          <Button
+            variant={viewsShown ? "secondary" : "ghost"}
+            size="icon-sm"
+            className="relative"
+            aria-pressed={viewsShown}
+            aria-label={t("panes.workspace.fileViews")}
+            aria-description={viewsOpen}
+            data-column-toggle="views"
+            onClick={() => actions.toggleFileViews()}
+          >
+            <FilesIcon />
+            {count > 0 ? (
+              <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-column-badge={count}>
+                {count}
+              </span>
+            ) : null}
+          </Button>
+        </Hint>
+        <Hint label={t("panes.workspace.tools")} shortcut={toolsChord}>
+          <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label={t("panes.workspace.tools")} data-column-toggle="tools" onClick={() => actions.toggleTools()}>
+            <PanelRightIcon />
+          </Button>
+        </Hint>
       </div>
-    </EntryContextMenu>
+    </div>
   );
 }
 

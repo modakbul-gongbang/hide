@@ -1023,9 +1023,11 @@ fn convert_core_state(value: &mut Value, node: &str, _projects: &BTreeMap<String
     }
     changed |= rename_key(value.get_mut("device_expanded_paths"), node);
     for fold in each(value, "session_open_folds") {
-        if fold.as_str() == Some(&format!("cleanup/{LEGACY}")) {
-            *fold = Value::String(format!("cleanup/{node}"));
-            changed = true;
+        for prefix in ["cleanup", "no_agents"] {
+            if fold.as_str() == Some(&format!("{prefix}/{LEGACY}")) {
+                *fold = Value::String(format!("{prefix}/{node}"));
+                changed = true;
+            }
         }
     }
     if let Some(dormant) = value

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
+import { countSent, registerFolder, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { onDisk } from "./wait";
@@ -42,7 +42,7 @@ test("History opens a scoped patch, then updates after editing the original file
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first())).click();
     // The Tools column holds one tool; History's tab swaps the Explorer out
     // (S6 B10).
     await showExplorer(page);
@@ -129,8 +129,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await registerFolder(page, daemon, registered);
     await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(1);
-    const project = page.locator("[data-project]", { hasText: "registered" });
-    await expect(project).toBeVisible({ timeout: 20_000 });
+    const project = await showProjectRow(page, page.locator("[data-project]", { hasText: "registered" }));
     await project.locator("[data-checkout]").first().click();
     await showTool(page, "changes");
     const history = page.locator('[data-history-root]');

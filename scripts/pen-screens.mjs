@@ -446,11 +446,13 @@ function screenUsageChip(id, {provider, value}) {
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
 // own feature in isolation. It is --size-sidebar-ideal wide, as sidebar.tsx
-// draws it, so its footer holds the one-device window's device button, the usage
-// chips and the Settings gear side by side. Its top is the device's Home row,
-// marked while `overview` is the screen beside it (session-first-ui B1-B10).
+// draws it: the Search row on top, then the Overview row, marked while
+// `overview` is the screen beside it (session-first-ui B1-B10), and a footer of
+// the usage chips, Help and the Settings gear.
 function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
   return frame(`${id}-${suffix}`, 'Sidebar', {width: num(tokens, '--size-sidebar-ideal'), layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
+    // The Search row opens the list; there is no Home row (PRD sidebar-titlebar-refresh D-06, D-08).
+    themedXref(`${id}-search-${suffix}`, 'sbc-search', 'Search row', {width: 'fill_container', padding: 0}),
     frame(`${id}-overview-${suffix}`, 'Overview', {
       width: 'fill_container', height: num(tokens, '--size-project-row'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm',
       ...(overview ? {fill: '$--secondary'} : {}),
@@ -459,12 +461,6 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
       text(`${id}-overviewn-${suffix}`, '2 asking · ⌘⇧O', {fill: '$--muted-foreground'}),
-    ]),
-    frame(`${id}-home-${suffix}`, 'Home', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
-      icon(`${id}-homeicon-${suffix}`, 'house', {size: num(tokens, '--size-checkout-icon'), fill: '$--muted-foreground'}),
-      text(`${id}-hometitle-${suffix}`, 'Home', {size: '$--text-caption'}),
-      frame(`${id}-tabsgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      screenIconButton(`${id}-search-${suffix}`, 'search'),
     ]),
     text(`${id}-seen-${suffix}`, 'Projects · Recent activity', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Root rows keep direct children behind their shared badge.
@@ -480,6 +476,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       frame(`${id}-footergap-${suffix}`, 'Gap', {width: 'fill_container', height: 1}, []),
       screenUsageChip(`${id}-usage0-${suffix}`, {provider: 'claude', value: '62%'}),
       screenUsageChip(`${id}-usage1-${suffix}`, {provider: 'codex', value: '59%'}),
+      screenIconButton(`${id}-help-${suffix}`, 'circle-help', {size: 20}),
       screenIconButton(`${id}-settings-${suffix}`, 'settings', {size: 20}),
     ]),
   ]);
@@ -2498,7 +2495,7 @@ function buildWorkspace(tokens) {
         "fill": "$--muted-foreground",
         "textGrowth": "fixed-width",
         "width": 1940,
-        "content": "PRD #321 A: Agents | File Views | Tools. Shared toolbar; independent controls; File badge only while hidden. Minima 480/360/260, divider 8, thresholds1116/848. Narrow calls substitute a column. Every scene below is linked to the copied component library; no Tools overlay, Pin or Expand.",
+        "content": "PRD #321 A: Agents | File Views | Tools. The window's top row carries the path and the four icons beside the traffic lights (PRD sidebar-titlebar-refresh D-15, D-16); independent controls; File badge only while hidden. Minima 480/360/260, divider 8, thresholds1116/848. Narrow calls substitute a column. Every scene below is linked to the copied component library; no Tools overlay, Pin or Expand.",
         "fontFamily": "$--font-ui",
         "fontSize": "$--text-body",
         "fontWeight": "normal"
@@ -3133,6 +3130,56 @@ function buildWorkspace(tokens) {
     for (const child of node.children ?? []) nodes(child, result);
     return result;
   }
+  // PRD sidebar-titlebar-refresh D-15 to D-17: macOS's title bar and the toolbar
+  // row are one top row. Over the rail and the sidebar it names the device a step
+  // after the traffic lights; over the center the toolbar carries the path without
+  // Home and the four icons; the rail, the sidebar (Search row first, no Home row)
+  // and the columns start at its foot. Applied to every decoded state after its own
+  // changes, so the states keep their ids and differences.
+  const TOP = num(tokens, '--size-tab-strip');
+  const OLD_TOP = 28;
+  const OLD_BODY = 60;
+  const toolbarColors = themedOverrides('VMZTz').descendants;
+  const aliased = map => Object.fromEntries(Object.entries(map).map(([key, value]) => [key.split('/').map(part => `${ALIAS}:${part}`).join('/'), value]));
+  function topRow(window) {
+    const named = (parent, name) => {
+      const node = parent.children.find(child => child.name === name);
+      if (!node) throw new Error(`Workspace window ${window.id} lacks ${name}`);
+      return node;
+    };
+    const chrome = named(window, 'Native window chrome - comparison context');
+    const rail = named(window, 'Device rail');
+    const sidebar = named(window, 'Projects sidebar');
+    const toolbar = named(window, 'Shared Workspace toolbar');
+    const columns = named(window, 'Docked columns');
+    const [light0, light1, light2, title] = chrome.children;
+    Object.assign(chrome, {name: 'Window top row: device', width: sidebar.x + sidebar.width, height: TOP, fill: '$--sidebar', strokeWidth: {bottom: '$--size-hairline', right: '$--size-hairline'}});
+    chrome.children = [
+      {...light0, x: 13, y: 10}, {...light1, x: 33, y: 10}, {...light2, x: 53, y: 10},
+      {...title, name: 'Device', content: 'This Mac', x: num(tokens, '--size-traffic-light-inset') + num(tokens, '--spacing-sm'), y: 8, fill: '$--foreground', fontSize: '$--text-subhead'},
+    ];
+    for (const column of [rail, sidebar]) Object.assign(column, {y: TOP, height: column.height - (TOP - OLD_TOP)});
+    const header = named(sidebar, 'This Mac header');
+    const tabs = named(sidebar, 'Sidebar tab strip');
+    const search = themedXref(header.id, 'sbc-search', 'Search row', {x: 0, y: 0, width: sidebar.width});
+    const searchH = num(tokens, '--spacing-sm') + num(tokens, '--size-sidebar-search') + num(tokens, '--spacing-xs');
+    Object.assign(tabs, {name: 'Overview row', y: searchH, children: [
+      icon(`${tabs.id}-g`, 'layout-dashboard', {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
+      {...tabs.children[0], name: 'Overview', content: 'Overview', fill: '$--subtle-foreground'},
+    ]});
+    sidebar.children = sidebar.children.filter(child => child.name !== 'Home').map(child => child === header ? search : child);
+    Object.assign(named(sidebar, 'Recent activity'), {y: searchH + TOP + num(tokens, '--spacing-md'), fontWeight: '500'});
+    named(sidebar, 'Selected checkout').y = searchH + TOP + num(tokens, '--spacing-md') + num(tokens, '--size-sidebar-section-header') - num(tokens, '--spacing-sm');
+    named(sidebar, 'Sidebar footer').y = sidebar.height - TOP;
+    const breadcrumb = `${ALIAS}:bkh81`;
+    const descendants = {...aliased(toolbarColors), ...toolbar.descendants};
+    if (descendants[breadcrumb]?.content) descendants[breadcrumb] = {...descendants[breadcrumb], content: descendants[breadcrumb].content.replace(/^Home\s+\/\s+/, '')};
+    Object.assign(toolbar, {name: 'Top row: Workspace path and icons', y: 0, height: TOP, descendants});
+    Object.assign(columns, {y: TOP, height: columns.height + OLD_BODY - TOP});
+    for (const child of window.children) {
+      if (![chrome, rail, sidebar, toolbar, columns].includes(child) && child.y >= OLD_BODY) child.y -= OLD_BODY - TOP;
+    }
+  }
   for (const state of states) {
     const window = structuredClone(windowTemplate);
     nodes(window).forEach((node, index) => { node.id = state.ids[index]; });
@@ -3149,6 +3196,7 @@ function buildWorkspace(tokens) {
       const master = findMaster({children: libraryDocument().children}, masterId);
       if (!master?.reusable) throw new Error(`Workspace needs reusable master ${masterId}`);
     }
+    topRow(window);
     materialized.set(state.id, window);
   }
   function expand(node) {
@@ -3255,7 +3303,7 @@ function buildSettings(tokens, root) {
 // -- Screen / Palette ------------------------------------------------------------
 
 // The ⌘K palette (PRD cmdk-navigation) and the ⌘P file palette on the same
-// shell: the sidebar's Search icon that opens ⌘K, the query row with its Esc
+// shell: the sidebar's Search row that opens ⌘K, the query row with its Esc
 // keycap, two-line rows with the agent's own mark and ↵ on the selected row,
 // and for ⌘K a detail beside the list. Rows are authored here on local tokens, as the
 // Overview board authors its agent rows, since no library master draws a
@@ -3310,21 +3358,10 @@ function buildPalette(tokens) {
       node,
     ]);
 
-    // The sidebar's tab strip on Agents: Search, the icon at its end, opens
-    // ⌘K, and its hint names the chord (PRD sidebar-shell D-03, D-07).
+    // The sidebar's Search row under the window's top row reads Search and the
+    // bound chord, and opens ⌘K (PRD sidebar-titlebar-refresh D-08).
     const sidebar = frame(id('side'), 'Sidebar', {width: SIDEBAR, layout: 'vertical', gap: '$--spacing-xs', fill: '$--sidebar', padding: [0, 0, '$--spacing-md', 0], cornerRadius: '$--radius-md'}, [
-      frame(id('side-modes'), 'Modes', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: SIDEBAR, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-xs', 0, '$--spacing-md']}, [
-        text(id('side-projects'), 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(id('side-agents'), 'Agents', {size: '$--text-caption'}),
-        frame(id('side-gap'), 'Spacer', {width: 'fill_container', height: 1}, []),
-        screenIconButton(id('side-search'), 'search'),
-      ]),
-      frame(id('side-hintwrap'), 'Search hint', {width: SIDEBAR, layout: 'horizontal', justifyContent: 'end', padding: [0, '$--spacing-xs']}, [
-        frame(id('side-hint'), 'Hint', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-          text(id('side-hintl'), 'Search', {size: '$--text-caption', fill: '$--popover-foreground'}),
-          text(id('side-hintk'), '⌘K', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        ]),
-      ]),
+      themedXref(id('side-search'), 'sbc-search', 'Search row', {width: SIDEBAR}),
       frame(id('side-sectwrap'), 'Section', {padding: ['$--spacing-sm', '$--spacing-md', 0, '$--spacing-md']}, [
         text(id('side-sect'), 'NEEDS YOU · 1', {size: '$--text-micro', fill: '$--muted-foreground'}),
       ]),
@@ -3445,7 +3482,7 @@ function buildPalette(tokens) {
     ]);
 
     return [
-      labelled('side-cell', 'Sidebar · the Search icon opens ⌘K', sidebar),
+      labelled('side-cell', 'Sidebar · the Search row opens ⌘K', sidebar),
       frame(id('wide-states'), 'Wide states', {layout: 'vertical', gap: '$--spacing-lg'}, [
         labelled('related-cell', '⌘K · empty, in front of an agent: relations', relations),
         labelled('typed-cell', '⌘K · typed', typed),
@@ -3461,7 +3498,7 @@ function buildPalette(tokens) {
       ]),
     ];
   }
-  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/SearchPalette.tsx and web/src/Palette.tsx over Command/CommandDialog (PRD cmdk-navigation): the sidebar’s Search icon with its ⌘K hint, ⌘K’s wide list-and-detail layout (empty in front of an agent drawn as the Overview groups it, typed results by group, #number, the input alone, GitHub searching, results and failed) and the ⌘P file palette whose ⌘↵ opens beside.', build, build);
+  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/SearchPalette.tsx and web/src/Palette.tsx over Command/CommandDialog (PRD cmdk-navigation): the sidebar’s Search row with its ⌘K chord, ⌘K’s wide list-and-detail layout (empty in front of an agent drawn as the Overview groups it, typed results by group, #number, the input alone, GitHub searching, results and failed) and the ⌘P file palette whose ⌘↵ opens beside.', build, build);
 }
 
 // -- Screen / Dialogs and Sheets -------------------------------------------------
@@ -3798,28 +3835,24 @@ function buildProjectsSidebar(tokens) {
   }
 
   // A project's badge is its checkouts' added up, and it stays while they are open.
-  function projectRow(id, {name, marks, expanded, selected = false}) {
-    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : {})}, {
+  // The name is 600 while an agent there works (a mark of ▲ ! ? ● ◐ ✓) and 400 when
+  // its agents only rest or sleep or it has none (PRD sidebar-titlebar-refresh D-02);
+  // a project or one-line folder whose agents all sleep is folded behind one moon
+  // cell (D-03), and under the pointer + and ⋯ stand over the badge slot (D-04).
+  const WORKING = ['error', 'approval', 'question', 'working', 'stopped', 'done'];
+  function projectRow(id, {name, marks, expanded, selected = false, glyph = 'folder-git-2', asleep, hover = false, menu = false}) {
+    const working = WORKING.some(part => (marks?.[part] ?? 0) > 0);
+    const actions = hover || menu;
+    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : actions ? {fill: '$--accent'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
       // An unfolded project's chevron waits for the pointer in its slot.
-      wgtfo: {opacity: expanded ? 0 : 1},
-      mIzlX: {icon: 'folder-git-2'},
-      JkPyX: {content: name},
+      wgtfo: {opacity: expanded && !actions ? 0 : 1},
+      mIzlX: {icon: glyph},
+      JkPyX: {content: name, fontWeight: working ? '600' : '400'},
       ...status('project', marks),
-    });
-  }
-
-  // The device's Home row (sidebar-header.tsx), in the place the Overview row held:
-  // the project row's columns, the house glyph, the project count where a badge
-  // stands, and under the pointer + in the fold slot (a new tab in Home).
-  function homeRow(id, {count, selected = false, hover = false}) {
-    return themedXref(id, 'qdhY0', 'Home', {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : hover ? {fill: '$--accent'} : {})}, {
-      wgtfo: {opacity: hover ? 1 : 0},
-      iBYjj: {icon: 'plus', fill: '$--foreground'},
-      mIzlX: {icon: 'house'},
-      JkPyX: {content: 'Home'},
-      nZkan: {enabled: true, content: count},
-      'project-status': {enabled: false},
+      ...(asleep && !expanded ? {'project-status': {enabled: false}, 'project-asleep': {enabled: !actions}, 'project-asleep-age': {content: asleep}} : {}),
+      ...(actions ? {'project-status': {enabled: false}, 'project-actions': {enabled: true}} : {}),
+      ...(menu ? {'project-action-more': {fill: '$--secondary'}} : {}),
     });
   }
 
@@ -3849,7 +3882,8 @@ function buildProjectsSidebar(tokens) {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},
       'checkout-name-prefix': prefix ? {content: prefix, enabled: true} : {enabled: false},
-      q91d7: project ? {content: name, fontSize: '$--text-subhead', fontWeight: '600'} : {content: rest, fontWeight: selected ? '500' : 'normal'},
+      // A plain folder's name is the project's: 600 while an agent there works, else 400 (D-02).
+      q91d7: project ? {content: name, fontSize: '$--text-subhead', fontWeight: WORKING.some(part => (marks?.[part] ?? 0) > 0) ? '600' : '400'} : {content: rest, fontWeight: selected ? '500' : 'normal'},
       TS5x9: {enabled: kind === 'missing'},
       ...status('checkout', project || !expanded ? marks : null),
       TuosT: !secondLine && age ? {content: age, enabled: true} : {enabled: false},
@@ -3892,14 +3926,14 @@ function buildProjectsSidebar(tokens) {
     return themedXref(id, 'inactive-fold-row', label, {width: row, padding: [0, xs, 0, level === 'project' ? sm : glyphColumn]}, {'inactive-fold-label': {content: label}});
   }
 
-  // The library's Section Header, 10/500 in sentence case (D-11), at the
-  // list's own inset, with neither chevron nor detail: these sections do not fold.
-  function section(id, label) {
-    return themedXref(id, 'O79KF', label, {width: row, padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-xxs', '$--spacing-sm']}, {
-      eK6gz: {enabled: false},
-      VOd6D: {content: label, fill: '$--muted-foreground'},
-      rVsKB: {enabled: false},
-      g7fzt: {enabled: false},
+  // Component / Sidebar chrome's section header, 10/500 on its baseline in a 26
+  // row: Pinned leads with the pin, Projects ends in Add project, and a header stuck
+  // to the list's top wears its hairline (PRD sidebar-titlebar-refresh D-05).
+  function section(id, label, {pin = false, add = false, stuck = false} = {}) {
+    return themedXref(id, 'sbc-section', label, {width: row, ...(stuck ? {stroke: '$--border', strokeWidth: {bottom: 1}, strokeAlignment: 'inner'} : {})}, {
+      'sbc-section-pin': {enabled: pin},
+      'sbc-section-label': {content: label},
+      'sbc-section-add': {enabled: add},
     });
   }
 
@@ -3972,18 +4006,27 @@ function buildProjectsSidebar(tokens) {
     ]);
   }
 
-  // The header line beside the traffic lights names the device in front, with Add
-  // project and Search at its end; with the rail hidden the name carries a chevron
-  // and opens the device menu.
-  function headerLine(p, {name, tag, icons = [], menu = false}) {
-    return frame(`${p}-band`, 'Header line', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, alignItems: 'center', padding: [0, xs, 0, '$--spacing-md']}, name ? [
-      text(`${p}-bn`, name, {size: '$--text-subhead', weight: '600'}),
-      ...(tag ? [text(`${p}-bt`, tag, {size: '$--text-caption', fill: MUTED})] : []),
-      ...(menu ? [icon(`${p}-bc`, 'chevron-down', {size: 12, fill: MUTED})] : []),
-      spacer(`${p}-bsp`),
-      ...icons.map(g => screenIconButton(`${p}-b${g}`, g)),
-    ] : []);
+  // The window's top row over the rail and the sidebar (TitleRow.tsx, PRD
+  // sidebar-titlebar-refresh D-15): the traffic lights, then the device in front a
+  // step after their space; with the rail hidden the name carries a chevron and
+  // opens the device menu. Its right edge is the sidebar's, so the divider runs up.
+  const TOP = num(tokens, '--size-tab-strip');
+  function topRow(p, {name, tag, menu = false, rail = true}) {
+    const total = (rail ? railWidth : 0) + width;
+    const nameX = num(tokens, '--size-traffic-light-inset') + sm;
+    const light = (i, x) => ({type: 'ellipse', id: `${p}-tl${i}`, name: 'Traffic light', x, y: 10, width: 12, height: 12, fill: MUTED, opacity: 0.5});
+    return frame(`${p}-top`, 'Window top row', {width: total, height: TOP, layout: 'none', fill: '$--sidebar', stroke: '$--border', strokeWidth: {bottom: 1, right: 1}, strokeAlignment: 'inner'}, [
+      light(0, 13), light(1, 33), light(2, 53),
+      at(frame(`${p}-tn`, 'Device', {layout: 'horizontal', gap: sm, alignItems: 'center', height: TOP}, [
+        text(`${p}-tn-t`, name, {size: '$--text-subhead', weight: '600'}),
+        ...(tag ? [text(`${p}-tn-tag`, tag, {size: '$--text-caption', fill: MUTED})] : []),
+        ...(menu ? [icon(`${p}-tn-c`, 'chevron-down', {size: 12, fill: MUTED})] : []),
+      ]), nameX, 0),
+    ]);
   }
+
+  // The Search row the sidebar opens with, under the top row (D-08).
+  const searchRow = p => themedXref(`${p}-search`, 'sbc-search', 'Search row', {width});
 
   const ruleLine = id => frame(id, 'Rule', {width, height: 1, fill: '$--border'}, []);
 
@@ -3996,14 +4039,17 @@ function buildProjectsSidebar(tokens) {
     ]);
   }
 
-  // Usage chips and the Settings gear.
-  function footer(p) {
+  // Usage chips, then Help (?) and the Settings gear (D-11).
+  function footer(p, {helpOpen = false} = {}) {
     return frame(`${p}-ftr`, 'Footer', {width, layout: 'vertical'}, [
       ruleLine(`${p}-fr`),
       frame(`${p}-fb`, 'Footer row', {width, layout: 'horizontal', padding: [sm, '$--spacing-md'], gap: xs, alignItems: 'center'}, [
         screenUsageChip(`${p}-u0`, {provider: 'claude', value: '62%'}),
         screenUsageChip(`${p}-u1`, {provider: 'codex', value: '59%'}),
         spacer(`${p}-fsp`),
+        helpOpen
+          ? themedXref(`${p}-help`, 'Nyvom', 'Help', {width: 20, height: 20, fill: '$--secondary'}, {ZIZFR: {icon: 'circle-help', fill: '$--foreground'}})
+          : screenIconButton(`${p}-help`, 'circle-help', {size: 20}),
         screenIconButton(`${p}-gear`, 'settings', {size: 20}),
       ]),
     ]);
@@ -4022,49 +4068,45 @@ function buildProjectsSidebar(tokens) {
     batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
     build: {title: '릴리스 빌드 확인', status: 'working', provider: 'codex', age: '1m', place: 'hide › main'},
   };
-  // A raised group over Home: its heading with the whole count, its most recent
-  // rows up to the cap, and a More fold for the rest.
+  // A raised group: its heading with the whole count, its most recent rows up to
+  // the cap, and a More fold for the rest.
   const raised = (p, title, list, total = list.length) => [
     section(`${p}-sn`, `${title} · ${total}`),
     ...list.map(([key, extra], i) => agentRow(`${p}-n${i}`, {...AGENTS[key], inset: sm, ...extra})),
     ...(total > list.length ? [fold(`${p}-more`, `More ${total - list.length}`, 'project')] : []),
   ];
 
-  // The Home row with the agents that belong to no project under it.
-  function homeBlock(p, {count, agents, selected = false}) {
-    return frame(`${p}-home`, 'Home', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, [
-      homeRow(`${p}-hr`, {count, selected}),
-      ...agents.map((key, i) => agentRow(`${p}-ha${i}`, {...AGENTS[key], place: undefined, line: undefined, inset: 30})),
-    ]);
-  }
-
-  // One device's sidebar: the header line over Projects | Agents, then the sidebar's Needs You and Done groups, its Home
-  // and projects, or the Agents tab's counts and sections; a fixed `height` is the window's, and the list takes what is left.
-  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], menu = false, needs, done, home, rows = [], height}) {
+  // One device's sidebar column, under the window's top row: the Search row and the
+  // Overview row, then the Needs You and Done groups and the projects (no Home row,
+  // D-06); a fixed `height` is the window's, and the list takes what is left.
+  function deviceSidebar(key, s, {needs, done, rows = [], height, helpOpen = false}) {
     const p = `psb-${key}`;
     const id = `${p}-${s}`;
     return frame(`${p}-${s}`, 'Sidebar', {width, ...(height ? {height} : {}), layout: 'vertical', fill: '$--sidebar', clip: true}, [
-      headerLine(id, {name, tag, icons, menu}),
-      ruleLine(`${id}-r0`), sharedOverviewRow(id, needs?.total ?? 0), ruleLine(`${id}-r1`),
+      searchRow(id), sharedOverviewRow(id, needs?.total ?? 0), ruleLine(`${id}-r1`),
       ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(needs.p, 'Needs You', needs.rows, needs.total))] : []),
       ...(done ? [frame(`${id}-done`, 'Done', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(done.p, 'Done', done.rows, done.total))] : []),
-      ...(home ? [homeBlock(id, home)] : []),
       frame(`${id}-list`, 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
-      footer(id),
+      footer(id, {helpOpen}),
     ]);
   }
+
+  // The window's left part: the top row over the rail and the sidebar beside it.
+  const windowPart = (p, top, body) => frame(`${p}-window`, 'Top row, rail and sidebar', {layout: 'vertical', gap: 0, alignItems: 'start'}, [top, body]);
 
   function build(s) {
     const id = key => `psb-${key}-${s}`;
     const mark = {question: 1, working: 2, done: 1};
-    // The rest state the review target names: This Mac in front, its Needs You
-    // and Done groups over Projects, the Overview child of hide selected.
+    // The rest state the review target names: This Mac in front, its Needs You and
+    // Done groups over Pinned and Projects; working projects at 600, a resting one at
+    // 400, sleeping ones folded behind the moon cell, then No agents and Inactive
+    // projects folded (PRD sidebar-titlebar-refresh D-01 to D-06).
     const rest = deviceSidebar('sidebar', s, {
-      name: 'This Mac', needs: {p: `psb-nu-${s}`, rows: [['deploy'], ['blog']], total: 2}, done: {p: `psb-dn-${s}`, rows: [['ci']], total: 1}, home: {count: '6 projects', agents: ['blog', 'research']},
+      needs: {p: `psb-nu-${s}`, rows: [['deploy'], ['blog']], total: 2}, done: {p: `psb-dn-${s}`, rows: [['ci']], total: 1},
       rows: [
-        section(`psb-sec-pin-${s}`, 'Pinned · 1'),
+        section(`psb-sec-pin-${s}`, 'Pinned · 1', {pin: true}),
         folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
-        section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
+        section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5', {add: true}),
         projectRow(`psb-p-herdr-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
@@ -4087,17 +4129,14 @@ function buildProjectsSidebar(tokens) {
         fold(`psb-cleanup-${s}`, 'Cleanup 1', 'checkout'),
         fold(`psb-f-herdr-${s}`, 'Inactive 14', 'checkout'),
         projectRow(`psb-p-sasu-${s}`, {name: 'sasu', marks: {working: 1, done: 1, idle: 1}, expanded: false}),
+        projectRow(`psb-p-codex-${s}`, {name: 'codex-daemon-apply-spec', glyph: 'folder', asleep: '4d'}),
+        projectRow(`psb-p-sticky-${s}`, {name: 'sticky-notes', asleep: '14d'}),
+        fold(`psb-f-none-${s}`, 'No agents 3', 'project'),
         fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
       ],
     });
 
-    // The Home row at rest and under the pointer, where + starts a tab in Home.
-    const homeCut = (key, hover) => frame(id(key), hover ? 'Home row under the pointer' : 'Home row', {width, layout: 'vertical', padding: xs, fill: '$--sidebar', cornerRadius: '$--radius-sm'}, [
-      homeRow(`${id(key)}-row`, {count: '6 projects', hover}),
-      agentRow(`${id(key)}-a0`, {...AGENTS.blog, place: undefined, line: undefined, inset: 30}),
-    ]);
-
-    // A remote device in front: its own Home and Projects, tagged Remote; its
+    // A remote device in front: its own Projects, tagged Remote in the top row; its
     // twelve Needs You draw the five most recent and fold the rest.
     const remoteNeeds = [
       ['batch', {place: 'Home'}],
@@ -4107,9 +4146,9 @@ function buildProjectsSidebar(tokens) {
       ['batch', {title: '디스크 정리', provider: 'claude', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
     ];
     const remote = deviceSidebar('remote', s, {
-      name: 'mini', tag: 'Remote', height: WIN_H, needs: {p: `psb-rm-${s}`, rows: remoteNeeds, total: 12}, home: {count: '2 projects', agents: ['batch']},
+      height: WIN_H, needs: {p: `psb-rm-${s}`, rows: remoteNeeds, total: 12},
       rows: [
-        section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2'),
+        section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2', {add: true}),
         projectRow(`psb-rm-p0-${s}`, {name: 'hide', marks: {working: 1}, expanded: true}),
         checkoutRow(`psb-rm-p0m-${s}`, {name: 'main', kind: 'primary', age: '1m', purpose: '릴리스 빌드 확인', marks: {working: 1}, selected: true}),
         checkoutRow(`psb-rm-p0w-${s}`, {name: 'quick/246-frontmost', kind: 'mergeable', age: '3h', purpose: '#246 frontmost 창 고정'}),
@@ -4125,14 +4164,14 @@ function buildProjectsSidebar(tokens) {
       screenButton(`psb-off-b-${s}`, '다시 연결', {variant: 'secondary', height: num(tokens, '--size-control-sm'), icon: 'refresh-cw'}),
     ]);
     const off = frame(`psb-off-${s}`, 'Sidebar', {width, height: WIN_H, layout: 'vertical', fill: '$--sidebar', clip: true}, [
-      headerLine(`psb-off-${s}`, {name: 'mini', tag: 'Remote', icons: ['search']}), ruleLine(`psb-off-r0-${s}`), offBody, footer(`psb-off-${s}`),
+      searchRow(`psb-off-${s}`), ruleLine(`psb-off-r0-${s}`), offBody, footer(`psb-off-${s}`),
     ]);
 
-    // One device: the rail still shows with This Mac alone and its unseen Done dot, and the Home row heads Projects.
+    // One device: the rail still shows with This Mac alone and its unseen Done dot.
     const one = deviceSidebar('one', s, {
-      height: WIN_H, home: {count: '4 projects', agents: ['blog', 'research']},
+      height: WIN_H,
       rows: [
-        section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4'),
+        section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4', {add: true}),
         projectRow(`psb-one-p0-${s}`, {name: 'hide', marks: mark, expanded: true}),
         checkoutRow(`psb-one-p0m-${s}`, {name: 'main', kind: 'primary', age: 'now', purpose: '사이드바 가독성 개선', marks: {question: 1, working: 1}, selected: true}),
         checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'mergeable', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
@@ -4141,8 +4180,8 @@ function buildProjectsSidebar(tokens) {
       ],
     });
 
-    // The rail hidden: the name is the device menu, and the menu is open under it.
-    const hiddenMenu = frame(id('hidden-menu'), 'Device menu', {layout: 'vertical', gap: 0}, [
+    // The rail hidden: the top row's name is the device menu, open under it.
+    const hiddenMenu = frame(id('hidden-menu'), 'Device menu', {layout: 'vertical', gap: 0, padding: [TOP, 0, 0, 0]}, [
       screenMenuContent(id('hidden-menu-content'), 220, [
         screenMenuItem(`psb-hm-0-${s}`, 'This Mac'), screenMenuItem(`psb-hm-1-${s}`, 'mini'), screenMenuItem(`psb-hm-2-${s}`, 'build-box · 연결 안 됨'),
         screenMenuSeparator(`psb-hm-s-${s}`),
@@ -4150,9 +4189,9 @@ function buildProjectsSidebar(tokens) {
       ]),
     ]);
     const hidden = deviceSidebar('hidden', s, {
-      name: 'This Mac', menu: true, height: WIN_H, home: {count: '4 projects', agents: ['blog', 'research']},
+      height: WIN_H,
       rows: [
-        section(`psb-hid-sp-${s}`, 'Projects · Recent activity · 2'),
+        section(`psb-hid-sp-${s}`, 'Projects · Recent activity · 2', {add: true}),
         projectRow(`psb-hid-p0-${s}`, {name: 'hide', marks: mark}),
         projectRow(`psb-hid-p1-${s}`, {name: 'sasu', marks: {idle: 1}}),
       ],
@@ -4164,17 +4203,74 @@ function buildProjectsSidebar(tokens) {
     const paired = (key, selected, sidebar, options) => frame(id(`pair-${key}`), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id(key), selected, options), sidebar]);
     return [frame(id('wrap'), 'Wrap', {layout: 'vertical', gap: '$--spacing-xl'}, [
       frame(id('row-rest'), 'This Mac in front', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
-        labeled('rest', 'This Mac in front · Needs You, Done, Home, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
-        labeled('home', 'Home row · rest and under the pointer', [homeCut('home0', false), homeCut('home1', true)]),
+        labeled('rest', 'This Mac in front · the top row, Search, Needs You, Done, Pinned, Projects, No agents', [windowPart(id('rest'), topRow(id('rest'), {name: 'This Mac'}), paired('rest', 'mac', rest))]),
+        frame(id('row-parts'), 'Rows and headers', {layout: 'vertical', gap: '$--spacing-lg', alignItems: 'start'}, [rowStates(s), stuckState(s), helpState(s)]),
         hoverState(s), menuStates(s),
       ]),
       frame(id('row-states'), 'Rail states', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [
-        labeled('remote', 'mini in front · 9+ pill, Needs You past its cap', [paired('remote', 'mini', remote)]),
-        labeled('off', 'mini not connected · dimmed glyph and x, no mark', [paired('off', 'mini', off, {miniOff: true})]),
-        labeled('one', 'One device · the rail shows with This Mac alone', [frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, done: true}]]}), one])]),
-        labeled('hidden', 'Rail hidden · the name is the device menu', [frame(id('pair-hidden'), 'Sidebar and menu', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [hidden, hiddenMenu])]),
+        labeled('remote', 'mini in front · 9+ pill, Needs You past its cap', [windowPart(id('remote'), topRow(id('remote'), {name: 'mini', tag: 'Remote'}), paired('remote', 'mini', remote))]),
+        labeled('off', 'mini not connected · dimmed glyph and x, no mark', [windowPart(id('off'), topRow(id('off'), {name: 'mini', tag: 'Remote'}), paired('off', 'mini', off, {miniOff: true}))]),
+        labeled('one', 'One device · the rail shows with This Mac alone', [windowPart(id('one'), topRow(id('one'), {name: 'This Mac'}), frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, done: true}]]}), one]))]),
+        labeled('hidden', 'Rail hidden · the top row’s name is the device menu', [frame(id('pair-hidden'), 'Sidebar and menu', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [windowPart(id('hidden'), topRow(id('hidden'), {name: 'This Mac', menu: true, rail: false}), hidden), hiddenMenu])]),
       ]),
     ])];
+  }
+
+  // The project row's states in the list's own width (PRD sidebar-titlebar-refresh
+  // D-02 to D-04): the weight, the moon cell folded and opened, and + ⋯ over the
+  // badge under the pointer, which keep the name's width.
+  function rowStates(s) {
+    const cut = (key, label, rows) => frame(`psb-rs-${key}-${s}`, label, {layout: 'vertical', gap: '$--spacing-xs', alignItems: 'start'}, [
+      text(`psb-rs-${key}-l-${s}`, label, {size: '$--text-caption', weight: '600', fill: MUTED}),
+      frame(`psb-rs-${key}-list-${s}`, 'Projects list, cut', {width, layout: 'vertical', padding: [xs, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm'}, rows),
+    ]);
+    return frame(`psb-rs-${s}`, 'Project row states', {layout: 'vertical', gap: '$--spacing-md', alignItems: 'start'}, [
+      cut('weight', 'Working 600 · resting 400', [
+        projectRow(`psb-rs-w0-${s}`, {name: 'sasu', marks: {working: 1, idle: 1}}),
+        projectRow(`psb-rs-w1-${s}`, {name: 'oh-my-principle', marks: {idle: 2}}),
+      ]),
+      cut('asleep', 'All asleep · folded with the moon, then opened', [
+        projectRow(`psb-rs-a0-${s}`, {name: 'sticky-notes', asleep: '14d'}),
+        projectRow(`psb-rs-a1-${s}`, {name: 'sticky-notes', asleep: '14d', expanded: true}),
+        checkoutRow(`psb-rs-a1m-${s}`, {name: 'main', kind: 'primary', age: '14d'}),
+      ]),
+      cut('hover', 'Under the pointer · + ⋯ over the badge or the moon', [
+        projectRow(`psb-rs-h0-${s}`, {name: 'hide', marks: {question: 3, working: 5}, hover: true}),
+        projectRow(`psb-rs-h1-${s}`, {name: 'codex-daemon-apply-spec', glyph: 'folder', asleep: '4d', hover: true}),
+      ]),
+      cut('none', 'No agents opened · its projects in the usual rows', [
+        fold(`psb-rs-n-${s}`, 'No agents 3', 'project'),
+        projectRow(`psb-rs-n0-${s}`, {name: 'investment'}),
+        projectRow(`psb-rs-n1-${s}`, {name: 'landing-page'}),
+        projectRow(`psb-rs-n2-${s}`, {name: 'modakbul-site'}),
+      ]),
+    ]);
+  }
+
+  // The list scrolled: Projects stuck to its top with its hairline, rows passing under it (D-05).
+  function stuckState(s) {
+    return frame(`psb-stuck-${s}`, 'Header stuck while scrolled', {layout: 'vertical', gap: '$--spacing-xs', alignItems: 'start'}, [
+      text(`psb-stuck-l-${s}`, 'Scrolled · Projects stuck to the top with its hairline', {size: '$--text-caption', weight: '600', fill: MUTED}),
+      frame(`psb-stuck-list-${s}`, 'Projects list, scrolled', {width, height: 120, layout: 'vertical', padding: [0, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm', clip: true}, [
+        section(`psb-stuck-h-${s}`, 'Projects · Recent activity · 5', {add: true, stuck: true}),
+        checkoutRow(`psb-stuck-c0-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
+        projectRow(`psb-stuck-p0-${s}`, {name: 'sasu', marks: {working: 1, done: 1, idle: 1}}),
+      ]),
+    ]);
+  }
+
+  // The footer's ? pressed with the Help menu above it (D-12).
+  function helpState(s) {
+    const I = (key, label, options) => screenMenuItem(`psb-help-${key}-${s}`, label, options);
+    return frame(`psb-help-${s}`, 'Help menu above the footer', {layout: 'vertical', gap: '$--spacing-xs', alignItems: 'end'}, [
+      text(`psb-help-l-${s}`, 'Help · the menu above the footer', {size: '$--text-caption', weight: '600', fill: MUTED}),
+      screenMenuContent(`psb-help-menu-${s}`, 220, [
+        I('0', 'Keyboard shortcuts', {shortcut: '⌘/'}), I('1', 'Copy diagnostics'), I('2', 'Report an issue'),
+        screenMenuSeparator(`psb-help-s-${s}`),
+        frame(`psb-help-v-${s}`, 'Version', {width: 'fill_container', padding: [xs, sm]}, [text(`psb-help-vt-${s}`, 'hide 0.4.0', {size: '$--text-caption', fill: MUTED, mono: true})]),
+      ]),
+      frame(`psb-help-f-${s}`, 'Footer', {width, fill: '$--sidebar', cornerRadius: '$--radius-sm'}, [footer(`psb-help-${s}`, {helpOpen: true})]),
+    ]);
   }
 
   // A row's right-click menu, one per row kind (PRD sidebar-context-menus
@@ -4191,8 +4287,8 @@ function buildProjectsSidebar(tokens) {
       frame(`psb-m-${id}-at-${s}`, 'Menu under the pointer', {layout: 'horizontal', padding: [0, 0, 0, 3 * num(tokens, '--spacing-lg')]}, [screenMenuContent(`psb-m-${id}-menu-${s}`, menuWidth, items)]),
     ]);
     return frame(`psb-menus-${s}`, 'Row menus', {layout: 'vertical', gap: '$--spacing-lg'}, [
-      opened('proj', 'Project row menu', [
-        projectRow(`psb-m-proj-row-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+      opened('proj', 'Project row menu, from ⋯ or a right-click', [
+        projectRow(`psb-m-proj-row-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true, menu: true}),
       ], 220, [
         I('psb-m-proj-1', 'New worktree…'),
         I('psb-m-proj-2', 'New tab in main', {shortcut: '⌘T'}),
@@ -4214,9 +4310,28 @@ function buildProjectsSidebar(tokens) {
         I('psb-m-co-4', 'Set as default checkout'),
         I('psb-m-co-5', 'Copy branch name'),
         I('psb-m-co-6', 'Copy path'),
+        I('psb-m-co-9', 'Open in VS Code'),
         I('psb-m-co-7', 'Reveal in Finder'),
         S('psb-m-co-s2'),
         I('psb-m-co-8', 'Delete worktree…', {state: 'destructive'}),
+      ]),
+      // A plain folder's menu: the project's items, Open in VS Code before the reveal
+      // since the folder is the checkout, then the checkout's own Open and Set purpose.
+      opened('fo', 'Folder row menu', [
+        projectRow(`psb-m-fo-row-${s}`, {name: 'team-notes', glyph: 'folder', marks: {idle: 1}, menu: true}),
+      ], 240, [
+        I('psb-m-fo-0', 'New worktree…', {state: 'disabled', reason: 'This project is not a Git repository.'}),
+        I('psb-m-fo-1', 'New tab in main', {shortcut: '⌘T'}),
+        S('psb-m-fo-s1'),
+        I('psb-m-fo-2', 'Open in VS Code'),
+        I('psb-m-fo-3', 'Reveal in Finder'),
+        I('psb-m-fo-4', 'Copy path'),
+        S('psb-m-fo-s2'),
+        I('psb-m-fo-5', 'Unpin'),
+        I('psb-m-fo-6', 'Remove project…'),
+        S('psb-m-fo-s3'),
+        I('psb-m-fo-7', 'Open'),
+        I('psb-m-fo-8', 'Set purpose…'),
       ]),
       opened('ag', 'Agent row menu', [
         agentRow(`psb-m-ag-row-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
@@ -4268,7 +4383,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, with bounded Needs You and Done groups, Home and default-open project checkouts. A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------

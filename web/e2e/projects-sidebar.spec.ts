@@ -8,7 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
+import { openAllProjectsPage } from "./overview-entry";
+import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sendEvent, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 import { chord } from "./chords";
 import { animationsFinished, quietFor } from "./wait";
 
@@ -225,10 +226,10 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // Looking at a row sends nothing: hover, focus and an open menu are the list's own.
     await quietFor(page, 300, "looking at a row sends nothing");
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
-    const overview = page.locator("[data-home-destination]");
+    const overview = page.locator("[data-sidebar-overview]");
     await expect(project.locator("[data-project-overview]")).toHaveCount(0);
-    await overview.click();
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await openAllProjectsPage(page);
+    await expect(overview).toHaveAttribute("aria-current", "page");
     await expect(project.locator("[data-project-row]")).not.toHaveAttribute("aria-current");
     await expect(project.locator("[data-project-row]").locator("xpath=..")).not.toHaveClass(/bg-secondary/);
     const beforeOpen = new Map(sent);
@@ -248,9 +249,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("Space");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
+    await openAllProjectsPage(page);
     await keyboardFocus(page, overview);
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await expect(overview).toHaveAttribute("aria-current", "page");
     await expect(primary.locator("[data-checkout]")).not.toHaveAttribute("aria-current");
     await screenshot(page, "overview-row-selected");
     await page.keyboard.press("Space");
@@ -551,6 +552,218 @@ test("Needs You and Done are raised above Pinned and stay in their tree, whateve
     await setFixtureLifecycle(herdr, asking, "working");
     await setFixtureLifecycle(herdr, asking, "idle");
     await expect(needsYou).toHaveCount(0, { timeout: 20_000 });
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});
+
+/** A git repository at `herdr.root/<name>` with one commit, so the sidebar draws it as a project with its main checkout. */
+function repoAt(herdr: HerdrFixture, name: string): string {
+  const repo = path.join(herdr.root, name);
+  fs.mkdirSync(repo);
+  git(repo, ["init"]);
+  git(repo, ["commit", "--allow-empty", "-m", "initial"]);
+  return repo;
+}
+
+/** A project's list item, by the name its row shows. */
+function projectItem(page: Page, name: string): Locator {
+  return page.locator("nav[data-sidebar] [data-project]").filter({ has: page.locator("[data-row-name]", { hasText: new RegExp(`^${name}$`) }) });
+}
+
+// PRD sidebar-titlebar-refresh B1-B3: the fold and the weight are the core's
+// decisions, which the list draws and a reload keeps.
+test("projects without agents fold under No agents, and only a working agent weighs a project's name", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const quietDir = path.join(herdr.root, "quiet-notes");
+    fs.mkdirSync(quietDir);
+    const quietPane = await workspaceAt(herdr, quietDir, null);
+    const busyPane = await workspaceAt(herdr, repoAt(herdr, "busy-repo"), "빌드 고치기");
+    daemon = await startHided(herdr, "projects-no-agents");
+    await open(page, daemon);
+
+    // B1: the agentless project is counted in the fold after the projects with agents, and not drawn.
+    const busy = projectItem(page, "busy-repo");
+    const quiet = projectItem(page, "quiet-notes");
+    const fold = page.locator("[data-no-agent-projects]");
+    await expect(busy).toBeVisible({ timeout: 20_000 });
+    // The project in front is never folded, so the Workspace in front is busy-repo's.
+    await busy.locator("[data-checkout]").first().click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await expect(fold).toHaveText(/^No agents 1$/);
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await expect(quiet).toHaveCount(0);
+    expect((await fold.boundingBox())!.y).toBeGreaterThan((await busy.boundingBox())!.y);
+
+    // B2: opened, it shows the project as an ordinary row, and the core keeps it open across a reload.
+    await fold.click();
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    await expect(quiet).toBeVisible();
+    await screenshot(page, "projects-no-agents-open");
+    await page.reload();
+    await expect(fold).toHaveAttribute("aria-expanded", "true", { timeout: 20_000 });
+    await expect(quiet).toBeVisible();
+
+    // B3: an idle agent leaves the name at 400; a working one makes it 600.
+    const weight = busy.locator("[data-project-weight]");
+    await expect(weight).toHaveAttribute("data-project-weight", "quiet");
+    await expect(weight).toHaveCSS("font-weight", "400");
+    await setFixtureLifecycle(herdr, busyPane, "working");
+    await expect(weight).toHaveAttribute("data-project-weight", "working", { timeout: 20_000 });
+    await expect(weight).toHaveCSS("font-weight", "600");
+    await expect(quiet.locator("[data-project-weight]")).toHaveAttribute("data-project-weight", "quiet");
+
+    // B2: an agent started in the folded project takes it out of the fold, which goes with its last project.
+    herdr.run(["agent", "start", "agent-quiet", "--kind", "claude", "--pane", quietPane]);
+    await expect(fold).toHaveCount(0, { timeout: 20_000 });
+    await expect(quiet).toBeVisible();
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});
+
+// PRD sidebar-titlebar-refresh B4, B5: the fold of a sleeping project is the core's, kept across a reload.
+test("a project whose agents all sleep folds behind its moon, and stays open once opened", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const napPane = await workspaceAt(herdr, repoAt(herdr, "napping-repo"), "잠들 작업");
+    daemon = await startHided(herdr, "projects-asleep");
+    await open(page, daemon);
+    const project = projectItem(page, "napping-repo");
+    const toggle = project.locator("[data-project-toggle]");
+    await expect(project.locator(`[data-pane="${napPane}"]`)).toBeVisible({ timeout: 20_000 });
+
+    await sendEvent(page, daemon, "agent_sleep", { pane_id: napPane });
+    // B4: folded, with one moon cell in the badge's place and no agent row.
+    const moon = project.locator("[data-project-asleep]");
+    await expect(moon).toBeVisible({ timeout: 30_000 });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(project.locator("[data-project-status]")).toHaveCount(0);
+    await expect(project.locator(`[data-pane="${napPane}"]`)).toHaveCount(0);
+    await expect(project.locator("[data-project-weight]")).toHaveAttribute("data-project-weight", "quiet");
+    await screenshot(page, "projects-asleep-folded");
+
+    // B4, B5: opened, the checkout and its sleeping row show, and the opening survives a reload.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(moon).toHaveCount(0);
+    await expect(project.locator(`[data-pane="${napPane}"] [data-mark="☾"]`)).toBeVisible();
+    await page.reload();
+    await expect(project.locator("[data-project-toggle]")).toHaveAttribute("aria-expanded", "true", { timeout: 20_000 });
+    await expect(project.locator("[data-project-asleep]")).toHaveCount(0);
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});
+
+// PRD sidebar-titlebar-refresh B6-B8.
+test("a project row's + and ⋯ appear on hover and focus over its badge, start in its main checkout and open its menu", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    await workspaceAt(herdr, repoAt(herdr, "tools-repo"), "도구 정리");
+    daemon = await startHided(herdr, "projects-row-actions");
+    await open(page, daemon);
+    const project = projectItem(page, "tools-repo");
+    const row = project.locator("[data-project-row]");
+    const start = project.locator("[data-row-start]");
+    const more = project.locator("[data-row-more]");
+    const pair = project.locator("[data-row-actions]");
+    const badge = pair.locator("xpath=preceding-sibling::span[1]");
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await rest(page);
+    const name = row.locator("[data-row-name]");
+    const nameWidth = (await name.boundingBox())!.width;
+    await expect(pair).toHaveCSS("opacity", "0");
+    await expect(badge).toHaveCSS("opacity", "1");
+
+    // B6: the pointer shows the pair over the badge and the name keeps its width.
+    await row.hover();
+    await expect(pair).toHaveCSS("opacity", "1");
+    await expect(badge).toHaveCSS("opacity", "0");
+    expect((await name.boundingBox())!.width).toBe(nameWidth);
+    await screenshot(page, "projects-row-actions-hover");
+    await rest(page);
+    await expect(pair).toHaveCSS("opacity", "0");
+
+    // B8: each has its own name, and the keyboard reaches and presses them.
+    await expect(start).toHaveAccessibleName("Start agent in tools-repo");
+    await expect(more).toHaveAccessibleName("More actions for tools-repo");
+    await keyboardFocus(page, start);
+    await expect(pair).toHaveCSS("opacity", "1");
+    // B7: + aims the start panel at the project's main checkout.
+    await page.keyboard.press("Enter");
+    const panel = page.locator("[data-start-panel]");
+    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", new RegExp(`^checkout:${daemon.node}:.*/tools-repo$`));
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+
+    // B8: ⋯ opens the right-click menu under itself.
+    await row.click({ button: "right" });
+    const contextItems = await page.locator('[role="menu"] [data-menu-item]').evaluateAll((items) => items.map((item) => item.getAttribute("data-menu-item")));
+    await page.keyboard.press("Escape");
+    await keyboardFocus(page, more);
+    await page.keyboard.press("Space");
+    const menu = page.locator('[role="menu"]');
+    await expect(menu).toBeVisible();
+    expect(await menu.locator("[data-menu-item]").evaluateAll((items) => items.map((item) => item.getAttribute("data-menu-item")))).toEqual(contextItems);
+    const button = (await more.boundingBox())!;
+    expect((await menu.boundingBox())!.y).toBeGreaterThanOrEqual(button.y + button.height - 1);
+    await expect(pair).toHaveCSS("opacity", "1");
+    await screenshot(page, "projects-row-actions-menu");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});
+
+// PRD sidebar-titlebar-refresh B9, B10.
+test("section headers stay at the top of the scrolled list, and a row the keyboard reaches is not under one", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 560 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const names = ["alpha-repo", "bravo-repo", "charlie-repo", "delta-repo", "echo-repo"];
+    for (const name of names) await workspaceAt(herdr, repoAt(herdr, name), `${name} 작업`);
+    daemon = await startHided(herdr, "projects-sticky");
+    await open(page, daemon);
+    await expect(projectItem(page, "echo-repo")).toBeVisible({ timeout: 20_000 });
+    await projectItem(page, "alpha-repo").locator("[data-project-row]").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+    const pinned = page.locator('[data-section="pinned"]');
+    const recent = page.locator('[data-section="recent"]');
+    // B9: the Pinned header carries the pin, and the pinned row none.
+    await expect(pinned.locator("[data-section-pin]")).toBeVisible();
+    await expect(projectItem(page, "alpha-repo").locator("svg.lucide-pin")).toHaveCount(0);
+
+    // B9: scrolled to the end, the Projects header is stuck at the list's top with its hairline, the Pinned one pushed off.
+    const list = page.locator("[data-project-list]");
+    await list.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+    await expect(recent).toHaveAttribute("data-stuck", "true");
+    const listTop = (await list.boundingBox())!.y;
+    const header = (await recent.boundingBox())!;
+    expect(Math.round(header.y)).toBe(Math.round(listTop));
+    await expect(recent).toHaveCSS("border-bottom-width", "1px");
+    expect((await pinned.boundingBox())!.y + (await pinned.boundingBox())!.height).toBeLessThanOrEqual(listTop + 0.5);
+    await screenshot(page, "projects-sticky-header");
+
+    // B10: the keyboard brings the first project under the header into view below it, whole.
+    const first = recent.locator("xpath=..").locator("[data-project-row]").first();
+    await keyboardFocus(page, first);
+    const row = (await first.boundingBox())!;
+    const stuck = (await recent.boundingBox())!;
+    expect(row.y).toBeGreaterThanOrEqual(stuck.y + stuck.height - 0.5);
   } finally {
     await daemon?.stop();
     await herdr.stop();

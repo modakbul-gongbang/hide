@@ -10,7 +10,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { fixtureExecutable } from "./platform-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { enterWorkspace, screenshot, showProjectRow } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -34,10 +34,10 @@ test("the recent agent pane order survives a daemon restart and a reload", async
     const canvas = page.locator("[data-canvas]").first();
 
     // The keyboard in beta's Codex, then back in the fixture's pane.
-    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first())).click();
     await expect(canvas).toHaveAttribute("data-canvas", beta.result.tab.tab_id);
     await page.locator(`[data-pane-view="${betaPane}"]`).click();
-    await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first())).click();
     await expect(canvas).not.toHaveAttribute("data-canvas", beta.result.tab.tab_id);
     const fixturePane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
     await page.locator(`[data-pane-view="${fixturePane}"]`).click({ position: { x: 30, y: 60 } });

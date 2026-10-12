@@ -7,7 +7,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
-import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer } from "../../web/e2e/wire";
+import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer, showProjectRow } from "../../web/e2e/wire";
 import { deviceHome, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
 import { isolate, launchShell, nodeOf, test } from "./fixture";
 
@@ -653,11 +653,11 @@ test("a Workspace switch cancels its column drag without changing another Worksp
       await page.locator('[data-explorer-row$="/notes.md"]').click();
       await expect(page.locator("[data-editor-body] .cm-content")).toBeVisible();
     };
-    await row("beta").click();
+    await (await showProjectRow(page, row("beta"))).click();
     await expect(row("beta")).toHaveAttribute("aria-current", "true");
     await openNotes();
     for (const theme of ["dark", "light"] as const) {
-      await row("fixture").click();
+      await (await showProjectRow(page, row("fixture"))).click();
       await expect(row("fixture")).toHaveAttribute("aria-current", "true");
       await openNotes();
       await page.locator("[data-open-settings]").click();

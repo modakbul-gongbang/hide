@@ -19,6 +19,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, rest, rowGeometry, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
+import { openAllProjectsPage } from "./overview-entry";
 import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
@@ -158,8 +159,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await page.keyboard.press("Escape");
     await expect(card).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await page.locator("[data-go-main]").click();
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    await openAllProjectsPage(page);
     const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
 
     // B4: on All projects no Workspace is in front, so the glyph opens the
@@ -264,7 +264,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(plain).toHaveCount(0);
 
     // Escape leaves the shared Overview page and closes the hovered row's card.
-    await page.locator("[data-go-main]").click();
+    await openAllProjectsPage(page);
     await page.getByRole("tab", { name: "repo", exact: true }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await feature.locator("[data-checkout]").hover();

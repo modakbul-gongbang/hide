@@ -78,6 +78,8 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
     runtime.snapshot.ui_state.session_open_folds = vec![
         "remote:studio:project".to_owned(),
         "cleanup/studio".to_owned(),
+        "no_agents/studio".to_owned(),
+        "asleep/remote:studio:project".to_owned(),
         "local-project".to_owned(),
     ];
     assert!(dispatch_device(&mut runtime, "remove_device", "studio"));

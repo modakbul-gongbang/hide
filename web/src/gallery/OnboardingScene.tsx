@@ -160,7 +160,7 @@ function sceneHost(system: OnboardingSystem, permission: NotificationPermission)
     onNotificationOpen: none,
     withdrawNotifications: () => undefined,
     notificationPermission: async () => permission,
-    openNotificationSettings: () => undefined,
+    onWindowChrome: () => () => undefined, editorAvailable: async () => false, openInEditor: () => undefined, openNotificationSettings: () => undefined,
     reportBadge: () => undefined,
     browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: none },
   };

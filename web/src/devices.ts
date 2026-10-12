@@ -104,11 +104,6 @@ export function tileHint(label: string, connected: boolean, counts: TileCounts, 
   return [label, ...(core ? [t("coreMove.railCore")] : []), ...tileFacts(connected, counts, t)].join(" · ");
 }
 
-/** How many projects a device has registered, without its Home (D-04, B16): a count from the registrations, not from any folder. */
-export function homeProjectCount(rest: SnapshotRest | null, deviceId: string): number {
-  return (rest?.ui_state?.workspace_registrations ?? []).filter((row) => row.device_id === deviceId && !row.home).length;
-}
-
 /** The device's Home once its first start created it, from the projection it reports. */
 export function homeOf(rest: SnapshotRest | null, deviceId: string): Workspace | null {
   const workspaces = deviceId === localDeviceId(rest) ? rest?.navigator?.workspaces : rest?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces;

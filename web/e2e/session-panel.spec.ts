@@ -6,6 +6,7 @@ import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
+import { openAllProjectsPage } from "./overview-entry";
 import { chooseTheme, countSent, screenshot } from "./wire";
 import { quietFor, unchangedForFrames } from "./wait";
 
@@ -162,7 +163,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
     await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
     await page.keyboard.press("Escape");
-    await page.locator("[data-home-destination]").click();
+    await openAllProjectsPage(page);
     expect(await page.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects"]);
     await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();

@@ -672,6 +672,8 @@ export type Workspace = {
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
   session_folds?: { empty: string[]; child_only: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
+  /** What the project's agents are doing, as the core decided it (`ProjectAgentPresenceSnapshot`, PRD sidebar-titlebar-refresh D-20). */
+  agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
@@ -785,6 +787,13 @@ export type ProjectDisk = {
 export type ProjectDiskLayers = { build_cache: number; dependencies: number; source: number; other: number; shared_git: number };
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
+
+/**
+ * `working` while an awake agent shows ▲ ! ? ● ◐ or ✓ (the row's name is
+ * heavy); `asleep` while every agent sleeps, with the newest sleep's time and
+ * whether the operator opened the fold since (D-02, D-03, D-19).
+ */
+export type ProjectAgentPresence = { working: boolean; asleep?: { since_unix_ms: number; expanded: boolean } };
 
 export type LayoutNode =
   | { type: "pane"; pane_id: string }
@@ -1651,6 +1660,8 @@ export type SnapshotRest = {
     changes_root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
+    /** Each device's projects with no agent and no sleeping conversation (D-01); opened by the `no_agents/<device>` fold key. */
+    no_agent_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
     hide_ai_checkouts?: HideAiCheckout[];
     sleeping_sessions?: SleepingSession[];

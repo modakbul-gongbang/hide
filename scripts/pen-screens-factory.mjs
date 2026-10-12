@@ -284,7 +284,6 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       frame(`${id}-tabs`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, ['Projects', 'Agents'].map((label, i) =>
         frame(`${id}-tab${i}`, label, {layout: 'horizontal', alignItems: 'center', height: 22, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-xs', ...(i === 0 ? {fill: '$--secondary'} : {})}, [text(`${id}-tab${i}-t`, label, {size: '$--text-body', weight: '500', fill: i === 0 ? FG : SUB})]))),
       frame(`${id}-g2`, 'Gap', {width: 1, height: 4}, []),
-      placeRow(`${id}-home`, 'house', 'Home', [cap(`${id}-homen`, '3', MUT, {mono: true})], false),
       placeRow(`${id}-p1`, 'folder-git-2', 'hide', [cap(`${id}-p1n`, '9', MUT, {mono: true}), icon(`${id}-p1c`, 'chevron-down', {size: 12, fill: MUT})], false),
       checkoutRow(`${id}-c0`, 'house', 'main', null, ''),
       checkoutRow(`${id}-c1`, 'git-branch', '412-board-sort', 'work', '2m'),

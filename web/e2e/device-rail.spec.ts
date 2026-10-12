@@ -68,7 +68,6 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-overview]")).toHaveText(SYSTEM === "mac" ? "Overview⇧⌘O" : "OverviewAlt+Shift+O");
-    await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
     await expect(page.locator("[data-project-list]")).toBeVisible();
 
     // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail; the choice is the core's, so it survives a reload.
@@ -113,7 +112,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
     expect(ids).toEqual([daemon.node, ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
-    // It runs the sidebar's full height, so the header line and the tab strip sit right of it, not over it.
+    // It runs the sidebar's full height under the window's top row, whose device title spans the rail and the content (sidebar-titlebar-refresh B17).
     const railBox = (await rail.boundingBox())!;
     const contentBox = (await page.locator("[data-sidebar-content]").boundingBox())!;
     const sidebarBox = (await sidebar.boundingBox())!;
@@ -123,7 +122,8 @@ test("the rail follows the registered devices; a device that cannot be reached i
     expect(Math.round(railBox.x)).toBe(Math.round(sidebarBox.x));
     expect(Math.round(railBox.y)).toBe(Math.round(sidebarBox.y));
     expect(Math.round(railBox.height)).toBe(Math.round(sidebarBox.height));
-    expect(Math.round((await page.locator("[data-sidebar-title]").boundingBox())!.x)).toBe(Math.round(railBox.x + railBox.width));
+    const titleBox = (await page.locator("[data-sidebar-title]").boundingBox())!;
+    expect([Math.round(titleBox.x), Math.round(titleBox.width), Math.round(titleBox.y + titleBox.height) <= Math.round(railBox.y)]).toEqual([Math.round(railBox.x), Math.round(sidebarBox.width), true]);
     // This Mac is the selection, and the center is where it was.
     await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
@@ -157,7 +157,6 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(disconnected).toContainText("Not connected");
     await expect(disconnected.locator("[data-device-disconnected-name]")).toHaveText("연구실 빌드 서버 자동화 장비");
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
-    await expect(page.locator("[data-home-destination]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-title-name]")).toContainText("연구실");
     await screenshot(page, "device-rail-not-connected");
@@ -169,7 +168,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // The Korean name pushes none of the rail, the header line and the content column sideways (B46).
     // The nav itself is not measured: its drag edge straddles its right side on purpose.
     for (const part of ["[data-device-rail]", "[data-sidebar-title]", "[data-sidebar-content]"]) {
-      const overflow = await sidebar.locator(part).evaluate((element) => element.scrollWidth - element.clientWidth);
+      const overflow = await page.locator(part).evaluate((element) => element.scrollWidth - element.clientWidth);
       expect(overflow, part).toBeLessThanOrEqual(0);
     }
     // The tile draws the name's monogram and no name; its hint is the name and its connection.
@@ -190,7 +189,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.keyboard.press("Escape");
     await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    await expect(page.locator("[data-home-destination]")).toBeVisible();
+    await expect(page.locator("[data-project-list]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();
   } finally {
     daemon?.stop();

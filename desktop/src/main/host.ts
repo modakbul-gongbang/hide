@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage } from "electron";
 import { SETUP_COMMAND } from "../../../web/src/host";
 import type { MenuCommand } from "./menu";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
@@ -47,6 +47,8 @@ import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowS
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
 import { badgeRequest, ClickGate, KeptNotifications, launchedId, notifyRequest, OVERLAY_SIZE, overlayDot, toastXml, withdrawRequest } from "./notify";
+import { Editor } from "./editor";
+import { frameOptions, hidesTitleBar, windowChrome } from "./windowChrome";
 import { NOTIFICATION_SETTINGS_URL, NotificationPermissionReader } from "./notificationPermission";
 import { fromPage, toPage, WirePathError } from "./wirePath";
 
@@ -135,6 +137,7 @@ export class DesktopHost {
   /** The app icon's count as last shown. */
   private badge = 0;
   private overlay: NativeImage | null = null;
+  private readonly editor: Editor;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -145,6 +148,18 @@ export class DesktopHost {
     private readonly language: HostLanguage,
   ) {
     this.permission = new NotificationPermissionReader(process.platform, path.dirname(process.execPath), log, () => Notification.isSupported());
+    this.editor = new Editor(
+      log,
+      () => ({
+        platform: process.platform,
+        home: app.getPath("home"),
+        // The folders a CLI child searches: what was inherited, the install folders, and the login shell's once it answered.
+        searchPath: [...(this.childEnvironment().PATH ?? "").split(path.delimiter), ...(this.loginPath ?? "").split(path.delimiter)].filter(Boolean),
+        exists: (file) => fs.existsSync(file),
+        isExecutable,
+      }),
+      () => this.childEnvironment(),
+    );
   }
 
   // --- lifecycle ------------------------------------------------------------
@@ -170,6 +185,8 @@ export class DesktopHost {
     this.listenPickFolder();
     this.listenLocalPaths();
     this.listenNotify();
+    this.listenWindowChrome();
+    this.listenEditor();
     this.openWindow();
     if (process.platform === "win32") this.listenToastActivation();
     void this.discover("launch");
@@ -192,6 +209,7 @@ export class DesktopHost {
     this.stopWatch();
     this.runner.stop();
     this.permission.stop();
+    this.editor.stop();
     // Revoke sockets and debugger leases immediately; hold quit only for
     // the bounded authenticated unregister, never for the operator daemon.
     const close = this.browserCdp?.close() ?? Promise.resolve();
@@ -409,6 +427,52 @@ export class DesktopHost {
       const id = launchedId(details.arguments);
       this.log.event("notify.activated", { type: details.type, named: id !== null });
       if (id !== null) this.openNotification(id);
+    });
+  }
+
+  /**
+   * The window frame the shell's top row is drawn inside (PRD
+   * sidebar-titlebar-refresh D-15, D-17): asked once by the shell and sent on
+   * every fullscreen change. Only this window's page on the daemon origin is
+   * answered or told; the status page draws its own drag strip.
+   */
+  private listenWindowChrome(): void {
+    ipcMain.handle(WINDOW_CHROME_GET_CHANNEL, (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event) || !this.window) {
+        this.log.event("window_chrome.refused", { reason: "sender" });
+        return null;
+      }
+      return windowChrome(process.platform, this.window.isFullScreen());
+    });
+  }
+
+  /** Tells the shell in `window` that the window entered or left fullscreen. */
+  private sendWindowChrome(window: BrowserWindow): void {
+    if (window.isDestroyed() || !this.isDaemonUrl(window.webContents.getURL())) return;
+    window.webContents.send(WINDOW_CHROME_CHANNEL, windowChrome(process.platform, window.isFullScreen()));
+  }
+
+  /**
+   * Open in VS Code (PRD sidebar-titlebar-refresh D-13, D-14, B15, B16):
+   * whether VS Code is installed, found once per launch, and a folder handed
+   * to it. Only this window's page on the daemon origin is heard; a refused
+   * or failed open shows nothing, and the log records the outcome, never the
+   * path (`editor.ts`).
+   */
+  private listenEditor(): void {
+    ipcMain.handle(EDITOR_AVAILABLE_CHANNEL, (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event)) {
+        this.log.event("editor.refused", { reason: "sender" });
+        return false;
+      }
+      return this.editor.available();
+    });
+    ipcMain.on(EDITOR_OPEN_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("editor.refused", { reason: "sender" });
+        return;
+      }
+      this.editor.open(reported).catch(() => this.log.event("editor.failed", { reason: "unexpected" }));
     });
   }
 
@@ -985,6 +1049,8 @@ export class DesktopHost {
       state_refused: t("native.status.stateRefused"),
       core_newer_title: t("native.status.coreNewerTitle"),
       update_failed_title: t("native.status.updateFailedTitle"),
+      // macOS draws its window buttons over the page's top, so the page keeps a drag strip there.
+      titlebar: hidesTitleBar(process.platform) ? "hidden" : "framed",
     };
     return { query, lang: query.lang };
   }
@@ -1063,6 +1129,7 @@ export class DesktopHost {
       minHeight: MIN_SIZE.height,
       show: false,
       title: "hide",
+      ...frameOptions(process.platform),
       backgroundColor: __HIDE_BACKGROUND__,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
@@ -1086,6 +1153,8 @@ export class DesktopHost {
     window.on("closed", () => {
       if (this.window === window) this.window = null;
     });
+    window.on("enter-full-screen", () => this.sendWindowChrome(window));
+    window.on("leave-full-screen", () => this.sendWindowChrome(window));
     this.guardNavigation(window);
     if (this.state.kind === "lost") {
       // A fresh page cannot load a daemon that is gone; show the search instead.

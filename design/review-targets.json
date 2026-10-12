@@ -123,7 +123,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rnIl8"
+        "referenceNode": "sb-full-l-side"
       },
       {
         "node": "psb-sidebar-d",
@@ -132,7 +132,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rPB4Q"
+        "referenceNode": "sb-full-d-side"
       }
     ],
     "conditions": {

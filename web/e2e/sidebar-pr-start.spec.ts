@@ -23,7 +23,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { toPage } from "../../desktop/src/main/wirePath";
-import { countSent, enterWorkspace } from "./wire";
+import { countSent, enterWorkspace, showProjectRow } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -166,6 +166,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     // before opening them; an immediate .all() can miss a later project.
     for (const name of ["alpha", "bravo"]) {
       const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: new RegExp(`^${name}$`) }) });
+      // A project with no agent waits under No agents (PRD sidebar-titlebar-refresh B1).
+      await showProjectRow(page, project);
       const fold = project.locator("[data-empty-worktrees]");
       await expect(fold).toHaveAttribute("aria-expanded", "false");
       await fold.click();

@@ -105,6 +105,7 @@ impl Runtime {
             crate::project_context::refresh_device_folds(
                 workspace,
                 &agents,
+                &self.snapshot.navigator.sleeping_sessions,
                 &self.snapshot.ui_state,
                 focused.as_deref(),
                 reports_own_facts,

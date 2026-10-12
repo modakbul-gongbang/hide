@@ -4,7 +4,7 @@ import { Disclosure, Group, Note, Row, Status, Value } from "../components/setti
 import { useInterfaceTranslation } from "../i18n/client";
 import { formatDateTime } from "../i18n/format";
 import { requireInterfaceLanguage } from "../i18n/locale";
-import { diagnosticsText, environmentTone, herdrLine, herdrProtocolText, shownIn } from "../settings";
+import { diagnosticsInputOf, diagnosticsText, environmentTone, herdrLine, herdrProtocolText, shownIn } from "../settings";
 import { useShellStore } from "../store";
 
 /** What this hide is: its version, the Herdr behind it, and the details folded away unless something is wrong. */
@@ -14,21 +14,11 @@ export function AboutTab() {
   const connection = useShellStore((s) => s.connection);
   const herdr = useShellStore((s) => s.rest?.status?.herdr);
   const environment = useShellStore((s) => s.rest?.status?.environment);
-  const diagnostics = useShellStore((s) => s.rest?.status?.diagnostics);
-  const lastError = useShellStore((s) => s.rest?.status?.last_error);
   const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
   const line = herdrLine(herdr, t);
   const protocol = herdrProtocolText(herdr, t);
   const copyDiagnostics = () => {
-    const text = diagnosticsText({
-      daemon,
-      connection,
-      herdr,
-      environment: environment ?? [],
-      diagnostics: diagnostics ?? [],
-      lastError,
-      userAgent: navigator.userAgent,
-    });
+    const text = diagnosticsText(diagnosticsInputOf(useShellStore.getState(), navigator.userAgent));
     void navigator.clipboard.writeText(text).then(
       () => setCopy("copied"),
       () => setCopy("failed"),

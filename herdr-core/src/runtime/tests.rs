@@ -688,6 +688,7 @@ fn workspace(
     checkouts: Vec<CheckoutSnapshot>,
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
+        agent_presence: Default::default(),
         agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),

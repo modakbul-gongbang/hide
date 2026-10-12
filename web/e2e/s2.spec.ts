@@ -15,7 +15,8 @@ import { toPage } from "../../desktop/src/main/wirePath";
 import { altScreenProgram, bytesReceived } from "./alt-screen-program";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { openAllProjectsPage } from "./overview-entry";
+import { countSent, screenshot, showProjectRow } from "./wire";
 import { chord, mod, SYSTEM } from "./chords";
 
 /**
@@ -109,6 +110,8 @@ async function startFlow(page: Page): Promise<Flow> {
 
     // Two checkouts in the Projects sidebar. Which one the core focuses at
     // boot is its own choice, so the flow starts by choosing the first.
+    // beta runs no agent, so unless it is in front it waits under No agents.
+    await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first());
     await expect(page.locator("[data-checkout]")).toHaveCount(2);
     // The core names projects by directory, not by Herdr's label or id.
     const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
@@ -162,7 +165,7 @@ test("switching checkouts is one focus_checkout, and a plain folder's Overview o
     const focusEvents = sent.get("focus_checkout") ?? 0;
 
     // Switching checkouts is one focus_checkout; the tab bar and center follow.
-    const betaRow = betaProject.locator("[data-checkout]").first();
+    const betaRow = await showProjectRow(page, betaProject.locator("[data-checkout]").first());
     await betaRow.click();
     await expect(betaRow).toHaveAttribute("aria-current", "true");
     await expect(page.locator("[data-tab]")).toHaveCount(1);
@@ -174,7 +177,7 @@ test("switching checkouts is one focus_checkout, and a plain folder's Overview o
     // reached from All projects (S6 B1). It opens on its Agents graph, on
     // its agents' boxes, and the sidebar row enters the Workspace again.
     await firstRow.click();
-    await page.locator("[data-go-main]").click();
+    await openAllProjectsPage(page);
     await page.getByRole("tab", { name: "fixture", exact: true }).click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
     await firstRow.click();

@@ -3,14 +3,15 @@
 // the host's OS, a file or folder to show in the OS file manager, a folder the operator picks to add as a project,
 // the paths a terminal link names and handing one to macOS, and the pages of
 // browser displays (issue 155), and the Factory's and agents' notifications with their clicks,
-// withdrawals, the system's permission for them and the app icon's count.
+// withdrawals, the system's permission for them and the app icon's count, the window frame the
+// top row is drawn inside, and a folder handed to VS Code.
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
-import type { NotificationPermission, ProbedPath } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import type { NotificationPermission, ProbedPath, WindowChrome } from "../../../web/src/host";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPEN_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_BADGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, NOTIFY_PERMISSION_CHANNEL, NOTIFY_SETTINGS_CHANNEL, NOTIFY_WITHDRAW_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL, WINDOW_CHROME_CHANNEL, WINDOW_CHROME_GET_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -65,6 +66,28 @@ contextBridge.exposeInMainWorld("hideHost", {
     return () => {
       ipcRenderer.removeListener(NOTIFY_OPEN_CHANNEL, handler);
     };
+  },
+  onWindowChrome(listener: (chrome: WindowChrome) => void): () => void {
+    // The main process is the only sender on this channel; the asked state
+    // is dropped if a change has already arrived, which is newer.
+    let heard = false;
+    const handler = (_event: IpcRendererEvent, chrome: WindowChrome) => {
+      heard = true;
+      listener(chrome);
+    };
+    ipcRenderer.on(WINDOW_CHROME_CHANNEL, handler);
+    void (ipcRenderer.invoke(WINDOW_CHROME_GET_CHANNEL) as Promise<WindowChrome | null>).then((chrome) => {
+      if (chrome !== null && !heard) listener(chrome);
+    });
+    return () => {
+      ipcRenderer.removeListener(WINDOW_CHROME_CHANNEL, handler);
+    };
+  },
+  editorAvailable(): Promise<boolean> {
+    return ipcRenderer.invoke(EDITOR_AVAILABLE_CHANNEL) as Promise<boolean>;
+  },
+  openInEditor(path: string): void {
+    ipcRenderer.send(EDITOR_OPEN_CHANNEL, path);
   },
   browser: {
     endCycle(cycleId: number): void {

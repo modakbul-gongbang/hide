@@ -437,11 +437,6 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
       T(`${p}-emptyt`, 'No project on this machine yet.', {size: 'caption', fill: '$--muted-foreground'}),
     ]);
     const list = F(`${p}-list`, 'Project list', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [0, '$--spacing-xs']}, [
-      F(`${p}-home`, 'Home', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, [
-        icon(`${p}-home-i`, 'house', {size: 14, fill: '$--subtle-foreground'}),
-        T(`${p}-home-t`, 'Home', {size: 'subhead', weight: '600', width: 'fill_container'}),
-        T(`${p}-home-n`, n === 1 ? "1 project" : `${n} projects`, {fill: '$--muted-foreground'}),
-      ]),
       label,
       ...(projects ? names.map(projectRow) : [empty]),
     ]);
