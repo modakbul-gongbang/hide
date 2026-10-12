@@ -171,8 +171,38 @@ static SECRET: LazyLock<Regex> = LazyLock::new(|| {
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b").expect("valid email expression")
 });
-static FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:(?:/Users|/home|/tmp|/var|/etc)/)[^\s'"`]+"#).expect("valid path expression")
+static HOME_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    // Account names are private; the remaining folders and file name identify
+    // a delegated task. Consume a quoted path through its matching quote so
+    // another quote in the account or a home-looking tail cannot split it.
+    // An unquoted Windows account with spaces must end
+    // at a separator without trailing whitespace or invalid name characters,
+    // so a bare home cannot consume prose through a later path's separator.
+    // A path component cannot start another home prefix.
+    let root = r"(?:(?:/Users|/home)/|(?i:[a-z]:[\\/]Users[\\/]))";
+    let quoted = [
+        ('"', "double_root"),
+        ('\'', "single_root"),
+        ('`', "backtick_root"),
+    ]
+    .map(|(quote, name)| format!(r"{quote}(?i:file:///?)?(?P<{name}>{root})[^{quote}\r\n]*{quote}"))
+    .join("|");
+    Regex::new(&format!(
+        r#"(?x)
+        (?P<quoted>{quoted})
+        |
+        (?P<boundary>(?:^|[^\w./\\~])(?i:file:///?)?)
+        (?P<home>
+            (?:/Users|/home)/[^/\\\s"]+/?
+            |
+            (?i:[a-z]:[\\/]Users[\\/])
+            (?:
+                [^\\/\s"<>:*?|](?:[^\\/\x00-\x1f"<>:*?|]*[^\\/\s"<>:*?|])?[\\/]
+                |[^\\/\s"]+
+            )
+        )"#,
+    ))
+    .expect("valid home prefix expression")
 });
 
 fn conversation(events: &[LabelEvent]) -> Vec<&LabelEvent> {
@@ -430,7 +460,38 @@ fn strip_code_fences(text: &str) -> String {
 fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
-    let masked = FILE_PATH.replace_all(&masked, "[redacted-path]");
+    let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {
+        if let Some(quoted) = captures.name("quoted") {
+            let root = ["double_root", "single_root", "backtick_root"]
+                .into_iter()
+                .find_map(|name| captures.name(name))
+                .expect("quoted path has a home root");
+            let path = quoted.as_str();
+            let closing_quote = path.len() - 1;
+            let account_and_tail = &path[root.end() - quoted.start()..closing_quote];
+            if account_and_tail.is_empty() || account_and_tail.starts_with(['/', '\\']) {
+                return path.to_owned();
+            }
+            let boundary = &path[..root.start() - quoted.start()];
+            let ending = &path[closing_quote..];
+            return match account_and_tail.find(['/', '\\']) {
+                Some(separator) => {
+                    format!("{boundary}~/{}{ending}", &account_and_tail[separator + 1..])
+                }
+                None => format!("{boundary}~{ending}"),
+            };
+        }
+        let boundary = &captures["boundary"];
+        let home = &captures["home"];
+        if home.ends_with(['/', '\\']) {
+            format!("{boundary}~/")
+        } else {
+            // A bare home may be followed by sentence punctuation rather
+            // than a path tail. Keep that punctuation outside the account.
+            let account_end = home.trim_end_matches(['.', ',', ';', ':', ')', '!', '?', ']', '}']);
+            format!("{boundary}~{}", &home[account_end.len()..])
+        }
+    });
     let masked = masked.trim();
     let start = masked
         .char_indices()
@@ -617,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn masking_removes_secrets_emails_and_home_paths_and_keeps_prose() {
+    fn masking_removes_secrets_emails_and_home_accounts_and_keeps_prose() {
         let context = analysis_context(
             &[human(
                 "token=abc123 메일 me@example.com 파일 /Users/example/project 그대로 두기",
@@ -627,9 +688,149 @@ mod tests {
         );
         assert!(context.contains("[redacted-secret]"));
         assert!(context.contains("[redacted-personal]"));
-        assert!(context.contains("[redacted-path]"));
+        assert!(context.contains("~/project"));
         assert!(context.contains("그대로 두기"));
         assert!(!context.contains("abc123"));
+        assert!(!context.contains("me@example.com"));
+        assert!(!context.contains("/Users/example"));
+    }
+
+    #[test]
+    fn home_accounts_are_hidden_and_path_tails_are_kept_on_every_system() {
+        let spaced_windows_path = [
+            "d:",
+            "users",
+            "Example Account",
+            "worktrees/fix-search",
+            "brief.md",
+        ]
+        .join("\\");
+        let spaced_windows_home = ["d:", "users", "Example Account"].join("\\");
+        let apostrophe_windows_home = ["C:", "Users", "Example'Account"].join("\\");
+        let apostrophe_windows_path =
+            [apostrophe_windows_home.as_str(), "rest", "brief.md"].join("\\");
+        let mut failures = Vec::new();
+        for (request, expected_request) in [
+            (
+                "/Users/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                "/home/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                r"C:\Users\example\worktrees\fix-search\agents\runs\fix-search\brief.md",
+                r"~/worktrees\fix-search\agents\runs\fix-search\brief.md",
+            ),
+            (
+                "C:/Users/example/worktrees/fix-search/agents/runs/fix-search/brief.md",
+                "~/worktrees/fix-search/agents/runs/fix-search/brief.md",
+            ),
+            (
+                spaced_windows_path.as_str(),
+                r"~/worktrees/fix-search\brief.md",
+            ),
+            (spaced_windows_home.as_str(), "~"),
+            (
+                "/Users/example/한글 폴더/example/brief.md",
+                "~/한글 폴더/example/brief.md",
+            ),
+            (apostrophe_windows_path.as_str(), r"~/rest\brief.md"),
+            (apostrophe_windows_home.as_str(), "~"),
+            (
+                "/Users/example/notes /Users/alice/brief.md",
+                "~/notes /Users/alice/brief.md",
+            ),
+        ]
+        .map(|(path, expected)| {
+            (
+                format!("Read \"{path}\" and execute it."),
+                format!("Read \"{expected}\" and execute it."),
+            )
+        })
+        .into_iter()
+        .chain(
+            [
+                ("cd /Users/example", "cd ~"),
+                (concat!("홈은 /Users/example", "."), "홈은 ~."),
+                (
+                    "open file:///Users/example/x/brief.md",
+                    "open file://~/x/brief.md",
+                ),
+                ("cwd=/home/alice", "cwd=~"),
+                (r"cd C:\Users\example", "cd ~"),
+                ("cwd=C:/Users/example", "cwd=~"),
+                (concat!("홈은 /home/alice", "."), "홈은 ~."),
+                (concat!(r"홈은 C:\Users\example", "."), "홈은 ~."),
+                (
+                    concat!(r"Compare C:\Users\example", ", /home/alice/report.md"),
+                    "Compare ~, ~/report.md",
+                ),
+                (
+                    concat!(r"Compare C:\Users\example", " and /tmp/report.md"),
+                    "Compare ~ and /tmp/report.md",
+                ),
+                (
+                    concat!(r"Compare C:\Users\example", r" and C:\Temp\report.md"),
+                    r"Compare ~ and C:\Temp\report.md",
+                ),
+                (
+                    "open file:///C:/Users/example/x/brief.md",
+                    "open file:///~/x/brief.md",
+                ),
+                (
+                    "Read '/home/alice/tasks/brief.md' and execute it.",
+                    "Read '~/tasks/brief.md' and execute it.",
+                ),
+                (
+                    "Read `C:/Users/example/tasks/brief.md` and execute it.",
+                    "Read `~/tasks/brief.md` and execute it.",
+                ),
+            ]
+            .map(|(request, expected)| (request.to_owned(), expected.to_owned())),
+        )
+        .chain([
+            (
+                format!("Read {spaced_windows_path} and execute it."),
+                r"Read ~/worktrees/fix-search\brief.md and execute it.".to_owned(),
+            ),
+            (
+                format!("Read {apostrophe_windows_path} and execute it."),
+                r"Read ~/rest\brief.md and execute it.".to_owned(),
+            ),
+        ]) {
+            let events = [human(&request, 1)];
+            for context in [
+                analysis_context(&events, &|_| true),
+                rolling_analysis_context("기존 작업 결과물", &events, &events),
+            ] {
+                if !context.contains(&expected_request) || context.contains(&request) {
+                    failures.push(format!(
+                        "{request} -> {context}; expected {expected_request}"
+                    ));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn paths_outside_account_homes_are_kept_as_written() {
+        let request = concat!(
+            "/tmp/example/project/brief.md /var/folders/example/brief.md ",
+            "/etc/example/config.conf agents/runs/fix-search/brief.md ",
+            "repo/Users/example/brief.md /tmp/Users/example/brief.md ",
+            "file:///tmp/Users/example/brief.md repo/file:///Users/example/brief.md ",
+            r"C:\Temp\example\brief.md repo\Users\example\brief.md"
+        );
+        let events = [human(request, 1)];
+        for context in [
+            analysis_context(&events, &|_| true),
+            rolling_analysis_context("기존 작업 결과물", &events, &events),
+        ] {
+            assert!(context.contains(request), "{context}");
+        }
     }
 
     #[test]
