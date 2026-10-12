@@ -1,6 +1,92 @@
 use super::*;
 use serde_json::{Value, json};
 const CAPTURED_AT: u64 = 1_789_632_300;
+#[test]
+fn every_declared_source_has_samples_covering_its_declared_windows() {
+    use hide_agent_adapter::usage::Support;
+    for source in LimitSource::ALL {
+        let samples: Vec<(String, u64)> = match source {
+            LimitSource::ClaudeUsageText => {
+                let frame: Value = serde_json::from_str(include_str!(
+                    "../../../tests/fixtures/claude-usage/usage-2.1.274.json"
+                ))
+                .unwrap();
+                vec![(frame["result"].as_str().unwrap().into(), CAPTURED_AT)]
+            }
+            LimitSource::CodexUsage => vec![
+                (
+                    include_str!("../../../tests/fixtures/usage/codex/five-hour-and-weekly.json")
+                        .into(),
+                    1_735_390_000,
+                ),
+                (
+                    include_str!("../../../tests/fixtures/usage/codex/weekly-only.json").into(),
+                    CAPTURED_AT,
+                ),
+            ],
+        };
+        let readings: Vec<_> = samples
+            .iter()
+            .map(|(body, now)| parse(source, body, *now).unwrap())
+            .collect();
+        for adapter in hide_agent_adapter::ADAPTERS
+            .iter()
+            .filter(|a| a.usage.limit_sources().any(|s| s == source))
+        {
+            for kind in [
+                WindowKind::FiveHour,
+                WindowKind::Weekly,
+                WindowKind::Monthly,
+            ] {
+                let declared = adapter.usage.window(kind) == Support::Supported(source);
+                assert_eq!(
+                    readings
+                        .iter()
+                        .any(|r| r.windows.iter().any(|w| w.kind == kind
+                            && w.scope == Scope::All
+                            && matches!(w.outcome, WindowOutcome::Open { .. }))),
+                    declared,
+                    "{} {kind:?}",
+                    adapter.id
+                );
+                if declared && source.presence(kind) == Presence::PlanDependent {
+                    assert!(
+                        readings
+                            .iter()
+                            .any(|r| matches!(outcome(r, kind), WindowOutcome::NotOffered))
+                    );
+                }
+            }
+            assert_eq!(
+                readings.iter().any(|r| r
+                    .windows
+                    .iter()
+                    .any(|w| matches!(w.scope, Scope::Model { .. }))),
+                adapter.usage.limits.scoped == Support::Supported(source)
+            );
+        }
+    }
+    let reading = parse(
+        LimitSource::CodexUsage,
+        include_str!("../../../tests/fixtures/usage/codex/five-hour-and-weekly.json"),
+        1_735_390_000,
+    )
+    .unwrap();
+    assert_eq!(
+        outcome(&reading, WindowKind::FiveHour),
+        &WindowOutcome::Open {
+            used_percent: 15.0,
+            resets_at_s: 1_735_401_600
+        }
+    );
+    assert_eq!(
+        outcome(&reading, WindowKind::Weekly),
+        &WindowOutcome::Open {
+            used_percent: 5.0,
+            resets_at_s: 1_735_920_000
+        }
+    );
+}
 fn outcome(reading: &LimitReading, kind: WindowKind) -> &WindowOutcome {
     &reading
         .windows
