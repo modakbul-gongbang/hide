@@ -1117,8 +1117,9 @@ impl Runtime {
 
     /// A sleeping project the operator opened stays open only until one of
     /// its agents wakes or starts; the next time it falls asleep it starts
-    /// folded again (PRD sidebar-titlebar-refresh D-19). A key whose project
-    /// is not listed now is kept, as a reconnect can publish no rows for a
+    /// folded again (PRD sidebar-titlebar-refresh D-19). Only an awake agent
+    /// row ends it: a key whose project is not listed, or is listed with no
+    /// agent row at all, is kept, as a reconnect can publish no rows for a
     /// moment. Returns whether a key left, after asking for the save.
     fn forget_woken_asleep_folds(&mut self) -> bool {
         if !self
@@ -1145,13 +1146,14 @@ impl Runtime {
                     .flat_map(|session| &session.workspaces),
             )
             .filter(|workspace| {
-                let (presence, _) = crate::project_context::agent_presence(
+                let (presence, has_rows) = crate::project_context::agent_presence(
                     workspace,
                     &by_pane,
                     &self.snapshot.navigator.sleeping_sessions,
                     &[],
                 );
-                presence.asleep.is_none()
+                // Rows and none asleep: an agent there is awake.
+                has_rows && presence.asleep.is_none()
             })
             .map(|workspace| crate::project_context::asleep_fold_key(&workspace.id))
             .collect();

@@ -261,8 +261,20 @@ impl Mapper<'_> {
             Moves::Registration => self.table(&self.ids.registrations, value),
             Moves::Checkout => self.table(&self.ids.checkouts, value),
             Moves::Fold => {
+                // A device's own folds carry its id; a sleeping project's
+                // fold carries the project's (PRD sidebar-titlebar-refresh D-19).
                 if let Some(device) = value.strip_prefix("cleanup/") {
                     to(self.change.device(device).map(|id| format!("cleanup/{id}")))
+                } else if let Some(device) = value.strip_prefix("no_agents/") {
+                    to(self
+                        .change
+                        .device(device)
+                        .map(|id| format!("no_agents/{id}")))
+                } else if let Some(project) = value.strip_prefix("asleep/") {
+                    match self.table(&self.ids.registrations, project) {
+                        Mapped::To(id) => Mapped::To(format!("asleep/{id}")),
+                        other => other,
+                    }
                 } else {
                     self.table(&self.ids.registrations, value)
                 }
@@ -767,7 +779,12 @@ fn still_naming(value: &Value, change: &OwnerChange, at: &str) -> Option<String>
     // A new owner known by its node id keeps that id as the owner's.
     let alias = old_id != change.new_owner;
     let carries = |text: &str| text.starts_with(&qualified);
-    let is_alias = |text: &str| alias && (text == old_id || text == format!("cleanup/{old_id}"));
+    let is_alias = |text: &str| {
+        alias
+            && (text == old_id
+                || text == format!("cleanup/{old_id}")
+                || text == format!("no_agents/{old_id}"))
+    };
     match value {
         Value::String(text) if carries(text) => Some(at.to_owned()),
         Value::String(text)
@@ -973,6 +990,12 @@ mod tests {
                 (own_workspace(), device_project(M, M_ROOT)),
                 (format!("cleanup/{ALIAS}"), format!("cleanup/{C}")),
                 (format!("cleanup/{X}"), format!("cleanup/{X}")),
+                (format!("no_agents/{ALIAS}"), format!("no_agents/{C}")),
+                (format!("no_agents/{X}"), format!("no_agents/{X}")),
+                (
+                    format!("asleep/{}", own_workspace()),
+                    format!("asleep/{}", device_project(M, M_ROOT)),
+                ),
             ],
             other => panic!("no shapes for {other}"),
         }

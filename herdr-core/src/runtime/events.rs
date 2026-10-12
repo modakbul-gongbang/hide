@@ -1676,8 +1676,6 @@ impl Runtime {
         changed
     }
 
-    /// Opens or folds one agent's children in the sidebar tree, or in
-    /// Sessions, whose folds are kept apart (PRD D-25).
     /// A sleeping project's fold is its own: opening it holds it open until
     /// an agent wakes, and the project's ordinary fold stays as the operator
     /// set it (PRD sidebar-titlebar-refresh D-19). `None` when the project is
@@ -1715,6 +1713,8 @@ impl Runtime {
         Some(true)
     }
 
+    /// Opens or folds one agent's children in the sidebar tree, or in
+    /// Sessions, whose folds are kept apart (PRD D-25).
     fn toggle_agent_tree(&mut self, pane_id: String, sessions: bool) -> bool {
         let exists = self
             .snapshot
@@ -2619,11 +2619,14 @@ impl Runtime {
                 // project registrations, expanded folders and file tabs. Its
                 // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
-                let cleanup_key = format!("cleanup/{}", payload.device_id);
-                self.snapshot
-                    .ui_state
-                    .session_open_folds
-                    .retain(|key| !key.starts_with(&scope) && key != &cleanup_key);
+                let device_folds = [
+                    format!("cleanup/{}", payload.device_id),
+                    crate::project_context::no_agents_fold_key(&payload.device_id),
+                ];
+                self.snapshot.ui_state.session_open_folds.retain(|key| {
+                    let project = key.strip_prefix("asleep/").unwrap_or(key);
+                    !project.starts_with(&scope) && !device_folds.contains(key)
+                });
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state

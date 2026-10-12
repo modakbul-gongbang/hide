@@ -1334,7 +1334,6 @@ pub struct WorkspaceSnapshot {
     /// What the project's agents are doing, which the sidebar row draws as
     /// its name's weight and its sleeping fold (PRD sidebar-titlebar-refresh
     /// D-02, D-03, D-20).
-    #[serde(default)]
     pub agent_presence: ProjectAgentPresenceSnapshot,
     /// What `Remove project…` would close, counted by the core so the
     /// confirmation names the same panes the close will send to Herdr

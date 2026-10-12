@@ -3854,6 +3854,37 @@ fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
 /// holds it open until an agent wakes, without touching the project's own
 /// fold; once it wakes the key is forgotten, so the next sleep starts folded.
 /// The No agents fold opens through the shared fold event and its own key.
+fn tab_with_pane(pane_id: &str) -> TabSnapshot {
+    TabSnapshot {
+        agent: None,
+        naming: Default::default(),
+        id: None,
+        workspace_id: None,
+        checkout_id: None,
+        label: None,
+        empty: false,
+        delegated: false,
+        panes: vec![crate::model::PaneSnapshot {
+            id: pane_id.to_owned(),
+            herdr_label: None,
+            terminal_title: None,
+            cwd: "/tmp/hide-runtime-asleep".to_owned(),
+            status_code: crate::model::AgentStatusCode::Unknown,
+            requires_close_confirmation: false,
+            requires_close_status_check: false,
+            identity_label: None,
+            activity_at_unix_ms: None,
+            fork: Default::default(),
+            ports: vec![],
+            servers: vec![],
+            children: None,
+            lineage_path: Vec::new(),
+            sleep: None,
+            sleep_action: None,
+        }],
+    }
+}
+
 #[test]
 fn a_sleeping_project_stays_open_until_it_wakes() {
     let mut runtime = runtime();
@@ -3923,10 +3954,31 @@ fn a_sleeping_project_stays_open_until_it_wakes() {
         "the same intent lands on the same state"
     );
 
-    // It wakes: the open key leaves, and the next sleep starts folded.
+    // A reconnect that publishes the project with no agent row at all is no
+    // wake: the open key stays (D-19).
     runtime.snapshot.navigator.sleeping_sessions.clear();
     runtime.refresh_inactive_groups();
+    assert_eq!(
+        runtime.snapshot.ui_state.session_open_folds,
+        ["asleep/workspace-asleep"]
+    );
+
+    // It wakes, an awake agent in its checkout: the open key leaves, and the
+    // next sleep starts folded.
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].tabs = vec![tab_with_pane("woken")];
+    runtime.snapshot.navigator.agents = crate::sidebar::project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({ "agents": [
+            {"pane_id": "woken", "agent_status": "idle", "state_change_seq": 1}
+        ] }))
+        .expect("valid fixture"),
+    )
+    .agents;
+    runtime.refresh_inactive_groups();
     assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .tabs
+        .clear();
+    runtime.snapshot.navigator.agents.clear();
     runtime.snapshot.navigator.sleeping_sessions = vec![sleeper];
     runtime.refresh_inactive_groups();
     assert_eq!(asleep(&runtime).map(|asleep| asleep.expanded), Some(false));
