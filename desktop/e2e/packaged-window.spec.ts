@@ -8,7 +8,6 @@
 // never the operator's installed copy.
 
 import { expect, type ElectronApplication } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
@@ -37,37 +36,18 @@ test("the packaged app opens its window on the shell its own daemon serves", asy
     // hided beside it; with no UI folder named, that daemon serves the shell it embeds.
     run.env.HIDE_CLI_PATH = path.join(resources, fixtureExecutable("hide"));
     delete run.env.HIDED_UI_DIR;
+    // Every Windows profile has its Start Menu; Electron finds it with SHGetKnownFolderPath, which
+    // fails for a missing folder, so the fixture's private profile needs one as a real profile has.
+    const startMenu = process.platform === "win32" ? path.join(run.env.APPDATA!, "Microsoft", "Windows", "Start Menu", "Programs") : null;
+    if (startMenu) fs.mkdirSync(startMenu, { recursive: true });
     ({ app } = await launch(run.env, { executablePath: file }));
     const page = await shellPage(app);
     expect(fs.realpathSync.native(await app.evaluate(() => process.resourcesPath))).toBe(fs.realpathSync.native(resources));
     expect(run.daemonPid()).not.toBeNull();
     // Launch builds Electron's notification presenter on Windows, which makes the Start Menu
-    // shortcut a toast is attributed through, named from the executable's product name. Where it
-    // lands and whether it waits for a first notification is what this records: the shortcut after
-    // launch, and when there is none, after one test notification through the shell's bridge.
-    const roaming = await app.evaluate(({ app: electron }) => electron.getPath("appData"));
-    const programs = [roaming, process.env.APPDATA ?? ""].map((folder) => path.join(folder, "Microsoft", "Windows", "Start Menu", "Programs"));
-    if (process.platform === "win32") {
-      const shortcut = () => programs.find((folder) => fs.existsSync(path.join(folder, "hide.lnk"))) ?? null;
-      const waitShortcut = () => expect.poll(shortcut, { timeout: 30_000 }).not.toBeNull().then(shortcut, shortcut);
-      const afterLaunch = await waitShortcut();
-      const afterShow = afterLaunch ?? (await page.evaluate(() => (window as unknown as { hideHost: { notify(id: string, title: string, body: string): void } }).hideHost.notify("test", "Notifications work", "")).then(waitShortcut));
-      const listing = programs.map((folder) => `${folder}: ${fs.existsSync(folder) ? fs.readdirSync(folder).join(", ") : "missing"}`);
-      const notify = hostLog(run.env).filter((line) => String(line.event).startsWith("notify."));
-      // Electron registers the toast activator's COM class in the same task, right after the shortcut
-      // (`windows_toast_activator.cc`, `EnsureCLSIDRegistry`): whether that task ran at all.
-      const activator = spawnSync("reg", ["query", "HKCU\\Software\\Classes\\CLSID", "/s", "/f", "Electron Notification Activator"], { encoding: "utf8" }).stdout;
-      const entries = (folder: string): string[] => {
-        try {
-          return fs.readdirSync(folder, { recursive: true }) as string[];
-        } catch (error) {
-          return [`unreadable: ${String(error)}`];
-        }
-      };
-      const found = [roaming, process.env.APPDATA ?? ""].flatMap((folder) => entries(folder).filter((entry) => /hide\.lnk$|unreadable/i.test(entry)).map((entry) => path.join(folder, entry)));
-      console.log(JSON.stringify({ afterLaunch, afterShow, listing, found, activator, notify }, null, 1));
-      expect(afterLaunch).not.toBeNull();
-    }
+    // shortcut a toast is attributed through, named from the executable's product name, before
+    // any notification shows.
+    if (startMenu) await expect.poll(() => fs.existsSync(path.join(startMenu, "hide.lnk")), { timeout: 30_000 }).toBe(true);
     await enterWorkspace(page, "fixture");
     await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
     await screenshot(page, "packaged-window");
