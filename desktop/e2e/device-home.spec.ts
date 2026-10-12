@@ -132,10 +132,10 @@ test("a device's Home is made on its first start, the rail follows registration,
     await enterWorkspace(page, "fixture");
     const nav = page.locator("nav[data-sidebar]");
 
-    // B1: one device, and the rail still shows (This Mac alone, no Inbox); the Home row heads Projects.
+    // B1: one device, and the rail still shows (This Mac alone, no Inbox); Home has no row (sidebar-titlebar-refresh B11).
     await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
     await expect(page.locator("[data-rail-tile]")).toHaveCount(1);
-    await expect(page.locator("[data-project-list] [data-home-destination]")).toBeVisible();
+    await expect(nav.getByRole("button", { name: /^Home\b/ })).toHaveCount(0);
     await capture(page, app, "device-home-one-device");
 
     // B6: View > Toggle device rail hides the rail, the name becomes the device menu, and the menu item brings it back.
@@ -180,7 +180,7 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect(page.locator(`[data-device-band="${DEVICE}"]`)).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(`[data-rail-tile="${DEVICE}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[data-sidebar-title-name]")).toContainText(DEVICE_LABEL);
-    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
+    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("~/hide");
     await capture(page, app, "device-home-started");
 
     // B25: with the device's Home pane in front, the panel aims at that device's Home.

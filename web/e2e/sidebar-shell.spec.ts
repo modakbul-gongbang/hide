@@ -1,113 +1,204 @@
-// The sidebar's shell on an isolated pinned Herdr and hided (PRD sidebar-shell
-// B1-B7, with the Home row moved into the Projects list by quick
-// device-rail-badges B3): the Home row heads the Projects list under the
-// Projects | Agents strip, opens the device's Overview and carries its fill only while that screen is in front; Projects
-// is the first tab and the default; Search at the strip's end opens the ⌘K
-// palette, and a browser tab offers no Add project before it; the
-// Search field row, the bottom new-workspace button and the All projects row
-// inside the list are gone. Captured in Dark and Light.
+// The sidebar's shell and the window's top row on an isolated pinned Herdr and
+// hided (PRD sidebar-shell B3-B5, sidebar-titlebar-refresh B11-B14, B17-B21,
+// D-07): the top row names the device over the rail and the sidebar and
+// carries a Workspace's path and icons; under it the Search row opens the ⌘K
+// palette with the chord as bound, the Overview row opens All projects, and no
+// Home row is left; a browser tab offers no Add project; the footer's Help
+// menu opens the shortcut sheet, copies the diagnostics, opens the new-issue
+// page and names the version. Captured in Dark and Light.
 
-import { expect, test } from "@playwright/test";
-import { startHerdr } from "./herdr-fixture";
+import { expect, test, type Page } from "@playwright/test";
+import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chooseTheme, screenshot, THIS_MACHINE } from "./wire";
+import { chooseTheme, enterWorkspace, screenshot, THIS_MACHINE } from "./wire";
 import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
-test("the Home row, the Projects | Agents strip and its Search icon, with no Add project in a browser tab", async ({ page }) => {
+/** One private stack with the page on it, the Projects list drawn; `check` runs with it and both are stopped after. */
+async function withShell(page: Page, label: string, check: (stack: { herdr: HerdrFixture; daemon: Daemon }) => Promise<void>): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
-    daemon = await startHided(herdr, "sidebar-shell");
+    daemon = await startHided(herdr, label);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    const sidebar = page.locator("nav[data-sidebar]");
-    // B3: Projects is the first tab and the one shown.
-    await expect(sidebar).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    const list = page.locator("[data-project-list]");
-    await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
-
-    // B1, B2: the Home row opens the device's Overview, titled with the device, and is marked.
-    // No Overview row is left above the list.
-    await expect(page.locator("[data-sidebar-overview]")).toBeVisible();
-    const overview = page.locator("[data-home-destination]");
-    await expect(overview).toContainText("Home");
-    await expect(overview.locator("[data-home-count]")).toHaveText(/^\d+ projects?$/);
-    await overview.click();
-    const main = page.locator("[data-main-screen]");
-    await expect(main).toBeVisible();
-    await expect(main.locator("h1")).toContainText("Home");
-    await expect(main.locator("[data-main-device-name]")).toHaveText(THIS_MACHINE);
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
-    await expect(overview).not.toHaveAttribute("aria-current", "page");
-    // The row is the Projects list's own, under the tab strip.
-    expect(await overview.evaluate((row) => row.closest("[data-project-list]") !== null)).toBe(true);
-    expect((await overview.boundingBox())!.y).toBeGreaterThan((await page.locator("[data-sidebar-overview]").boundingBox())!.y);
-
-    // B7 and the removed controls: the list starts at a project, and no field or bottom button is left.
-    await expect(list).not.toContainText("All projects");
-    await expect(sidebar.locator("input")).toHaveCount(0);
-    await expect(sidebar).not.toContainText("새 워크스페이스");
-
-    for (const theme of ["dark", "light"] as const) {
-      await chooseTheme(page, theme);
-      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-      await screenshot(page, `sidebar-shell-overview-${theme}`);
-    }
-
-    // B2: a Workspace in front takes the fill away; Enter on the row brings the Home Overview back.
-    await list.locator("[data-checkout]").first().click();
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await expect(overview).not.toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-go-main]")).toHaveText("Home");
-    await overview.focus();
-    await page.keyboard.press("Enter");
-    await expect(main).toBeVisible();
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
-    await expect(overview).not.toHaveAttribute("aria-current", "page");
-
-    // B4: Search at the strip's end, hinted with its chord, opens the palette.
-    const search = page.locator("[data-sidebar-search]");
-    await expect(search).toHaveAccessibleName("Search");
-    await search.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(`Search${commandLabel("search")}`);
-    await screenshot(page, "sidebar-shell-search-hint-light");
-    await search.click();
-    await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(page.locator('[data-palette="Search"]')).toHaveCount(0);
-
-    // B5: a browser tab has no folder picker, so the sidebar offers no Add project
-    // (the desktop app draws it on the Projects title: desktop/e2e/add-project.spec.ts).
-    const add = page.locator("[data-sidebar-new-workspace]");
-    await expect(add).toHaveCount(0);
-    // Neither the Overview nor the chord offers it: the chord opens nothing.
-    await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
-    await page.keyboard.press("Alt+Shift+KeyN");
-    await page.keyboard.press(chord("new_workspace", "electron"));
-    await expect(page.locator("[data-add-project]")).toHaveCount(0);
-
-    // The direct commands focus this one list or open the Agents graph.
-    // B9 opens the modal over a Workspace; Home already displays Overview.
-    await list.locator("[data-checkout]").first().click();
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await page.keyboard.press(chord("sidebar_projects"));
-    await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
-    await page.keyboard.press(chord("sidebar_agents"));
-    await expect(page.getByRole("dialog", { name: "Overview", exact: true }).locator('[data-main-view="agents"]')).toBeVisible();
-    await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(sidebar).toHaveAttribute("data-sidebar", "projects");
-    await expect(list).toBeVisible();
-    await expect(add).toHaveCount(0);
-    await expect(search).toBeVisible();
-    await expect(overview).toBeVisible();
-    await page.mouse.move(640, 700);
-    await screenshot(page, "sidebar-shell-agents-light");
+    await expect(page.locator("nav[data-sidebar]")).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
+    await expect(page.locator("[data-project-list] [data-checkout]").first()).toBeVisible({ timeout: 20_000 });
+    await check({ herdr, daemon });
   } finally {
     daemon?.stop();
     herdr.stop();
   }
+}
+
+test("the Search row and the Overview row under the device, with no Home row and no Add project in a browser tab", async ({ page }) => {
+  await withShell(page, "sidebar-shell", async () => {
+    const sidebar = page.locator("nav[data-sidebar]");
+    const list = page.locator("[data-project-list]");
+    // B3: Projects is the first tab and the one shown.
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
+    // B11: no Home row and no `+` for it.
+    await expect(sidebar.getByRole("button", { name: /^Home\b/ })).toHaveCount(0);
+    await expect(list).not.toContainText("All projects");
+    await expect(sidebar.locator("input")).toHaveCount(0);
+
+    // B12: the Search row sits under the top row, above Overview, with the chord as bound; a press or Enter opens the palette.
+    const search = page.locator("[data-sidebar-search]");
+    const overview = page.locator("[data-sidebar-overview]");
+    await expect(search.locator("[data-sidebar-search-chord]")).toHaveText(commandLabel("search"));
+    expect((await search.boundingBox())!.y).toBeLessThan((await overview.boundingBox())!.y);
+    await search.click();
+    const palette = page.locator('[data-palette="Search"]');
+    await expect(palette.locator("[data-palette-input]")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(palette).toHaveCount(0);
+    await search.focus();
+    await page.keyboard.press("Enter");
+    await expect(palette.locator("[data-palette-input]")).toBeFocused();
+    await page.keyboard.press("Escape");
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `sidebar-shell-search-${theme}`);
+    }
+
+    // D-07: over a Workspace the Overview row opens All projects as a layer, and Escape returns to the Workspace.
+    await list.locator("[data-checkout]").first().click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await expect(overview).not.toHaveAttribute("aria-current", "page");
+    await overview.click();
+    const modal = page.getByRole("dialog", { name: "Overview", exact: true });
+    await modal.getByRole("tab", { name: "All projects", exact: true }).click();
+    await expect(modal.locator("[data-main-screen]")).toBeVisible();
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+
+    // B5: a browser tab has no folder picker, so neither the sidebar nor the chord offers Add project
+    // (the desktop app draws it on the Projects header: desktop/e2e/add-project.spec.ts).
+    await expect(page.locator("[data-sidebar-new-workspace], [data-main-add-project]")).toHaveCount(0);
+    await page.keyboard.press(chord("new_workspace", "electron"));
+    await expect(page.locator("[data-add-project]")).toHaveCount(0);
+
+    // The direct commands focus this one list or open the Agents graph over the Workspace.
+    await page.keyboard.press(chord("sidebar_projects"));
+    await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect(modal.locator('[data-main-view="agents"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toHaveAttribute("data-sidebar", "projects");
+    await expect(list).toBeVisible();
+  });
+});
+
+test("the window's top row names the device over the rail and the sidebar, and carries the Workspace's path and icons", async ({ page }) => {
+  await withShell(page, "sidebar-title-row", async () => {
+    const row = page.locator("[data-title-row]");
+    const sidebar = page.locator("nav[data-sidebar]");
+    const center = page.locator("[data-title-center]");
+    // B17, B23: one row at the window's top, with no traffic lights' space in a browser tab, the device over the rail and the sidebar.
+    const rowBox = (await row.boundingBox())!;
+    expect([rowBox.x, rowBox.y]).toEqual([0, 0]);
+    await expect(row).toHaveAttribute("data-traffic-lights", "false");
+    const title = page.locator("[data-sidebar-title]");
+    await expect(title.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
+    const titleBox = (await title.boundingBox())!;
+    const sidebarBox = (await sidebar.boundingBox())!;
+    expect([Math.round(titleBox.x), Math.round(titleBox.width)]).toEqual([Math.round(sidebarBox.x), Math.round(sidebarBox.width)]);
+    expect(sidebarBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height - 0.5);
+
+    // B17, B18: a Workspace puts its project / checkout path and its icons in the row, and no toolbar under it.
+    await enterWorkspace(page, "fixture");
+    const project = center.locator("[data-workspace-project]");
+    await expect(project).toHaveText("fixture");
+    await expect(center.locator("[data-workspace-location]")).toBeVisible();
+    await expect(center.locator("[data-column-toggles] button")).toHaveCount(4);
+    const workspaceBox = (await page.locator("[data-workspace-screen]").boundingBox())!;
+    expect(workspaceBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height - 0.5);
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.mouse.move(640, 600);
+      await screenshot(page, `title-row-workspace-${theme}`);
+    }
+    // B18: the checkout's right-click is the path's menu, and the project opens its Project Overview.
+    await center.locator("[data-workspace-location]").click({ button: "right" });
+    await expect(page.locator('[role="menu"] [data-menu-item="copy_path"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await project.click();
+    const modal = page.getByRole("dialog", { name: "Overview", exact: true });
+    await expect(modal.locator("[data-overview-screen]")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
+
+    // B21: with the sidebar hidden the path starts the row, where the device name was.
+    await page.keyboard.press(chord("toggle_left_sidebar"));
+    await expect(sidebar).toHaveCount(0);
+    await expect(title).toHaveCount(0);
+    expect(Math.round((await center.boundingBox())!.x)).toBe(0);
+    await expect(project).toBeVisible();
+    await page.keyboard.press(chord("toggle_left_sidebar"));
+    await expect(title).toBeVisible();
+
+    // B20: on a screen that is not a Workspace the row's center is empty.
+    await page.locator("[data-sidebar-factory]").click();
+    await expect(page.locator("[data-factory-screen]")).toBeVisible();
+    await expect(center.locator("*")).toHaveCount(0);
+    await expect(title.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
+  });
+});
+
+test("the Help menu opens the shortcut sheet, copies the diagnostics, opens the new-issue page and names the version", async ({ page }) => {
+  await withShell(page, "sidebar-help", async ({ daemon }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.origin });
+    // The new-issue page is answered here, so the test never reaches GitHub.
+    await page.context().route("https://github.com/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>new issue</title>" }));
+    const trigger = page.locator("[data-help-menu-trigger]");
+    const settings = page.locator("[data-open-settings]");
+    // B13: `?` sits before the gear.
+    await expect(trigger).toHaveAccessibleName("Help");
+    const triggerBox = (await trigger.boundingBox())!;
+    const settingsBox = (await settings.boundingBox())!;
+    expect(triggerBox.x + triggerBox.width).toBeLessThanOrEqual(settingsBox.x);
+    expect(Math.round(triggerBox.y)).toBe(Math.round(settingsBox.y));
+
+    // B13: three actions, then the version as a line to read.
+    await trigger.click();
+    const menu = page.locator("[data-help-menu]");
+    await expect(menu.locator("[data-help-item]")).toHaveText([`Keyboard shortcuts${commandLabel("shortcuts")}`, "Copy diagnostics", "Report an issue"]);
+    const version = menu.locator("[data-help-version]");
+    await expect(version).toHaveText(/^hide \S+$/);
+    await expect(version).not.toHaveAttribute("role", "menuitem");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await trigger.click();
+      await expect(menu).toBeVisible();
+      await screenshot(page, `sidebar-help-menu-${theme}`);
+      await page.keyboard.press("Escape");
+    }
+
+    // B14: Copy diagnostics copies the About text and says so in the open menu.
+    await trigger.click();
+    await menu.locator('[data-help-item="copy_diagnostics"]').click();
+    await expect(menu.locator("[data-help-copied]")).toHaveText("Copied");
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).toContain((await version.getAttribute("data-help-version"))!);
+    await page.keyboard.press("Escape");
+
+    // B14: Report an issue opens the repository's new-issue page outside hide.
+    await trigger.click();
+    const popup = page.context().waitForEvent("page");
+    await menu.locator('[data-help-item="report_issue"]').click();
+    const opened = await popup;
+    expect(opened.url()).toBe("https://github.com/modakbul-gongbang/hide/issues/new");
+    await opened.close();
+
+    // B14: Keyboard shortcuts opens the shortcut sheet.
+    await trigger.click();
+    await menu.locator('[data-help-item="shortcuts"]').click();
+    await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
+  });
 });

@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setFixtureLifecycle, spawnAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { openCurrentProjectOverview } from "./overview-entry";
+import { openAllProjects, openCurrentProjectOverview } from "./overview-entry";
 import { chooseTheme, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
@@ -68,7 +68,7 @@ test("All projects: a delegation into another project is a chip at each end, and
   const stack = await start(page, "graph-cross-all");
   try {
     const { lead, spec, build, docs } = stack;
-    await page.locator("[data-home-destination]").click();
+    await openAllProjects(page);
     const main = page.locator("[data-main-screen]");
     await page.locator('[data-main-tab="agents"]').click();
     await expect(main.locator("[data-graph=all]")).toBeVisible();

@@ -6,6 +6,7 @@ import { ProjectOverview } from "../ProjectOverview";
 import { Sidebar } from "../sidebar";
 import type { ProjectSessionDetail, SessionSearch } from "../snapshot";
 import { useShellStore } from "../store";
+import { TitleRow } from "../TitleRow";
 import { entryLens, useUiStore } from "../ui";
 import { WorkspaceScreen } from "../WorkspaceScreen";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
@@ -47,5 +48,6 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
     document.documentElement.classList.toggle("light",theme === "light");
     document.documentElement.style.setProperty("--interface-scale",String(scale));
   }, [fixture,kind,theme,scale]);
-  return <TooltipProvider><div className="flex h-full bg-background text-foreground" data-gallery-scene={kind}><Sidebar actions={actions}/>{kind === "workspace-servers" ? <WorkspaceScreen actions={actions}/> : <ProjectOverview projectId={fixture.workspace.id} lens={{...entryLens(null,"board"),tab:"sessions"}} actions={actions}/>}</div></TooltipProvider>;
+  // The Workspace's path and icons are the window's top row (PRD sidebar-titlebar-refresh B17).
+  return <TooltipProvider><div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene={kind}><TitleRow actions={actions}/><div className="flex min-h-0 flex-1"><Sidebar actions={actions}/>{kind === "workspace-servers" ? <WorkspaceScreen actions={actions}/> : <ProjectOverview projectId={fixture.workspace.id} lens={{...entryLens(null,"board"),tab:"sessions"}} actions={actions}/>}</div></div></TooltipProvider>;
 }

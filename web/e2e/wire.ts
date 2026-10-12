@@ -153,6 +153,19 @@ export async function rowGeometry(row: Locator, next: Locator, parts: Locator[])
   return [Math.round(box.height), Math.round(after.y), ...xs];
 }
 
+/**
+ * A sidebar row of a project, shown: a project with no agent rows is folded
+ * under No agents (PRD sidebar-titlebar-refresh B1), so the fold is opened
+ * when the row is not drawn. The fold is the core's, so it stays open.
+ */
+export async function showProjectRow(page: Page, row: Locator): Promise<Locator> {
+  const fold = page.locator('[data-no-agent-projects][aria-expanded="false"]');
+  await expect(row.or(fold).first()).toBeVisible({ timeout: 20_000 });
+  if (!(await row.isVisible())) await fold.click();
+  await expect(row).toBeVisible();
+  return row;
+}
+
 /** Puts the pointer on the canvas and drops keyboard focus, so no row is hovered or focused. */
 export async function rest(page: Page): Promise<void> {
   await page.mouse.move(900, 600);

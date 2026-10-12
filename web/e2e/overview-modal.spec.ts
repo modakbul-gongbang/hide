@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { openAllProjectsPage } from "./overview-entry";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 import { chord, held } from "./chords";
 
@@ -19,14 +20,12 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     const paneId = await pane.getAttribute("data-pane-view");
     const geometry = await pane.boundingBox();
     const sidebar = page.locator("[data-sidebar-overview]");
-    const home = page.locator("[data-home-destination]");
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await page.keyboard.press(chord("overview"));
     await expect(modal).toBeVisible();
     // On a 1920 × 1080 window the modal stops at its cap, 1440 × 960.
     expect(await modal.boundingBox().then((box) => [box?.width, box?.height])).toEqual([1440, 960]);
     await expect(sidebar).toHaveAttribute("aria-current", "page");
-    await expect(home).not.toHaveAttribute("aria-current");
     await expect(page.locator("[data-project-overview]")).toHaveCount(0);
     expect(await pane.boundingBox()).toEqual(geometry);
     expect(await modal.evaluate((node) => node.contains(document.activeElement))).toBe(true);
@@ -103,11 +102,11 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(modal).toHaveCount(0);
     await expect.poll(() => page.locator('nav[data-sidebar]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    await home.click();
-    await expect(page.locator("[data-overview-page]")).toBeVisible();
-    await expect(modal).toHaveCount(0);
+    // From another page the Overview row opens All projects as a page, not the layer.
+    await openAllProjectsPage(page);
     await sidebar.click();
     await expect(page.locator("[data-main-screen]")).toBeVisible();
+    await expect(modal).toHaveCount(0);
     await screenshot(page, "overview-page-dark");
     await page.keyboard.press(chord("overview"));
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();

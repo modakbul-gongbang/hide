@@ -116,7 +116,8 @@ test("결정 필요 holds every item open; a pick sent on Enter takes it off, an
     await expect(rows.first()).toHaveAttribute("data-factory-row-turn", "true");
 
     // Factory remains directly reachable from the shared sidebar.
-    await page.locator("[data-home-destination]").click();
+    await page.locator("[data-sidebar-overview]").click();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
     await expect(page.locator("[data-factory-badge]")).toHaveText("1");
     await openFactory(page);
     await expect(page.locator('[data-factory-screen="ready"]')).toBeVisible();
