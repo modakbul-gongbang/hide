@@ -462,7 +462,7 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
   const save = () => {
     const id = `edit-${card.task.key}-${Date.now()}`;
     setRequest(id);
-    actions.updateLocalIssue(id, card.task.key, title, text);
+    actions.updateLocalIssue(id, card.owner.id, card.task.key, title, text);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" && holdsCommandKey(event)) {

@@ -59,6 +59,8 @@ mod links;
 mod memory;
 #[path = "tests/node_agent_areas.rs"]
 mod node_agent_areas;
+#[path = "tests/node_issues.rs"]
+mod node_issues;
 #[path = "tests/operator_focus.rs"]
 mod operator_focus;
 mod pane_geometry;

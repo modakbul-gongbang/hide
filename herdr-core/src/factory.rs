@@ -2196,31 +2196,34 @@ fn prompt_argument(prompt: &str, task: &str) -> Result<String, Failure> {
     }
 }
 
-/// Local issues (`L-<n>`) live in the core's local issue store (B3).
-struct CoreIssues {
-    runtime: Weak<Mutex<Runtime>>,
+/// Local issues (`L-<n>`) live in the core's local issue store (B3), a
+/// node's project's under that node's id (PRD core-host-node-move D-29).
+pub(crate) struct CoreIssues {
+    pub(crate) runtime: Weak<Mutex<Runtime>>,
 }
 
 impl IssueBook for CoreIssues {
     fn create(
         &mut self,
+        machine: Option<&str>,
         project: &str,
         title: &str,
         body: &str,
         marker: &str,
     ) -> Result<u32, Failure> {
         let runtime = lock(&self.runtime).ok_or_else(|| Failure::task("issue", "core stopped"))?;
-        let number = guard(&runtime).factory_local_issue(project, title, body, marker);
+        let number = guard(&runtime).factory_local_issue(machine, project, title, body, marker);
         number.map_err(|reason| Failure::task("issue.create", reason))
     }
 
     fn read(
         &mut self,
+        machine: Option<&str>,
         project: &str,
         number: u32,
     ) -> Result<hide_factory::adapters::IssueText, Failure> {
         let runtime = lock(&self.runtime).ok_or_else(|| Failure::task("issue", "core stopped"))?;
-        let issue = guard(&runtime).factory_local_issue_read(project, number);
+        let issue = guard(&runtime).factory_local_issue_read(machine, project, number);
         let issue = issue.ok_or_else(|| Failure::task("issue.read", "missing"))?;
         Ok(hide_factory::adapters::IssueText {
             title: issue.title,

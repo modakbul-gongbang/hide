@@ -1043,6 +1043,16 @@ pub(crate) struct TaskAgentLaunch {
     pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
 }
 
+/// One repository of a node's GitHub read: the generation it was last asked
+/// with, when, and the linked issues that ask named, so a new link asks again
+/// at once rather than at the next re-read.
+#[derive(Clone, Debug)]
+pub(crate) struct DeviceGithubRead {
+    generation: u64,
+    asked_at: std::time::Instant,
+    links: Vec<crate::issues::IssueReference>,
+}
+
 pub struct Runtime {
     snapshot: Snapshot,
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
@@ -1139,7 +1149,7 @@ pub struct Runtime {
     /// The pull requests of each node that dials this core, read here by
     /// repository name, and when each of its repositories was last asked.
     device_github: HashMap<String, crate::model::GithubSnapshot>,
-    device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
+    device_github_reads: HashMap<(String, String), DeviceGithubRead>,
     /// The generation of each node repository's last answered read, which a
     /// Memory promotion's verdict waits for (`memory_promotion.rs`).
     device_github_read_generation: HashMap<(String, String), u64>,
@@ -1501,8 +1511,15 @@ pub struct Runtime {
     pending_checks_read_at: Option<std::time::Instant>,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
-    issue_write_pending: Option<(u64, String, String)>,
+    issue_write_pending: Option<issues::IssueWritePending>,
     unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
+    /// The same, for each node that dials this core, by its Herdr's
+    /// workspace ids; kept while the node's session is.
+    unconfirmed_node_issue_tokens:
+        BTreeMap<String, BTreeMap<String, issues::UnconfirmedIssueToken>>,
+    /// The malformed link value each checkout's chain last logged, so one
+    /// that stays malformed is logged once rather than on every pass.
+    invalid_links: issues::InvalidLinks,
     /// Every project's Local issues, read when the runtime is created; `Err`
     /// holds why the file could not be read, and then no change is accepted,
     /// so a damaged file is never replaced by a partial one.
@@ -1649,6 +1666,9 @@ pub struct Runtime {
     /// every window of the daemon: naming another replaces it.
     disk_project: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
+    /// The node whose session last carried `cleanup`, so a cleanup that
+    /// replaces it on another project also leaves that node's rows.
+    cleanup_published_node: Option<String>,
     next_cleanup_id: u64,
     /// The id of the cleanup worker that is running, if one is. While it is,
     /// no other review starts and the snapshot cannot be dismissed, so two
@@ -2070,6 +2090,8 @@ impl Runtime {
             issue_candidates: Default::default(),
             issue_write_pending: None,
             unconfirmed_issue_tokens: BTreeMap::new(),
+            unconfirmed_node_issue_tokens: BTreeMap::new(),
+            invalid_links: Default::default(),
             local_issues: match &local_issues_path {
                 Some(path) => crate::local_issues::load(path),
                 None => Ok(crate::local_issues::LocalIssueStore::default()),
@@ -2118,6 +2140,7 @@ impl Runtime {
             disk_generation: 0,
             disk_project: None,
             cleanup: None,
+            cleanup_published_node: None,
             next_cleanup_id: 0,
             cleanup_worker: None,
             worktree_generation: 0,

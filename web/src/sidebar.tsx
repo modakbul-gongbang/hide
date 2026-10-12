@@ -19,7 +19,7 @@ import { PrMark } from "./components/pr-mark";
 import { PR_LOOK } from "./prMark";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
+import { frontDeviceId, frontTitle, homeProjectCount, railShown, readsHere, sidebarBody } from "./devices";
 import { badgeWords } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
@@ -1315,6 +1315,7 @@ function CheckoutOpenButton({
   disabled?: boolean;
 }) {
   const { t } = useInterfaceTranslation();
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now(), t);
   return (
@@ -1322,7 +1323,7 @@ function CheckoutOpenButton({
       card={card}
       description={view.detail}
       onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
-      onShowPullRequestRow={workspace.is_git && !workspace.remote_target_id ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
     >
       <button
         type="button"

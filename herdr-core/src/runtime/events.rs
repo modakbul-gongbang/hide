@@ -894,6 +894,9 @@ pub(super) struct GithubSearchPayload {
 #[serde(deny_unknown_fields)]
 pub(super) struct LocalIssueUpdatePayload {
     pub(super) request_id: String,
+    /// The project the issue is in: a node's project and this machine's may
+    /// share a path, and the key names only the path.
+    pub(super) workspace_id: String,
     pub(super) task_key: String,
     pub(super) title: String,
     #[serde(default)]
@@ -955,6 +958,8 @@ pub(super) struct PrDelegatePayload {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct IssueSetOpenPayload {
+    /// The project the issue is in, as in `LocalIssueUpdatePayload`.
+    pub(super) workspace_id: String,
     pub(super) task_key: String,
     pub(super) open: bool,
 }
@@ -2344,22 +2349,29 @@ impl Runtime {
                 true
             }
             Event::InactiveCheckoutsToggle(payload) => {
-                let Some(group) = self
+                // The fold is this machine's projects' and those of a node
+                // that dials the core (D-29), keyed by the project's folder.
+                let nodes = self
+                    .node_sessions()
+                    .flat_map(|(_, session)| &session.workspaces);
+                let folds: Vec<bool> = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
-                    .find(|workspace| workspace.path == payload.project_path)
-                    .map(|workspace| &workspace.inactive_checkouts)
-                else {
+                    .chain(nodes)
+                    .filter(|workspace| workspace.path == payload.project_path)
+                    .map(|workspace| !workspace.inactive_checkouts.checkout_ids.is_empty())
+                    .collect();
+                if folds.is_empty() {
                     self.set_error(
                         "inactive_checkouts.unknown_project",
                         format!("Project {} is not available", payload.project_path),
                         false,
                     );
                     return true;
-                };
-                if group.checkout_ids.is_empty() {
+                }
+                if !folds.contains(&true) {
                     self.set_error(
                         "inactive_checkouts.unavailable",
                         format!("Project {} has no inactive checkouts", payload.project_path),
@@ -3315,6 +3327,17 @@ impl Runtime {
                             && workspace.remote_target_id.is_none()
                     })
                     .map(|workspace| workspace.path.clone());
+                if project.is_none()
+                    && let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
+                    && workspace.is_git
+                {
+                    // A node's repositories are all read without being
+                    // asked, up to the limit; a refresh reads one again.
+                    if payload.refresh {
+                        self.reread_node_github(&node, &workspace.path);
+                    }
+                    return payload.refresh;
+                }
                 let Some(project) = project else {
                     self.set_error(
                         "github.invalid_project",
@@ -3351,6 +3374,15 @@ impl Runtime {
                     })
                     .map(|workspace| workspace.path.clone());
                 let Some(project) = project else {
+                    // A node's Git project is read again on the node and by
+                    // its repository's name here, as this machine's is (D-29).
+                    if let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
+                        && workspace.is_git
+                    {
+                        self.reread_node_github(&node, &workspace.path);
+                        self.request_device_worktrees(&node, true);
+                        return true;
+                    }
                     crate::diagnostic!(serde_json::json!({
                         "component": "overview", "kind": "refresh.invalid_project",
                         "workspace_id": payload.workspace_id
@@ -3368,11 +3400,15 @@ impl Runtime {
             Event::CleanupDismiss => {
                 // A worker still running owns the snapshot; it cannot be
                 // dismissed until the worker has ended.
-                if self.cleanup.is_none() || self.cleanup_worker.is_some() {
+                let Some(cleanup) = self.cleanup.as_ref() else {
+                    return false;
+                };
+                if self.cleanup_worker.is_some() {
                     return false;
                 }
+                let node = self.cleanup_node(&cleanup.workspace_id);
                 self.cleanup = None;
-                self.refresh_worktree_projection();
+                self.publish_cleanup(node.as_deref());
                 true
             }
             Event::OverviewOpenSection(payload) => self.overview_open_section(payload),
@@ -3381,12 +3417,7 @@ impl Runtime {
                 // The card's one refresh button re-reads both the remote
                 // answer and the local counts, because the operator pressing
                 // it means "this is out of date", not "gh is out of date".
-                if let Some((workspace, _)) = self.focused_local_checkout() {
-                    let project = workspace.path.clone();
-                    self.refresh_pull_requests(&project);
-                }
-                self.refresh_worktrees();
-                self.remeasure_disk();
+                self.reread_focused_project();
                 true
             }
             Event::CardMeasureDisk(payload) => match payload.workspace_id {
@@ -3728,12 +3759,7 @@ impl Runtime {
                         RightPanelSection::Overview
                     );
                 if git_is_visible && !git_was_visible {
-                    if let Some((workspace, _)) = self.focused_local_checkout() {
-                        let project = workspace.path.clone();
-                        self.refresh_pull_requests(&project);
-                    }
-                    self.refresh_worktrees();
-                    self.remeasure_disk();
+                    self.reread_focused_project();
                 }
                 if git_is_visible != git_was_visible {
                     self.refresh_card();

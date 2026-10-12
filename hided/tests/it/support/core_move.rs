@@ -48,6 +48,17 @@ const STAND_INS: [(&str, &str); 3] = [
         r#"if [ -e "$0.fail" ]; then printf 'AC Power:\n sleep 10\n'; else printf 'AC Power:\n sleep 0\n'; fi"#,
     ),
 ];
+/// Each machine's own `gh`, first on its `PATH` and signed in, as the
+/// operator's are: a repository whose `origin` names no GitHub repository
+/// answers as `gh` does there, so its issues read Local by themselves; the
+/// fixture has no GitHub to answer anything else.
+const GH: &str = r#"[ "$1 $2" = "auth status" ] && exit 0
+if [ -z "$GH_REPO" ] && ! git remote get-url origin 2>/dev/null | grep -q github.com; then
+  echo "none of the git remotes configured for this repository point to a known GitHub host" >&2
+  exit 1
+fi
+echo "the fixture's gh has no GitHub to ask" >&2
+exit 1"#;
 const CLAUDE: &str = r#"if [ "$1 $2" = "auth status" ]; then
   if [ -e "$0.fail" ]; then echo '{"loggedIn":false}'; else echo '{"loggedIn":true}'; fi
   exit 0
@@ -185,9 +196,21 @@ impl Fixture {
             stand_in(&preflight.join(name), script)?;
         }
         stand_in(&target_env.home.join(".local/bin/claude"), CLAUDE)?;
+        for environment in [&source_env, &target_env] {
+            fs::create_dir_all(environment.home.join("bin"))?;
+            stand_in(&environment.home.join("bin/gh"), GH)?;
+        }
         // Each runs once here, so the system's first look at a new program
         // (macOS checks each one once, machine-wide in turn) is not inside a
         // check's bound.
+        for (environment, program) in [&source_env, &target_env]
+            .into_iter()
+            .map(|environment| (environment, environment.home.join("bin/gh")))
+        {
+            let mut command = environment.command(&program);
+            command.args(["auth", "status"]);
+            successful(command)?;
+        }
         for (program, args) in [
             (preflight.join("gh"), &[][..]),
             (preflight.join("launchctl"), &[]),

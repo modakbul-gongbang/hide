@@ -37,6 +37,10 @@ impl Runtime {
             &self.snapshot.ui_state.workspace_registrations,
             facts,
         );
+        let reports_own_facts = self
+            .link_origin(target)
+            .is_some_and(LinkOrigin::reports_own_facts);
+        let own_rows = reports_own_facts.then_some(target);
         if let Some(worktrees) = self.device_worktrees.get(target) {
             let measured = self.device_disk.get(target);
             for project in &mut session.workspaces {
@@ -47,11 +51,11 @@ impl Runtime {
                     Some(disk) => {
                         let mut listed = listed.clone();
                         super::projects::measure_worktrees(&mut listed, disk);
-                        device_catalog::apply_worktrees(project, &listed);
+                        device_catalog::apply_worktrees(project, &listed, own_rows);
                         let named = self.device_disk_project.get(target) == Some(&project.path);
                         project.disk = super::projects::project_disk(Some(&listed), named);
                     }
-                    None => device_catalog::apply_worktrees(project, listed),
+                    None => device_catalog::apply_worktrees(project, listed, own_rows),
                 }
                 if let Some(found) = self
                     .device_github
@@ -59,7 +63,26 @@ impl Runtime {
                     .and_then(|github| github.project(&project.path))
                 {
                     super::projects::associate_pull_requests(project, Some(found));
+                    // A node's project lists its pull requests on its PRs tab
+                    // as this machine's does (D-29).
+                    if reports_own_facts && project.is_git {
+                        project.pull_requests = super::pull_requests::shown_pull_requests(
+                            &found.pull_requests,
+                            &project.checkouts,
+                            unix_milliseconds(),
+                        );
+                    }
                 }
+            }
+        }
+        if reports_own_facts {
+            self.project_node_issues(target, &mut session);
+            for project in &mut session.workspaces {
+                project.cleanup = self
+                    .cleanup
+                    .as_ref()
+                    .filter(|review| review.workspace_id == project.id)
+                    .cloned();
             }
         }
         if let Some(listeners) = self.device_ports.get(target) {
@@ -73,12 +96,19 @@ impl Runtime {
             .iter()
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect();
+        let now = unix_milliseconds();
+        let focused = crate::project_context::device_fold_focus(
+            self.snapshot.navigator.focused_checkout_id.as_deref(),
+            &session,
+        );
         for workspace in &mut session.workspaces {
-            crate::project_context::refresh_session_folds(
+            crate::project_context::refresh_device_folds(
                 workspace,
                 &agents,
                 &self.snapshot.ui_state,
-                session.focused_checkout_id.as_deref(),
+                focused.as_deref(),
+                reports_own_facts,
+                now,
             );
         }
         session
@@ -519,27 +549,30 @@ impl Runtime {
         let Ok(channel) = self.node_link(target) else {
             return false;
         };
+        // Branch notes link a node's checkouts to their issues (D-29); a
+        // device this core dials keeps its issues there, so none is asked.
+        let notes = self
+            .link_origin(target)
+            .is_some_and(LinkOrigin::reports_own_facts);
         let generation = self.device_host_generation(target);
         let entry = self.device_worktrees.entry(target.to_owned()).or_default();
         entry.in_flight = Some(generation);
         entry.again = false;
         entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
-            let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
-            return self.ingest_device_worktrees(target, generation, answers, failure);
+            let answer = ask_worktrees(channel.as_ref(), target, &wanted, notes);
+            return self.ingest_device_worktrees(target, generation, answer);
         };
         let device = target.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-worktrees".to_owned())
             .spawn(move || {
-                let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
+                let answer = ask_worktrees(channel.as_ref(), &device, &wanted, notes);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => {
-                        guard.ingest_device_worktrees(&device, generation, answers, failure)
-                    }
+                    Ok(mut guard) => guard.ingest_device_worktrees(&device, generation, answer),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -562,9 +595,13 @@ impl Runtime {
         &mut self,
         target: &str,
         generation: u64,
-        answers: Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
-        failure: Option<String>,
+        answer: WorktreesAnswer,
     ) -> bool {
+        let WorktreesAnswer {
+            answers,
+            notes,
+            failure,
+        } = answer;
         let Some(entry) = self.device_worktrees.get_mut(target) else {
             return false;
         };
@@ -578,10 +615,24 @@ impl Runtime {
                     entry.projects.insert(root, project);
                 }
                 None => {
+                    entry.notes.remove(&root);
                     entry.projects.remove(&root);
                 }
             }
         }
+        for (root, read) in notes {
+            match read {
+                Some(read) => {
+                    entry.notes.insert(root, read);
+                }
+                None => {
+                    entry.notes.remove(&root);
+                }
+            }
+        }
+        entry
+            .notes
+            .retain(|root, _| entry.projects.contains_key(root));
         if let Some(reason) = failure.as_deref() {
             crate::diagnostic!(serde_json::json!({
                 "component": "device_worktrees",
@@ -633,6 +684,7 @@ impl Runtime {
     /// machine, forgets those answers too (`forget_device_directories`).
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
+        self.unconfirmed_node_issue_tokens.remove(target);
         self.device_recent_tabs.remove(target);
         self.created_device_tabs
             .retain(|(owner, _), _| owner != target);
@@ -648,9 +700,62 @@ impl Runtime {
 
 const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Reads each repository in turn; a refusal is that repository's answer (no
-/// rows), a connection failure stops the batch with the reason.
+/// What one read of a device's repositories answered.
+pub(super) struct WorktreesAnswer {
+    pub answers: Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
+    /// Each repository's branch notes, `None` where its config could not be
+    /// read; empty when the node could not be asked.
+    pub notes: Vec<(String, Option<BranchNotes>)>,
+    pub failure: Option<String>,
+}
+
+type BranchNotes = std::collections::BTreeMap<String, hide_node_link::catalog::BranchNote>;
+
+/// Reads each repository of device `target` in turn, then, when `notes`,
+/// every one's branch notes in one `Call::PathFacts`; a refusal is that
+/// repository's answer (no rows), a connection failure stops the batch with
+/// the reason and asks no notes over the lost link. Notes that cannot be
+/// read leave the issue a branch names unread, which is logged, not failed.
 fn ask_worktrees(
+    channel: &dyn crate::node_access::NodeLink,
+    target: &str,
+    roots: &[String],
+    notes: bool,
+) -> WorktreesAnswer {
+    let (answers, failure) = ask_repositories(channel, roots);
+    if !notes || failure.is_some() {
+        return WorktreesAnswer {
+            answers,
+            notes: Vec::new(),
+            failure,
+        };
+    }
+    let notes = match crate::workspace::PathIndex::ask(
+        channel,
+        answers.iter().map(|(root, _)| root.clone()).collect(),
+    ) {
+        Ok(index) => answers
+            .iter()
+            .map(|(root, _)| (root.clone(), index.branch_notes(root).cloned()))
+            .collect(),
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "device_worktrees",
+                "kind": "branch_notes.read_failed",
+                "target": target,
+                "message": error,
+            }));
+            Vec::new()
+        }
+    };
+    WorktreesAnswer {
+        answers,
+        notes,
+        failure,
+    }
+}
+
+fn ask_repositories(
     channel: &dyn crate::node_access::NodeLink,
     roots: &[String],
 ) -> (

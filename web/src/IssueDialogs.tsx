@@ -5,6 +5,7 @@
 // `task_operation`); a dialog never decides that its request succeeded.
 
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
@@ -20,7 +21,8 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { catalogOf, localDeviceId, type Device, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { machineName } from "./screenMachine";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -63,9 +65,13 @@ export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>
   }
 }
 
-/** The projects on this Mac an issue can be made in: each with its source, never the Home, which is no project. */
-function issueProjects(workspaces: readonly Workspace[] | undefined): Workspace[] {
-  return (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source);
+/**
+ * The projects an issue can be made in: each one the core publishes a source
+ * for (its own, and a node's that dials it), never the Home, which is no
+ * project.
+ */
+function issueProjects(workspaces: readonly Workspace[]): Workspace[] {
+  return workspaces.filter((workspace) => !workspace.is_home && workspace.tasks?.source);
 }
 
 /** `hide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
@@ -76,6 +82,23 @@ export function sourcePlace(workspace: Workspace): string {
 }
 
 /**
+ * New issue's project list rows by project id: `sourcePlace`, and when the
+ * list holds projects of more than one machine, each row's machine, this
+ * window's own as This Mac, so the core's project and a node's at the same
+ * name read apart from either window (PRD core-host-node-move D-29). A list
+ * from one machine names none.
+ */
+export function issuePlaces(projects: readonly Workspace[], devices: readonly Device[] | undefined, t: TFunction<"translation">): Map<string, string> {
+  const machines = new Set(projects.map((workspace) => workspace.device_id));
+  return new Map(
+    projects.map((workspace) => {
+      const place = sourcePlace(workspace);
+      return [workspace.id, machines.size > 1 ? `${place} · ${machineName(devices, workspace.device_id, t)}` : place];
+    }),
+  );
+}
+
+/**
  * New issue: in the named project's source, or another project picked from
  * the list; `Create and start immediately` goes on to the Start dialog with the new issue
  * once the source has it.
@@ -83,7 +106,10 @@ export function sourcePlace(workspace: Workspace): string {
 export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const projects = useMemo(() => issueProjects(workspaces), [workspaces]);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const projects = useMemo(() => issueProjects(catalogOf(workspaces, remote)), [workspaces, remote]);
+  const places = useMemo(() => issuePlaces(projects, devices, t), [projects, devices, t]);
   const [projectId, setProjectId] = useState(workspace.id);
   const project = projects.find((row) => row.id === projectId) ?? null;
   const [title, setTitle] = useState("");
@@ -127,7 +153,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
                 <SelectContent>
                   {projects.map((row) => (
                     <SelectItem key={row.id} value={row.id}>
-                      {sourcePlace(row)}
+                      {places.get(row.id)}
                     </SelectItem>
                   ))}
                 </SelectContent>

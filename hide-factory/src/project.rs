@@ -27,16 +27,25 @@ use crate::exec::{Machine, Machines, checked, classify, read_run};
 use crate::model::*;
 
 /// Local issues (`L-<n>`) for a project without GitHub, owned by the core.
+/// A Factory's Local issues, kept by its project's machine
+/// (`Factory::node`, `None` the core's own) and its project path: a node's
+/// project and one of the core's at the same path keep their own.
 pub trait IssueBook: Send {
     /// Creates an issue, or returns the one whose body carries `marker`.
     fn create(
         &mut self,
+        machine: Option<&str>,
         project: &str,
         title: &str,
         body: &str,
         marker: &str,
     ) -> Result<u32, Failure>;
-    fn read(&mut self, project: &str, number: u32) -> Result<IssueText, Failure>;
+    fn read(
+        &mut self,
+        machine: Option<&str>,
+        project: &str,
+        number: u32,
+    ) -> Result<IssueText, Failure>;
 }
 
 pub const LABEL: &str = hide_node_link::factory::LABEL;
@@ -703,9 +712,13 @@ impl TaskSource for SharedProjects {
         let mut this = self.at(factory)?;
         match factory.source {
             SourceKind::Local => {
-                let number =
-                    this.issues
-                        .create(&factory.project, &task.card.title, body, &marker)?;
+                let number = this.issues.create(
+                    factory.node.as_deref(),
+                    &factory.project,
+                    &task.card.title,
+                    body,
+                    &marker,
+                )?;
                 Ok(IssueRef::Local { number })
             }
             SourceKind::Github => {
@@ -753,7 +766,13 @@ impl TaskSource for SharedProjects {
         let mut this = self.at(factory)?;
         match factory.source {
             SourceKind::Local => {
-                let number = this.issues.create(&factory.project, title, body, marker)?;
+                let number = this.issues.create(
+                    factory.node.as_deref(),
+                    &factory.project,
+                    title,
+                    body,
+                    marker,
+                )?;
                 Ok(IssueRef::Local { number })
             }
             SourceKind::Github => {
@@ -878,7 +897,10 @@ impl TaskSource for SharedProjects {
     fn read_issue(&mut self, factory: &Factory, issue: &IssueRef) -> Result<IssueText, Failure> {
         let mut this = self.at(factory)?;
         match issue {
-            IssueRef::Local { number } => this.issues.read(&factory.project, *number),
+            IssueRef::Local { number } => {
+                this.issues
+                    .read(factory.node.as_deref(), &factory.project, *number)
+            }
             IssueRef::Github { number } => {
                 let repo = repo(factory)?;
                 let value = this.gh_json(
@@ -912,7 +934,9 @@ impl TaskSource for SharedProjects {
                 if matches!(task.state, TaskState::Done | TaskState::Cancelled) {
                     continue;
                 }
-                if let Ok(text) = this.issues.read(&factory.project, number)
+                if let Ok(text) =
+                    this.issues
+                        .read(factory.node.as_deref(), &factory.project, number)
                     && !text.open
                 {
                     events.push(OutsideEvent::IssueClosed {

@@ -15,7 +15,21 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn connect(port: u16, token: &str) -> Result<Self> {
-        let mut renderer = Self::connect_held(port, token)?;
+        Self::drawn(port, json!({"token": token, "schema_version": 2}))
+    }
+
+    /// A window as the web shell opens one (`client_kind` `web`), which the
+    /// daemon counts as drawing the snapshot, so the core runs the reads a
+    /// window is there for (PRD labels-in-hided B29).
+    pub fn window(port: u16, token: &str) -> Result<Self> {
+        Self::drawn(
+            port,
+            json!({"token": token, "schema_version": 2, "client_kind": "web"}),
+        )
+    }
+
+    fn drawn(port: u16, handshake: Value) -> Result<Self> {
+        let mut renderer = Self::held(port, &handshake)?;
         for _ in 0..8 {
             let frame = renderer.read()?;
             if frame["type"] == "snapshot" {
@@ -29,6 +43,10 @@ impl Renderer {
     /// A window on whatever role the address mounts, answered before any
     /// snapshot: a move's screen or a node holding its screen sends none.
     pub fn connect_held(port: u16, token: &str) -> Result<Self> {
+        Self::held(port, &json!({"token": token, "schema_version": 2}))
+    }
+
+    fn held(port: u16, handshake: &Value) -> Result<Self> {
         let mut socket = TcpStream::connect(("127.0.0.1", port))?;
         socket.set_read_timeout(Some(Duration::from_secs(2)))?;
         socket.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -70,10 +88,7 @@ impl Renderer {
             stream,
             snapshot: Value::Null,
         };
-        renderer.send(
-            1,
-            &serde_json::to_vec(&json!({"token":token,"schema_version":2}))?,
-        )?;
+        renderer.send(1, &serde_json::to_vec(handshake)?)?;
         Ok(renderer)
     }
 

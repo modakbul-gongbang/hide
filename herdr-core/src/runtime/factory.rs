@@ -771,16 +771,19 @@ impl Runtime {
     }
 
     /// A local issue for a Factory Task, or the one already carrying its
-    /// marker (B13, B73).
+    /// marker (B13, B73), in the store of its project's machine (`machine`,
+    /// the Factory's node; `None` or this core's own id is this machine).
     pub(crate) fn factory_local_issue(
         &mut self,
+        machine: Option<&str>,
         project: &str,
         title: &str,
         body: &str,
         marker: &str,
     ) -> Result<u32, String> {
+        let machine = machine.filter(|node| *node != self.node.as_str());
         if let Ok(store) = &self.local_issues
-            && let Some(existing) = store.project(project).and_then(|project| {
+            && let Some(existing) = store.project(machine, project).and_then(|project| {
                 project
                     .issues
                     .iter()
@@ -789,18 +792,20 @@ impl Runtime {
         {
             return Ok(existing.number);
         }
-        self.create_local_issue(project, title, body)
+        self.create_local_issue(machine, project, title, body)
     }
 
     pub(crate) fn factory_local_issue_read(
         &self,
+        machine: Option<&str>,
         project: &str,
         number: u32,
     ) -> Option<crate::local_issues::LocalIssue> {
+        let machine = machine.filter(|node| *node != self.node.as_str());
         self.local_issues
             .as_ref()
             .ok()
-            .and_then(|store| store.issue(project, number))
+            .and_then(|store| store.issue(machine, project, number))
             .cloned()
     }
 

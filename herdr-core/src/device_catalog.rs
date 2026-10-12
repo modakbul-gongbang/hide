@@ -467,6 +467,8 @@ pub(crate) fn group(
         focused_pane_id: raw.focused_pane_id.clone(),
         pane_layouts: raw.pane_layouts.clone(),
         pane_hook_tokens: raw.pane_hook_tokens.clone(),
+        issue_tokens: raw.issue_tokens.clone(),
+        issue_links: BTreeMap::new(),
     }
 }
 
@@ -620,6 +622,9 @@ pub(crate) fn apply_registrations(
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeviceWorktrees {
     pub projects: BTreeMap<String, crate::model::ProjectWorktreesSnapshot>,
+    /// Each repository's branch notes (`branch.<b>.issue`), by the root the
+    /// session names it by, read with its worktrees.
+    pub notes: BTreeMap<String, BTreeMap<String, hide_node_link::catalog::BranchNote>>,
     /// The helper connection the running read belongs to.
     pub in_flight: Option<u64>,
     /// Asked again while a read ran; one more read follows it.
@@ -662,13 +667,45 @@ pub(crate) fn apply_ports(
 /// already has. Paths are compared as the device's helper reported them;
 /// nothing is resolved on this machine's filesystem, where the same path may
 /// name another repository (B2, B7).
+///
+/// For a node that dials the core (`own_rows`, its id), a listed worktree
+/// the session has no checkout for gets one, as this machine's own projects
+/// do (`workspace::apply_worktrees`, PRD core-host-node-move D-29): a
+/// worktree with no pane open is still one of the node's checkouts, and the
+/// id its folder names (`checkout_id`) is the one a move gives it. A device
+/// the core dials keeps only the checkouts its session opens.
 pub(crate) fn apply_worktrees(
     project: &mut WorkspaceSnapshot,
     listed: &crate::model::ProjectWorktreesSnapshot,
+    own_rows: Option<&str>,
 ) {
     let same = |left: &str, right: &str| left.trim_end_matches('/') == right.trim_end_matches('/');
     project.default_branch = listed.default_branch.clone();
     project.branches = listed.branches.clone();
+    if let Some(target) = own_rows {
+        for worktree in &listed.worktrees {
+            if project
+                .checkouts
+                .iter()
+                .any(|row| same(&row.path, &worktree.path))
+            {
+                continue;
+            }
+            project.checkouts.push(CheckoutSnapshot {
+                id: checkout_id(target, &worktree.path),
+                workspace_id: project.id.clone(),
+                label: crate::workspace::checkout_row_label(
+                    worktree.branch.as_deref(),
+                    Path::new(&worktree.path),
+                ),
+                path: worktree.path.clone(),
+                branch: worktree.branch.clone(),
+                is_primary: worktree.is_main,
+                next_tab_label: crate::model::next_tab_label(std::iter::empty()),
+                ..CheckoutSnapshot::default()
+            });
+        }
+    }
     for row in &mut project.checkouts {
         let Some(worktree) = listed
             .worktrees
