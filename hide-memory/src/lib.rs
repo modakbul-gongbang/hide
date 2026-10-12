@@ -9,6 +9,7 @@ mod evidence;
 mod matcher;
 mod redaction;
 mod store;
+mod verify;
 
 pub use engine::{
     AliasBackfill, AnalysisOutput, HideNativeAnalyzer, HideNativeOutputError,
@@ -19,6 +20,12 @@ pub use evidence::{
     still_holds, written_names,
 };
 pub use redaction::{RedactedText, redact};
+pub use verify::{
+    Correction, DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, Excerpt, FILE_EXCERPT_BYTES,
+    FILE_EXCERPT_LIMIT, GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, PROMOTE_CHECK_FEATURE, PromoteCheck,
+    PromoteCheckCard, VERIFY_FEATURE, Verification, VerifyError, cited_files, parse_promote_check,
+    parse_verification, pointer_target, promote_check_request, verify_request,
+};
 pub use store::{
     AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateKind, CandidateOutcome,
     CandidateRelation, CardEvidence, ComparisonCard, CursorReader, DeleteProjectOutcome,

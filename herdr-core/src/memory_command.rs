@@ -159,6 +159,7 @@ impl PreparedMemory {
             }));
             "memory_project_unavailable".to_owned()
         })?;
+        let root = identity.root.to_string_lossy().into_owned();
         let mut store = MemoryStore::open(&self.database).map_err(|error| {
             crate::diagnostic!(json!({
                 "component": "memory",
@@ -352,7 +353,7 @@ impl PreparedMemory {
                         0 => ADD_SESSION.to_owned(),
                         n => format!("{ADD_SESSION}-{n}"),
                     };
-                    let source = self.add_source(&identity.id, &session_id, deadline);
+                    let source = self.add_source(&identity.id, &root, &session_id, deadline);
                     let (_, batch_id) = batch_identity(&source, &serialized);
                     if !store
                         .has_batch(&batch_id)
@@ -376,7 +377,7 @@ impl PreparedMemory {
                     &mut store,
                     self.sessions_node.as_ref(),
                     &router,
-                    &self.add_source(&identity.id, &session_id, deadline),
+                    &self.add_source(&identity.id, &root, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
                     &mut |store| admit_call(store, WeeklyUsage::Unknown, false),
@@ -394,6 +395,7 @@ impl PreparedMemory {
     fn add_source<'a>(
         &'a self,
         project_id: &'a str,
+        root: &'a str,
         session_id: &'a str,
         deadline: Instant,
     ) -> BatchSource<'a> {
@@ -402,6 +404,8 @@ impl PreparedMemory {
             provider: ADD_PROVIDER,
             session_id,
             checkout_path: &self.checkout_path,
+            evidence_root: root,
+            new_card_limit: None,
             deadline: Some(deadline),
         }
     }
