@@ -44,6 +44,14 @@ pub struct Actor {
 /// (D-14). Only the core's Factory host constructs one.
 pub const FACTORY_KIND: &str = "factory";
 pub const FACTORY_PREFIX: &str = "factory:";
+/// The kind of Hide's own code-owned identity: the origin of the agents
+/// Hide starts for the operator rather than for a pane, such as a Memory
+/// card's promotion into the repository (PRD project-memory-v2 D-25). It has
+/// no pane and reads no letters; only the core constructs one.
+pub const HIDE_KIND: &str = "hide";
+pub const HIDE_PREFIX: &str = "hide:";
+/// The one role Hide starts agents as today.
+pub const HIDE_MEMORY_ROLE: &str = "memory";
 /// A watch whose observer is a Factory warns after this long (PRD
 /// software-factory, Technical structure: the window is per watch).
 pub const FACTORY_INACTIVITY_MS: u64 = 30 * 60_000;
@@ -61,9 +69,23 @@ impl Actor {
         }
     }
 
-    /// Whether this is a Factory's code-owned identity rather than a pane's.
+    /// Hide's own code-owned identity for `role` on `node`, the core's own.
+    pub fn hide(role: &str, node: &str) -> Self {
+        let name = format!("{HIDE_PREFIX}{role}");
+        Self {
+            pane_id: name.clone(),
+            name: name.clone(),
+            kind: HIDE_KIND.into(),
+            device_id: node.into(),
+            session: crate::wire::session_digest(&name),
+        }
+    }
+
+    /// Whether this is a code-owned identity (a Factory's or Hide's own)
+    /// rather than a pane's.
     pub fn code_owned(&self) -> bool {
-        self.kind == FACTORY_KIND && self.pane_id.starts_with(FACTORY_PREFIX)
+        (self.kind == FACTORY_KIND && self.pane_id.starts_with(FACTORY_PREFIX))
+            || (self.kind == HIDE_KIND && self.pane_id.starts_with(HIDE_PREFIX))
     }
 
     /// Mailbox authority requires a positively observed native session. Watch
@@ -91,9 +113,10 @@ impl Actor {
     }
 }
 
-/// A name or pane a pane may never claim: it would read as a Factory.
+/// A name or pane a pane may never claim: it would read as a Factory or as
+/// Hide itself.
 pub(crate) fn reserved_name(value: &str) -> bool {
-    value.starts_with(FACTORY_PREFIX)
+    value.starts_with(FACTORY_PREFIX) || value.starts_with(HIDE_PREFIX)
 }
 
 /// A pane's native session as a letter pull or a Factory question guard names

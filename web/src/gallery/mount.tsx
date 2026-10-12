@@ -9,6 +9,7 @@ import { AreaFocusScene } from "./AreaFocusScene";
 import { AgentOnboardingScene } from "./AgentOnboardingScene";
 import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
+import { MemoryScene, memorySceneParams } from "./MemoryScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
@@ -35,6 +36,11 @@ export function mountGallery(root: Root) {
     if (scene === "search-palette") {
       document.title = "hide · ⌘K scene";
       root.render(<StrictMode><CmdkScene {...cmdkSceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "memory") {
+      document.title = "hide · Memory scene";
+      root.render(<StrictMode><MemoryScene {...memorySceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "factory") {

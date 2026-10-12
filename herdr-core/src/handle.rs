@@ -492,6 +492,21 @@ impl Core {
         Ok(factory.prepare(caller, command))
     }
 
+    /// Checks a `hide memory` caller and takes what its command needs; the
+    /// command then runs on the daemon's blocking task, off this lock.
+    pub fn prepare_memory(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        command: crate::memory_command::MemoryCommand,
+    ) -> Result<crate::memory_command::PreparedMemory, String> {
+        if !check_owner_thread(self, "memory.prepare") {
+            return Err("memory_unavailable".into());
+        }
+        lock_recover(&self.runtime).prepare_memory(device, caller, expected, command)
+    }
+
     /// Prepare one read against an already-open Factory, with pane-only
     /// authority and a deadline supplied by the authenticated server route.
     #[allow(clippy::too_many_arguments)] // each identity fact is supplied by the authenticated pane boundary

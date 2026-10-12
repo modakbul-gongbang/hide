@@ -37,6 +37,7 @@ mod labels;
 pub mod links;
 pub mod live;
 pub mod local_issues;
+pub mod memory_command;
 mod model;
 pub mod node;
 pub mod node_access;

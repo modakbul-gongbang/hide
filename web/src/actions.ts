@@ -53,6 +53,7 @@ import {
   type EditorTabSnapshot,
   type IssueSettings,
   type KitComponentId,
+  type MemoryAction,
   type Tab,
   type Workspace,
   type LinkTarget,
@@ -1409,6 +1410,41 @@ export function createActions(send: DispatchFn) {
     /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
     searchProjectSessions(workspaceId: string, deviceId: string, query: string, control?: { clear?: boolean; days?: number; provider?: string }) {
       dispatch({ schema_version: 2, kind: "session_search", payload: { workspace_id: workspaceId, device_id: deviceId, query, ...control } });
+    },
+
+    /**
+     * Opens a catalog Project's Memory for the Memory tab (PRD
+     * project-memory-v2 D-17); the core keeps one opened Project per daemon
+     * and reads it again when asked for the same one.
+     */
+    memoryOpen(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "memory_open", payload: { workspace_id: workspaceId } });
+    },
+
+    /** Shows one card of the opened Project in full; null folds it. */
+    memoryExpand(workspaceId: string, number: number | null) {
+      dispatch({ schema_version: 2, kind: "memory_expand", payload: { workspace_id: workspaceId, number } });
+    },
+
+    /** Searches the opened Project's cards; empty words clear the search. */
+    memorySearch(workspaceId: string, query: string) {
+      dispatch({ schema_version: 2, kind: "memory_search", payload: { workspace_id: workspaceId, query } });
+    },
+
+    /** One operator action on the opened Project's Memory or one of its cards. */
+    memoryAction(workspaceId: string, action: MemoryAction, number: number | null = null) {
+      dispatch({ schema_version: 2, kind: "memory_action", payload: { workspace_id: workspaceId, action, number } });
+    },
+
+    /**
+     * A card number under a past conversation (B33): that Project's Memory
+     * opens with the card in full, in the Memory tab of one of its checkouts.
+     */
+    openMemoryCard(deviceId: string, workspaceId: string, number: number) {
+      this.memoryOpen(workspaceId);
+      this.memoryExpand(workspaceId, number);
+      this.openProjectById(deviceId, workspaceId);
+      setWorkspaceView({ tools: true, tool: "memory" });
     },
 
     openProjectSession(workspaceId: string, sessionId: string) {

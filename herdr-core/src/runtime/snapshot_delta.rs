@@ -29,6 +29,10 @@ pub(super) struct DeltaState {
     project_sessions_revision: u64,
     session_search_revision: u64,
     last_session_search: Option<Arc<crate::model::SessionSearchSnapshot>>,
+    memory_revision: u64,
+    /// `None` until Memory has a Project open or a pane's received cards; the
+    /// section is never unset after that.
+    last_memory: Option<Arc<crate::model::MemorySnapshot>>,
     link_summaries_revision: u64,
     last_link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     link_panel_revision: u64,
@@ -135,6 +139,13 @@ impl Runtime {
             self.delta.session_search_revision = self.delta.revision;
             self.delta.last_session_search = Some(Arc::new(search.clone()));
         }
+        if let Some(memory) = &self.snapshot.memory
+            && self.delta.last_memory.as_deref() != Some(memory)
+        {
+            self.delta.revision += 1;
+            self.delta.memory_revision = self.delta.revision;
+            self.delta.last_memory = Some(Arc::new(memory.clone()));
+        }
         if let Some(summaries) = &self.snapshot.link_summaries
             && self.delta.last_link_summaries.as_deref() != Some(summaries)
         {
@@ -222,6 +233,12 @@ impl Runtime {
                 .last_session_search
                 .as_ref()
                 .filter(|_| self.delta.session_search_revision > have_revision)
+                .map(Arc::clone),
+            memory: self
+                .delta
+                .last_memory
+                .as_ref()
+                .filter(|_| self.delta.memory_revision > have_revision)
                 .map(Arc::clone),
             link_summaries: self
                 .delta

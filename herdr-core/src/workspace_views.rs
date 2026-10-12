@@ -42,7 +42,8 @@ pub const MAX_WORKSPACES: usize = 256;
 pub const MAX_COLUMN_WIDTH: u32 = 8192;
 
 /// The one tool the Tools column holds (issue 170, "Side panel hierarchy,
-/// revised"): Sessions, Explorer or History, one at a time. Choosing one swaps it;
+/// revised"): Sessions, Explorer, History or Memory (PRD project-memory-v2
+/// D-17), one at a time. Choosing one swaps it;
 /// hiding the column keeps which one comes back.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +54,8 @@ pub enum Tool {
     Changes,
     /// Live operator sessions, separate from the Memory reader's `sessions`.
     AgentSessions,
+    /// The Project's Memory.
+    Memory,
 }
 
 impl Tool {
@@ -61,6 +64,7 @@ impl Tool {
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
             "agent_sessions" => Some(Self::AgentSessions),
+            "memory" => Some(Self::Memory),
             _ => None,
         }
     }

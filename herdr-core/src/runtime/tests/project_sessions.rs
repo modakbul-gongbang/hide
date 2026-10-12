@@ -259,8 +259,6 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
         project_id: "zeta".to_owned(),
         checkout_path: String::new(),
         rows: zeta_rows.to_vec(),
-        memories: Vec::new(),
-        state: None,
     };
     let landed = runtime.ingest_project_sessions(
         stale,
@@ -485,8 +483,6 @@ fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
         project_id: "older".to_owned(),
         checkout_path: String::new(),
         rows: Vec::new(),
-        memories: Vec::new(),
-        state: None,
     };
     runtime.ingest_project_sessions(
         running,

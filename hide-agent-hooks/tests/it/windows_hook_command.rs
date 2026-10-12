@@ -83,27 +83,54 @@ fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path, cwd: &Path
     child.wait_with_output().unwrap()
 }
 
-/// A Project with Memory on and nothing in it: its SessionStart context
-/// carries a receipt only when the helper read the session and the cwd from
-/// stdin, which is how the test sees stdin cross the shell.
+/// A Project with Memory on and one rule card: its SessionStart context
+/// carries the card index only when the helper read the session and the cwd
+/// from stdin, which is how the test sees stdin cross the shell.
 fn enable_memory(home: &Path, project_root: &Path) {
+    use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
     // The hook keys this machine's Projects by its node id.
     let node = hide_platform::host::machine_id().unwrap();
     let project = hide_project::resolve(project_root, &node).unwrap();
     let path = hide_agent_hooks::memory::database_path(home);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let store = hide_memory::MemoryStore::open(&path).unwrap();
+    let mut store = hide_memory::MemoryStore::open(&path).unwrap();
     store
         .ensure_project(&project.id, &project.root, &node)
         .unwrap();
     store.set_enabled(&project.id, true, true).unwrap();
+    store
+        .apply_candidates(
+            &AnalysisBatch {
+                id: "windows-batch".into(),
+                project_id: project.id.clone(),
+                provider: "codex".into(),
+                analysis_provider: "codex".into(),
+                session_id: "source-session".into(),
+                content_hash: "windows-hash".into(),
+                created_at_unix_ms: 1,
+            },
+            &[Candidate {
+                text: "Run the Windows hooks through PowerShell".into(),
+                title: String::new(),
+                aliases: Vec::new(),
+                kind: CandidateKind::Rule,
+                confidence: 0.9,
+                salience: 0.9,
+                source_offsets: vec![1],
+                human_offsets: vec![1],
+                source_times: Default::default(),
+                cited_paths: Vec::new(),
+                relation: CandidateRelation::New,
+            }],
+        )
+        .unwrap();
 }
 
-const RECEIPT: &str = "<hide-memory-receipt event=\"SessionStart\"";
+const INDEX: &str = "<hide-memory-index ";
 
 /// A debug helper on a shared runner can miss its 75 ms Memory budget and
-/// answer without the receipt; without stdin it never carries one, so one
-/// receipt in a few runs is the proof.
+/// answer without the index; without stdin it never carries one, so one
+/// index in a few runs is the proof.
 const ATTEMPTS: usize = 5;
 
 #[test]
@@ -152,7 +179,7 @@ fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there(
     for runtime in AgentRuntime::ALL {
         let hook = session_start_hook(&home, runtime);
         for how in ways(runtime) {
-            let mut receipt = false;
+            let mut index = false;
             for _ in 0..ATTEMPTS {
                 let output = run(runtime, &hook, how, &home, &project);
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -174,13 +201,13 @@ fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there(
                     context.starts_with(PURPOSE_CONTEXT),
                     "{runtime:?} under {how}: the context's `…` crossed PowerShell intact: {context}"
                 );
-                if context.contains(RECEIPT) {
-                    receipt = true;
+                if context.contains(INDEX) {
+                    index = true;
                     break;
                 }
             }
             assert!(
-                receipt,
+                index,
                 "{runtime:?} under {how}: no run read the session from stdin"
             );
         }

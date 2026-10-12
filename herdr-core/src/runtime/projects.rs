@@ -1225,6 +1225,7 @@ impl Runtime {
             self.github = restored;
             self.apply_pull_requests();
             self.refresh_worktree_projection();
+            self.track_memory_promotions();
         }
         self.github_store = Some(store);
     }
@@ -1332,6 +1333,8 @@ impl Runtime {
         }
         self.apply_pull_requests();
         self.refresh_worktree_projection();
+        // A promoted card's pull request may have opened, merged or closed.
+        self.track_memory_promotions();
         true
     }
 

@@ -15,15 +15,12 @@ No feature type lives in the crate, and no provider detail leaks out of it.
 
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 
-Project Memory uses feature id `project_memory` through Hide's native analysis, relation-planning, persistence, and retrieval boundary.
-Official Mem0 OSS does not execute and is not a runtime dependency or service.
-Pinned Mem0 OSS v2.1.0 extraction and update prompt assets remain only as audited design-reference provenance; their exact upstream commit, source hashes, local asset hashes, and non-runtime role live in `hide-memory/hide-native-engine-reference.json`.
-Hide's strict schema carries candidate text, kind, extraction confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
-The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps.
-The local search path uses active-only FTS5 plus bounded literal and path fallback; it admits only query-relevant candidates, then uses salience, extraction confidence, and recency as tie-breakers rather than semantic-similarity signals.
-It sends only locally redacted, normalized human and assistant events after the durable session cursor, plus a relevance-neutral active-Memory comparison set used to find duplicates, updates, and conflicts across languages.
-The comparison set is bounded by item, token, and exact serialized-byte budgets; normalized events and comparison items are composed as JSON arrays under one final 64 KiB request-input cap, so individually valid inputs cannot combine into a permanently unprocessable batch.
-Both fields pass through the current local redactor again at the final provider egress boundary.
+Project Memory uses feature id `project_memory` with Hide's own extraction prompt (`hide-memory/src/engine.rs`, under 8 KiB) and strict schema: each card's text, a one-line title, aliases, kind, extraction confidence and salience, source offsets, cited repository paths, and a `new`, `same`, `supersedes`, `conflicts` or `discard` relation to one of the cards it was shown, plus titles and aliases for shown cards that have none.
+No third-party memory engine or prompt asset is part of it.
+The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps; only an operator's own words can supersede a card.
+It sends locally redacted, normalized human and assistant events after the durable session cursor, or an agent's note from `hide memory add`, plus the existing cards the model-free matcher finds most like them, so a same-meaning card is found across Korean and English.
+The comparison set is bounded by cards and serialized bytes so it and one event group fit the 64 KiB request-input cap, and both pass through the current local redactor again at the final provider egress boundary.
+Background analysis counts against a machine-wide 1,000 calls a UTC day and waits while the provider's weekly usage is at 80% or more; `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
 Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.
 It may fall through to a provider the operator added under fallback (see [Selection and fallback](#selection-and-fallback)), and only to one, and the disclosure names both that possibility and the fact that the stored analysis batch records which provider answered.

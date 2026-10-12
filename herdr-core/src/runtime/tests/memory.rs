@@ -1,9 +1,8 @@
 use super::*;
 use crate::model::{
-    ArchiveDetailSnapshot, MemoryDetailSnapshot, MemoryRowSnapshot, RightPanelSection,
-    SessionRowSnapshot, SessionsMode, SessionsProviderFilter,
+    ArchiveDetailSnapshot, MemoryAction, MemoryUnavailableSnapshot, ProjectMemorySnapshot,
+    RightPanelSection, SessionRowSnapshot, SessionsProviderFilter,
 };
-use hide_memory::CandidateKind;
 
 fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> SessionRowSnapshot {
     SessionRowSnapshot {
@@ -25,15 +24,27 @@ fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> 
     }
 }
 
-fn memory(id: &str, body: &str) -> MemoryRowSnapshot {
-    MemoryRowSnapshot {
-        id: id.to_owned(),
-        body: body.to_owned(),
-        lifecycle: "active".to_owned(),
-        revision: 1,
-        source_count: 1,
-        provided_session_count: 0,
-        updated_at_unix_ms: 1,
+/// A runtime with the fixture's first Project's Memory open, as its first
+/// read leaves it, with Memory's Project id `project-1`.
+fn opened_project() -> (Runtime, String) {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
+    assert!(runtime.open_project_memory(Some(workspace.clone())));
+    runtime.project_memory.project_id = Some("project-1".to_owned());
+    runtime.snapshot.status.last_error = None;
+    (runtime, workspace)
+}
+
+fn opened(runtime: &Runtime) -> Option<&ProjectMemorySnapshot> {
+    runtime.snapshot.memory.as_ref()?.project.as_ref()
+}
+
+fn action(workspace: &str, action: MemoryAction) -> crate::runtime::events::MemoryActionPayload {
+    crate::runtime::events::MemoryActionPayload {
+        workspace_id: workspace.to_owned(),
+        action,
+        number: None,
     }
 }
 
@@ -92,46 +103,7 @@ fn the_agent_sessions_tool_does_not_activate_the_memory_reader() {
 }
 
 #[test]
-fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
-    let mut runtime = runtime();
-    let detail = |revision: u64, body: &str| ArchiveDetailSnapshot {
-        id: "memory-1".to_owned(),
-        kind: "memory".to_owned(),
-        title: "Memory".to_owned(),
-        provider: None,
-        unavailable_reason: None,
-        events: Vec::new(),
-        memory: Some(MemoryDetailSnapshot {
-            id: "memory-1".to_owned(),
-            body: body.to_owned(),
-            lifecycle: "active".to_owned(),
-            revision,
-            source_count: 0,
-            provided_session_count: 0,
-            learned_at_unix_ms: 1,
-            conflict_existing_id: None,
-            conflict_candidate_id: None,
-            sources: Vec::new(),
-            revisions: Vec::new(),
-        }),
-    };
-
-    runtime.show_archive_tab("workspace", "checkout", detail(1, "First"), true);
-    runtime.show_archive_tab("workspace", "checkout", detail(2, "Updated"), false);
-
-    let memory = runtime
-        .snapshot
-        .editor
-        .archive_detail
-        .as_ref()
-        .and_then(|archive| archive.memory.as_ref())
-        .expect("active memory detail");
-    assert_eq!(memory.revision, 2);
-    assert_eq!(memory.body, "Updated");
-}
-
-#[test]
-fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
+fn session_tabs_share_the_preview_slot_and_promote_in_place() {
     let mut runtime = runtime();
     let archive = |kind: &str, id: &str, title: &str| ArchiveDetailSnapshot {
         id: id.to_owned(),
@@ -140,7 +112,6 @@ fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
         provider: None,
         unavailable_reason: None,
         events: Vec::new(),
-        memory: None,
     };
 
     runtime.show_diff_tab("workspace", "checkout", "/fixture/notes.md", false, true);
@@ -165,13 +136,11 @@ fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
     runtime.show_archive_tab(
         "workspace",
         "checkout",
-        archive("memory", "m1", "Memory"),
+        archive("session", "s2", "Claude Code · Review"),
         true,
     );
     assert_eq!(runtime.snapshot.editor.tabs.len(), 2);
-    assert_eq!(runtime.snapshot.editor.tabs[0].kind, EditorTabKind::Session);
     assert!(!runtime.snapshot.editor.tabs[0].preview);
-    assert_eq!(runtime.snapshot.editor.tabs[1].kind, EditorTabKind::Memory);
     assert!(runtime.snapshot.editor.tabs[1].preview);
 }
 
@@ -214,73 +183,109 @@ fn session_filter_and_query_keep_the_catalogs_existing_order() {
 }
 
 #[test]
-fn opening_memory_for_a_turn_is_one_bounded_panel_transition() {
+fn memory_opens_for_a_project_without_its_sessions_and_closes() {
+    // The Memory screen names its own Project and waits for no Sessions
+    // history read; opening another leaves nothing of the first.
     let mut runtime = runtime();
-    runtime.snapshot.sessions.project_id = Some("project-1".to_owned());
-    runtime.snapshot.sessions.query = "old query".to_owned();
-    runtime.memory_catalog_rows = vec![
-        memory("a", "Alpha"),
-        memory("b", "Beta"),
-        memory("c", "Gamma"),
-        memory("d", "Delta"),
-    ];
+    runtime.ingest_session(Ok(context_payload()));
+    let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
 
-    assert!(runtime.open_memory_for_turn(vec![
-        "d".to_owned(),
-        "b".to_owned(),
-        "a".to_owned(),
-        "c".to_owned(),
-        "a".to_owned(),
-    ]));
+    assert!(runtime.open_project_memory(Some(workspace.clone())));
+    assert!(runtime.snapshot.project_sessions.is_none());
+    let project = opened(&runtime).expect("Memory is open");
+    assert_eq!(project.workspace_id, workspace);
+    assert_eq!(project.unavailable, None);
 
-    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert!(runtime.open_project_memory(Some("gone-project".to_owned())));
+    let project = opened(&runtime).unwrap();
+    assert_eq!(project.workspace_id, "gone-project");
     assert_eq!(
-        runtime.snapshot.ui_state.right_panel_section,
-        RightPanelSection::Sessions
+        project.unavailable,
+        Some(MemoryUnavailableSnapshot::Unregistered)
     );
-    assert_eq!(runtime.snapshot.sessions.mode, SessionsMode::Memory);
-    assert_eq!(runtime.snapshot.sessions.query, "");
-    assert_eq!(
-        runtime.snapshot.sessions.this_turn_memory_ids,
-        ["a", "b", "c"]
+    assert_eq!(runtime.named_memory_project(), None);
+
+    assert!(runtime.open_project_memory(None));
+    assert!(opened(&runtime).is_none());
+    assert!(!runtime.open_project_memory(None));
+}
+
+#[test]
+fn expanding_or_searching_a_project_memory_does_not_open_shows_nothing() {
+    let (mut runtime, workspace) = opened_project();
+
+    assert!(!runtime.expand_memory_card("another-project", Some(3)));
+    assert!(!runtime.search_project_memory("another-project", "lint".to_owned()));
+    assert!(runtime.expand_memory_card(&workspace, Some(3)));
+    assert!(
+        !runtime.expand_memory_card(&workspace, Some(3)),
+        "already shown"
     );
+    assert!(runtime.search_project_memory(&workspace, " lint ".to_owned()));
+    assert!(!runtime.search_project_memory(&workspace, "lint".to_owned()));
+    assert!(runtime.search_project_memory(&workspace, "x".repeat(2_000)));
     assert_eq!(
-        runtime
-            .snapshot
-            .sessions
-            .memories
-            .iter()
-            .map(|row| row.id.as_str())
-            .collect::<Vec<_>>(),
-        ["a", "b", "c"]
-    );
-    assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .sessions_mode_by_project
-            .get("project-1"),
-        Some(&SessionsMode::Memory)
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "memory.search_too_long"
     );
 }
 
 #[test]
-fn changing_modes_clears_the_turn_filter_and_persists_per_project() {
-    let mut runtime = runtime();
-    runtime.snapshot.sessions.project_id = Some("project-1".to_owned());
-    runtime.snapshot.sessions.mode = SessionsMode::Memory;
-    runtime.snapshot.sessions.this_turn_memory_ids = vec!["a".to_owned()];
+fn a_memory_action_for_a_project_no_longer_registered_says_so() {
+    let (mut runtime, _) = opened_project();
 
-    assert!(runtime.set_sessions_mode("sessions"));
-    assert_eq!(runtime.snapshot.sessions.mode, SessionsMode::Sessions);
-    assert!(runtime.snapshot.sessions.this_turn_memory_ids.is_empty());
+    assert!(runtime.apply_memory_action(action("another-project", MemoryAction::Disable)));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "memory.project_unavailable"
+    );
+    assert!(runtime.project_memory.action.is_none());
+}
+
+#[test]
+fn a_forgotten_card_offers_its_undo_on_its_project_until_undone() {
+    // B24: "mN 지움 · 되돌리기", from the tab or an agent's `hide memory forget`.
+    use crate::runtime::memory_analysis::MemoryChange;
+    let (mut runtime, _) = opened_project();
+    let shown = |runtime: &Runtime| opened(runtime).and_then(|project| project.forgotten);
+
+    runtime.note_memory_change("another-project", MemoryChange::Forgot(2));
+    assert_eq!(shown(&runtime), None);
+
+    runtime.note_memory_change("project-1", MemoryChange::Forgot(5));
+    assert_eq!(shown(&runtime), Some(5));
+    runtime.note_memory_change("project-1", MemoryChange::Undid(4));
+    assert_eq!(shown(&runtime), Some(5), "another card's undo leaves it");
+    runtime.note_memory_change("project-1", MemoryChange::Undid(5));
+    assert_eq!(shown(&runtime), None);
+}
+
+#[test]
+fn a_session_its_pane_let_go_is_analyzed_by_the_next_pass_at_once() {
+    // B2: the label worker's live set is the pane-close signal.
+    let mut runtime = runtime();
+    let session = |id: &str| ("claude", id.to_owned());
+    let handoff = |live: &[&str]| crate::labels::worker::MemoryHandoff {
+        receipts: Vec::new(),
+        live_sessions: Some(live.iter().map(|id| session(id)).collect()),
+    };
+    runtime.take_memory_handoff(handoff(&["a", "b"]));
+    runtime.memory_work.next_pass_unix_ms = u64::MAX;
+
+    runtime.take_memory_handoff(handoff(&["a"]));
+
     assert_eq!(
         runtime
-            .snapshot
-            .ui_state
-            .sessions_mode_by_project
-            .get("project-1"),
-        Some(&SessionsMode::Sessions)
+            .memory_work
+            .closed_sessions
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![session("b")]
+    );
+    assert_eq!(
+        runtime.memory_work.next_pass_unix_ms, 0,
+        "the next pass starts at once"
     );
 }
 
@@ -296,7 +301,8 @@ fn analysis_event_groups_preserve_every_event_exactly_once() {
         })
         .collect::<Vec<_>>();
 
-    let groups = crate::runtime::memory::event_groups(&events).expect("bounded events group");
+    let groups =
+        crate::runtime::memory_analysis::event_groups(&events).expect("bounded events group");
     let flattened = groups.into_iter().flatten().collect::<Vec<_>>();
 
     assert_eq!(flattened, events);
@@ -311,7 +317,7 @@ fn one_analysis_event_over_the_group_budget_is_split_without_text_loss() {
         "text": text,
     })];
 
-    let groups = crate::runtime::memory::event_groups(&events).unwrap();
+    let groups = crate::runtime::memory_analysis::event_groups(&events).unwrap();
     let chunks = groups.into_iter().flatten().collect::<Vec<_>>();
     assert!(chunks.len() > 1);
     assert_eq!(
@@ -330,29 +336,35 @@ fn an_oversized_event_and_a_later_turn_are_both_preserved() {
         serde_json::json!({"offset": 1, "text": "x".repeat(40 * 1024)}),
         serde_json::json!({"offset": 2, "text": "Keep later turns analyzable"}),
     ];
-    let groups = crate::runtime::memory::event_groups(&events).unwrap();
+    let groups = crate::runtime::memory_analysis::event_groups(&events).unwrap();
     let flattened = groups.into_iter().flatten().collect::<Vec<_>>();
     assert!(flattened.iter().any(|event| event["offset"] == 1));
     assert!(flattened.iter().any(|event| event["offset"] == 2));
 }
 
 #[test]
-fn one_event_over_the_analysis_cap_fails_without_advancing() {
+fn one_event_over_the_analysis_cap_keeps_its_start_in_a_few_requests() {
+    // A 256 KiB message neither stalls its session nor costs a call per
+    // slice of it.
     let events = vec![serde_json::json!({
         "offset": 1,
         "kind": "human",
-        "text": "x".repeat(hide_memory::ANALYSIS_INPUT_LIMIT_BYTES + 1),
+        "text": "가".repeat(256 * 1024 / 3),
     })];
 
-    assert!(
-        crate::runtime::memory::event_groups(&events)
-            .unwrap_err()
-            .contains("analysis limit")
-    );
+    let groups = crate::runtime::memory_analysis::event_groups(&events).unwrap();
+    assert!((1..=3).contains(&groups.len()), "{} groups", groups.len());
+    for group in &groups {
+        assert!(
+            serde_json::to_vec(group).unwrap().len() <= hide_memory::ANALYSIS_INPUT_LIMIT_BYTES
+        );
+    }
 }
 
 #[test]
-fn maximum_korean_relation_context_and_event_group_fit_one_request() {
+fn the_largest_comparison_set_and_event_group_fit_one_request() {
+    // B6, D-13: thirty Korean cards near the body cap and one full event
+    // group still make one request under the analysis input cap.
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path().to_path_buf();
     let mut store = hide_memory::MemoryStore::open(&root.join("memory.sqlite3")).unwrap();
@@ -360,6 +372,7 @@ fn maximum_korean_relation_context_and_event_group_fit_one_request() {
     store
         .ensure_project(project_id, &root, crate::node::TEST_NODE)
         .unwrap();
+    store.set_enabled(project_id, true, true).unwrap();
     store
         .apply_candidates(
             &hide_memory::AnalysisBatch {
@@ -371,55 +384,67 @@ fn maximum_korean_relation_context_and_event_group_fit_one_request() {
                 content_hash: "request-budget-hash".into(),
                 created_at_unix_ms: 1,
             },
-            &(0..5)
+            &(0..40)
                 .map(|index| hide_memory::Candidate {
-                    text: format!("규칙 {index} {}", "가".repeat(3_990)),
-                    kind: CandidateKind::Rule,
+                    text: format!("규칙 {index} 테스트 {}", "가".repeat(3_980)),
+                    title: String::new(),
+                    aliases: vec!["테스트".to_owned()],
+                    kind: hide_memory::CandidateKind::Rule,
                     confidence: 1.0,
-                    salience: 1.0 - index as f64 / 10.0,
+                    salience: 1.0 - index as f64 / 100.0,
                     source_offsets: vec![index],
-                    direct_human_source: true,
+                    human_offsets: vec![index],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
                     relation: hide_memory::CandidateRelation::New,
                 })
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-
-    let active = crate::runtime::memory::active_memories_json(&store, project_id).unwrap();
-    assert!(active.len() <= 16 * 1024);
-    assert!(
-        !serde_json::from_str::<Vec<serde_json::Value>>(&active)
-            .unwrap()
-            .is_empty()
-    );
     let events = vec![serde_json::json!({
         "offset": 1,
         "kind": "human",
-        "text": "x".repeat(35 * 1024),
+        "text": format!("테스트 {}", "x".repeat(35 * 1024)),
     })];
-    let group = crate::runtime::memory::event_groups(&events)
+    let group = crate::runtime::memory_analysis::event_groups(&events)
         .unwrap()
         .remove(0);
+    let similar = store
+        .similar(
+            project_id,
+            "테스트를 돌려줘",
+            hide_memory::COMPARISON_LIMIT,
+            16 * 1024,
+        )
+        .unwrap();
+    assert!(!similar.is_empty());
+
     let request = hide_memory::HideNativeAnalyzer
         .request(
             "request-budget",
             project_id,
             "session",
             &serde_json::to_string(&group).unwrap(),
-            &active,
+            &similar,
         )
         .unwrap();
 
     assert!(request.input.len() <= hide_memory::ANALYSIS_INPUT_LIMIT_BYTES);
     let input: serde_json::Value = serde_json::from_str(&request.input).unwrap();
     assert!(input["new_events"].is_array());
-    assert!(input["active_memories"].is_array());
-    drop(store);
+    assert!(!input["similar_memories"].as_array().unwrap().is_empty());
 }
 
 #[test]
-fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
-    let mut runtime = runtime();
+fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
+    // D-17, B4: the switch is the operator's word; no separate hook button.
+    let (runtime, workspace) = opened_project();
+    let runtime = Arc::new(Mutex::new(runtime));
+    let mut guard = runtime.lock().unwrap();
+    guard.install_worker_context(
+        Arc::downgrade(&runtime),
+        crate::handle::ChangeNotifier::noop(),
+    );
     let diagnosis = |status| hide_agent_hooks::Diagnosis {
         runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
             runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -433,8 +458,8 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
         }],
         last_report_failure: None,
     };
-    runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
-    runtime.ingest_kit_report(
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
+    guard.ingest_kit_report(
         crate::node::TEST_NODE,
         &hide_kit::KitReport {
             components: vec![hide_kit::ComponentReport {
@@ -454,47 +479,31 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             codex_daemon_off: None,
         },
     );
+    let pending = |runtime: &Runtime| opened(runtime).and_then(|project| project.pending_action);
 
-    runtime.apply_memory_action(crate::runtime::events::MemoryActionPayload {
-        action: "enable".to_owned(),
-        item_id: None,
-        candidate_id: None,
-        body: None,
-        batch_id: None,
-        conflict_choice: None,
-    });
-    assert!(!runtime.memory_enable_after_hook_update);
-    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
-
-    runtime.apply_memory_action(crate::runtime::events::MemoryActionPayload {
-        action: "update_hooks".to_owned(),
-        item_id: None,
-        candidate_id: None,
-        body: None,
-        batch_id: None,
-        conflict_choice: None,
-    });
-    assert!(runtime.memory_enable_after_hook_update);
+    guard.apply_memory_action(action(&workspace, MemoryAction::Enable));
     assert_eq!(
-        runtime.take_local_kit_job(std::time::Instant::now()),
+        guard.take_local_kit_job(std::time::Instant::now()),
         Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
             hide_kit::ComponentId::CodexHook
         ])))
     );
+    assert_eq!(pending(&guard), None, "Memory waits for the hooks");
 
-    runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
     }));
-    assert!(!runtime.memory_enable_after_hook_update);
     assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .expect("the approved enable intent resumed")
-            .kind,
-        "memory.project_unavailable"
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "the switch turns on once the hooks carry Memory"
+    );
+    guard.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    assert_eq!(
+        guard.snapshot.status.last_error, None,
+        "a second hook read starts no second enable"
     );
 }
 
@@ -533,4 +542,48 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
     });
 
     assert!(runtime.hooks_support_memory());
+}
+
+#[test]
+fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
+    // B16: "Memory는 이 Mac의 세션에만 씁니다. 이 pane은 mini에서 돌아갑니다."
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "remote:mini:workspace:w",
+        "api",
+        "/srv/api",
+        vec![checkout(
+            "remote:mini:workspace:w",
+            "remote:mini:checkout:c",
+            "/srv/api",
+            None,
+        )],
+    );
+    project.device_id = "mini".into();
+    project.remote_target_id = Some("mini".into());
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        session: Some(RemoteSessionSnapshot {
+            workspaces: vec![project],
+            agents: Vec::new(),
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
+        }),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+
+    assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));
+    assert!(matches!(
+        opened(&runtime).unwrap().unavailable,
+        Some(MemoryUnavailableSnapshot::RemoteDevice { .. })
+    ));
 }
