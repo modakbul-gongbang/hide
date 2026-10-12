@@ -536,15 +536,6 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<hide_session::SessionReadScope>,
     },
-    /// The complete lines of the session file at `path` past `checkpoint`,
-    /// one bounded read (`sessions::SessionChunk`).
-    SessionChunk {
-        path: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<hide_session::SessionReadScope>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        checkpoint: Option<hide_session::CursorCheckpoint>,
-    },
     /// The whole session file at `path`, at most
     /// `hide_session::SESSION_READ_LIMIT_BYTES`, as text.
     SessionText {
@@ -749,7 +740,6 @@ impl Call {
             | Self::ProjectSessions { .. }
             | Self::GitWatch { .. }
             | Self::SessionStat { .. }
-            | Self::SessionChunk { .. }
             | Self::SessionText { .. }
             | Self::SessionConversation { .. }
             | Self::PanesStart { .. }
