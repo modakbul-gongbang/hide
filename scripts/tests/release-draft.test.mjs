@@ -8,18 +8,21 @@ import { gzipSync } from "node:zlib";
 import { createGitHubClient, prepareDraft, publishDraft } from "../release-draft.mjs";
 
 const tag = "v1.2.3";
+const rc = "v0.4.0-rc.1";
 const sha = "1".repeat(40);
 const marker = `<!-- hide-release-source:${sha} -->`;
-const names = ["macos-arm64.zip", "windows-x64.zip", "linux-x64.tar.gz"].map((s) => `hide-${tag}-${s}`);
+const namesOf = (tag) => ["macos-arm64.zip", "windows-x64.zip", "linux-x64.tar.gz"].map((s) => `hide-${tag}-${s}`);
+const names = namesOf(tag);
 const digest = (data) => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 
 async function fixture(t, options = {}) {
+  const tag = options.tag ?? "v1.2.3";
   const runs = path.resolve("agents/runs/release-draft-tests");
   await fs.mkdir(runs, { recursive: true });
   const directory = await fs.mkdtemp(path.join(runs, "fixture-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const files = new Map();
-  for (const name of names) {
+  for (const name of namesOf(tag)) {
     // Valid empty ZIP and TAR.GZ archives; no bundled program is executed.
     const data = name.endsWith(".zip") ? Buffer.from("504b0506000000000000000000000000000000000000", "hex") : gzipSync(Buffer.alloc(1024));
     files.set(name, data);
@@ -29,7 +32,7 @@ async function fixture(t, options = {}) {
   const state = {
     release: options.release ? structuredClone(options.release) : null,
     assets: options.assets ? structuredClone(options.assets) : [],
-    requests: [], writes: [], assetGets: 0, publications: [],
+    requests: [], writes: [], assetGets: 0, created: [], publications: [],
   };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://fixture.invalid");
@@ -52,6 +55,7 @@ async function fixture(t, options = {}) {
       const payload = JSON.parse(bytes);
       // GitHub answers a target commit for an existing tag under immutable releases this way.
       if ("target_commitish" in payload) return answer(403, { message: "Resource not accessible by integration" });
+      state.created.push(payload);
       state.release = { ...payload, id: 7 };
       return answer(201, state.release);
     }
@@ -90,6 +94,7 @@ async function fixture(t, options = {}) {
 }
 
 const draft = () => ({ id: 7, tag_name: tag, body: marker, draft: true, prerelease: false });
+const rcDraft = () => ({ ...draft(), tag_name: rc, prerelease: true });
 
 test("complete fresh draft posts six matching assets without PATCH or DELETE; retry writes nothing", async (t) => {
   const f = await fixture(t);
@@ -165,6 +170,7 @@ test("moved tag, wrong release ID and incomplete local package fail; annotated t
 test("a complete verified draft is published once, as the latest, after its last read", async (t) => {
   const f = await fixture(t);
   assert.deepEqual(await f.publish(), { id: 7, tag, assets: 6 });
+  assert.deepEqual(f.state.created, [{ tag_name: tag, name: tag, body: marker, draft: true, prerelease: false }]);
   assert.deepEqual(f.state.publications, [{ draft: false, make_latest: "true" }]);
   assert.deepEqual(f.state.writes.at(-1), { method: "PATCH", route: "/releases/7" });
   assert.equal(f.state.writes.filter((r) => r.method === "PATCH").length, 1);
@@ -188,4 +194,29 @@ test("an answer that is not the verified release, published, fails the run", asy
   const f = await fixture(t, { publishAnswer: { draft: true } });
   await assert.rejects(f.publish(), /not the verified release, published/);
   assert.equal(f.state.publications.length, 1);
+});
+
+test("an -rc tag drafts a pre-release with its own six assets and publishes it, never as the latest", async (t) => {
+  const f = await fixture(t, { tag: rc });
+  assert.deepEqual(await f.publish(), { id: 7, tag: rc, assets: 6 });
+  assert.deepEqual(f.state.created, [{ tag_name: rc, name: rc, body: marker, draft: true, prerelease: true }]);
+  assert.deepEqual(f.state.assets.map((a) => a.name).sort(), [
+    "hide-v0.4.0-rc.1-linux-x64.tar.gz", "hide-v0.4.0-rc.1-linux-x64.tar.gz.sha256",
+    "hide-v0.4.0-rc.1-macos-arm64.zip", "hide-v0.4.0-rc.1-macos-arm64.zip.sha256",
+    "hide-v0.4.0-rc.1-windows-x64.zip", "hide-v0.4.0-rc.1-windows-x64.zip.sha256",
+  ]);
+  assert.deepEqual(f.state.publications, [{ draft: false, make_latest: "false" }]);
+  assert.equal(f.state.writes.filter((r) => r.method === "PATCH").length, 1);
+});
+
+test("a draft or a published answer of the other release kind stops the run", async (t) => {
+  for (const [kind, release] of [[tag, { ...draft(), prerelease: true }], [rc, { ...rcDraft(), prerelease: false }]]) {
+    const f = await fixture(t, { tag: kind, release });
+    await assert.rejects(f.publish());
+    assert.deepEqual(f.state.writes, []);
+  }
+  const resumed = await fixture(t, { tag: rc, release: rcDraft() });
+  assert.equal((await resumed.run()).assets, 6);
+  const answered = await fixture(t, { tag: rc, publishAnswer: { prerelease: false } });
+  await assert.rejects(answered.publish(), /not the verified release, published/);
 });
