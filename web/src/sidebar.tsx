@@ -19,7 +19,7 @@ import { PrMark } from "./components/pr-mark";
 import { PR_LOOK } from "./prMark";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
+import { frontDeviceId, frontTitle, homeProjectCount, railShown, readsHere, sidebarBody } from "./devices";
 import { badgeWords } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
@@ -54,7 +54,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { screenDeviceId } from "./screenMachine";
+import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -87,13 +87,14 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const title = useMemo(() => frontTitle(devices, frontId, t), [devices, frontId, t]);
   const remoteStatus = useShellStore((s) => s.rest?.status?.remote);
   const deviceMenu = useMemo<DeviceMenu>(() => {
-    const list = devices ?? [];
+    const list = windowFirst(devices);
     const localId = list.find((device) => device.kind !== "remote")?.id ?? "";
+    const own = windowDeviceId(devices);
     return {
       devices: list.map((device) => ({
         id: device.id,
-        label: device.label,
-        remote: device.kind === "remote",
+        label: machineName(devices, device.id, t),
+        remote: device.id !== own,
         connected: device.id === localId || remoteStatus?.find((row) => row.target_id === device.id)?.state === "connected",
       })),
       frontId: frontId ?? localId,
@@ -101,7 +102,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
       onAddDevice: actions.openAddDevice,
       onShowRail: actions.showDeviceRail,
     };
-  }, [devices, frontId, remoteStatus, actions]);
+  }, [devices, frontId, remoteStatus, actions, t]);
   useHomeStart();
   useSecretaryStart(actions);
   // The switch has no chord of its own until the operator binds one (issue 170).
@@ -579,7 +580,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const localAgents = useShellStore((s) => s.agents);
   const agentScope = useShellStore((s) => s.rest?.navigator?.agent_scope);
-  const listedAgents = useMemo(() => allAgents(remoteStatuses, localAgents, agentScope), [remoteStatuses, localAgents, agentScope]);
+  const listedAgents = useMemo(() => allAgents(remoteStatuses, localAgents, agentScope, devices), [remoteStatuses, localAgents, agentScope, devices]);
   const agents = useMemo(() => listedAgents.map((row) => row.agent), [listedAgents]);
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
@@ -1314,6 +1315,7 @@ function CheckoutOpenButton({
   disabled?: boolean;
 }) {
   const { t } = useInterfaceTranslation();
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now(), t);
   return (
@@ -1321,7 +1323,7 @@ function CheckoutOpenButton({
       card={card}
       description={view.detail}
       onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
-      onShowPullRequestRow={workspace.is_git && !workspace.remote_target_id ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+      onShowPullRequestRow={workspace.is_git && readsHere(workspace, devices) ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
     >
       <button
         type="button"

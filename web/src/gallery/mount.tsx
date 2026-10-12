@@ -9,6 +9,8 @@ import { AreaFocusScene } from "./AreaFocusScene";
 import { OnboardingScene, onboardingSceneParams } from "./OnboardingScene";
 import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
+import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
+import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
 
 export function mountGallery(root: Root) {
@@ -46,6 +48,16 @@ export function mountGallery(root: Root) {
     if (scene === "factory") {
       document.title = "hide · Factory scene";
       root.render(<StrictMode><FactoryScene {...factorySceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "core-move" || scene === "core-move-window") {
+      document.title = "hide · Core move scene";
+      root.render(<StrictMode><CoreMoveScene {...coreMoveSceneParams(scene, params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "node-project") {
+      document.title = "hide · Node project scene";
+      root.render(<StrictMode><NodeProjectScene {...nodeProjectSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);

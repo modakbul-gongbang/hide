@@ -1,8 +1,10 @@
-import { MoreHorizontalIcon } from "lucide-react";
+import { CrownIcon, MoreHorizontalIcon } from "lucide-react";
 import type { Actions } from "../actions";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Note, Row, Status } from "../components/settings-rows";
+import { Hint } from "../components/ui/tooltip";
 import { useInterfaceTranslation } from "../i18n/client";
 import { formatDateTime } from "../i18n/format";
 import { requireInterfaceLanguage } from "../i18n/locale";
@@ -18,7 +20,21 @@ export type DeviceRowHandlers = {
   onAllow: (device: Device) => void;
   onRevoke: (device: Device) => void;
   onRemove: (device: Device) => void;
+  /** Opens the move of the core to this device (PRD core-host-node-move B2). */
+  onMove: (device: Device) => void;
+  /** From a node's window: opens the move of the core back to this machine. */
+  onMoveBack: () => void;
+  /** From a node's window: asks to end its link to the core (B16). */
+  onDisconnect: () => void;
 };
+
+/**
+ * Where a row stands for this window (PRD core-host-node-move B2): its name
+ * as this window calls it, whether it runs the core, whether it is the
+ * window's own machine, whether that machine is a node, whether the core
+ * reads it now, and the core machine's name for the node's menu.
+ */
+export type DeviceRowPlace = { name: string; core: boolean; own: boolean; windowIsNode: boolean; connected: boolean; coreName: string };
 
 /**
  * One device (PRD settings-cleanup B54, B55): its name, alias, platform, Herdr
@@ -27,19 +43,34 @@ export type DeviceRowHandlers = {
  * a helper that is not allowed or not running, a part of Hide's kit that
  * failed, or the result of a test they asked for.
  */
-export function DeviceRow({ device, status, focused, actions, handlers }: { device: Device; status: RemoteStatus | undefined; focused: boolean; actions: Actions; handlers: DeviceRowHandlers }) {
+export function DeviceRow({ device, status, focused, place, actions, handlers }: { device: Device; status: RemoteStatus | undefined; focused: boolean; place: DeviceRowPlace; actions: Actions; handlers: DeviceRowHandlers }) {
   const { t } = useInterfaceTranslation();
   const line = deviceLine(device, status, t);
-  const remote = device.kind === "remote";
+  // A node that dials in has no SSH connection to test or retry here.
+  const remote = device.kind === "remote" && device.dials_in !== true;
+  // The core's machine seen from a node: its platform, since "local" would name the window's machine.
+  const subtitle = device.kind !== "remote" && place.windowIsNode ? (device.host?.platform ?? "") : deviceSubtitle(device, status, t);
   return (
     <Row
       data-device-row={device.id}
       label={
         <span className="flex min-w-0 flex-col">
-          <span className="break-words font-semibold">{device.label}</span>
-          <span className="break-all font-mono text-caption text-muted-foreground" data-device-subtitle={device.id}>
-            {deviceSubtitle(device, status, t)}
+          <span className="flex min-w-0 flex-wrap items-center gap-xs">
+            <span className="break-words font-semibold" data-device-name={device.id}>{place.name}</span>
+            {place.core ? (
+              <Hint label={t("coreMove.runs")}>
+                <Badge variant="outline" data-device-core={device.id}>
+                  <CrownIcon aria-hidden="true" />
+                  {t("coreMove.badge")}
+                </Badge>
+              </Hint>
+            ) : null}
           </span>
+          {subtitle ? (
+            <span className="break-all font-mono text-caption text-muted-foreground" data-device-subtitle={device.id}>
+              {subtitle}
+            </span>
+          ) : null}
         </span>
       }
       detail={<DeviceAttention device={device} actions={actions} onAct={handlers.onAct} onAllow={handlers.onAllow} />}
@@ -73,19 +104,28 @@ export function DeviceRow({ device, status, focused, actions, handlers }: { devi
           {device.test?.state === "running" ? t("devices.testing") : t("devices.test")}
         </Button>
       ) : null}
-      <DeviceMenu device={device} focused={focused} actions={actions} handlers={handlers} />
+      <DeviceMenu device={device} focused={focused} place={place} actions={actions} handlers={handlers} />
     </Row>
   );
 }
 
-function DeviceMenu({ device, focused, actions, handlers }: { device: Device; focused: boolean; actions: Actions; handlers: DeviceRowHandlers }) {
+/**
+ * The row's ⋯ (PRD core-host-node-move B2, B16): a device this core dials
+ * offers to take the core, dimmed with why while it is not connected; the
+ * window's own machine, on a node, offers the core back and the end of its
+ * link. The core moves only from the core's own window (issue 951).
+ */
+function DeviceMenu({ device, focused, place, actions, handlers }: { device: Device; focused: boolean; place: DeviceRowPlace; actions: Actions; handlers: DeviceRowHandlers }) {
   const { t } = useInterfaceTranslation();
-  const remote = device.kind === "remote";
+  const dialed = device.kind === "remote" && device.dials_in !== true;
+  const remote = device.kind === "remote" && !place.own;
   const granted = device.host?.consent === "granted" && device.host.state !== "identity_changed";
+  const movable = dialed && !place.windowIsNode;
+  const nodeOwn = place.own && place.windowIsNode;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t("devices.moreAria", { name: device.label })} data-device-menu={device.id}>
+        <Button variant="ghost" size="icon" aria-label={t("devices.moreAria", { name: place.name })} data-device-menu={device.id}>
           <MoreHorizontalIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
@@ -98,7 +138,7 @@ function DeviceMenu({ device, focused, actions, handlers }: { device: Device; fo
         <DropdownMenuItem onSelect={() => handlers.onDetails(device)} data-device-details={device.id}>
           {t("devices.detailsMenu")}
         </DropdownMenuItem>
-        {remote ? (
+        {dialed ? (
           granted ? (
             <DropdownMenuItem onSelect={() => handlers.onRevoke(device)} data-device-host-revoke={device.id}>
               {t("devices.revokeHelperMenu")}
@@ -108,6 +148,24 @@ function DeviceMenu({ device, focused, actions, handlers }: { device: Device; fo
               {t("devices.allowInstallMenu")}
             </DropdownMenuItem>
           )
+        ) : null}
+        {movable ? <DropdownMenuSeparator /> : null}
+        {movable ? (
+          <DropdownMenuItem disabled={!place.connected} onSelect={() => handlers.onMove(device)} className="flex-col items-start gap-0" data-device-move={device.id}>
+            <span>{t("coreMove.moveHere")}</span>
+            {place.connected ? null : <span className="text-caption text-muted-foreground">{t("devices.rail.notConnected")}</span>}
+          </DropdownMenuItem>
+        ) : null}
+        {nodeOwn ? <DropdownMenuSeparator /> : null}
+        {nodeOwn ? (
+          <DropdownMenuItem onSelect={() => handlers.onMoveBack()} data-device-move-back={device.id}>
+            {t("coreMove.moveBackMenu")}
+          </DropdownMenuItem>
+        ) : null}
+        {nodeOwn ? (
+          <DropdownMenuItem onSelect={() => handlers.onDisconnect()} data-device-core-disconnect={device.id}>
+            {t("coreMove.disconnectMenu", { machine: place.coreName })}
+          </DropdownMenuItem>
         ) : null}
         {remote ? <DropdownMenuSeparator /> : null}
         {remote ? (
@@ -123,7 +181,8 @@ function DeviceMenu({ device, focused, actions, handlers }: { device: Device; fo
 /** The lines under a device that something needs the operator for; a healthy device has none. */
 function DeviceAttention({ device, actions, onAct, onAllow }: { device: Device; actions: Actions; onAct: () => void; onAllow: (device: Device) => void }) {
   const { t, i18n } = useInterfaceTranslation();
-  const remote = device.kind === "remote";
+  // SSH trust, sign-in and helper consent belong to a device this core dials, not to a node that dials in.
+  const remote = device.kind === "remote" && device.dials_in !== true;
   const problem = remote && device.state !== "ready" ? deviceProblemLine(device.problem, device.ssh_alias, t) : null;
   const host = device.host;
   // A helper that is not running matters while the connection itself is fine;

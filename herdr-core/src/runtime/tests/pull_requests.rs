@@ -283,7 +283,11 @@ fn a_local_issue_is_linked_in_hide_only() {
         ..link(&runtime)
     });
     runtime.pr_link_checkout = Some("c".into());
-    runtime.issue_write_pending = Some((7, "c".into(), "L-1".into()));
+    runtime.issue_write_pending = Some(crate::runtime::issues::IssueWritePending {
+        id: 7,
+        checkout_id: "c".into(),
+        node: None,
+    });
     let request = crate::live::PurposeTaskRequest {
         id: 7,
         checkout_id: "c".into(),

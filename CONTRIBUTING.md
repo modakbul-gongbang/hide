@@ -124,7 +124,7 @@ Run the platform set after the web build with `bash scripts/verify-web.sh web e2
 Press an editor or clipboard chord in a spec with `ControlOrMeta`: Playwright binds its editing commands (copy, start of document) to the host system, so a `Meta` press only works on macOS.
 
 The remote mailbox crate-boundary lane is the `remote mailbox` job on a Linux runner, planned for a change to a crate it builds and tests, and the nightly's `remote mailbox (macOS)` job.
-Run it locally with `bash scripts/verify-cargo.sh cli && HIDE_E2E_HERDR_BIN=<pinned-binary> bash scripts/verify-cargo.sh nextest -p hided --test it -E 'test(/^(remote_delivery|held_letter_notice|remote_core)::/)' --run-ignored only`; the `held_letter_notice` module starts a real daemon with a seeded ledger against one private pinned Herdr and reads the diagnostic log for a held-letter notice's per-channel reasons.
+Run it locally with `bash scripts/verify-cargo.sh cli && HIDE_E2E_HERDR_BIN=<pinned-binary> bash scripts/verify-cargo.sh nextest -p hided --test it -E 'test(/^(remote_delivery|held_letter_notice|remote_core|core_move)::/)' --run-ignored only`; the `held_letter_notice` module starts a real daemon with a seeded ledger against one private pinned Herdr and reads the diagnostic log for a held-letter notice's per-channel reasons.
 It starts only private Herdr servers and a loopback SSH account, with no external device.
 
 The additional gates that read an existing Herdr server, drive an installed app, or reach an external device are local steps and are not required in CI.
@@ -212,7 +212,9 @@ They never enter a commit; write them under `agents/runs/<slug>/`, which is igno
 ## Releases
 
 A release is a tag on a commit that is already on `main`, never on a branch.
-Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, with nothing for a person to do (operator decision 2026-10-12, `release.yml`):
+Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, with nothing for a person to do (operator decision 2026-10-12, `release.yml`).
+A `vX.Y.Z-rc.N` tag runs the same gates and publishes a pre-release that is never the latest, for trying a signed build before its stable release ([docs/BUILD.md](docs/BUILD.md#release-asset-gate)).
+The gates:
 - The tagged commit's own `verify` push run on main must have passed; it ran every lane, the desktop and web end-to-end suites, Windows and the packages included.
   The release waits up to 90 minutes for it, and refuses a run that was cancelled or failed: rerun that run, or tag a later main commit whose run passed.
 - `verify-cargo.sh test` and `verify-web.sh` pass again on macOS.
@@ -220,11 +222,12 @@ Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, wit
   The macOS app is signed and notarized, then opened from its archive by the packaged-app specs (`local-kit.spec.ts` and `server-session-search.spec.ts`); on Windows and Linux `node desktop/scripts/smoke-package.mjs` unpacks each package, installs the kit, resolves the command in a fresh shell and checks daemon replacement with a second complete package fixture, and on Windows `desktop/e2e/packaged-window.spec.ts` opens the unpacked `hide.exe` with its window on a private HOME and keeps a screenshot of the shell it draws.
 - The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`.
 
-The writer then adds the six files to its exact draft, never deleting or overwriting one, reads the complete draft back, and publishes it as the latest release, which withhide.dev's download links follow; legacy drafts require separate coverage review.
+The writer then adds the six files to its exact draft, never deleting or overwriting one, reads the complete draft back, and publishes it: a stable tag as the latest release, which withhide.dev's download links follow, and an `-rc.N` tag as a pre-release those links ignore; legacy drafts require separate coverage review.
 The operator keeps immutable releases turned on in the repository's Settings; the workflow does not check it.
 A published release is therefore final: a fault the gates missed is fixed by the next version, not by changing the release.
 The macOS archive is signed with the Developer ID certificate and notarized (`HIDE_MACOS_SIGNING=developer-id`, [docs/BUILD.md](docs/BUILD.md)), and the release fails rather than ship it any other way.
 Its secrets belong to the repository's `release` environment, which only `package.yml`'s macOS job in a release run reads: `MACOS_DEVELOPER_ID_P12` (the certificate with its private key, as base64) and `MACOS_DEVELOPER_ID_P12_PASSWORD`, and the App Store Connect API key notarytool uses, `APPLE_NOTARY_KEY_P8` (the `.p8` file's text), `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`.
+[docs/BUILD.md](docs/BUILD.md#developer-id-signing) says what expires and how to replace the certificate or the key.
 The Windows and Linux packages are not signed, and [docs/INSTALL.md](docs/INSTALL.md) gives the SmartScreen and sandbox steps.
 `package.yml` also runs as `pr.yml`'s `package` lane on a pull request that changes what goes into a package (`PACKAGE_PATHS` in `scripts/ci-plan.py`: `desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows).
 There it also builds the macOS archive and runs the packaged app's own specs on it, keeps the packages for a week as the run's artifacts, and `verify` requires it like any planned lane.
@@ -237,8 +240,8 @@ It never merges, because three Herdr behaviors the core relies on are covered by
 
 ## License of contributions
 
-hide is released under the Fair Core License, Version 1.0, MIT Future License ([LICENSE](LICENSE)).
-By submitting a contribution, you confirm that you have the right to submit it, and you grant Hoyeon Lee a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce, modify, distribute, sublicense and relicense it under any terms, including in versions of hide that are not published as source.
+hide is released under the MIT License ([LICENSE](LICENSE)).
+By submitting a contribution, you confirm that you have the right to submit it and agree that it is licensed under the same MIT License.
 You keep the copyright in your contribution.
 
 ## Commit messages and attribution

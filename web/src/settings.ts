@@ -7,6 +7,7 @@ import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
 import type { AgentRow, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitComponent, RemoteStatus, Workspace } from "./snapshot";
+import { readsHere } from "./devices";
 import { redact } from "./redact";
 
 type Translate = TFunction<"translation">;
@@ -45,15 +46,17 @@ export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
 export type GithubAccess = { state: "connected" } | { state: "failed"; category: GithubFailureCategory; reason: string | null };
 
 /**
- * Whether GitHub reads work on this Mac: connected once any local Git
- * project's last read succeeded, otherwise the failure `gh` itself gave, and
- * null while nothing has answered. A repository with no GitHub remote says
- * nothing about `gh`, and a refusal of `gh` itself (not installed, not logged
- * in) is the same for every repository, so it speaks before a network one.
+ * Whether GitHub reads work on the core's machine: connected once any Git
+ * project the core reads with its own `gh` (its own, or a node's that dials
+ * it, `readsHere`) last read successfully, otherwise the failure `gh` itself
+ * gave, and null while nothing has answered. A repository with no GitHub
+ * remote says nothing about `gh`, and a refusal of `gh` itself (not
+ * installed, not logged in) is the same for every repository, so it speaks
+ * before a network one.
  */
-export function githubAccess(workspaces: readonly Workspace[]): GithubAccess | null {
+export function githubAccess(workspaces: readonly Workspace[], devices: readonly Device[] | null | undefined): GithubAccess | null {
   const statuses = workspaces
-    .filter((workspace) => workspace.is_git && !workspace.remote_target_id)
+    .filter((workspace) => workspace.is_git && readsHere(workspace, devices))
     .flatMap((workspace) => workspace.checkouts.map((checkout) => checkout.github))
     .filter((status) => status !== undefined);
   if (statuses.some((status) => status.last_success_at_unix_ms != null && !status.stale)) return { state: "connected" };
@@ -69,9 +72,15 @@ const GH_FAILURE_KEY: Partial<Record<GithubFailureCategory, MessageKey>> = {
   network_or_rate_limit: "issueSettings.readFailed",
 };
 
-/** What the GitHub row's state says; a category this build does not know is shown as the core named it. */
-export function githubAccessLine(access: GithubAccess, t: Translate): { text: string; tone: "ok" | "warn" } {
+/**
+ * What the GitHub row's state says; a category this build does not know is
+ * shown as the core named it. `coreMachine` is the core's machine when this
+ * window runs on another one (`coreMachineAway`): the core reads GitHub with
+ * that machine's `gh`, so a lapsed sign-in is named there (B15).
+ */
+export function githubAccessLine(access: GithubAccess, t: Translate, coreMachine: string | null = null): { text: string; tone: "ok" | "warn" } {
   if (access.state === "connected") return { text: t("common.connected"), tone: "ok" };
+  if (access.category === "not_logged_in" && coreMachine) return { text: t("issueSettings.ghNotLoggedInOn", { machine: coreMachine }), tone: "warn" };
   const key = GH_FAILURE_KEY[access.category];
   return { text: key ? t(key) : access.category, tone: "warn" };
 }

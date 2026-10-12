@@ -5,6 +5,8 @@
 // snapshot's to say (B5), so they are joined here, never stored.
 
 import type { MessageKey } from "./i18n/catalogs";
+import { translate } from "./i18n/client";
+import { machineName } from "./screenMachine";
 import type { AgentRow, Checkout, Device, LinkedSession, Workspace } from "./snapshot";
 import { agentAdapter } from "./agentAdapters";
 import type { ProviderKind } from "./agentPicker";
@@ -49,7 +51,7 @@ export type Blocked = { key: "links.why.worktree" | "links.why.agent" | "links.w
 
 /** A device's name for its chip and its tooltips, or its id when the snapshot no longer lists it. */
 export function deviceLabel(devices: readonly Device[] | undefined, id: string): string {
-  return devices?.find((device) => device.id === id)?.label ?? id;
+  return machineName(devices, id, translate);
 }
 
 function connected(devices: readonly Device[] | undefined, id: string, node: string): boolean {

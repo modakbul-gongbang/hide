@@ -98,6 +98,10 @@ use crate::error::HostError;
 /// node that owns the Herdr server, and terminal lines name the screen a
 /// view or a key came from. A node on 27 would refuse the first as unknown,
 /// so it is refused at Hello and reinstalled.
+/// A wire enum may gain a variant within 28 (`crate::factory::VerifyOutcome::Lost`)
+/// only because no peer of another build reads it: a node that dials its
+/// core links only on the core's exact build (PRD core-host-node-move B10,
+/// option C), and Factory runs never go to a device the core dials.
 pub const PROTOCOL_VERSION: u32 = 28;
 
 /// What a link stream the core opens on a node that dialed it reaches on
@@ -683,8 +687,10 @@ impl Call {
     /// panes; what acts with the operator's own logins (GitHub, the AI
     /// providers and their usage), the files the operator picked on this
     /// machine, and the Software Factory's work (D-01) are the core's own
-    /// node's, and a device refuses them unrun. The match names every
-    /// request, so a new one is decided here before it compiles.
+    /// node's, and a device refuses them unrun; a node that dialed its core
+    /// also does the Factory's work on its own projects
+    /// (`FactoryCall::answered_by_node`). The match names every request, so
+    /// a new one is decided here before it compiles.
     pub fn answered_by_device(&self) -> bool {
         match self {
             Self::Hello

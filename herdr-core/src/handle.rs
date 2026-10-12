@@ -357,6 +357,7 @@ impl Core {
                     environment_home.clone(),
                     Arc::downgrade(&runtime),
                     notifier.clone(),
+                    lock_recover(&runtime).effects(),
                 )
                 .map_err(|message| {
                     crate::diagnostic!(
@@ -483,11 +484,8 @@ impl Core {
             return Err("factory_unavailable".into());
         }
         let runtime = lock_recover(&self.runtime);
-        if device != runtime.node().as_str() {
-            return Err("factory_local_only".into());
-        }
         let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
-        let caller = runtime.factory_caller(caller, expected, hint)?;
+        let caller = runtime.factory_caller(device, caller, expected, hint)?;
         drop(runtime);
         Ok(factory.prepare(caller, command))
     }
@@ -550,6 +548,19 @@ impl Core {
         lock_recover(&self.runtime).prepare_delivery_human()
     }
 
+    /// The move's link committed this core: what it held while pending
+    /// runs now (`effects.rs`). Returns whether this released the hold.
+    pub fn release_effects(&self) -> bool {
+        if !check_owner_thread(self, "effects.release") {
+            return false;
+        }
+        let released = lock_recover(&self.runtime).release_effects();
+        if released {
+            notify_change(self);
+        }
+        released
+    }
+
     /// The checkout roots the daemon verified, by the identity each was
     /// opened with, which the core's own file work is checked against.
     pub fn set_file_roots(&self, roots: crate::files::FileRoots) {
@@ -587,6 +598,49 @@ impl Core {
         lock_recover(&self.runtime)
             .inbound_refusal(node)
             .map(str::to_owned)
+    }
+
+    /// What a move of the core to `device` is made from (PRD
+    /// core-host-node-move B4), with the device's label records, which only
+    /// memory holds, in the form `labels.json` stores them.
+    pub fn move_source(
+        &self,
+        device: &str,
+    ) -> Result<(crate::MoveSource, serde_json::Value), crate::MoveSourceRefusal> {
+        if !check_owner_thread(self, "move_source") {
+            return Err(crate::MoveSourceRefusal::NotReady);
+        }
+        let source = lock_recover(&self.runtime).move_source(device)?;
+        // A core whose label services never started holds no records.
+        let labels = match &self.labels {
+            Some(labels) => labels
+                .store
+                .export(&crate::labels::device_target(device))
+                .map_err(crate::MoveSourceRefusal::Unstorable)?,
+            None => serde_json::Value::Object(serde_json::Map::new()),
+        };
+        Ok((source, labels))
+    }
+
+    /// What a move of the core back to the node that dialed it is made
+    /// from (PRD core-host-node-move B6), with that node's label records,
+    /// which only memory holds, in the form `labels.json` stores them.
+    pub fn release_source(
+        &self,
+        node: &str,
+    ) -> Result<(crate::ReleaseSource, serde_json::Value), crate::MoveSourceRefusal> {
+        if !check_owner_thread(self, "release_source") {
+            return Err(crate::MoveSourceRefusal::NotReady);
+        }
+        let source = lock_recover(&self.runtime).release_source(node)?;
+        let labels = match &self.labels {
+            Some(labels) => labels
+                .store
+                .export(&crate::labels::device_target(node))
+                .map_err(crate::MoveSourceRefusal::Unstorable)?,
+            None => serde_json::Value::Object(serde_json::Map::new()),
+        };
+        Ok((source, labels))
     }
 
     /// The nodes that dialed this core and are connected now (PRD
@@ -670,6 +724,19 @@ impl Core {
             return None;
         }
         lock_recover(&self.runtime).links_scope(context)
+    }
+
+    /// What a hook's Memory read for a pane in `context` is answered from,
+    /// which the daemon then answers off this thread
+    /// (`crate::memory_hook::answer`), or why there is none.
+    pub fn memory_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Result<crate::memory_hook::Scope, &'static str> {
+        if !check_owner_thread(self, "memory_scope") {
+            return Err("core_unavailable");
+        }
+        lock_recover(&self.runtime).memory_scope(context)
     }
 
     pub fn workspace_control_query(

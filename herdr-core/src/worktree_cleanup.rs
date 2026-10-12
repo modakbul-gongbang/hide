@@ -4,7 +4,7 @@
 //! like any other, and the confirmation closes those panes before it removes.
 //! All inspection and filesystem effects run on the existing action-worker
 //! path, never under the runtime lock.
-use super::{LiveContext, control_request};
+use super::{ApiConnector, ChangeNotifier, GhPlace, Runtime, control_request};
 use crate::model::ListeningPortSnapshot;
 use crate::node_access::{NodeLink, call_as};
 use crate::{disk, github};
@@ -19,6 +19,7 @@ use hide_node_link::worktrees::Registered;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 /// How long one read of the checkouts' node may take: the node bounds each
@@ -205,6 +206,10 @@ use crate::agent_state::AgentUse;
 #[derive(Clone, Debug)]
 pub(crate) struct ReviewInput {
     pub workspace_id: String,
+    /// The project's path as its rows spell it: the key its repository facts
+    /// are filed under, and the root every answer names, never respelled
+    /// through `root`.
+    pub repository_root: String,
     pub root: PathBuf,
     /// The checkout the operator is looking at, when it is in this project.
     pub current: Option<PathBuf>,
@@ -213,6 +218,49 @@ pub(crate) struct ReviewInput {
     pub folders: HashMap<PathBuf, Vec<LayerFolder>>,
     /// Each worktree's measured allocated bytes, for the result's totals.
     pub bytes: HashMap<PathBuf, u64>,
+}
+
+/// Where a cleanup runs: the machine whose disk holds the project, through
+/// its Herdr (`api_connector`) and its node, with the runtime its answers go
+/// to; and where `gh` reads a squash merge's proof (D-16), none for a
+/// node's repository that names no GitHub one. A node's project is cleaned
+/// up on that node, never on this machine's disk (D-29).
+#[derive(Clone)]
+pub(crate) struct CleanupPlace {
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    api_connector: Arc<dyn ApiConnector>,
+    node: Arc<dyn NodeLink>,
+    /// Where merge proofs are read, or why they cannot be.
+    github: Result<GhPlace, String>,
+}
+
+impl CleanupPlace {
+    /// This machine's project: its Herdr and the core's own node.
+    pub(crate) fn local(context: super::LiveContext, github: Result<GhPlace, String>) -> Self {
+        Self {
+            runtime: context.runtime,
+            notifier: context.notifier,
+            api_connector: context.api_connector,
+            node: context.node,
+            github,
+        }
+    }
+
+    /// A node's project: the node's Herdr and its link.
+    pub(crate) fn node(
+        control: &super::RemoteControlContext,
+        node: Arc<dyn NodeLink>,
+        github: Result<GhPlace, String>,
+    ) -> Self {
+        Self {
+            runtime: control.runtime.clone(),
+            notifier: control.notifier.clone(),
+            api_connector: Arc::clone(&control.api_connector),
+            node,
+            github,
+        }
+    }
 }
 
 /// A build cache or dependency cell the operator chose.
@@ -333,7 +381,7 @@ pub(crate) fn read_in_use(
 }
 
 /// The in-use read against the live Herdr and the machine's listening ports.
-fn live_in_use(context: &LiveContext, checkouts: &[CheckoutFacts]) -> Result<InUseMap, String> {
+fn live_in_use(context: &CleanupPlace, checkouts: &[CheckoutFacts]) -> Result<InUseMap, String> {
     let ports = crate::ports::read_now(context.node.as_ref());
     let ports = match ports.unavailable_reason {
         Some(reason) => Err(format!("Listening ports could not be read: {reason}")),
@@ -413,7 +461,7 @@ fn read_in_use_now(
 }
 
 fn fresh_in_use(
-    context: &LiveContext,
+    context: &CleanupPlace,
     workspace_id: &str,
     path: &Path,
 ) -> Result<(Option<InUse>, Vec<String>), String> {
@@ -493,7 +541,7 @@ fn listed(node: &dyn NodeLink, root: &Path) -> Result<Vec<CleanupRow>, String> {
 /// Each live pane's id with a folder it stands in, from Herdr.
 type PanePaths = Vec<(String, PathBuf)>;
 
-fn pane_paths(context: &LiveContext) -> Result<PanePaths, String> {
+fn pane_paths(context: &CleanupPlace) -> Result<PanePaths, String> {
     let response = control_request(
         context.api_connector.as_ref(),
         "session.snapshot",
@@ -603,15 +651,20 @@ fn verified_merge(
 /// limits the checks to those paths, so a confirmation rereads what it is
 /// about to remove and nothing else.
 fn inspect(
-    node: &dyn crate::node_access::NodeLink,
+    context: &CleanupPlace,
     root: &Path,
     current: Option<&Path>,
     panes: Result<PanePaths, String>,
     usage: &Usage,
     only: Option<&[String]>,
 ) -> Result<CleanupSnapshot, String> {
+    let node = context.node.as_ref();
     inspect_with_merge_proofs(node, root, current, panes, usage, only, |branch| {
-        github::merged_pull_request_proofs(node, root, branch)
+        let github = context
+            .github
+            .as_ref()
+            .map_err(|why| format!("GitHub merge proof is unavailable: {why}"))?;
+        github::merged_pull_request_proofs(github.node.as_ref(), &github.place, branch)
     })
 }
 
@@ -750,7 +803,6 @@ fn inspect_with_merge_proofs(
         }
     }
     Ok(CleanupSnapshot {
-        repository_root: hide_platform::path::to_wire_lossy(root),
         main_head: local_main,
         rows,
         phase: "review".into(),
@@ -873,7 +925,7 @@ fn confirm(
 
 /// Hands a snapshot to the runtime, which keeps it only while its id is the
 /// live one. A runtime that cannot be locked is logged, never skipped quietly.
-fn publish(context: &LiveContext, snapshot: CleanupSnapshot) {
+fn publish(context: &CleanupPlace, snapshot: CleanupSnapshot) {
     let id = snapshot.id;
     if let Some(runtime) = context.runtime.upgrade() {
         match runtime.lock() {
@@ -891,7 +943,7 @@ fn publish(context: &LiveContext, snapshot: CleanupSnapshot) {
 }
 
 /// Marks the worker done, so the lane is free again.
-fn worker_finished(context: &LiveContext, id: u64) {
+fn worker_finished(context: &CleanupPlace, id: u64) {
     if let Some(runtime) = context.runtime.upgrade() {
         match runtime.lock() {
             Ok(mut guard) => guard.cleanup_worker_finished(id),
@@ -933,7 +985,7 @@ impl WorkerGuard {
     }
 
     fn for_context(
-        context: &LiveContext,
+        context: &CleanupPlace,
         start: CleanupSnapshot,
         terminal_phase: &'static str,
     ) -> Self {
@@ -981,14 +1033,14 @@ impl Drop for WorkerGuard {
 /// The review worker: reads what is in use and publishes the rows with it at
 /// once, so build caches can be chosen, then checks each worktree's
 /// eligibility (Git, and GitHub for a squash merge) and publishes the answer.
-pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result<(), String> {
+pub fn spawn_review(context: CleanupPlace, id: u64, input: ReviewInput) -> Result<(), String> {
     std::thread::Builder::new()
         .name("hide-worktree-cleanup".into())
         .spawn(move || {
             let base = CleanupSnapshot {
                 id,
                 workspace_id: input.workspace_id.clone(),
-                repository_root: hide_platform::path::to_wire_lossy(&input.root),
+                repository_root: input.repository_root.clone(),
                 phase: "loading".into(),
                 free_bytes: disk::volume_free_bytes(context.node.as_ref(), &input.root),
                 ..Default::default()
@@ -1039,7 +1091,7 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
             };
             let usage = Usage::of(in_use, &input.checkouts);
             let answer = match inspect(
-                context.node.as_ref(),
+                &context,
                 &input.root,
                 input.current.as_deref(),
                 panes,
@@ -1049,6 +1101,7 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                 Ok(value) => CleanupSnapshot {
                     id,
                     workspace_id: input.workspace_id.clone(),
+                    repository_root: input.repository_root.clone(),
                     usage_error,
                     free_bytes: base.free_bytes,
                     ..value
@@ -1407,7 +1460,7 @@ const DELETE_WAIT: Duration = Duration::from_secs(600);
 /// pane that appeared, or one that is not the checkout's own keeps the
 /// worktree, and a pane that is already gone needs no closing.
 fn close_checkout(
-    context: &LiveContext,
+    context: &CleanupPlace,
     workspace_id: &str,
     id: u64,
     path: &str,
@@ -1484,7 +1537,7 @@ fn panes_to_close(
 }
 
 pub fn spawn_confirm(
-    context: LiveContext,
+    context: CleanupPlace,
     review: CleanupSnapshot,
     input: ReviewInput,
     selected: Vec<String>,
@@ -1521,7 +1574,7 @@ pub fn spawn_confirm(
                     panes: HashMap::from([(PathBuf::from(path), panes)]),
                 };
                 inspect(
-                    context.node.as_ref(),
+                    &context,
                     &root,
                     input.current.as_deref(),
                     pane_paths(&context),

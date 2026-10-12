@@ -369,6 +369,21 @@ fn remove_other_builds(root: &Path, keep: &str) {
     }
 }
 
+/// A core update's end on the machine running the core (PRD
+/// core-host-node-move B10): `<root>/current` leads to `version`, the build
+/// the core now runs, and every build but it and `kept` is removed, so the
+/// other build of the update stays for the next connection and no more
+/// than two are ever kept.
+pub fn adopt_build(root: &Path, version: &str, kept: &str) -> HostResult<()> {
+    point_current(root, version)?;
+    for build in builds(root, Some(version)) {
+        if build.file_name().and_then(|name| name.to_str()) != Some(kept) {
+            let _ = std::fs::remove_dir_all(build);
+        }
+    }
+    Ok(())
+}
+
 /// Removes every build, the `current` link and then the root itself, which
 /// is removed only when nothing else is left in it: the root is the folder
 /// the operator allowed Hide to own, but a file someone else put there is not
@@ -504,6 +519,26 @@ mod tests {
         assert_eq!(std::fs::read_to_string(ledger).unwrap(), bytes);
         assert!(!placement.home.join(".hide/kit").exists());
         assert!(!placement.home.join(".local/bin").exists());
+    }
+
+    #[test]
+    fn a_core_update_keeps_the_build_it_runs_and_the_other_one_of_the_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for build in ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc"] {
+            std::fs::create_dir_all(root.join(build)).unwrap();
+        }
+        adopt_build(root, "cccccccccccccccc", "bbbbbbbbbbbbbbbb").unwrap();
+        assert!(hide_platform::fs::link::is_link_to(
+            &root.join("current"),
+            Path::new("cccccccccccccccc")
+        ));
+        let mut left: Vec<String> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["bbbbbbbbbbbbbbbb", "cccccccccccccccc", "current"]);
     }
 
     #[test]

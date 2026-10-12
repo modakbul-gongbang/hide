@@ -114,7 +114,7 @@ impl Runtime {
 
     /// Connects every device the persisted registrations name. Called once,
     /// after the worker context exists, because a coordinator reports back
-    /// through it.
+    /// through it, and again when a pending core's hold is released.
     pub fn connect_registered_devices(&mut self) -> bool {
         let registrations = self.snapshot.ui_state.device_registrations.clone();
         let mut changed = false;
@@ -139,6 +139,9 @@ impl Runtime {
                 Some(arrived) => Ok(arrived),
                 None => return false,
             },
+            // A core waiting for its move's link dials nothing; releasing
+            // the hold connects every registration again.
+            LinkOrigin::Dialed { .. } if self.effects_held() => return false,
             LinkOrigin::Dialed { ssh_alias } => Err(ssh_alias.clone()),
         };
         if !self
@@ -300,6 +303,8 @@ impl Runtime {
         self.device_github.remove(device_id);
         self.device_github_reads
             .retain(|(device, _), _| device != device_id);
+        self.device_github_read_generation
+            .retain(|(device, _), _| device != device_id);
         self.device_github_over_limit.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
@@ -344,8 +349,11 @@ impl Runtime {
             .iter()
             .map(|device| (device.id.clone(), device.agent_count))
             .collect::<HashMap<_, _>>();
-        let mut devices =
-            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        let mut devices = workspace::devices(
+            &self.node,
+            self.machine_name.as_deref(),
+            &self.snapshot.ui_state.device_registrations,
+        );
         for device in &mut devices {
             if let Some(count) = counts.get(&device.id) {
                 device.agent_count = *count;

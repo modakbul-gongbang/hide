@@ -144,6 +144,31 @@ fn checkout_is_inactive(
     settled || stale
 }
 
+/// A project's Inactive fold: its checkouts, other than the primary one,
+/// that nothing works in now (`checkout_is_inactive`), open as the operator
+/// left it. This machine's projects and those of a node that dials the core
+/// share it (PRD core-host-node-move D-29).
+pub(crate) fn inactive_checkout_group(
+    workspace: &WorkspaceSnapshot,
+    by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
+    focused_checkout_id: Option<&str>,
+    expanded: bool,
+    now_unix_ms: u64,
+) -> InactiveCheckoutGroupSnapshot {
+    InactiveCheckoutGroupSnapshot {
+        expanded,
+        checkout_ids: workspace
+            .checkouts
+            .iter()
+            .filter(|checkout| {
+                !checkout.is_primary
+                    && checkout_is_inactive(checkout, by_pane, focused_checkout_id, now_unix_ms)
+            })
+            .map(|checkout| checkout.id.clone())
+            .collect(),
+    }
+}
+
 /// Rebuilds core-owned inactive membership without moving the authoritative
 /// project or checkout rows. The shell maps these ordered IDs back to the
 /// existing rows, while search and focus continue to see the full collections.
@@ -183,19 +208,13 @@ pub(crate) fn refresh_inactive_groups(
 
     let mut inactive_projects = Vec::<InactiveProjectGroupSnapshot>::new();
     for workspace in &mut navigator.workspaces {
-        let inactive_checkout_ids = workspace
-            .checkouts
-            .iter()
-            .filter(|checkout| {
-                !checkout.is_primary
-                    && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
-            })
-            .map(|checkout| checkout.id.clone())
-            .collect();
-        workspace.inactive_checkouts = InactiveCheckoutGroupSnapshot {
-            expanded: expanded_checkout_projects.contains(workspace.path.as_str()),
-            checkout_ids: inactive_checkout_ids,
-        };
+        workspace.inactive_checkouts = inactive_checkout_group(
+            workspace,
+            &by_pane,
+            focused_checkout_id,
+            expanded_checkout_projects.contains(workspace.path.as_str()),
+            now_unix_ms,
+        );
         refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
         workspace
             .inactive_checkouts
@@ -235,6 +254,55 @@ pub(crate) fn refresh_inactive_groups(
                     || workspace.session_folds != session_folds
             },
         )
+}
+
+/// The folds of a device session's project, the one place they are
+/// decided for a device: the session folds, and the Inactive fold when the
+/// device is a node that dials this core (`node`), whose pane-less
+/// worktrees are rows as this machine's are (D-29). A device this core
+/// dials shows only the checkouts its session opens, so it has no Inactive
+/// fold. The derive and the time-based pass both call it, so a published
+/// session and a newly derived one compare like with like.
+/// The checkout a device session's folds treat as in front: the window's
+/// selection when it is one of the session's checkouts, as a local
+/// project's folds read it, else the device Herdr's own focus.
+pub(crate) fn device_fold_focus(
+    window: Option<&str>,
+    session: &crate::model::RemoteSessionSnapshot,
+) -> Option<String> {
+    window
+        .filter(|id| {
+            session.workspaces.iter().any(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.id == *id)
+            })
+        })
+        .or(session.focused_checkout_id.as_deref())
+        .map(str::to_owned)
+}
+
+pub(crate) fn refresh_device_folds(
+    workspace: &mut WorkspaceSnapshot,
+    agents: &HashMap<&str, &SidebarAgentSnapshot>,
+    ui_state: &UiStateSnapshot,
+    focused_checkout_id: Option<&str>,
+    node: bool,
+    now_unix_ms: u64,
+) {
+    if node {
+        workspace.inactive_checkouts = inactive_checkout_group(
+            workspace,
+            agents,
+            focused_checkout_id,
+            ui_state
+                .expanded_inactive_checkout_project_paths
+                .contains(&workspace.path),
+            now_unix_ms,
+        );
+    }
+    refresh_session_folds(workspace, agents, ui_state, focused_checkout_id);
 }
 
 pub(crate) fn refresh_session_folds(
@@ -469,6 +537,8 @@ mod tests {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
+            effects_held: false,
+            machine_name: None,
         })
         .navigator;
         navigator.workspaces = workspaces;

@@ -48,23 +48,6 @@ impl Runtime {
         let mut candidates = BTreeMap::new();
         let mut refresh = BTreeSet::new();
         let mut changed = false;
-        let mut family_tokens: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-        for (pane, token) in &self.issue_tokens.panes {
-            family_tokens
-                .entry(pane.clone())
-                .or_default()
-                .insert(pane.clone(), token.clone());
-        }
-        for agent in &self.snapshot.navigator.agents {
-            if let Some(token) = self.issue_tokens.panes.get(&agent.pane_id) {
-                for ancestor in &agent.lineage_path_pane_ids {
-                    family_tokens
-                        .entry(ancestor.clone())
-                        .or_default()
-                        .insert(agent.pane_id.clone(), token.clone());
-                }
-            }
-        }
 
         let sessions: BTreeMap<_, _> = self
             .snapshot
@@ -82,19 +65,18 @@ impl Runtime {
                 })
             })
             .collect();
-        self.unconfirmed_issue_tokens.retain(|id, token| {
-            if !self.last_session_spaces.iter().any(|space| &space.id == id) {
-                return false;
-            }
-            if self.issue_tokens.workspaces.get(id) == Some(&token.value) {
-                token.observed = true;
-                true
-            } else {
-                // A delayed event for the failed write must be seen before a
-                // later replacement/clear can confirm reconciliation.
-                !token.observed
-            }
-        });
+        let spaces = &self.last_session_spaces;
+        settle_unconfirmed(
+            &mut self.unconfirmed_issue_tokens,
+            &self.issue_tokens.workspaces,
+            |id| spaces.iter().any(|space| space.id == id),
+        );
+        let links = LinkTokens::new(
+            &self.issue_tokens,
+            Some(&self.unconfirmed_issue_tokens),
+            &self.snapshot.navigator.agents,
+            &self.invalid_links,
+        );
         let sources = self.snapshot.ui_state.project_issue_sources.clone();
         let mut local_links = BTreeMap::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
@@ -117,92 +99,33 @@ impl Runtime {
                 if self
                     .issue_write_pending
                     .as_ref()
-                    .is_some_and(|(_, id, _)| id == &checkout.id)
+                    .is_some_and(|pending| pending.checkout_id == checkout.id)
                 {
                     if let Some(candidate) = self.issue_candidates.get(&checkout.id) {
                         candidates.insert(checkout.id.clone(), candidate.clone());
                     }
                     continue;
                 }
-                let physical: BTreeSet<_> = checkout
-                    .tabs
-                    .iter()
-                    .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
-                    .collect();
-                let manual = sessions.get(&checkout.id).and_then(|id| {
-                    self.issue_tokens.workspaces.get(id).filter(|value| {
-                        !self
-                            .unconfirmed_issue_tokens
-                            .get(id)
-                            .is_some_and(|token| token.value == **value)
-                    })
-                });
-                let pane = physical
-                    .iter()
-                    .filter_map(|id| family_tokens.get(id))
-                    .flat_map(|tokens| tokens.iter())
-                    .min_by_key(|(id, _)| *id)
-                    .map(|(_, token)| token);
-                // A Local project's link is the same chain read as a local id
-                // (`L-3`, or the number a branch starts with); a pull
-                // request's closing issues are GitHub's and do not apply.
+                let repository = workspace.home_issues.repository.as_deref();
+                let session = sessions.get(&checkout.id).map(String::as_str);
+                let candidate =
+                    match links.checkout_link(session, checkout, local_source, repository) {
+                        // A Local project's link is the same chain read as a
+                        // local id; it names no GitHub issue.
+                        Some(ChainLink::Local(number)) => {
+                            local_links.insert(checkout.id.clone(), number);
+                            None
+                        }
+                        Some(ChainLink::Github(candidate)) => Some(candidate),
+                        None => None,
+                    };
                 if local_source {
-                    let number = manual
-                        .or(pane)
-                        .or(checkout.branch_issue.as_ref())
-                        .and_then(|value| crate::local_issues::parse_id(value))
-                        .or_else(|| {
-                            checkout
-                                .branch
-                                .as_deref()
-                                .and_then(crate::issues::branch_number)
-                        });
-                    if let Some(number) = number {
-                        local_links.insert(checkout.id.clone(), number);
-                    }
                     if checkout.issue.is_some() {
                         checkout.issue = None;
                         changed = true;
                     }
                     continue;
                 }
-                let repository = workspace.home_issues.repository.as_deref();
-                let selected = manual
-                    .map(|value| (value.clone(), "직접 연결".to_owned()))
-                    .or_else(|| pane.map(|value| (value.clone(), "pane 토큰".into())))
-                    .or_else(|| {
-                        checkout
-                            .branch_issue
-                            .as_ref()
-                            .map(|value| (value.clone(), "브랜치 설정".into()))
-                    })
-                    .or_else(|| {
-                        checkout.pull_request.as_ref().and_then(|pr| {
-                            pr.closing_issues
-                                .first()
-                                .map(|issue| (issue.token(), format!("PR #{} 본문", pr.number)))
-                        })
-                    })
-                    .or_else(|| {
-                        checkout
-                            .branch
-                            .as_deref()
-                            .and_then(crate::issues::branch_number)
-                            .map(|number| (format!("#{number}"), "브랜치 이름".into()))
-                    });
-                let candidate = selected.and_then(|(value, source)| {
-                    match IssueReference::parse(&value, repository) {
-                        Ok(reference) => Some(IssueCandidate { reference, source }),
-                        Err(_) => {
-                            // A missing repository will resolve after the first
-                            // lookup; malformed external metadata is diagnostic.
-                            if repository.is_some() || !value.starts_with('#') {
-                                crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"reference.invalid","checkout_id":checkout.id}));
-                            }
-                            None
-                        }
-                    }
-                });
                 let issue = candidate.as_ref().and_then(|candidate| {
                     linked.insert(candidate.reference.clone());
                     if linked.len() > ISSUE_LIMIT {
@@ -253,66 +176,20 @@ impl Runtime {
         let sources = &self.snapshot.ui_state.project_issue_sources;
         let store = &self.local_issues;
         for workspace in &mut self.snapshot.navigator.workspaces {
-            let status = workspace
-                .checkouts
-                .first()
-                .map(|checkout| checkout.github.clone())
-                .unwrap_or_default();
+            if workspace.remote_target_id.is_some() {
+                // A device's projects are not this machine's; a node's are
+                // projected with its session (`project_node_issues`).
+                continue;
+            }
             let choice = sources.get(&workspace.path).map(String::as_str);
-            let kind = crate::tasks::source_kind(
+            changed |= project_tasks(
+                workspace,
+                None,
                 choice,
-                workspace.is_git,
-                &workspace.home_issues,
-                &status,
+                store,
+                None,
+                &self.local_issue_links,
             );
-            let tasks = if workspace.remote_target_id.is_some() {
-                // A device's projects keep their issues on that device.
-                crate::tasks::ProjectTasksSnapshot::default()
-            } else if kind == crate::tasks::SourceKind::Local {
-                let read = match store {
-                    Err(reason) => crate::tasks::LocalRead::Failed(reason),
-                    Ok(store) => crate::tasks::LocalRead::Ready(store.project(&workspace.path)),
-                };
-                crate::tasks::local_tasks(&workspace.path, read, choice.is_some())
-            } else {
-                crate::tasks::github_tasks(&workspace.home_issues, &status, choice.is_some())
-            };
-            if workspace.tasks != tasks {
-                workspace.tasks = tasks;
-                changed = true;
-            }
-            let local =
-                workspace.remote_target_id.is_none() && kind == crate::tasks::SourceKind::Local;
-            for checkout in &mut workspace.checkouts {
-                let (key, closes) = if local {
-                    let key = self
-                        .local_issue_links
-                        .get(&checkout.id)
-                        .map(|number| crate::tasks::local_key(&workspace.path, *number))
-                        .filter(|key| workspace.tasks.tasks.iter().any(|task| &task.key == key));
-                    (key, Vec::new())
-                } else {
-                    let key = checkout
-                        .issue
-                        .as_ref()
-                        .map(|link| crate::tasks::github_key(&link.issue.reference));
-                    let closes: Vec<String> = checkout
-                        .pull_request
-                        .iter()
-                        .flat_map(|pr| pr.closing_issues.iter().map(crate::tasks::github_key))
-                        .filter(|closed| Some(closed) != key.as_ref())
-                        .filter(|closed| {
-                            workspace.tasks.tasks.iter().any(|task| &task.key == closed)
-                        })
-                        .collect();
-                    (key, closes)
-                };
-                if checkout.task_key != key || checkout.closes_task_keys != closes {
-                    checkout.task_key = key;
-                    checkout.closes_task_keys = closes;
-                    changed = true;
-                }
-            }
         }
         changed
     }
@@ -327,33 +204,54 @@ impl Runtime {
         }
     }
 
-    /// The link Hide keeps between a checkout and an issue: the branch's issue
-    /// link and its Workspace token, written on a worker. `Err` names the
-    /// diagnostic kind and why nothing was started; the write's own answer
-    /// lands in `ingest_issue_operation_result`.
-    pub(super) fn link_checkout_issue(
-        &mut self,
+    /// A checkout an issue can be linked to: a linked worktree on a branch,
+    /// in one of this machine's Git projects or one of a node that dials this
+    /// core, with the node it is on.
+    fn issue_checkout(
+        &self,
         checkout_id: &str,
-        text: &str,
-    ) -> Result<(), (&'static str, String)> {
-        let target = self
+    ) -> Option<(Option<String>, WorkspaceSnapshot, CheckoutSnapshot)> {
+        let find = |workspace: &WorkspaceSnapshot| {
+            workspace
+                .checkouts
+                .iter()
+                .find(|checkout| {
+                    checkout.id == checkout_id && checkout.is_worktree && checkout.branch.is_some()
+                })
+                .map(|checkout| (workspace.clone(), checkout.clone()))
+        };
+        let own = self
             .snapshot
             .navigator
             .workspaces
             .iter()
             .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
-            .find_map(|workspace| {
-                workspace
-                    .checkouts
+            .find_map(find)
+            .map(|(workspace, checkout)| (None, workspace, checkout));
+        own.or_else(|| {
+            self.node_sessions().find_map(|(node, session)| {
+                let (workspace, checkout) = session
+                    .workspaces
                     .iter()
-                    .find(|checkout| {
-                        checkout.id == checkout_id
-                            && checkout.is_worktree
-                            && checkout.branch.is_some()
-                    })
-                    .map(|checkout| (workspace.clone(), checkout.clone()))
-            });
-        let Some((workspace, checkout)) = target else {
+                    .filter(|workspace| workspace.is_git)
+                    .find_map(find)?;
+                Some((Some(node.to_owned()), workspace, checkout))
+            })
+        })
+    }
+
+    /// The link Hide keeps between a checkout and an issue: the branch's issue
+    /// link and its Workspace token, written on a worker on the checkout's
+    /// own machine: this machine's git and Herdr, or a node's through its
+    /// link and its Herdr. `Err` names the diagnostic kind and why nothing
+    /// was started; the write's own answer lands in
+    /// `ingest_issue_operation_result`.
+    pub(super) fn link_checkout_issue(
+        &mut self,
+        checkout_id: &str,
+        text: &str,
+    ) -> Result<(), (&'static str, String)> {
+        let Some((node, workspace, checkout)) = self.issue_checkout(checkout_id) else {
             return Err((
                 "checkout_issue.target_missing",
                 "Issue target checkout is unavailable".to_owned(),
@@ -364,7 +262,7 @@ impl Runtime {
             String::new()
         } else if local_source {
             let known = crate::local_issues::parse_id(text).filter(|number| {
-                matches!(&self.local_issues, Ok(store) if store.issue(&workspace.path, *number).is_some())
+                matches!(&self.local_issues, Ok(store) if store.issue(node.as_deref(), &workspace.path, *number).is_some())
             });
             match known {
                 Some(number) => crate::local_issues::display_id(number),
@@ -380,6 +278,18 @@ impl Runtime {
                 .map(|reference| reference.token())
                 .map_err(|error| ("checkout_issue.invalid", error))?
         };
+        // Removing a link reads nothing, so it needs no repository name.
+        let read = if local_source || text.is_empty() {
+            Ok(None)
+        } else {
+            self.github_place(node.as_deref(), &workspace.path)
+                .map(|place| {
+                    Some(crate::live::GhPlace {
+                        node: self.own_node(),
+                        place,
+                    })
+                })
+        };
         let id = self
             .begin_task_operation(
                 "checkout_issue",
@@ -389,16 +299,53 @@ impl Runtime {
                 None,
             )
             .map_err(|error| ("checkout_issue.busy", error))?;
-        let session = workspace::authoritative_session_space(
-            &self.last_session_spaces,
-            &workspace,
-            &checkout.path,
-        )
-        .map(|space| space.id.clone());
-        let previous = session
-            .as_ref()
-            .and_then(|id| self.issue_tokens.workspaces.get(id))
-            .cloned();
+        // A link that cannot be read yet ends as the operator's failed task,
+        // with why, rather than as a click that shows nothing.
+        let read = match read {
+            Ok(read) => read,
+            Err(message) => {
+                self.push_diagnostic("checkout_issue.unavailable", message.clone());
+                self.op_timings
+                    .finish(&super::op_timing::task_create_op_id(id), "failed");
+                let operation = self
+                    .snapshot
+                    .task_operation
+                    .as_mut()
+                    .expect("the task operation was begun above");
+                operation.phase = "failed".into();
+                operation.message = Some(message);
+                return Ok(());
+            }
+        };
+        // The Workspace that carries the token: this machine's authoritative
+        // one for the checkout, or the Herdr workspace that owns a node's.
+        let (session, previous) = match node.as_deref() {
+            None => {
+                let session = workspace::authoritative_session_space(
+                    &self.last_session_spaces,
+                    &workspace,
+                    &checkout.path,
+                )
+                .map(|space| space.id.clone());
+                let previous = session
+                    .as_ref()
+                    .and_then(|id| self.issue_tokens.workspaces.get(id))
+                    .cloned();
+                (session, previous)
+            }
+            Some(node) => {
+                let session = checkout.owner_workspace_id.clone();
+                let previous = session.as_ref().and_then(|owner| {
+                    self.device_raw_sessions
+                        .get(node)?
+                        .issue_tokens
+                        .workspaces
+                        .get(owner)
+                        .cloned()
+                });
+                (session, previous)
+            }
+        };
         let request = crate::live::PurposeTaskRequest {
             id,
             checkout_id: checkout.id.clone(),
@@ -407,18 +354,18 @@ impl Runtime {
             session_workspace_id: session,
             purpose: text.clone(),
         };
-        self.issue_write_pending = Some((id, checkout.id, text));
-        let result = self
-            .live
-            .clone()
-            .ok_or_else(|| "Live connection is unavailable".to_owned())
-            .and_then(|context| {
-                if local_source {
-                    crate::live::spawn_local_issue_write(context, request.clone(), previous)
-                } else {
-                    crate::live::spawn_issue_write(context, request.clone(), previous)
-                }
-            });
+        self.issue_write_pending = Some(IssueWritePending {
+            id,
+            checkout_id: checkout.id,
+            node: node.clone(),
+        });
+        let target = match node.as_deref() {
+            None => self.local_worktree_target(),
+            Some(node) => self.device_worktree_target(node),
+        };
+        let result = target.and_then(|target| {
+            crate::live::spawn_issue_write(target, read, request.clone(), previous)
+        });
         if let Err(error) = result {
             self.ingest_issue_operation_result(
                 &request,
@@ -433,17 +380,18 @@ impl Runtime {
         request: &crate::live::PurposeTaskRequest,
         result: Result<Option<crate::issues::IssueSnapshot>, crate::live::IssueWriteFailure>,
     ) -> bool {
-        if !self
+        let Some(pending) = self
             .issue_write_pending
-            .as_ref()
-            .is_some_and(|(id, _, _)| *id == request.id)
-        {
+            .take_if(|pending| pending.id == request.id)
+        else {
             return false;
-        }
-        self.issue_write_pending = None;
+        };
         if self.pr_link_checkout.as_deref() == Some(request.checkout_id.as_str()) {
             self.pr_link_checkout = None;
             self.settle_pr_link_write(result.as_ref().err().map(|error| error.detail.clone()));
+        }
+        if let Some(node) = pending.node {
+            return self.ingest_node_issue_write(&node, request, result);
         }
         match result {
             Ok(issue) => {
@@ -530,12 +478,133 @@ impl Runtime {
         }
         true
     }
+
+    /// A node checkout's link was written on the node. Its rows show the new
+    /// link at once, from the token and branch note the write set and the
+    /// issue it read; the node's next session event and worktree read confirm
+    /// them. A token the node may hold after a failed rollback is logged:
+    /// the node's own Herdr is what the next session event reports.
+    fn ingest_node_issue_write(
+        &mut self,
+        node: &str,
+        request: &crate::live::PurposeTaskRequest,
+        result: Result<Option<crate::issues::IssueSnapshot>, crate::live::IssueWriteFailure>,
+    ) -> bool {
+        match result {
+            Ok(issue) => {
+                let token = (!request.purpose.is_empty()).then(|| request.purpose.clone());
+                if let Some(owner) = &request.session_workspace_id
+                    && let Some(unconfirmed) = self.unconfirmed_node_issue_tokens.get_mut(node)
+                {
+                    unconfirmed.remove(owner);
+                }
+                if let Some(owner) = &request.session_workspace_id
+                    && let Some(raw) = self.device_raw_sessions.get_mut(node)
+                {
+                    match &token {
+                        Some(token) => raw
+                            .issue_tokens
+                            .workspaces
+                            .insert(owner.clone(), token.clone()),
+                        None => raw.issue_tokens.workspaces.remove(owner),
+                    };
+                }
+                if let Some(branch) = &request.branch
+                    && let Some(listed) = self.device_worktrees.get_mut(node)
+                {
+                    let note = listed
+                        .notes
+                        .entry(request.repository_root.clone())
+                        .or_default()
+                        .entry(branch.clone())
+                        .or_default();
+                    note.issue = token;
+                }
+                if let Some(issue) = issue
+                    && let Some(project) = self.device_github.get_mut(node).and_then(|github| {
+                        github
+                            .projects
+                            .iter_mut()
+                            .find(|project| project.root_path == request.repository_root)
+                    })
+                {
+                    project
+                        .issues
+                        .issues
+                        .retain(|known| known.reference != issue.reference);
+                    project.issues.issues.insert(0, issue);
+                    project.issues.issues.truncate(ISSUE_LIMIT);
+                }
+                if let Some(operation) = self.snapshot.task_operation.as_mut() {
+                    operation.phase = "ready".into();
+                }
+                self.request_device_worktrees(node, true);
+            }
+            Err(error) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "checkout_issue",
+                    "kind": "node_write.failed",
+                    "node": node,
+                    "checkout_id": request.checkout_id,
+                    "unconfirmed_token": error.unconfirmed_token,
+                }));
+                if error.unconfirmed_token
+                    && let Some(owner) = &request.session_workspace_id
+                {
+                    self.unconfirmed_node_issue_tokens
+                        .entry(node.to_owned())
+                        .or_default()
+                        .insert(
+                            owner.clone(),
+                            UnconfirmedIssueToken {
+                                value: request.purpose.clone(),
+                                observed: false,
+                            },
+                        );
+                }
+                self.push_diagnostic("checkout_issue.save_failed", error.detail);
+                if let Some(operation) = self.snapshot.task_operation.as_mut() {
+                    operation.phase = "failed".into();
+                }
+            }
+        }
+        self.refresh_device_catalog(node);
+        true
+    }
+
+    /// Settles a node's unconfirmed tokens against the tokens its Herdr
+    /// reports now, by the rule this machine's follow (`settle_unconfirmed`).
+    pub(super) fn settle_node_issue_tokens(&mut self, node: &str, raw: &RemoteSessionSnapshot) {
+        let Some(unconfirmed) = self.unconfirmed_node_issue_tokens.get_mut(node) else {
+            return;
+        };
+        settle_unconfirmed(unconfirmed, &raw.issue_tokens.workspaces, |id| {
+            raw.workspaces.iter().any(|workspace| {
+                workspace
+                    .session_workspace_ids
+                    .iter()
+                    .any(|known| known == id)
+            })
+        });
+        if unconfirmed.is_empty() {
+            self.unconfirmed_node_issue_tokens.remove(node);
+        }
+    }
+}
+
+/// The checkout issue link a worker is writing, and the node it is on
+/// (`None` for this machine's).
+pub(super) struct IssueWritePending {
+    pub id: u64,
+    pub checkout_id: String,
+    pub node: Option<String>,
 }
 
 /// A Local issue as its panel reads it: the body and when it was made, from
 /// the store the runtime already holds, so the read needs no worker.
 fn local_issue_detail(
     store: &Result<crate::local_issues::LocalIssueStore, String>,
+    node: Option<&str>,
     key: &str,
 ) -> Result<crate::tasks::TaskDetail, String> {
     let (path, number) =
@@ -543,7 +612,7 @@ fn local_issue_detail(
     match store {
         Err(reason) => Err(reason.clone()),
         Ok(store) => store
-            .issue(path, number)
+            .issue(node, path, number)
             .map(|issue| crate::tasks::TaskDetail {
                 body: issue.body.clone(),
                 created_at_unix_ms: Some(issue.created_at_unix_ms),
@@ -588,6 +657,64 @@ impl Runtime {
             .iter()
             .find(|workspace| workspace.id == workspace_id && workspace.remote_target_id.is_none())
             .cloned()
+    }
+
+    /// A project an issue action reaches, with the node it is on: one of
+    /// this machine's (`None`), or one of a node that dials this core (PRD
+    /// core-host-node-move D-29). A dialed device's projects keep their
+    /// issues on that device and are not reached.
+    pub(super) fn issue_project(
+        &self,
+        workspace_id: &str,
+    ) -> Option<(Option<String>, WorkspaceSnapshot)> {
+        if let Some(workspace) = self.local_project_by_id(workspace_id) {
+            return Some((None, workspace));
+        }
+        self.node_sessions().find_map(|(node, session)| {
+            let workspace = session
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)?;
+            Some((Some(node.to_owned()), workspace.clone()))
+        })
+    }
+
+    /// Where `gh` reads a project's repository: in its checkout on this
+    /// machine, or, for a node's project, by the name the node read from its
+    /// `origin` (D-16); never in a folder of this machine at the node's path.
+    pub(super) fn github_place(
+        &self,
+        node: Option<&str>,
+        root: &str,
+    ) -> Result<crate::github::Where, String> {
+        let Some(node) = node else {
+            return Ok(crate::github::Where::Checkout(PathBuf::from(root)));
+        };
+        self.device_worktrees
+            .get(node)
+            .and_then(|listed| listed.projects.get(root))
+            .and_then(|project| project.repository.clone())
+            .map(crate::github::Where::Repository)
+            .ok_or_else(|| "The node has not named this project's GitHub repository yet".to_owned())
+    }
+
+    /// Shows a change to a project's issues made here: this machine's
+    /// projects are projected again, and a node's session rows are.
+    pub(super) fn refresh_issue_rows(&mut self, node: Option<&str>) {
+        match node {
+            None => {
+                self.apply_pull_requests();
+            }
+            Some(node) => {
+                self.refresh_device_catalog(node);
+            }
+        }
+    }
+
+    /// Asks a node's repository again at its next read, as this machine's
+    /// `refresh_pull_requests` does.
+    pub(super) fn reread_node_github(&mut self, node: &str, root: &str) {
+        self.refresh_device_pull_requests(node, root);
     }
 
     fn next_issue_work_id(&mut self) -> u64 {
@@ -655,6 +782,21 @@ impl Runtime {
         }));
         self.persist_ui_state();
         self.apply_pull_requests();
+        // The source is kept by path, so a node project at that path reads
+        // its issues from the new source now too (D-29).
+        let nodes: Vec<String> = self
+            .node_sessions()
+            .filter(|(_, session)| {
+                session
+                    .workspaces
+                    .iter()
+                    .any(|project| project.path == payload.project_path)
+            })
+            .map(|(node, _)| node.to_owned())
+            .collect();
+        for node in nodes {
+            self.refresh_issue_rows(Some(&node));
+        }
         true
     }
 
@@ -704,10 +846,10 @@ impl Runtime {
     /// in the store at once and written by the coordinator; a GitHub one is
     /// `gh issue create` on a worker.
     pub(super) fn create_issue(&mut self, payload: IssueCreatePayload) -> bool {
-        let Some(workspace) = self.local_project_by_id(&payload.workspace_id) else {
+        let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
             self.set_error(
                 "issue_create.unknown_project",
-                "A new issue needs a project on this Mac",
+                "A new issue needs a project on this Mac or a linked machine",
                 false,
             );
             return true;
@@ -743,24 +885,29 @@ impl Runtime {
         };
         crate::diagnostic!(serde_json::json!({
             "component": "issues", "kind": "issue_create.requested",
-            "id": id, "project": workspace.path,
+            "id": id, "project": workspace.path, "node": node,
         }));
         match self.project_source_kind(&workspace) {
             crate::tasks::SourceKind::Local => {
                 let created = self
-                    .create_local_issue(&workspace.path, &title, &body)
+                    .create_local_issue(node.as_deref(), &workspace.path, &title, &body)
                     .map(|number| crate::tasks::local_key(&workspace.path, number));
                 self.settle_issue_create(id, created);
                 true
             }
             crate::tasks::SourceKind::Github => {
-                let root = PathBuf::from(&workspace.path);
+                let place = match self.github_place(node.as_deref(), &workspace.path) {
+                    Ok(place) => place,
+                    Err(message) => return self.settle_issue_create(id, Err(message)),
+                };
                 let project_path = workspace.path.clone();
-                let node = self.own_node();
+                let own = self.own_node();
                 let spawned = self.spawn_issue_worker(
                     "issue-create",
-                    move || crate::github::create_issue(node.as_ref(), &root, &title, &body),
-                    move |runtime, result| runtime.ingest_created_issue(id, &project_path, result),
+                    move || crate::github::create_issue(own.as_ref(), &place, &title, &body),
+                    move |runtime, result| {
+                        runtime.ingest_created_issue(id, node.as_deref(), &project_path, result)
+                    },
                 );
                 if let Err(message) = spawned {
                     return self.settle_issue_create(id, Err(message));
@@ -770,10 +917,12 @@ impl Runtime {
         }
     }
 
-    /// A Local issue made in `project_path`'s store, saved off the lock, and
-    /// on the project's board at once; the store checks the title and body.
+    /// A Local issue made in the store for `project_path` on `node` (this
+    /// machine's for `None`), saved off the lock, and on the project's board
+    /// at once; the store checks the title and body.
     pub(super) fn create_local_issue(
         &mut self,
+        node: Option<&str>,
         project_path: &str,
         title: &str,
         body: &str,
@@ -784,16 +933,17 @@ impl Runtime {
                     "로컬 이슈 파일을 읽지 못해 새 이슈를 만들 수 없습니다: {reason}"
                 ));
             }
-            Ok(store) => store.create(project_path, title, body, unix_milliseconds())?,
+            Ok(store) => store.create(node, project_path, title, body, unix_milliseconds())?,
         };
         self.persist_local_issues();
-        self.apply_pull_requests();
+        self.refresh_issue_rows(node);
         Ok(number)
     }
 
     pub(crate) fn ingest_created_issue(
         &mut self,
         id: u64,
+        node: Option<&str>,
         project_path: &str,
         result: Result<crate::issues::IssueSnapshot, String>,
     ) -> bool {
@@ -802,22 +952,28 @@ impl Runtime {
             Err(message) => return self.settle_issue_create(id, Err(message)),
         };
         let key = crate::tasks::github_key(&issue.reference);
-        self.remember_created_issue(project_path, issue);
+        self.remember_created_issue(node, project_path, issue);
         self.settle_issue_create(id, Ok(key))
     }
 
-    /// A GitHub issue Hide just made shows at once; the next read confirms it.
+    /// A GitHub issue Hide just made shows at once, in this machine's
+    /// answer or the node's; the next read confirms it.
     pub(super) fn remember_created_issue(
         &mut self,
+        node: Option<&str>,
         project_path: &str,
         issue: crate::issues::IssueSnapshot,
     ) {
-        if let Some(project) = self
-            .github
-            .projects
-            .iter_mut()
-            .find(|project| project.root_path == project_path)
-        {
+        let github = match node {
+            None => Some(&mut self.github),
+            Some(node) => self.device_github.get_mut(node),
+        };
+        if let Some(project) = github.and_then(|github| {
+            github
+                .projects
+                .iter_mut()
+                .find(|project| project.root_path == project_path)
+        }) {
             project
                 .issues
                 .issues
@@ -825,8 +981,11 @@ impl Runtime {
             project.issues.issues.insert(0, issue);
             project.issues.issues.truncate(ISSUE_LIMIT);
         }
-        self.refresh_pull_requests(project_path);
-        self.apply_pull_requests();
+        match node {
+            None => self.refresh_pull_requests(project_path),
+            Some(node) => self.reread_node_github(node, project_path),
+        }
+        self.refresh_issue_rows(node);
     }
 
     /// `issue_detail_request`: an issue's body, labels, author, assignees and
@@ -834,12 +993,12 @@ impl Runtime {
     /// overview-lenses-issues D-40). A Local issue is read from the store at
     /// once; a GitHub one is one `gh issue view` on a worker, off the lock.
     pub(super) fn request_issue_detail(&mut self, payload: IssueDetailRequestPayload) -> bool {
-        let Some(workspace) = self.local_project_by_id(&payload.workspace_id) else {
+        let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
             return false;
         };
         let key = payload.task_key;
         if key.starts_with("local:") {
-            let answer = local_issue_detail(&self.local_issues, &key);
+            let answer = local_issue_detail(&self.local_issues, node.as_deref(), &key);
             self.snapshot.issue_work.detail =
                 Some(crate::model::IssueDetailSnapshot::answered(key, answer));
             return true;
@@ -853,14 +1012,22 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "issues", "kind": "issue_detail.requested", "task": key,
         }));
+        let place = match self.github_place(node.as_deref(), &workspace.path) {
+            Ok(place) => place,
+            Err(message) => {
+                self.snapshot.issue_work.detail = Some(
+                    crate::model::IssueDetailSnapshot::answered(key, Err(message)),
+                );
+                return true;
+            }
+        };
         self.snapshot.issue_work.detail =
             Some(crate::model::IssueDetailSnapshot::reading(key.clone()));
-        let root = PathBuf::from(&workspace.path);
         let worker_key = key.clone();
-        let node = self.own_node();
+        let own = self.own_node();
         if let Err(message) = self.spawn_issue_worker(
             "issue-detail",
-            move || crate::github::issue_detail(node.as_ref(), &root, &reference),
+            move || crate::github::issue_detail(own.as_ref(), &place, &reference),
             move |runtime, result| runtime.ingest_issue_detail(&worker_key, result),
         ) {
             self.snapshot.issue_work.detail = Some(crate::model::IssueDetailSnapshot::answered(
@@ -904,9 +1071,22 @@ impl Runtime {
         &self,
     ) -> (Vec<crate::github::SearchTarget>, Option<String>) {
         let mut targets: Vec<crate::github::SearchTarget> = Vec::new();
-        for workspace in &self.snapshot.navigator.workspaces {
-            if workspace.remote_target_id.is_some()
-                || !workspace.is_git
+        // A node's GitHub projects are searched by the name the node read,
+        // with this machine's login (D-16); one not named yet is left out,
+        // since its folder is not on this machine to resolve it in.
+        let nodes = self
+            .node_sessions()
+            .flat_map(|(_, session)| session.workspaces.iter())
+            .map(|workspace| (true, workspace));
+        let own = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .map(|workspace| (false, workspace));
+        for (on_node, workspace) in own.chain(nodes) {
+            if !workspace.is_git
                 || self.project_source_kind(workspace) != crate::tasks::SourceKind::Github
             {
                 continue;
@@ -917,6 +1097,9 @@ impl Runtime {
                 .as_deref()
                 .filter(|repository| crate::issues::is_repository(repository))
                 .map(str::to_owned);
+            if on_node && repository.is_none() {
+                continue;
+            }
             if let Some(repository) = &repository
                 && targets.iter().any(|known| {
                     known
@@ -1208,6 +1391,13 @@ impl Runtime {
             );
             return true;
         };
+        let node = match self.local_issue_project(&payload.workspace_id, path) {
+            Ok(node) => node,
+            Err(message) => {
+                self.set_error("issue_set_open.unknown_project", message, false);
+                return true;
+            }
+        };
         let Ok(store) = self.local_issues.as_mut() else {
             self.set_error(
                 "issue_set_open.unavailable",
@@ -1216,12 +1406,34 @@ impl Runtime {
             );
             return true;
         };
-        if !store.set_open(path, number, payload.open, unix_milliseconds()) {
+        if !store.set_open(
+            node.as_deref(),
+            path,
+            number,
+            payload.open,
+            unix_milliseconds(),
+        ) {
             return false;
         }
         self.persist_local_issues();
-        self.apply_pull_requests();
+        self.refresh_issue_rows(node.as_deref());
         true
+    }
+
+    /// The node whose store keeps a Local issue of `workspace_id` at
+    /// `path`: the project the request names has to be the one its key
+    /// names, so a key is never applied to another machine's project at the
+    /// same path.
+    fn local_issue_project(
+        &self,
+        workspace_id: &str,
+        path: &str,
+    ) -> Result<Option<String>, String> {
+        match self.issue_project(workspace_id) {
+            Some((node, workspace)) if workspace.path == path => Ok(node),
+            Some(_) => Err("The issue is not this project's".to_owned()),
+            None => Err("The issue's project is not on this Mac or a linked machine".to_owned()),
+        }
     }
 
     /// `local_issue_update`: a Local issue's title and body, edited in its
@@ -1231,17 +1443,22 @@ impl Runtime {
     /// no GitHub counterpart.
     pub(super) fn update_local_issue(&mut self, payload: LocalIssueUpdatePayload) -> bool {
         let now = unix_milliseconds();
-        let updated = match (
-            crate::tasks::parse_local_key(&payload.task_key),
-            self.local_issues.as_mut(),
-        ) {
-            (None, _) => Err("Only a local issue is edited in Hide".to_owned()),
-            (Some(_), Err(reason)) => Err(format!(
+        let key = crate::tasks::parse_local_key(&payload.task_key);
+        let node = key.map(|(path, _)| self.local_issue_project(&payload.workspace_id, path));
+        let updated = match (key, node.clone(), self.local_issues.as_mut()) {
+            (None, _, _) | (_, None, _) => Err("Only a local issue is edited in Hide".to_owned()),
+            (_, Some(Err(message)), _) => Err(message),
+            (Some(_), _, Err(reason)) => Err(format!(
                 "로컬 이슈 파일을 읽지 못해 고칠 수 없습니다: {reason}"
             )),
-            (Some((path, number)), Ok(store)) => {
-                store.update(path, number, &payload.title, &payload.body, now)
-            }
+            (Some((path, number)), Some(Ok(node)), Ok(store)) => store.update(
+                node.as_deref(),
+                path,
+                number,
+                &payload.title,
+                &payload.body,
+                now,
+            ),
         };
         crate::diagnostic!(serde_json::json!({
             "component": "issues", "kind": "local_issue.update",
@@ -1249,7 +1466,8 @@ impl Runtime {
         }));
         if updated == Ok(true) {
             self.persist_local_issues();
-            self.apply_pull_requests();
+            let node = node.and_then(Result::ok).flatten();
+            self.refresh_issue_rows(node.as_deref());
         }
         self.snapshot.issue_work.update = Some(crate::model::IssueUpdateSnapshot {
             request_id: payload.request_id,
@@ -1318,5 +1536,437 @@ impl Runtime {
                 format!("The local issue save worker could not start: {error}"),
             );
         }
+    }
+}
+
+impl Runtime {
+    /// A node's projects' issues, read where they live (PRD
+    /// core-host-node-move D-29): a GitHub project's from the repository the
+    /// node named, read with this machine's login in the node's pull request
+    /// pass (D-16), and a Local project's from this core's store under the
+    /// node's id, the slot a core move wrote them into. A checkout's link is
+    /// the chain a local checkout reads, from the node's Herdr tokens and
+    /// branch notes. It runs with `derive_device_session`, so only when the
+    /// node's session or one of these answers moved; an idle fetch keeps the
+    /// published rows.
+    pub(super) fn project_node_issues(&self, target: &str, session: &mut RemoteSessionSnapshot) {
+        let listed = self.device_worktrees.get(target);
+        let github = self.device_github.get(target);
+        let sources = &self.snapshot.ui_state.project_issue_sources;
+        // The agents a pane delegated to are known from the lineage, which
+        // only the published session carries; a first derive has none yet.
+        let lineage = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .and_then(|status| status.session.as_ref())
+            .map_or(&session.agents, |published| &published.agents);
+        let links = LinkTokens::new(
+            &session.issue_tokens,
+            self.unconfirmed_node_issue_tokens.get(target),
+            lineage,
+            &self.invalid_links,
+        );
+        let (read, _) = self.node_github_repositories(target);
+        let unread = crate::issues::ProjectIssuesSnapshot::default();
+        for workspace in &mut session.workspaces {
+            let found = github.and_then(|github| github.project(&workspace.path));
+            let asked = read.iter().any(|(root, _)| *root == workspace.path);
+            let status = node_github_status(
+                workspace.is_git,
+                listed.and_then(|listed| listed.projects.get(&workspace.path)),
+                found,
+                asked,
+            );
+            // The rows carry the issues as tasks; `home_issues` names only the
+            // repository, which is all the shell reads of a node's. Before a
+            // GitHub read answers with its name, or while every read fails,
+            // the repository the node named is it, as a local project's is
+            // the one its worktree read named.
+            let issues = found.map_or(&unread, |found| &found.issues);
+            let repository = issues.repository.clone().or_else(|| {
+                listed
+                    .and_then(|listed| listed.projects.get(&workspace.path))
+                    .and_then(|project| project.repository.clone())
+            });
+            workspace.home_issues = crate::issues::ProjectIssuesSnapshot {
+                repository,
+                ..Default::default()
+            };
+            let notes = listed.and_then(|listed| listed.notes.get(&workspace.path));
+            let choice = sources.get(&workspace.path).map(String::as_str);
+            let local = crate::tasks::source_kind(
+                choice,
+                workspace.is_git,
+                &workspace.home_issues,
+                &status,
+            ) == crate::tasks::SourceKind::Local;
+            let repository = workspace.home_issues.repository.as_deref();
+            let mut local_links = BTreeMap::new();
+            let mut linked = BTreeSet::new();
+            for checkout in &mut workspace.checkouts {
+                checkout.github = status.clone();
+                checkout.branch_issue = checkout
+                    .branch
+                    .as_ref()
+                    .and_then(|branch| notes?.get(branch)?.issue.clone());
+                let owner = checkout.owner_workspace_id.as_deref();
+                checkout.issue = match links.checkout_link(owner, checkout, local, repository) {
+                    Some(ChainLink::Local(number)) => {
+                        local_links.insert(checkout.id.clone(), number);
+                        None
+                    }
+                    Some(ChainLink::Github(candidate)) => {
+                        linked.insert(candidate.reference.clone());
+                        issues
+                            .issues
+                            .iter()
+                            .find(|issue| issue.reference == candidate.reference)
+                            .map(|issue| IssueLinkSnapshot {
+                                issue: issue.clone(),
+                                source: candidate.source,
+                            })
+                    }
+                    None => None,
+                };
+            }
+            // What the node's GitHub read brings beside the open list: the
+            // linked issues it leaves out, closed or in another repository.
+            if !linked.is_empty() {
+                session.issue_links.insert(
+                    workspace.path.clone(),
+                    linked.into_iter().take(ISSUE_LIMIT).collect(),
+                );
+            }
+            project_tasks(
+                workspace,
+                Some(issues),
+                choice,
+                &self.local_issues,
+                Some(target),
+                &local_links,
+            );
+        }
+    }
+}
+
+/// A checkout's issue as the link chain names it.
+enum ChainLink {
+    Local(u32),
+    Github(IssueCandidate),
+}
+
+/// What one machine's Herdr says about its checkouts' links, gathered once
+/// per pass, for this machine's checkouts and a node's alike: each Herdr
+/// workspace's manual token, the values a failed write here may have left
+/// unconfirmed there, and each pane's token with those of every agent it
+/// delegated to.
+struct LinkTokens<'a> {
+    workspaces: &'a BTreeMap<String, String>,
+    unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
+    family: BTreeMap<String, BTreeMap<String, String>>,
+    invalid: &'a InvalidLinks,
+}
+
+impl<'a> LinkTokens<'a> {
+    /// `agents` carry the lineage that names a pane's descendants.
+    fn new(
+        tokens: &'a crate::wire::IssueTokens,
+        unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
+        agents: &[crate::model::SidebarAgentSnapshot],
+        invalid: &'a InvalidLinks,
+    ) -> Self {
+        Self {
+            workspaces: &tokens.workspaces,
+            unconfirmed,
+            family: family_tokens(&tokens.panes, agents),
+            invalid,
+        }
+    }
+
+    /// A checkout's issue by the link chain (`chain_link`): the manual token
+    /// of the Herdr workspace that carries it (`session`), unless it is a
+    /// value a failed write left unconfirmed, then its panes' and their
+    /// descendants' tokens, its branch note, its pull request and its branch.
+    fn checkout_link(
+        &self,
+        session: Option<&str>,
+        checkout: &crate::model::CheckoutSnapshot,
+        local: bool,
+        repository: Option<&str>,
+    ) -> Option<ChainLink> {
+        let manual = session.and_then(|id| {
+            self.workspaces.get(id).filter(|value| {
+                !self
+                    .unconfirmed
+                    .and_then(|unconfirmed| unconfirmed.get(id))
+                    .is_some_and(|token| token.value == **value)
+            })
+        });
+        let physical: BTreeSet<String> = checkout
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
+            .collect();
+        let pane = pane_token(&self.family, &physical);
+        chain_link(local, manual, pane, checkout, repository, self.invalid)
+    }
+}
+
+/// Most checkouts whose malformed link is remembered; past it the record
+/// starts over, so a value already logged is at worst logged once more.
+const INVALID_LINKS_LIMIT: usize = 1024;
+
+/// The malformed link value each checkout's chain last logged. The chain
+/// runs on every pass over a project, a node's included, so a value that
+/// stays malformed is logged once for its checkout, not on each pass.
+#[derive(Default)]
+pub(super) struct InvalidLinks(std::cell::RefCell<BTreeMap<String, String>>);
+
+impl InvalidLinks {
+    fn log(&self, checkout_id: &str, value: &str) {
+        let mut logged = self.0.borrow_mut();
+        if logged.get(checkout_id).is_some_and(|last| last == value) {
+            return;
+        }
+        if logged.len() >= INVALID_LINKS_LIMIT && !logged.contains_key(checkout_id) {
+            logged.clear();
+        }
+        logged.insert(checkout_id.to_owned(), value.to_owned());
+        crate::diagnostic!(
+            serde_json::json!({"component":"checkout_issue","kind":"reference.invalid","checkout_id":checkout_id})
+        );
+    }
+}
+
+/// Keeps a failed write's token aside until the machine's own tokens show
+/// how it settled: while the value is the one the write may have left, it is
+/// not a link; a delayed event for that write must be seen before a later
+/// replacement or clear confirms it, and a workspace that is gone drops it.
+fn settle_unconfirmed(
+    unconfirmed: &mut BTreeMap<String, UnconfirmedIssueToken>,
+    tokens: &BTreeMap<String, String>,
+    live: impl Fn(&str) -> bool,
+) {
+    unconfirmed.retain(|id, token| {
+        if !live(id) {
+            return false;
+        }
+        if tokens.get(id) == Some(&token.value) {
+            token.observed = true;
+            true
+        } else {
+            !token.observed
+        }
+    });
+}
+
+/// Each pane's issue token and every descendant agent's, by pane, so a
+/// checkout links the issue an agent it delegated to names.
+fn family_tokens(
+    panes: &BTreeMap<String, String>,
+    agents: &[crate::model::SidebarAgentSnapshot],
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut family: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for (pane, token) in panes {
+        family
+            .entry(pane.clone())
+            .or_default()
+            .insert(pane.clone(), token.clone());
+    }
+    for agent in agents {
+        if let Some(token) = panes.get(&agent.pane_id) {
+            for ancestor in &agent.lineage_path_pane_ids {
+                family
+                    .entry(ancestor.clone())
+                    .or_default()
+                    .insert(agent.pane_id.clone(), token.clone());
+            }
+        }
+    }
+    family
+}
+
+/// The token a checkout's panes or their descendants carry: the lowest pane
+/// id's, so the answer does not move with the order panes are listed in.
+fn pane_token<'a>(
+    family: &'a BTreeMap<String, BTreeMap<String, String>>,
+    panes: &BTreeSet<String>,
+) -> Option<&'a String> {
+    panes
+        .iter()
+        .filter_map(|id| family.get(id))
+        .flat_map(|tokens| tokens.iter())
+        .min_by_key(|(id, _)| *id)
+        .map(|(_, token)| token)
+}
+
+/// The issue a checkout links to: the manual token, then a pane's token,
+/// then the branch's `issue` note, then for GitHub the pull request's first
+/// closing issue, then the number the branch starts with. A Local project
+/// reads the same chain as a local id (`L-3`); a pull request's closing
+/// issues are GitHub's and do not apply.
+fn chain_link(
+    local: bool,
+    manual: Option<&String>,
+    pane: Option<&String>,
+    checkout: &crate::model::CheckoutSnapshot,
+    repository: Option<&str>,
+    invalid: &InvalidLinks,
+) -> Option<ChainLink> {
+    if local {
+        return manual
+            .or(pane)
+            .or(checkout.branch_issue.as_ref())
+            .and_then(|value| crate::local_issues::parse_id(value))
+            .or_else(|| {
+                checkout
+                    .branch
+                    .as_deref()
+                    .and_then(crate::issues::branch_number)
+            })
+            .map(ChainLink::Local);
+    }
+    let (value, source) = manual
+        .map(|value| (value.clone(), "직접 연결".to_owned()))
+        .or_else(|| pane.map(|value| (value.clone(), "pane 토큰".into())))
+        .or_else(|| {
+            checkout
+                .branch_issue
+                .as_ref()
+                .map(|value| (value.clone(), "브랜치 설정".into()))
+        })
+        .or_else(|| {
+            checkout.pull_request.as_ref().and_then(|pr| {
+                pr.closing_issues
+                    .first()
+                    .map(|issue| (issue.token(), format!("PR #{} 본문", pr.number)))
+            })
+        })
+        .or_else(|| {
+            checkout
+                .branch
+                .as_deref()
+                .and_then(crate::issues::branch_number)
+                .map(|number| (format!("#{number}"), "브랜치 이름".into()))
+        })?;
+    match IssueReference::parse(&value, repository) {
+        Ok(reference) => Some(ChainLink::Github(IssueCandidate { reference, source })),
+        Err(_) => {
+            // A missing repository will resolve after the first lookup;
+            // malformed external metadata is diagnostic.
+            if repository.is_some() || !value.starts_with('#') {
+                invalid.log(&checkout.id, &value);
+            }
+            None
+        }
+    }
+}
+
+/// A project's task list from the source it reads, and each checkout's task
+/// by its key, for this machine's project (`node` is `None`) and a node's
+/// alike. `issues` is the project's GitHub list when its row does not carry
+/// it (a node's); `local_links` are the Local issue numbers the chain named,
+/// by checkout; a GitHub checkout's task is the issue `sync_issues` or
+/// `project_node_issues` linked it to.
+fn project_tasks(
+    workspace: &mut crate::model::WorkspaceSnapshot,
+    issues: Option<&crate::issues::ProjectIssuesSnapshot>,
+    choice: Option<&str>,
+    store: &Result<crate::local_issues::LocalIssueStore, String>,
+    node: Option<&str>,
+    local_links: &BTreeMap<String, u32>,
+) -> bool {
+    let mut changed = false;
+    let status = workspace
+        .checkouts
+        .first()
+        .map(|checkout| checkout.github.clone())
+        .unwrap_or_default();
+    let issues = issues.unwrap_or(&workspace.home_issues);
+    let kind = crate::tasks::source_kind(choice, workspace.is_git, issues, &status);
+    let local = kind == crate::tasks::SourceKind::Local;
+    let tasks = if local {
+        let read = match store {
+            Err(reason) => crate::tasks::LocalRead::Failed(reason),
+            Ok(store) => crate::tasks::LocalRead::Ready(store.project(node, &workspace.path)),
+        };
+        crate::tasks::local_tasks(&workspace.path, read, choice.is_some())
+    } else {
+        crate::tasks::github_tasks(issues, &status, choice.is_some())
+    };
+    if workspace.tasks != tasks {
+        workspace.tasks = tasks;
+        changed = true;
+    }
+    for checkout in &mut workspace.checkouts {
+        let (key, closes) = if local {
+            let key = local_links
+                .get(&checkout.id)
+                .map(|number| crate::tasks::local_key(&workspace.path, *number))
+                .filter(|key| workspace.tasks.tasks.iter().any(|task| &task.key == key));
+            (key, Vec::new())
+        } else {
+            let key = checkout
+                .issue
+                .as_ref()
+                .map(|link| crate::tasks::github_key(&link.issue.reference));
+            let closes: Vec<String> = checkout
+                .pull_request
+                .iter()
+                .flat_map(|pr| pr.closing_issues.iter().map(crate::tasks::github_key))
+                .filter(|closed| Some(closed) != key.as_ref())
+                .filter(|closed| workspace.tasks.tasks.iter().any(|task| &task.key == closed))
+                .collect();
+            (key, closes)
+        };
+        if checkout.task_key != key || checkout.closes_task_keys != closes {
+            checkout.task_key = key;
+            checkout.closes_task_keys = closes;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// What a node project's GitHub read says: the answer the node's pull
+/// request pass brought; else, for a repository the node refused to read,
+/// that refusal, which no GitHub read follows; else, for a repository whose
+/// `origin` the node said names no GitHub repository, no GitHub remote, so
+/// its issues default to Local as this machine's do; else still reading
+/// while the repository is among those read (`node_github_repositories`).
+fn node_github_status(
+    is_git: bool,
+    listed: Option<&crate::model::ProjectWorktreesSnapshot>,
+    found: Option<&crate::model::GithubProjectSnapshot>,
+    asked: bool,
+) -> crate::model::GithubStatusSnapshot {
+    if let Some(found) = found {
+        return found.status.clone();
+    }
+    match listed {
+        Some(listed) if is_git && listed.unavailable_reason.is_some() => {
+            crate::model::GithubStatusSnapshot {
+                available: false,
+                unavailable_reason: listed.unavailable_reason.clone(),
+                ..Default::default()
+            }
+        }
+        Some(listed) if is_git && listed.repository.is_none() => {
+            crate::model::GithubStatusSnapshot {
+                available: false,
+                unavailable_reason: Some(
+                    "The repository's origin names no GitHub repository".to_owned(),
+                ),
+                failure_category: Some(crate::model::GithubFailureCategory::NoGithubRemote),
+                ..Default::default()
+            }
+        }
+        _ => crate::model::GithubStatusSnapshot {
+            loading: asked,
+            ..Default::default()
+        },
     }
 }

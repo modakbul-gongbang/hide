@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{ArchiveEventSnapshot, SessionsProviderFilter, SessionsSnapshot};
 use crate::node::NodeId;
-use crate::node_access::{NodeLink, call_as};
+use crate::node_access::NodeLink;
 use hide_memory::{MemoryStore, SessionCursorRecord, SessionSourceRecord};
 use hide_node_link::protocol::Call;
 use hide_node_link::sessions::SessionStat;
@@ -12,6 +12,16 @@ use std::collections::HashSet;
 /// One session call on the node that holds the Project's sessions; a
 /// listing walks at most `hide_session::SESSION_DISCOVERY_LIMIT` files.
 pub(super) const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The checkout in front for Sessions, and the node that reads its files
+/// (`Runtime::linked_node`).
+struct MemoryFocus {
+    workspace_id: String,
+    checkout_id: String,
+    checkout_path: String,
+    node: NodeId,
+    link: Arc<dyn NodeLink>,
+}
 
 pub(super) struct SessionsLoad {
     pub(super) project_id: String,
@@ -43,17 +53,30 @@ impl Runtime {
         hide_memory::database_path(self.state_path.parent().unwrap_or(Path::new(".")))
     }
 
-    fn focused_memory_context(&self) -> Option<(String, String, String)> {
-        let (workspace, checkout) = self.focused_local_checkout()?;
-        Some((
-            workspace.id.clone(),
-            checkout.id.clone(),
-            checkout.path.clone(),
-        ))
+    /// The checkout in front whose Sessions the panel shows, with the node
+    /// that reads its files: this machine's or a linked node's that dials
+    /// in, never a device the core dials (B14, Q20).
+    fn focused_memory_context(&self) -> Option<MemoryFocus> {
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
+        let (node, link) = self.linked_node(&workspace.device_id).ok()?;
+        Some(MemoryFocus {
+            workspace_id: workspace.id.clone(),
+            checkout_id: checkout.id.clone(),
+            checkout_path: checkout.path.clone(),
+            node,
+            link,
+        })
     }
 
     pub(super) fn request_sessions_refresh(&mut self) -> bool {
-        let Some((_, _, checkout_path)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            checkout_path,
+            node,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             self.snapshot.sessions = SessionsSnapshot {
                 unavailable_reason: Some("Choose a local Project to view sessions".to_owned()),
                 ..SessionsSnapshot::default()
@@ -77,9 +100,7 @@ impl Runtime {
         }
         self.memory_sessions_load_in_flight = true;
         self.memory_sessions_load_pending = false;
-        let sessions_node = self.own_node();
         let database = self.memory_database_path();
-        let node = self.node.clone();
         thread::Builder::new()
             .name("hide-project-memory-read".to_owned())
             .spawn(move || {
@@ -89,7 +110,9 @@ impl Runtime {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_sessions_load(generation, &checkout_path, result),
+                    Ok(mut guard) => {
+                        guard.ingest_sessions_load(generation, &node, &checkout_path, result)
+                    }
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -124,11 +147,15 @@ impl Runtime {
     fn ingest_sessions_load(
         &mut self,
         generation: u64,
+        node: &NodeId,
         checkout_path: &str,
         result: Result<SessionsLoad, String>,
     ) -> bool {
         self.memory_sessions_load_in_flight = false;
-        let current_path = self.focused_memory_context().map(|(_, _, path)| path);
+        let current_path = self
+            .focused_memory_context()
+            .filter(|focus| focus.node == *node)
+            .map(|focus| focus.checkout_path);
         if !sessions_load_matches_scope(
             generation,
             self.memory_sessions_load_generation,
@@ -219,7 +246,13 @@ impl Runtime {
     }
 
     pub(super) fn open_archive_detail(&mut self, kind: &str, id: &str, preview: bool) -> bool {
-        let Some((workspace_id, checkout_id, _)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            workspace_id,
+            checkout_id,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             self.set_error(
                 "archive.project_unavailable",
                 "Choose a local Project first",
@@ -246,7 +279,6 @@ impl Runtime {
             .cloned();
         let database = self.memory_database_path();
         let project_id = self.snapshot.sessions.project_id.clone();
-        let sessions_node = self.own_node();
         thread::Builder::new()
             .name("hide-archive-detail".to_owned())
             .spawn(move || {
@@ -276,9 +308,9 @@ impl Runtime {
                             guard.archive_detail_load_generation,
                             &workspace_id,
                             &checkout_id,
-                            guard.focused_memory_context().as_ref().map(
-                                |(workspace, checkout, _)| (workspace.as_str(), checkout.as_str()),
-                            ),
+                            guard.focused_memory_context().as_ref().map(|focus| {
+                                (focus.workspace_id.as_str(), focus.checkout_id.as_str())
+                            }),
                         ) =>
                     {
                         match result {
@@ -324,21 +356,7 @@ pub(crate) fn project_identity(
     node: &NodeId,
     checkout_path: &str,
 ) -> Result<hide_project::ProjectIdentity, String> {
-    let facts: hide_project::ProjectFacts = call_as(
-        sessions_node,
-        Call::Project {
-            path: checkout_path.to_owned(),
-        },
-        SESSION_CALL_TIMEOUT,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(hide_project::ProjectIdentity {
-        id: hide_project::project_id(node.as_str(), &facts.root),
-        root: facts.root,
-        checkout_root: facts.checkout_root,
-        device_id: node.as_str().to_owned(),
-        kind: facts.kind,
-    })
+    crate::memory_hook::project_identity(sessions_node, node, checkout_path, SESSION_CALL_TIMEOUT)
 }
 
 pub(super) fn project_sessions(

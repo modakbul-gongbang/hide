@@ -337,6 +337,26 @@ impl Runtime {
                 .any(|registration| registration.id == device)
     }
 
+    /// Every machine other than this core's own that holds agents, with
+    /// whether a letter can reach it now: the core holds a connection to its
+    /// Herdr and its link has not ended (PRD core-host-node-move B13). A
+    /// letter to an agent there counts its delivery deadline only while it
+    /// is reachable. A node's link ends here at once; the Herdr connection
+    /// it carried reads as gone only at the next sync (`ingest_host_closed`).
+    pub(crate) fn delivery_reach(&self) -> crate::delivery::ledger::Reach {
+        self.snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .filter(|registration| registration.id != self.node.as_str())
+            .map(|registration| {
+                let id = registration.id.as_str();
+                let reachable = self.remote_herdr_api(id).is_some() && !self.device_host_ended(id);
+                (registration.id.clone(), reachable)
+            })
+            .collect()
+    }
+
     /// The registrations the delivery store has still to end.
     pub(crate) fn delivery_registrations_gone(
         &self,
@@ -575,6 +595,11 @@ impl Runtime {
     }
 
     pub(crate) fn prepare_delivery_human(&self) -> Result<PreparedHuman, String> {
+        // A notice claimed by a core that may still be rolled back would be
+        // lost with its copy; the core that keeps the ledger claims it.
+        if self.effects_held() {
+            return Err("core_pending".into());
+        }
         self.delivery_state()?;
         Ok(PreparedHuman::new(
             self.delivery_client.clone().ok_or("delivery_unavailable")?,
@@ -793,6 +818,9 @@ impl Runtime {
         now: u64,
     ) -> Result<Observation, crate::delivery::doorbell::Hold> {
         use crate::delivery::doorbell::Hold;
+        if self.effects_held() {
+            return Err(Hold::CorePending);
+        }
         let current = self
             .delivery_observations
             .get(&recipient.pane_id)
@@ -841,14 +869,17 @@ impl Runtime {
                         Some(attempt) => (1..=3).contains(&attempt) && letter.attempts() == attempt,
                         None => letter.attempts() < 3,
                     }
-                    && now.saturating_sub(letter.created_at_unix_ms)
-                        < crate::delivery::DELIVERY_EXPIRY_MS
+                    && letter.within_deadline(&ledger.node_clocks, now)
             })
         });
         letter_current.then_some(()).ok_or(Hold::Letter)
     }
 
     pub(crate) fn delivery_watch_work(&mut self) -> Vec<crate::delivery::worker::WatchWork> {
+        // No reading, so no warning, until the move's link commits this core.
+        if self.effects_held() {
+            return Vec::new();
+        }
         let Ok(ledger) = self.delivery_state() else {
             return Vec::new();
         };

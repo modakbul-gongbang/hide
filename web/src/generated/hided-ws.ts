@@ -11,6 +11,7 @@ export type HidedWebSocketContract =
   | FactoryQuestionGuard
   | WorkspaceAction
   | LinksQuery
+  | MemoryHookAsk
   | WorkspaceResult;
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
@@ -59,6 +60,10 @@ export interface Handshake {
   client_kind?: "web" | "desktop";
   have_revision?: number;
   /**
+   * The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.
+   */
+  have_core?: string;
+  /**
    * The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta and the `have_terminal_epoch` of the hub that gave it, it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none, or names it without this hub's epoch, has every pane drawn again; a client given a whole snapshot ignores it.
    */
   have_terminal_sequence?: number;
@@ -68,7 +73,7 @@ export interface Handshake {
   have_terminal_epoch?: string;
 }
 /**
- * snapshot/delta carry the core state; terminal carries pane output beside them, never through the core (see terminalFrame); error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace` and `clone_repository`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). project_target answers a `project_target` probe (see projectTarget and projectTargetResult). clone_target answers a `clone_target` question about where a clone would land (see cloneTarget). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). agent_notice reaches only a desktop window, and only while one has asked for it with `desktop_notices` (see agentNotice and desktopNoticesPayload). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).
+ * snapshot/delta carry the core state; terminal carries pane output beside them, never through the core (see terminalFrame); error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace` and `clone_repository`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). project_target answers a `project_target` probe (see projectTarget and projectTargetResult). clone_target answers a `clone_target` question about where a clone would land (see cloneTarget). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). agent_notice reaches only a desktop window, and only while one has asked for it with `desktop_notices` (see agentNotice and desktopNoticesPayload). core_move is the core move as the process's supervisor holds it, which every role of the process sends its screens, a node holding its screen from the moment a move is under way, and the only frame a screen gets while a move holds it (`hided/src/core_move/control.rs` `MoveView`); once the move is under way it carries `alias`, the SSH alias the move reaches its other machine by, which a screen that has not drawn the core names that machine by. core_link is where a node's link to its core stands, sent to a screen the node holds while the core cannot draw it: `phase` `connecting`, `updating`, `waiting` or `disconnected`, `machine`, the core machine's name when its hello gave it, else null, and `alias`, the SSH alias the node dials its core by, which a screen that has not drawn the core names instead of an empty machine. `disconnected` is the operator's own end of the link: a screen's `core_link` event {action: `disconnect`} ends it from that machine's node daemon, which records it so a restart keeps it, and {action: `reconnect`} restores it; the node takes that event, and a `core_move` event, even while it holds the screen, and answers a change it could not make with an error frame whose payload is {kind: `core_link`, reason: `not_changed`}. A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).
  */
 export interface ServerFrame {
   type:
@@ -87,6 +92,8 @@ export interface ServerFrame {
     | "attachment_refused"
     | "open_external_result"
     | "clone_target"
+    | "core_move"
+    | "core_link"
     | "agent_notice";
   payload: {
     [k: string]: unknown;
@@ -152,6 +159,17 @@ export interface LinksQuery {
           id: string;
         };
   };
+}
+/**
+ * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
+ */
+export interface MemoryHookAsk {
+  type: "memory_hook";
+  request_id: WorkspaceRequestId;
+  event: "SessionStart" | "UserPromptSubmit";
+  runtime: "claude" | "codex" | "opencode" | "pi" | "omp";
+  session: string;
+  prompt?: string;
 }
 /**
  * A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.

@@ -3,9 +3,14 @@
 //! One pairing code lives at a time, in memory only: five minutes, one use,
 //! and a new code voids the old one. A paired phone holds a credential of its
 //! own; `phones.json` keeps only its SHA-256, the phone's name, when it was
-//! last seen, and its push subscription. At most four phones; a phone not seen
-//! for seven days is revoked, and a revoke removes the credential and the
-//! subscription in one write.
+//! last seen, its push subscription and the address it was paired at. At most
+//! four phones per address; a phone not seen for seven days is revoked, and a
+//! revoke removes the credential and the subscription in one write.
+//!
+//! Only the phones paired at the address this core was last exposed at count
+//! (PRD core-host-node-move B17): they are listed, belled and let in, and the
+//! limit counts them. A phone paired where the core ran before it moved waits,
+//! unlisted, for a move back, and the seven-day rule ends it otherwise.
 
 use std::path::PathBuf;
 
@@ -13,7 +18,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use subtle::ConstantTimeEq;
 
-use super::store::{self, Notifications, PhoneRecord, PhonesFile, PushSubscription};
+use super::store::{self, Notifications, PhoneOrigin, PhoneRecord, PhonesFile, PushSubscription};
 
 pub const MAX_PHONES: usize = 4;
 pub const CODE_TTL_MS: u64 = 5 * 60 * 1000;
@@ -23,7 +28,7 @@ pub const INACTIVE_REVOKE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 pub enum PairRefusal {
     /// Expired, already used, replaced by a newer code, or never issued.
     CodeExpired,
-    /// Four phones are paired already.
+    /// Four phones are paired already at this address.
     PhoneLimit,
 }
 
@@ -45,6 +50,19 @@ pub struct Phones {
     path: PathBuf,
     file: PhonesFile,
     code: Option<PairingCode>,
+    /// The tailnet name this core was last exposed at, which a switch-off or a
+    /// failed check leaves as it is; none before its first exposure on
+    /// record.
+    origin: Option<String>,
+}
+
+/// Why a credential lets no phone in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Unadmitted {
+    /// No phone holds it.
+    Unknown,
+    /// Its phone was paired at another address than this core's.
+    Elsewhere,
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {
@@ -74,21 +92,52 @@ pub fn name_from_user_agent(user_agent: &str) -> &'static str {
 }
 
 impl Phones {
-    pub fn load(path: PathBuf) -> Self {
+    /// The phones on file; one paired before phones kept their address
+    /// gets `recorded`, the exposure the settings name, when there is one.
+    pub fn load(path: PathBuf, recorded: Option<&str>) -> Self {
         let file: PhonesFile = store::read(&path);
-        Self {
+        let mut phones = Self {
             path,
             file,
             code: None,
+            origin: None,
+        };
+        if let Some(recorded) = recorded {
+            phones.set_origin(recorded);
         }
+        phones
+    }
+
+    fn stamp(&mut self, origin: &str) {
+        let mut stamped = false;
+        for phone in &mut self.file.phones {
+            if phone.origin == PhoneOrigin::Unrecorded {
+                phone.origin = PhoneOrigin::Paired(origin.to_owned());
+                stamped = true;
+            }
+        }
+        if stamped {
+            self.save();
+        }
+    }
+
+    /// The address the core is exposed at now.
+    pub fn set_origin(&mut self, origin: &str) {
+        self.stamp(origin);
+        self.origin = Some(origin.to_owned());
+    }
+
+    fn here(&self, phone: &PhoneRecord) -> bool {
+        matches!((&phone.origin, &self.origin), (PhoneOrigin::Paired(at), Some(now)) if at == now)
+    }
+
+    /// The phones paired at the address this core was last exposed at.
+    pub fn current(&self) -> impl Iterator<Item = &PhoneRecord> {
+        self.file.phones.iter().filter(|phone| self.here(phone))
     }
 
     fn save(&self) -> bool {
         store::write_logged(&self.path, &self.file)
-    }
-
-    pub fn list(&self) -> &[PhoneRecord] {
-        &self.file.phones
     }
 
     pub fn is_empty(&self) -> bool {
@@ -136,16 +185,16 @@ impl Phones {
                 && code.code.len() == offered.len()
                 && bool::from(code.code.as_bytes().ct_eq(offered.as_bytes()))
         });
-        if !valid {
+        let Some(origin) = self.origin.clone().filter(|_| valid) else {
             return Err(PairRefusal::CodeExpired);
-        }
-        if self.file.phones.len() >= MAX_PHONES {
+        };
+        if self.current().count() >= MAX_PHONES {
             return Err(PairRefusal::PhoneLimit);
         }
         self.code = None;
         let credential = hex::encode(random_bytes::<32>());
         let base = name_from_user_agent(user_agent);
-        let taken = |name: &str| self.file.phones.iter().any(|phone| phone.name == name);
+        let taken = |name: &str| self.current().any(|phone| phone.name == name);
         let name = if taken(base) {
             (2..)
                 .map(|n| format!("{base} {n}"))
@@ -162,15 +211,17 @@ impl Phones {
             last_seen_ms: now_ms,
             notifications: Notifications::Unasked,
             push: None,
+            origin: PhoneOrigin::Paired(origin),
         };
         self.file.phones.push(record.clone());
         self.save();
         Ok((record, credential))
     }
 
-    /// The phone a credential belongs to. Every record is compared, in
-    /// constant time per record, so the answer's timing does not say which.
-    pub fn authenticate(&self, credential: &str) -> Option<&PhoneRecord> {
+    /// The phone a credential belongs to, when it was paired at the address
+    /// this core was last exposed at. Every record is compared, in constant time per record, so
+    /// the answer's timing does not say which.
+    pub fn authenticate(&self, credential: &str) -> Result<&PhoneRecord, Unadmitted> {
         let offered = credential_hash(credential);
         let mut found = None;
         for phone in &self.file.phones {
@@ -178,7 +229,12 @@ impl Phones {
                 found = Some(phone);
             }
         }
-        found
+        let phone = found.ok_or(Unadmitted::Unknown)?;
+        if self.here(phone) {
+            Ok(phone)
+        } else {
+            Err(Unadmitted::Elsewhere)
+        }
     }
 
     pub fn touch(&mut self, id: &str, now_ms: u64) {
@@ -271,10 +327,97 @@ mod tests {
 
     const UA: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)";
 
+    const MAC: &str = "mac.tailnet.ts.net";
+
     fn phones() -> (tempfile::TempDir, Phones) {
         let dir = tempfile::tempdir().unwrap();
-        let phones = Phones::load(store::phones_path(dir.path()));
+        let phones = Phones::load(store::phones_path(dir.path()), Some(MAC));
         (dir, phones)
+    }
+
+    fn ids(phones: &Phones) -> Vec<String> {
+        phones.current().map(|phone| phone.id.clone()).collect()
+    }
+
+    fn pair_one(phones: &mut Phones, now: u64) -> (PhoneRecord, String) {
+        let (code, _) = phones.new_code(now);
+        phones.pair(&code, UA, now).unwrap()
+    }
+
+    /// A phone paired before phones kept their address takes the exposure
+    /// the settings name at the first load, and is written with it
+    /// (amendment 12).
+    #[test]
+    fn a_phone_paired_before_phones_kept_their_address_takes_the_one_on_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store::phones_path(dir.path());
+        let credential = "c".repeat(64);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"phones": [{
+                "id": "p1", "name": "iPhone", "credential_sha256": credential_hash(&credential),
+                "paired_at_ms": 1, "last_seen_ms": 1,
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
+        let phones = Phones::load(path.clone(), Some(MAC));
+        assert_eq!(
+            phones.authenticate(&credential).map(|phone| &phone.id),
+            Ok(&"p1".to_owned())
+        );
+        let reread: PhonesFile = store::read(&path);
+        assert_eq!(reread.phones[0].origin, PhoneOrigin::Paired(MAC.to_owned()));
+    }
+
+    /// After the core moves, the phones paired where it ran wait unlisted
+    /// and do not fill the new address's four; a move back lets them in
+    /// again (B17).
+    #[test]
+    fn phones_paired_where_the_core_ran_before_wait_for_it_and_leave_the_limit_alone() {
+        let (_dir, mut phones) = phones();
+        let (first, credential) = pair_one(&mut phones, 1);
+        for _ in 1..MAX_PHONES {
+            pair_one(&mut phones, 1);
+        }
+        phones.set_origin("mini.tailnet.ts.net");
+        assert!(ids(&phones).is_empty());
+        assert_eq!(
+            phones.authenticate(&credential).unwrap_err(),
+            Unadmitted::Elsewhere
+        );
+        for _ in 0..MAX_PHONES {
+            pair_one(&mut phones, 2);
+        }
+        let (code, _) = phones.new_code(2);
+        assert_eq!(
+            phones.pair(&code, UA, 2).unwrap_err(),
+            PairRefusal::PhoneLimit
+        );
+        phones.set_origin(MAC);
+        assert_eq!(ids(&phones).len(), MAX_PHONES);
+        assert_eq!(
+            phones.authenticate(&credential).map(|phone| &phone.id),
+            Ok(&first.id)
+        );
+    }
+
+    /// What is kept is bounded by four phones per address, and the
+    /// seven-day rule ends the phones of an address the core left (B17).
+    #[test]
+    fn the_phones_kept_are_four_per_address_until_the_seven_day_rule() {
+        let (_dir, mut phones) = phones();
+        let day = 24 * 60 * 60 * 1000;
+        for at in 0..5_u64 {
+            phones.set_origin(&format!("machine-{at}.tailnet.ts.net"));
+            for _ in 0..=MAX_PHONES {
+                let (code, _) = phones.new_code(at * day);
+                let _ = phones.pair(&code, UA, at * day);
+            }
+        }
+        assert_eq!(phones.file.phones.len(), 5 * MAX_PHONES);
+        phones.sweep(8 * day, &[]);
+        assert_eq!(phones.file.phones.len(), 3 * MAX_PHONES);
     }
 
     #[test]
@@ -298,9 +441,9 @@ mod tests {
             phones
                 .authenticate(&credential)
                 .map(|phone| phone.id.clone()),
-            Some(record.id.clone())
+            Ok(record.id.clone())
         );
-        assert!(phones.authenticate("0".repeat(64).as_str()).is_none());
+        assert!(phones.authenticate("0".repeat(64).as_str()).is_err());
         // Only the hash is on disk.
         let text = std::fs::read_to_string(&phones.path).unwrap();
         assert!(!text.contains(&credential));
@@ -326,18 +469,14 @@ mod tests {
             let (code, _) = phones.new_code(0);
             phones.pair(&code, UA, 1).unwrap();
         }
-        let names: Vec<_> = phones
-            .list()
-            .iter()
-            .map(|phone| phone.name.clone())
-            .collect();
+        let names: Vec<_> = phones.current().map(|phone| phone.name.clone()).collect();
         assert_eq!(names, ["iPhone", "iPhone 2", "iPhone 3", "iPhone 4"]);
         let (code, _) = phones.new_code(0);
         assert_eq!(
             phones.pair(&code, UA, 1).unwrap_err(),
             PairRefusal::PhoneLimit
         );
-        let first = phones.list()[0].id.clone();
+        let first = ids(&phones)[0].clone();
         phones.revoke(&first);
         assert!(
             phones.pair(&code, UA, 2).is_ok(),
@@ -360,8 +499,8 @@ mod tests {
         );
         assert!(phones.revoke(&record.id).is_some());
         assert!(phones.revoke(&record.id).is_none());
-        assert!(phones.authenticate(&credential).is_none());
-        let reread = Phones::load(store::phones_path(dir.path()));
+        assert!(phones.authenticate(&credential).is_err());
+        let reread = Phones::load(store::phones_path(dir.path()), Some(MAC));
         assert!(reread.is_empty());
         let text = std::fs::read_to_string(store::phones_path(dir.path())).unwrap();
         assert!(!text.contains("web.push.apple.com"));
@@ -382,7 +521,7 @@ mod tests {
             revoked.iter().map(|phone| &phone.id).collect::<Vec<_>>(),
             [&old.id]
         );
-        let left: Vec<_> = phones.list().iter().map(|phone| phone.id.clone()).collect();
+        let left = ids(&phones);
         assert_eq!(left, [live.id, recent.id]);
     }
 }

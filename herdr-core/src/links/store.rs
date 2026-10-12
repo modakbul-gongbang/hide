@@ -247,6 +247,13 @@ impl LinkStore {
             .map_err(failed)
     }
 
+    pub fn delete_meta(&self, key: &str) -> Result<(), String> {
+        self.connection
+            .execute("DELETE FROM meta WHERE key=?1", [key])
+            .map(|_| ())
+            .map_err(failed)
+    }
+
     /// Whether any row still names `device` (PRD core-host-node B2).
     pub fn has_device(&self, device: &str) -> Result<bool, String> {
         self.connection

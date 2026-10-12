@@ -100,7 +100,7 @@ fn label_key(node: &str, pane_id: &str) -> (String, String) {
         .strip_prefix("remote:")
         .and_then(|rest| rest.split_once(":pane:"))
     {
-        Some((device, pane)) => (format!("device:{device}"), pane.to_owned()),
+        Some((device, pane)) => (super::device_target(device), pane.to_owned()),
         None => (node.to_owned(), pane_id.to_owned()),
     }
 }

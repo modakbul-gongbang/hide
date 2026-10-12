@@ -147,6 +147,10 @@ pub struct Config {
     pub renderers: Arc<AtomicUsize>,
     /// Which connections show a start surface; a phone's open start sheet is one.
     pub start_demand: Arc<crate::demand::ObservationDemand>,
+    /// Whether the core may act outside this machine: a core on a move's
+    /// copy serves no phone and pushes nothing until the move's link
+    /// commits it (PRD core-host-node-move amendment 3).
+    pub open: watch::Receiver<bool>,
     /// The desktop windows' notifications, judged on the projection this
     /// follower reads (`desktop_notices.rs`).
     pub desktop: Arc<crate::desktop_notices::DesktopNotices>,
@@ -213,7 +217,10 @@ impl Mobile {
                 }
             },
         };
-        let phones = Phones::load(store::phones_path(&config.state_dir));
+        let phones = Phones::load(
+            store::phones_path(&config.state_dir),
+            settings.serve.as_ref().map(|serve| serve.dns_name.as_str()),
+        );
         let exposure = if settings.enabled {
             Exposure::Checking
         } else {
@@ -252,10 +259,20 @@ impl Mobile {
         mobile.sweep();
         mobile.publish();
         let startup = Arc::clone(&mobile);
-        tokio::spawn(async move { startup.reconcile().await });
-        tokio::spawn(Arc::clone(&mobile).observe_loop());
+        tokio::spawn(async move {
+            let mut open = startup.config.open.clone();
+            let mut stopping = startup.stopping.subscribe();
+            tokio::select! {
+                opened = open.wait_for(|open| *open) => if opened.is_err() {
+                    return;
+                },
+                _ = stopping.wait_for(|stopping| *stopping) => return,
+            }
+            tokio::spawn(Arc::clone(&startup).observe_loop());
+            tokio::spawn(Arc::clone(&startup).follow());
+            startup.reconcile().await;
+        });
         tokio::spawn(Arc::clone(&mobile).sweep_loop());
-        tokio::spawn(Arc::clone(&mobile).follow());
         mobile
     }
 
@@ -412,8 +429,7 @@ impl Mobile {
             .collect();
         let phones: Vec<Value> = inner
             .phones
-            .list()
-            .iter()
+            .current()
             .map(|phone| {
                 json!({
                     "id": phone.id,
@@ -448,6 +464,9 @@ impl Mobile {
     }
 
     fn set_origin(&self, dns_name: Option<&str>) {
+        if let Some(dns_name) = dns_name {
+            self.lock().phones.set_origin(dns_name);
+        }
         *self
             .origin
             .write()
@@ -460,8 +479,9 @@ impl Mobile {
     /// for this port; off, hide's recorded entry is gone. Runs one at a time.
     pub async fn reconcile(&self) {
         let _running = self.reconcile_lock.lock().await;
-        // Once the daemon is stopping, shutdown owns the serve entry.
-        if *self.stopping.borrow() {
+        // Once the daemon is stopping, shutdown owns the serve entry; a
+        // pending core touches none.
+        if *self.stopping.borrow() || !*self.config.open.borrow() {
             return;
         }
         let (enabled, record) = {
@@ -790,6 +810,11 @@ impl Mobile {
         // After any reconcile in flight: an add it finishes is recorded, so
         // the record read here is the entry actually there.
         let _running = self.reconcile_lock.lock().await;
+        // A core that never left pending added no entry; the one recorded
+        // is the previous core's.
+        if !*self.config.open.borrow() {
+            return;
+        }
         let record = self.lock().settings.serve.clone();
         let (Some(record), Some(program)) = (record, self.config.cli.resolve()) else {
             return;
@@ -933,8 +958,7 @@ impl Mobile {
             let inner = self.lock();
             let targets = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .filter_map(|phone| {
                     phone
                         .push
@@ -1218,11 +1242,15 @@ impl Mobile {
     /// holds, which is what a revoked phone's credential is.
     pub fn authenticate(&self, credential: &str) -> Result<PhoneRecord, &'static str> {
         let mut inner = self.lock();
-        let phone = inner
-            .phones
-            .authenticate(credential)
-            .cloned()
-            .ok_or("revoked")?;
+        // A phone paired where the core ran before a move stays paired and
+        // reads the core as unreachable until it pairs here (B17).
+        let phone =
+            inner.phones.authenticate(credential).cloned().map_err(
+                |unadmitted| match unadmitted {
+                    phones::Unadmitted::Unknown => "revoked",
+                    phones::Unadmitted::Elsewhere => "mobile_off",
+                },
+            )?;
         // The seven-day rule holds at the door too, not only at the hourly
         // sweep, whose timer does not run while the Mac sleeps.
         if now_ms().saturating_sub(phone.last_seen_ms) >= phones::INACTIVE_REVOKE_MS {
@@ -1635,8 +1663,7 @@ impl Mobile {
             let mut inner = self.lock();
             let ids: Vec<String> = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .map(|phone| phone.id.clone())
                 .collect();
             if !seen.is_empty() {
@@ -1650,8 +1677,7 @@ impl Mobile {
             }
             let targets: Vec<(String, PushSubscription)> = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .filter_map(|phone| phone.push.clone().map(|push| (phone.id.clone(), push)))
                 .collect();
             let subject = inner

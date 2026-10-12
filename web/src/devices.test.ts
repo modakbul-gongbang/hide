@@ -1,9 +1,9 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
-import { describe, expect, it } from "vitest";
-import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, readsHere, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import type { AgentRow, SnapshotRest } from "./snapshot";
+import type { AgentRow, Device, SnapshotRest, Workspace } from "./snapshot";
 
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
@@ -44,6 +44,9 @@ function rest(devices: string[] = ["mini", "build-box"]): SnapshotRest {
 }
 
 describe("the device rail's facts (quick device-rail-badges)", () => {
+  // This window runs on a Mac, whatever system runs the test (#972 names it by its system).
+  beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" }));
+  afterEach(() => vi.unstubAllGlobals());
   it("shows the rail with one device alone, and hides it only when the core says so (B1, B6)", () => {
     expect(railShown(rest([]))).toBe(true);
     expect(railShown(rest())).toBe(true);
@@ -110,3 +113,14 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
 });
 
 function tileCounts(rest: SnapshotRest | null, agents: AgentRow[], id: string) { return drawTileCounts(rest ? legacyRest(rest, agents) : null, agents, id); }
+
+describe("which projects the core keeps as its own (PRD core-host-node-move D-29)", () => {
+  it("keeps this machine's projects and a node's that dials the core, never a dialed device's", () => {
+    const project = (device: string, remote: string | null) => ({ device_id: device, remote_target_id: remote }) as Workspace;
+    const devices = [{ id: "macbook", dials_in: true }, { id: "studio", dials_in: false }] as Device[];
+    expect(readsHere(project("local", null), devices)).toBe(true);
+    expect(readsHere(project("macbook", "macbook"), devices)).toBe(true);
+    expect(readsHere(project("studio", "studio"), devices)).toBe(false);
+    expect(readsHere(project("gone", "gone"), devices)).toBe(false);
+  });
+});

@@ -325,7 +325,7 @@ export function createActions(send: DispatchFn) {
   };
 
   /** Every current agent row, this machine's and each connected device's, as the lists draw them. */
-  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, useShellStore.getState().agents, rest()?.navigator?.agent_scope).map((row) => row.agent);
+  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, useShellStore.getState().agents, rest()?.navigator?.agent_scope, rest()?.navigator?.devices).map((row) => row.agent);
 
   const sendClose = (kind: "pane" | "tab", id: string, targetId: string | null, confirmed: boolean) => {
     if (targetId) {
@@ -1126,6 +1126,23 @@ export function createActions(send: DispatchFn) {
     },
 
     /**
+     * Asks the process's supervisor about the core move (PRD
+     * core-host-node-move B3 to B5): run the checks toward a device or back
+     * to this machine, start the move once they passed, or give up its wait
+     * on its other machine where the frame offers it. The answer is the
+     * `core_move` frame, or a refusal naming why.
+     */
+    coreMove(request: { action: "check" | "start"; device: string } | { action: "check_back" | "back" | "abandon" }) {
+      useShellStore.setState({ coreMoveRefusal: null });
+      dispatch({ schema_version: 2, kind: "core_move", payload: request });
+    },
+
+    /** A node's window ends or restores its link to the core on another machine (B16); the node's own daemon answers. */
+    coreLink(action: "disconnect" | "reconnect") {
+      dispatch({ schema_version: 2, kind: "core_link", payload: { action } });
+    },
+
+    /**
      * The core closes the device's file tabs without saving, so every draft of
      * them this browser is still writing lands first and stays as a recovery
      * item (B26). A draft that could not be stored then (B44) would be lost
@@ -1328,9 +1345,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "issue_settings_set", payload: patch });
     },
 
-    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. */
-    updateLocalIssue(requestId: string, taskKey: string, title: string, body: string) {
-      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, task_key: taskKey, title, body } });
+    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. The project is named since a key names only a path. */
+    updateLocalIssue(requestId: string, workspaceId: string, taskKey: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, workspace_id: workspaceId, task_key: taskKey, title, body } });
     },
 
     /**
@@ -1413,9 +1430,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_search", payload: { request_id: requestId, query } });
     },
 
-    /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
-    setIssueOpen(taskKey: string, open: boolean) {
-      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
+    /** Closes or reopens a Local issue of a project; a GitHub one closes on GitHub. */
+    setIssueOpen(workspaceId: string, taskKey: string, open: boolean) {
+      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { workspace_id: workspaceId, task_key: taskKey, open } });
     },
 
 

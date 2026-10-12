@@ -8,6 +8,7 @@ export const issueSettingsEnglish = {
   "issueSettings.githubRepository": "GitHub · {{repository}}",
   "issueSettings.ghNotInstalled": "gh isn't installed",
   "issueSettings.ghNotLoggedIn": "Not signed in to gh",
+  "issueSettings.ghNotLoggedInOn": "Not signed in to gh on {{machine}}",
   "issueSettings.readFailed": "Couldn't read",
   "issueSettings.sourceMenu": "Issue source",
 } as const;
@@ -20,6 +21,7 @@ const ko = {
   "issueSettings.githubRepository": "GitHub · {{repository}}",
   "issueSettings.ghNotInstalled": "gh 설치 안 됨",
   "issueSettings.ghNotLoggedIn": "gh 로그인 안 됨",
+  "issueSettings.ghNotLoggedInOn": "{{machine}}에서 gh 로그인 안 됨",
   "issueSettings.readFailed": "읽기 실패",
   "issueSettings.sourceMenu": "이슈 출처",
 } satisfies Catalog<typeof issueSettingsEnglish>;
@@ -32,6 +34,7 @@ const zhCN = {
   "issueSettings.githubRepository": "GitHub · {{repository}}",
   "issueSettings.ghNotInstalled": "未安装 gh",
   "issueSettings.ghNotLoggedIn": "未登录 gh",
+  "issueSettings.ghNotLoggedInOn": "{{machine}} 上未登录 gh",
   "issueSettings.readFailed": "读取失败",
   "issueSettings.sourceMenu": "议题来源",
 } satisfies Catalog<typeof issueSettingsEnglish>;
@@ -44,6 +47,7 @@ const ja = {
   "issueSettings.githubRepository": "GitHub · {{repository}}",
   "issueSettings.ghNotInstalled": "ghが未インストール",
   "issueSettings.ghNotLoggedIn": "ghに未ログイン",
+  "issueSettings.ghNotLoggedInOn": "{{machine}}でghに未ログイン",
   "issueSettings.readFailed": "読み込み失敗",
   "issueSettings.sourceMenu": "Issueの保存先",
 } satisfies Catalog<typeof issueSettingsEnglish>;

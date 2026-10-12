@@ -200,6 +200,14 @@ struct Harness {
 }
 
 fn harness(policy: RetryPolicy) -> Harness {
+    harness_with(policy, || Cleanup::None)
+}
+
+/// A harness whose sessions each end with what `cleanup` makes.
+fn harness_with(
+    policy: RetryPolicy,
+    cleanup: impl Fn() -> Cleanup + Send + Sync + 'static,
+) -> Harness {
     let (opened_tx, opened) = channel();
     let (reports_tx, reports) = channel();
     let attacher = Arc::new(FakeAttacher {
@@ -207,8 +215,8 @@ fn harness(policy: RetryPolicy) -> Harness {
         refuse: Mutex::new(None),
     });
     let outputs = Arc::new(Outputs::default());
-    struct Shared(Arc<FakeAttacher>);
-    impl Attacher for Shared {
+    struct Shared<C>(Arc<FakeAttacher>, C);
+    impl<C: Fn() -> Cleanup + Send + Sync> Attacher for Shared<C> {
         fn open(
             &self,
             pane: &str,
@@ -216,11 +224,13 @@ fn harness(policy: RetryPolicy) -> Harness {
             rows: u16,
             cols: u16,
         ) -> Result<SessionParts, String> {
-            self.0.open(pane, mode, rows, cols)
+            let mut parts = self.0.open(pane, mode, rows, cols)?;
+            parts.cleanup = (self.1)();
+            Ok(parts)
         }
     }
     let service = Service::start(
-        Box::new(Shared(Arc::clone(&attacher))),
+        Box::new(Shared(Arc::clone(&attacher), cleanup)),
         Arc::clone(&outputs) as Arc<dyn OutputSink>,
         Arc::new(Reports(Mutex::new(reports_tx))),
         policy,
@@ -1348,4 +1358,104 @@ fn reports_reach_the_core_in_the_order_the_service_made_them() {
     first.join().unwrap();
     second.join().unwrap();
     assert_eq!(sink.heard.lock().unwrap().as_slice(), ["w1:p1", "w1:p2"]);
+}
+
+/// A closed service lets every pane it held go, while something else still
+/// holds the service, and attaches none after: a core that stops for a move
+/// leaves this machine's panes to the node its process becomes, which would
+/// otherwise find each one held and draw it read-only.
+#[test]
+fn a_closed_service_lets_its_panes_go_and_attaches_none_again() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    harness.service.close();
+    while opened.next_line()["type"] != "terminal.release" {}
+    harness.attach("w1:p2", Some(SIZE));
+    assert_eq!(harness.service.attached(), 0);
+}
+
+/// A close returns only once each attach child it ended has exited: the
+/// role that follows in the same process attaches only after it, and a
+/// child still on its way out would meet that attach as another client
+/// holding the pane.
+#[test]
+fn a_close_returns_only_once_its_children_have_exited() {
+    let (exiting_tx, exiting) = channel();
+    let (exit_tx, exit) = channel::<()>();
+    let exiting_tx = Mutex::new(exiting_tx);
+    let exit = Arc::new(Mutex::new(exit));
+    let harness = harness_with(RetryPolicy::Automatic, move || {
+        let exiting = exiting_tx.lock().unwrap().clone();
+        let exit = Arc::clone(&exit);
+        Cleanup::Other(Box::new(move || {
+            exiting.send(()).unwrap();
+            let _ = exit.lock().unwrap().recv();
+        }))
+    });
+    harness.controlling("w1:p1");
+    let (closed_tx, closed) = channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            harness.service.close();
+            closed_tx.send(()).unwrap();
+        });
+        exiting.recv_timeout(WAIT).expect("the child began to exit");
+        // A close that does not wait returns within microseconds of letting
+        // the pane go; this one waits for the child as long as it takes.
+        assert!(
+            closed.recv_timeout(WAIT / 10).is_err(),
+            "the close returned while its child was still exiting"
+        );
+        exit_tx.send(()).unwrap();
+        closed
+            .recv_timeout(WAIT)
+            .expect("the close returned once its child exited");
+    });
+}
+
+#[test]
+fn a_close_that_runs_before_a_spawn_s_worker_waits_and_nothing_opens_after_it() {
+    // Tells of any open that comes after its service's close returned.
+    struct Late {
+        returned: Arc<std::sync::atomic::AtomicBool>,
+        late: Mutex<Sender<()>>,
+    }
+    impl Attacher for Late {
+        fn open(&self, _: &str, _: Mode, _: u16, _: u16) -> Result<SessionParts, String> {
+            if self.returned.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = self.late.lock().unwrap().send(());
+            }
+            Err("refused".into())
+        }
+    }
+    let (late_tx, late) = channel();
+    // Every service lives to the end, so a worker that runs late still can.
+    let mut services = Vec::new();
+    for _ in 0..50 {
+        let returned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (reports_tx, reports) = channel();
+        let service = Service::start(
+            Box::new(Late {
+                returned: Arc::clone(&returned),
+                late: Mutex::new(late_tx.clone()),
+            }),
+            Arc::new(Outputs::default()),
+            Arc::new(Reports(Mutex::new(reports_tx))),
+            RetryPolicy::Manual,
+        )
+        .unwrap();
+        // The attach queues a spawn whose worker may not have run yet.
+        service.control(TerminalControl::Attach {
+            pane: "w1:p1".into(),
+            size: Some(SIZE),
+            manual: false,
+        });
+        service.close();
+        returned.store(true, std::sync::atomic::Ordering::SeqCst);
+        services.push((service, reports));
+    }
+    assert!(
+        late.recv_timeout(WAIT / 10).is_err(),
+        "a session opened after its service's close returned"
+    );
 }

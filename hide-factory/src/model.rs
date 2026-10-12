@@ -22,6 +22,12 @@ pub struct Factory {
     pub id: String,
     /// Canonical path of the project's primary checkout.
     pub project: String,
+    /// The machine that holds the project, by node id; `None` is the core's
+    /// own machine, as every Factory made before a core could move was
+    /// (PRD core-host-node-move Q17). Its git, quick checks, verify runs and
+    /// workers run there; its GitHub work is the core's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
     /// A short name the inbox shows next to each item.
     pub project_name: String,
     pub source: SourceKind,
@@ -1708,6 +1714,9 @@ pub struct WorkerRef {
     /// The Factory that spawned it.
     #[serde(default)]
     pub factory: String,
+    /// The machine it runs on: its Factory's `node` when it started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
     /// The coordination agent id, which ends it.
     #[serde(default)]
     pub agent: Option<String>,

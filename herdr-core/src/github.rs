@@ -711,10 +711,10 @@ fn parse_dependencies(output: &str) -> Result<Dependencies, GhFailure> {
 
 pub(crate) fn read_linked_issue(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     reference: &crate::issues::IssueReference,
 ) -> Result<crate::issues::IssueSnapshot, String> {
-    read_linked_issues(node, &Where::Checkout(root.to_owned()), &[reference])
+    read_linked_issues(node, place, &[reference])
         .map_err(|error| error.reason)?
         .0
         .into_iter()
@@ -722,19 +722,19 @@ pub(crate) fn read_linked_issue(
         .ok_or_else(|| "GitHub issue was not found".to_owned())
 }
 
-/// Creates an issue in the repository `root` belongs to (Overview › 새 이슈,
+/// Creates an issue in the repository `place` names (Overview › 새 이슈,
 /// and a pull request's 새 이슈 만들기), one of Hide's two writes to GitHub
 /// with `write_closing_line`. `gh issue create` prints the new issue's URL,
 /// which names it.
 pub(crate) fn create_issue(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     title: &str,
     body: &str,
 ) -> Result<crate::issues::IssueSnapshot, String> {
-    let output = gh(
+    let output = gh_at(
         node,
-        Some(root),
+        place,
         &["issue", "create", "--title", title, "--body", body],
     )
     .map_err(|error| error.reason)?;
@@ -770,13 +770,13 @@ pub(crate) fn create_issue(
 /// worker.
 pub(crate) fn issue_detail(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     reference: &crate::issues::IssueReference,
 ) -> Result<crate::tasks::TaskDetail, String> {
     let number = reference.number.to_string();
-    let output = gh(
+    let output = gh_at(
         node,
-        Some(root),
+        place,
         &[
             "issue",
             "view",
@@ -1076,16 +1076,16 @@ pub(crate) struct PrFeedback {
     pub(crate) change_requests: Vec<crate::model::PrChangeRequest>,
 }
 
-/// `PrFeedback`, in one `gh pr view` on the caller's worker.
+/// `PrFeedback`, in one `gh pr view` at `place` on the caller's worker.
 pub(crate) fn pr_feedback(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     number: u32,
 ) -> Result<PrFeedback, String> {
     let number = number.to_string();
-    let output = gh(
+    let output = gh_at(
         node,
-        Some(root),
+        place,
         &["pr", "view", &number, "--json", PR_FEEDBACK_FIELDS],
     )
     .map_err(|error| error.reason)?;
@@ -1155,14 +1155,14 @@ fn parse_pr_feedback(output: &str) -> Result<PrFeedback, String> {
 /// GitHub closes the issue when it merges (PRD overview-lenses-prs D-13,
 /// D-47): the body is read first, and a body that already closes the issue
 /// is left as it is, so a retry never adds a second line. This is Hide's one
-/// write to a pull request.
+/// write to a pull request; `place` is where `gh` reads its repository.
 pub(crate) fn write_closing_line(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     number: u32,
     issue: u32,
 ) -> Result<bool, String> {
-    write_closing_line_with(|arguments| gh(node, Some(root), arguments), number, issue)
+    write_closing_line_with(|arguments| gh_at(node, place, arguments), number, issue)
 }
 
 /// `write_closing_line` through `gh`, which a test answers with a fixture.
@@ -1385,12 +1385,12 @@ struct GhMergedPullRequestProof {
 /// caller matches the head commit and the base.
 pub(crate) fn merged_pull_request_proofs(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     branch: &str,
 ) -> Result<Vec<MergedPullRequestProof>, String> {
-    let listed = gh(
+    let listed = gh_at(
         node,
-        Some(root),
+        place,
         &[
             "pr",
             "list",
@@ -1783,7 +1783,7 @@ impl GhFailure {
 
 /// Where a `gh` command finds its repository: a checkout on the machine it
 /// runs on, or, for a checkout on another machine, the repository's name.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Where {
     Checkout(PathBuf),
     Repository(String),
