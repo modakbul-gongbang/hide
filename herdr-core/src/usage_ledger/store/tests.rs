@@ -48,6 +48,9 @@ fn claude_streaming_maxima_replace_one_call_and_its_context_band() {
     let mut next = old.clone();
     next.tokens.input = 210_000;
     next.tokens.output = 28;
+    // A fork may carry the same native billed call in another session.
+    next.session = "forked-container".into();
+    next.cwd = Some("/work/fork".into());
     let mut store = Store::open(&path).unwrap();
     store
         .ingest(
@@ -83,6 +86,12 @@ fn claude_streaming_maxima_replace_one_call_and_its_context_band() {
     );
     assert_eq!(totals.price_bands[1].input, 0);
     assert_eq!(totals.price_bands[2].input, 210_000);
+    let saved: String = store
+        .connection
+        .query_row("SELECT event FROM events", [], |row| row.get(0))
+        .unwrap();
+    let saved: Event = decode(&saved).unwrap();
+    assert_eq!((saved.session, saved.cwd), (old.session, old.cwd));
 }
 
 #[test]

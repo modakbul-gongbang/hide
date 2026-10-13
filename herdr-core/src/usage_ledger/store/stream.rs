@@ -31,7 +31,6 @@ pub(super) fn merge(
 ) -> Result<bool, &'static str> {
     if old.at_ms < frozen_at
         || old.model != next.model
-        || old.session != next.session
         || old.recorded_cost_micro_usd.is_some()
         || next.recorded_cost_micro_usd.is_some()
         || old.incomplete
