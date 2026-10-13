@@ -2309,6 +2309,7 @@ Missing or malformed facts disable the affected reader feature while file and Gi
 The audited protocol-24 transition keeps its frozen Claude/Codex and partial OpenCode label/link capabilities, with no new reader or structured user-turn content inferred from the current build.
 Reader requests and returned bodies are checked against the live link before serialization and decoding; draining, closed or replaced links cannot lend their retired facts to a checkpoint.
 Provider-bearing discovery rows are inspected as bounded raw records before their format enum is decoded, and mixed link batches refuse unsupported members without discarding supported results or advancing the refused member's durable cursor.
+Reader header strings decode JSON escapes before provider and requested-path comparison, so a native Windows path keeps the same identity as the request; strings without escapes remain borrowed.
 Filtered discovery rows still count toward the original page and oldest timestamp, so an unsupported provider cannot hide older supported files by shortening pagination.
 A device normally runs the helper this Hide carries, installed by the digest of its bytes; ordinary payload replacement refreshes the Hello facts on a new connection and remains the recovery for an unaudited mismatch.
 The patch wire does not carry complete old and new documents, so `@codemirror/merge`'s two-document view would require an extra read and is not used.

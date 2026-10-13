@@ -1,7 +1,7 @@
 //! Reader-aware boundaries for provider-bearing lists and mixed batches.
 //! Provider names are checked as strings before a native format enum is read.
 
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use hide_session::links::{Candidate, ReadAnswer, ReadRequest};
 use serde::Deserialize;
@@ -92,7 +92,7 @@ fn rows(answer: LinkAnswer, limit: usize) -> Result<Vec<Box<RawValue>>, LinkErro
 #[derive(Deserialize)]
 struct Header<'a> {
     #[serde(borrow)]
-    agent: &'a str,
+    agent: Cow<'a, str>,
     #[serde(default)]
     modified_unix_ms: Option<u64>,
 }
@@ -130,7 +130,7 @@ pub fn link_files(
             page.oldest_unix_ms
                 .map_or(modified, |oldest| oldest.min(modified)),
         );
-        if !features.supports(header.agent, ReaderFeature::Links) {
+        if !features.supports(header.agent.as_ref(), ReaderFeature::Links) {
             page.refused += 1;
             continue;
         }
@@ -170,11 +170,11 @@ pub fn project_sessions(
                 continue;
             }
         };
-        if !features.supports(header.agent, ReaderFeature::Identity) {
+        if !features.supports(header.agent.as_ref(), ReaderFeature::Identity) {
             page.refused += 1;
             continue;
         }
-        let row = if features.supports(header.agent, ReaderFeature::Titles) {
+        let row = if features.supports(header.agent.as_ref(), ReaderFeature::Titles) {
             row
         } else {
             let mut fields: crate::link::RawReaderFields = match serde_json::from_str(row.get()) {
@@ -260,8 +260,10 @@ pub fn links(
         let features = facts(link)?;
         #[derive(Deserialize)]
         struct ReadHeader<'a> {
-            agent: &'a str,
-            path: &'a str,
+            #[serde(borrow)]
+            agent: Cow<'a, str>,
+            #[serde(borrow)]
+            path: Cow<'a, str>,
         }
         let mut answers: Vec<ReadAnswer> = Vec::new();
         for row in rows(answer, hide_session::links::READ_FILE_LIMIT)? {
@@ -272,9 +274,9 @@ pub fn links(
                     continue;
                 }
             };
-            if !features.supports(header.agent, ReaderFeature::Links)
+            if !features.supports(header.agent.as_ref(), ReaderFeature::Links)
                 || !supported.iter().any(|request| {
-                    request.agent.as_str() == header.agent && request.path == header.path
+                    request.agent.as_str() == header.agent && request.path == header.path.as_ref()
                 })
             {
                 ignored_answers += 1;
@@ -433,6 +435,43 @@ mod tests {
                 reason: "opencode_db_unreadable".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn escaped_header_fields_keep_supported_sessions_and_requested_windows_paths() {
+        let path = r"C:\fixture\sessions\native-working.jsonl";
+        let response = serde_json::json!([{
+            "agent": "claude", "path": path, "has_more": false, "rescanned": false
+        }])
+        .to_string();
+        for response in [
+            response.clone(),
+            response.replacen(r#""claude""#, r#""clau\u0064e""#, 1),
+        ] {
+            let batch = links(
+                &Peer::new(response),
+                vec![ReadRequest {
+                    agent: hide_session::Agent::Claude,
+                    path: path.to_owned(),
+                    checkpoint: None,
+                }],
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            assert_eq!(batch.answers.len(), 1);
+            assert_eq!(batch.answers[0].path, path);
+            assert!(batch.refused.is_empty());
+            assert_eq!(batch.ignored_answers, 0);
+        }
+
+        let peer = Peer::new(
+            r#"[{"agent":"clau\u0064e","path":"working","stamp":"s","modified_unix_ms":8}]"#
+                .to_owned(),
+        );
+        let page = link_files(&peer, 0, None, Duration::from_secs(1)).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].path, "working");
+        assert_eq!(page.refused, 0);
     }
 
     #[test]
