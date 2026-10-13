@@ -38,20 +38,28 @@ export function sidebarFocusPane(focused: string | null, agents: readonly AgentR
  * at all while one of its rows is already in view. The row is the deepest one
  * marked current: an agent row, else the focused checkout's row, else the
  * project or fold row that hides it; an agent drawn both raised and in its
- * tree is brought in at its tree row. A section header stuck to the list's
- * top covers what passes under it, so a row there is not in view, and the
- * list's scroll padding brings a row in below the header (PRD
- * sidebar-titlebar-refresh B10).
+ * tree is brought in at its tree row.
  */
 export function revealSidebarFocus(list: HTMLElement): void {
   const marked = [...list.querySelectorAll<HTMLElement>('[aria-current="true"]')];
   if (marked.length === 0) return;
+  const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
+  revealRow(list, deepest, deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!);
+}
+
+/**
+ * Scrolls the list by as little as brings `target` into view, and not at all
+ * while one of `rows`, the places the same selection is drawn, is already in
+ * view; Sessions brings its selected row in by this rule too. A section
+ * header stuck to the list's top covers what passes under it, so a row there
+ * is not in view, and the list's scroll padding brings a row in below the
+ * header (PRD sidebar-titlebar-refresh B10).
+ */
+export function revealRow(list: HTMLElement, rows: readonly HTMLElement[], target: HTMLElement): void {
   const view = list.getBoundingClientRect();
   const covered = list.querySelector<HTMLElement>('[data-section-sticky][data-stuck="true"]')?.getBoundingClientRect().height ?? 0;
   const top = view.top + covered;
-  const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
-  if (deepest.some((row) => inside(row.getBoundingClientRect(), top, view.bottom))) return;
-  const target = deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!;
+  if (rows.some((row) => inside(row.getBoundingClientRect(), top, view.bottom))) return;
   target.scrollIntoView({ block: "nearest" });
 }
 

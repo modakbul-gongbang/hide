@@ -870,7 +870,7 @@ function FoldRow({
       aria-current={current ? "true" : undefined}
       className={cn(
         "flex min-h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-        current ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent",
+        current ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent",
       )}
       style={{ paddingLeft: level === "project" ? PROJECT_COLUMN : CHECKOUT_COLUMN }}
       onClick={onToggle}
@@ -1054,7 +1054,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         <div
-          className={cn("flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs", hiding === "project" ? "bg-secondary" : "hover:bg-accent")}
+          className={cn("flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs", hiding === "project" ? "bg-selected" : "hover:bg-accent")}
           style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <button
@@ -1252,7 +1252,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
-            focused ? "bg-secondary" : !removing && "hover:bg-accent",
+            focused ? "bg-selected" : !removing && "hover:bg-accent",
             view.settled && !removing && "opacity-(--opacity-dimmed)",
           )}
           style={{ paddingLeft: CHECKOUT_COLUMN }}
@@ -1351,7 +1351,7 @@ const FolderRowView = memo(function FolderRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-project-row)",
-            focused ? "bg-secondary" : "hover:bg-accent",
+            focused ? "bg-selected" : "hover:bg-accent",
           )}
           style={{ paddingLeft: PROJECT_COLUMN }}
         >

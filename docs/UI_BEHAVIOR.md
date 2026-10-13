@@ -632,6 +632,7 @@ A child's title is quiet (subtle) unless it asks or is selected, by the sidebar'
 While a Workspace is in front, the row standing for its focused pane is selected as in the sidebar: the focused pane's row, or, when a closed tree or `N개 더` hides it, the nearest ancestor row the panel draws, with the sidebar's selected fill and `aria-current`; nothing opens by itself, and a root hidden in the folded Resolved has no selected row.
 An agent is drawn once in Sessions: a raised child's ask rides its root's row, and the child's own row, where its root's tree is open, is the one selected.
 The selected fill stays under the pointer, and keyboard focus draws its ring over it.
+When the selected row changes, the list scrolls by as little as brings it into view, and not at all while it is already in view; a selected row that has not changed since it was brought in never scrolls the list, whether a snapshot moves it to another group or the Workspace comes back in front, so a list the operator scrolled stays where they left it (the sidebar's rule, `web/src/sidebarFocus.ts`).
 
 Click or Enter opens a row's Workspace, tab and pane, and arrows, Home and End navigate the displayed group heads and rows.
 Resolve hides a session only after its state has been saved; it keeps the pane and conversation alive and appears under Resolved.
@@ -1103,6 +1104,7 @@ The web Projects list is the scope picker, starting at its first project.
 The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
 Expanded projects contain checkout rows only, with no Overview child.
 A Workspace selects its focused checkout and visible agent rows.
+The sidebar's selected fill is the chosen accent at the selected-fill share (`--opacity-selected-fill`), apart from the neutral fill of the row under the pointer, so the row standing for the focus is never mistaken for a hovered one (`--color-selected` in `web/src/index.css`).
 A focused delegated child has no row of its own, so the nearest ancestor row the list draws carries its selection.
 While a fold hides the focused checkout's row, the row that hides it carries the selection instead: the folded project's row, or the Inactive, empty-worktree, cleanup or inactive-projects fold that holds it; no fold opens by itself, so the operator's folds stay as they left them.
 When the focus moves, the list scrolls by as little as brings the selected row into view, the agent row before its checkout's, and not at all while one is already in view; an agent selected both raised and in its tree is brought in at its tree row.
