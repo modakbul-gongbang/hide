@@ -1,10 +1,11 @@
 // The native host's smallest window and largest text must contain all footer
 // controls and the Usage sheet. The provider alone is a fixed external shim.
+import fs from "node:fs";
+import path from "node:path";
 import { expect, type ElectronApplication } from "@playwright/test";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { usageShim } from "../../web/e2e/usage-fixture";
-import { fitWindow, isolate, launchShell, test } from "./fixture";
-import { captureNativeWindow } from "./native-window";
+import { fitWindow, isolate, launchShell, screenshot, test } from "./fixture";
 
 test("three usage chips, Help and Settings fit the minimum native window in English and Korean", async () => {
   const herdr = await startHerdr();
@@ -26,13 +27,23 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
     await page.locator('[data-settings-tab="general"]').click();
     await page.locator('[data-font-size] [role="slider"]').press("End");
     const facts = { home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, provider: "external Claude CLI shim; Codex signed out", window: "720x480, maximum Interface text" };
+    const capture = async (name: string) => {
+      const candidate = await app!.evaluate(({ BrowserWindow }) => ({
+        pid: process.pid, executable: process.execPath, windows: BrowserWindow.getAllWindows().length,
+        switches: process.argv, bounds: BrowserWindow.getAllWindows()[0]!.getBounds(),
+      }));
+      expect(candidate.windows).toBe(1);
+      const directory = process.env.HIDE_E2E_SCREENSHOT_DIR;
+      if (directory) fs.writeFileSync(path.join(directory, `${name}.json`), JSON.stringify({ ...facts, candidate, collector: "Playwright page.screenshot on isolated Electron renderer; excludes native traffic lights" }, null, 2));
+      await screenshot(page, name);
+    };
     for (const language of ["en", "ko"] as const) {
       await page.locator('[data-interface-language]').click();
       await page.locator(`[data-language-option="${language}"]`).click();
       await page.locator(`[data-theme-option="${language === "en" ? "light" : "dark"}"]`).click();
       await page.locator('[data-settings-tab="usage"]').click();
       await expect(page.locator('[data-usage-settings]')).toBeVisible();
-      await captureNativeWindow(app, `usage-settings-${language}-native`, facts);
+      await capture(`usage-settings-${language}-electron`);
       await page.keyboard.press("Escape");
       const chips = page.locator('[data-usage-chip]');
       await expect(chips).toHaveCount(3);
@@ -46,12 +57,12 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
       });
       expect(boxes).toHaveLength(5);
       expect(boxes.every(Boolean)).toBe(true);
-      await captureNativeWindow(app, `usage-footer-${language}-native`, facts);
+      await capture(`usage-footer-${language}-electron`);
       await chips.first().click();
       const popover = page.locator('[data-usage-popover]');
       await expect(popover.locator('[data-usage-window-row="five_hour"] [data-usage-value]')).toHaveText("4%");
       expect(await popover.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-      await captureNativeWindow(app, `usage-popover-${language}-native`, facts);
+      await capture(`usage-popover-${language}-electron`);
       await popover.getByRole("button").click();
       await page.locator('[data-settings-tab="general"]').click();
     }
