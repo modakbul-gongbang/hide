@@ -102,6 +102,7 @@ struct Mailbox {
     panel_closed: bool,
     ledger: VecDeque<LedgerUpdate>,
     ledger_pending: usize,
+    contexts: VecDeque<SessionIdentity>,
     record: Option<(u64, SessionIdentity)>,
     record_closed: bool,
     search: Option<(u64, String, bool)>,
@@ -116,11 +117,23 @@ struct Mailbox {
 #[derive(Clone)]
 pub struct LinkClient(
     Arc<(Mutex<Mailbox>, Condvar)>,
-    Arc<Mutex<BTreeMap<SessionIdentity, LedgerContext>>>,
+    Arc<Mutex<ContextCache>>,
     Arc<std::sync::atomic::AtomicU64>,
 );
 
+#[derive(Default)]
+struct ContextCache {
+    values: BTreeMap<SessionIdentity, LedgerContext>,
+    used: VecDeque<SessionIdentity>,
+}
+
 impl LinkClient {
+    #[cfg(test)]
+    pub(crate) fn prime_context_for_test(&self, session: SessionIdentity, context: LedgerContext) {
+        let mut cache = self.1.lock().unwrap();
+        cache.used.push_back(session.clone());
+        cache.values.insert(session, context);
+    }
     #[cfg(test)]
     pub(crate) fn full_mailbox_for_test() -> Self {
         Self(
@@ -182,7 +195,27 @@ impl LinkClient {
     }
 
     pub fn context(&self, session: &SessionIdentity) -> Option<LedgerContext> {
-        self.1.lock().ok()?.get(session).cloned()
+        {
+            let mut cache = self.1.lock().ok()?;
+            if let Some(context) = cache.values.get(session).cloned() {
+                cache.used.retain(|held| held != session);
+                cache.used.push_back(session.clone());
+                return Some(context);
+            }
+        }
+        // A miss is unknown authority. Request a bounded worker read without
+        // blocking the label worker, the runtime or a session-sync thread.
+        self.post(|mailbox| {
+            if mailbox.contexts.contains(session) {
+                return;
+            }
+            if mailbox.contexts.len() >= LEDGER_QUEUE_LIMIT {
+                crate::diagnostic!(serde_json::json!({"component":"links","kind":"ledger.context_request_capacity","limit":LEDGER_QUEUE_LIMIT}));
+                return;
+            }
+            mailbox.contexts.push_back(session.clone());
+        });
+        None
     }
 
     pub fn read_record(&self, generation: u64, session: SessionIdentity) {
@@ -470,6 +503,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             && !mailbox.record_closed
             && mailbox.search.is_none()
             && mailbox.calls.is_empty()
+            && (store.is_err() || mailbox.contexts.is_empty())
             && wait > Duration::ZERO
         {
             mailbox = match wake.wait_timeout(mailbox, wait) {
@@ -490,6 +524,12 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         let record_closed = std::mem::take(&mut mailbox.record_closed);
         let search = mailbox.search.take();
         let calls = std::mem::take(&mut mailbox.calls);
+        let contexts = if store.is_ok() {
+            let count = mailbox.contexts.len().min(16);
+            mailbox.contexts.drain(..count).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         drop(mailbox);
         // Admission counts both mailbox and worker-owned pending updates.
         state.ledger.extend(ledger);
@@ -636,7 +676,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             let held = client
                 .1
                 .lock()
-                .map(|contexts| contexts.keys().cloned().collect::<Vec<_>>())
+                .map(|contexts| contexts.values.keys().cloned().collect::<Vec<_>>())
                 .unwrap_or_default();
             for session in held {
                 update_context_ancestors(client, store, &session);
@@ -677,6 +717,9 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 );
             }
             state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        for session in contexts {
+            update_context(client, store, &session);
         }
         if state.panel.is_some() && state.panel_answer.is_none() {
             answer_panel(store, own, paths, &mut state, sink);
@@ -1309,15 +1352,19 @@ fn update_context(client: &LinkClient, store: &LinkStore, session: &SessionIdent
     match store.ledger_context(session) {
         Ok(context) => {
             if let Ok(mut contexts) = client.1.lock() {
-                if !contexts.contains_key(session) && contexts.len() >= LEDGER_QUEUE_LIMIT {
-                    if let Some(first) = contexts.keys().next().cloned() {
-                        contexts.remove(&first);
+                if !contexts.values.contains_key(session)
+                    && contexts.values.len() >= LEDGER_QUEUE_LIMIT
+                {
+                    if let Some(first) = contexts.used.pop_front() {
+                        contexts.values.remove(&first);
                     }
                     crate::diagnostic!(
                         serde_json::json!({"component":"links","kind":"ledger.context_capacity"})
                     );
                 }
-                contexts.insert(session.clone(), context);
+                contexts.used.retain(|held| held != session);
+                contexts.used.push_back(session.clone());
+                contexts.values.insert(session.clone(), context);
             }
         }
         Err(code) => log_write(&code, "ledger_context"),

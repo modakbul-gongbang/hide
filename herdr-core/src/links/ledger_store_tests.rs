@@ -698,6 +698,7 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
         })
         .unwrap();
     request(&mut store, 3, "operator new work");
+    store.connection.execute("INSERT INTO ledger_outputs VALUES('device-a','codex','session-a','pr','owner/repo',7,'invalid continuation PR','https://github.com/owner/repo/pull/7','open',2200,2200,'task-1')", []).unwrap();
     end(
         &mut store,
         3,
@@ -740,6 +741,18 @@ fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
     assert_eq!(record.tasks.len(), 1);
     assert_eq!(record.tasks[0].name, "parent work");
     assert_eq!(record.tasks[0].end, LabelEnd::Done);
+    assert!(
+        record.tasks[0].done,
+        "a retracted continuation's PR cannot hold up valid work"
+    );
+    assert!(record.outputs[0].task_id.is_none());
+    assert!(
+        store
+            .ledger_context(&session())
+            .unwrap()
+            .open_tasks
+            .is_empty()
+    );
     assert_eq!(record.last_end, Some(LabelEnd::Done));
     assert_eq!(record.missed.len(), 1);
     assert_eq!(record.missed[0].status, MissedStatus::Open);

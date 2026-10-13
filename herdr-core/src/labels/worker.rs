@@ -49,6 +49,8 @@ use crate::links::worker::LinkClient;
 /// The minimum interval between native-file current-metadata reads, also
 /// used for the single follow-up when a starting turn has no prompt yet.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+/// A cold context is read by the links worker; retry without spending a call.
+const CONTEXT_READ_RETRY: Duration = Duration::from_millis(250);
 /// How long a read the machine could not answer (a device whose helper is
 /// not connected) waits before it is tried again, so the pane catches up
 /// after a reconnect without waiting for its next state change (B14).
@@ -1334,17 +1336,27 @@ impl LabelWorker {
             agent: pane.agent.as_str().to_owned(),
             session_id: id.clone(),
         });
+        let ledger_client = self.ledger.lock().ok().and_then(|client| client.clone());
         let ledger = ledger_session.as_ref().and_then(|session| {
-            self.ledger
-                .lock()
-                .ok()
-                .and_then(|client| client.as_ref().and_then(|client| client.context(session)))
+            ledger_client
+                .as_ref()
+                .and_then(|client| client.context(session))
         });
+        if phase == AnalysisPhase::TurnEnd
+            && ledger_session.is_some()
+            && ledger_client.is_some()
+            && ledger.is_none()
+        {
+            // The link worker will fill a cold/evicted context. Never settle
+            // the turn with a fabricated root author or empty open work.
+            pane.next_analysis_at = Some(now + CONTEXT_READ_RETRY);
+            return false;
+        }
         let ledger = ledger.unwrap_or_default();
         let work_author = events
-                .iter()
-                .rfind(|event| event.kind == LabelEventKind::Human)
-                .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
         let turn_witness = events
             .iter()
             .rfind(|event| event.kind == LabelEventKind::Human)
@@ -1490,7 +1502,13 @@ impl LabelWorker {
                         && let Some(offset) = outcome.offset
                         && let Some(judgment) = analysis.work.clone()
                         && let Err(code) = client.ledger(LedgerUpdate::TurnEnd {
-                            session,offset,at_unix_ms:outcome.at_unix_ms,end:analysis.end,work_author:outcome.work_author,turn_witness:outcome.turn_witness.clone(),judgment,
+                            session,
+                            offset,
+                            at_unix_ms: outcome.at_unix_ms,
+                            end: analysis.end,
+                            work_author: outcome.work_author,
+                            turn_witness: outcome.turn_witness.clone(),
+                            judgment,
                         })
                     {
                         crate::diagnostic!(

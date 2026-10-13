@@ -120,8 +120,8 @@ pub(super) fn retract_operator_work(
         tx.execute(&format!("UPDATE {table} SET task_ids=(SELECT json_group_array(j.value) FROM json_each({table}.task_ids) j WHERE EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device={table}.device AND t.agent={table}.agent AND t.id={table}.id AND t.task=j.value)) WHERE device=?1 AND agent=?2 AND id=?3"),params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
     }
     tx.execute("UPDATE ledger_tasks SET (end,last_at)=(SELECT t.end,t.end_at FROM ledger_turns t,json_each(t.task_ids) j WHERE t.device=ledger_tasks.device AND t.agent=ledger_tasks.agent AND t.id=ledger_tasks.id AND j.value=ledger_tasks.task ORDER BY t.end_at DESC,t.offset DESC LIMIT 1) WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
-    tx.execute("UPDATE ledger_outputs SET task=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND NOT EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device=ledger_outputs.device AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND t.task=ledger_outputs.task)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
     tx.execute("UPDATE ledger_turns SET output_task=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND NOT EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device=ledger_turns.device AND t.agent=ledger_turns.agent AND t.id=ledger_turns.id AND t.task=ledger_turns.output_task)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    assign_outputs(tx, session)?;
     crate::diagnostic!(
         serde_json::json!({"component":"links","kind":"ledger.lineage_retracted","device_id":session.device_id,"session_id":session.session_id,"count":invalid.len()})
     );

@@ -27,6 +27,7 @@ use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 /// A provider that answers from a queue and can hold an answer back.
 struct Scripted {
     answers: Mutex<VecDeque<Value>>,
+    inputs: Mutex<Vec<String>>,
     calls: AtomicUsize,
     /// How many of the next requests run out of time.
     timeouts: AtomicUsize,
@@ -39,6 +40,7 @@ impl Scripted {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             answers: Mutex::new(VecDeque::new()),
+            inputs: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
             timeouts: AtomicUsize::new(0),
             held: Mutex::new(false),
@@ -96,7 +98,8 @@ impl AiBackend for Scripted {
     fn models(&self) -> ModelCatalog {
         ModelCatalog::Offered(vec!["fixture".to_owned()])
     }
-    fn execute(&self, _: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
+    fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
+        self.inputs.lock().unwrap().push(request.input.clone());
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self
             .timeouts
@@ -226,6 +229,17 @@ impl Harness {
         socket_name: &str,
         source: Arc<dyn TranscriptSource>,
     ) -> (LabelWorker, Receiver<()>) {
+        self.spawn_with_ledger(store, target, socket_name, source, Arc::default())
+    }
+
+    fn spawn_with_ledger(
+        &self,
+        store: Arc<LabelStore>,
+        target: &str,
+        socket_name: &str,
+        source: Arc<dyn TranscriptSource>,
+        ledger: Arc<Mutex<Option<crate::links::worker::LinkClient>>>,
+    ) -> (LabelWorker, Receiver<()>) {
         let (wake, woken) = channel();
         let wake = Mutex::new(wake);
         let worker = LabelWorker::spawn(
@@ -242,7 +256,7 @@ impl Harness {
                     herdr_socket: Some(self.locks.path().join(socket_name).display().to_string()),
                 },
                 input: Arc::clone(&self.input),
-                ledger: Arc::default(),
+                ledger,
             },
             store,
             Arc::clone(&self.analyzer),
@@ -449,6 +463,73 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
         source.reads.load(Ordering::SeqCst),
         reads,
         "nor reads anything"
+    );
+}
+
+#[test]
+fn an_end_waits_for_parent_authority_after_a_cold_context() {
+    use crate::links::ledger::{LedgerContext, SessionIdentity};
+    let harness = Harness::new();
+    let store = harness.store();
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let (mut worker, woken) = harness.spawn_with_ledger(
+        Arc::clone(&store),
+        LOCAL_TARGET,
+        "local.sock",
+        Arc::new(NodeTranscripts::new(Box::new(move || {
+            Ok(Arc::clone(&node))
+        }))),
+        Arc::new(Mutex::new(Some(client.clone()))),
+    );
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "CI 확인해줘"),
+            ("assistant", "확인하겠습니다"),
+            (
+                "user",
+                "Hide letter r1 from ci-lead (claude) [request]\nCI 다시 봐줘",
+            ),
+            ("assistant", "확인했습니다"),
+        ],
+    );
+    harness.backend.answer("지속적 통합 확인 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        0,
+        "unknown authority spends no END call"
+    );
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .analysis_turn_end
+            .is_none()
+    );
+    client.prime_context_for_test(
+        SessionIdentity {
+            device_id: LOCAL_TARGET.into(),
+            agent: "claude".into(),
+            session_id: "native-a".into(),
+        },
+        LedgerContext {
+            parent_name: Some("ci-lead".into()),
+            ..Default::default()
+        },
+    );
+    worker.tick(Instant::now() + Duration::from_secs(1));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    assert!(harness.backend.inputs.lock().unwrap()[0].contains("<work-author>true</work-author>"));
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .analysis_turn_end
+            .is_some()
     );
 }
 
