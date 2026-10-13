@@ -12,6 +12,82 @@ use crate::device_catalog;
 const NODE: &str = "macbook-node";
 
 #[test]
+fn delegated_inbound_caller_can_manage_background_views() {
+    let t = tree();
+    let (mut runtime, _requests, _views) =
+        device_in_front(crate::model::LinkOrigin::Inbound, &t.main);
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .workspaces[0]
+        .checkouts[0]
+        .tabs
+        .iter_mut()
+        .find(|item| item.id.as_deref() == Some(&tab("t2")))
+        .unwrap()
+        .delegated = true;
+    let key = (NODE.to_owned(), t.main.clone());
+    runtime
+        .reconcile_agent_topology(&key, &[(tab("t1"), false), (tab("t2"), true)])
+        .unwrap();
+    runtime.sync_workspace_view();
+    assert!(
+        runtime
+            .agent_layout_of(&key)
+            .unwrap()
+            .tree
+            .display(&tab("t2"))
+            .is_none()
+    );
+    let before = runtime.snapshot.workspace_view.clone();
+    let caller = format!("remote:{NODE}:pane:t2");
+    let context = runtime
+        .workspace_control_query(NODE, &caller, crate::workspace_control::Query::Info)
+        .unwrap()
+        .context;
+    let mut apply = |action, suffix| {
+        runtime
+            .workspace_control_action(
+                NODE,
+                &caller,
+                &context,
+                &format!("{}-{suffix}", unix_milliseconds()),
+                action,
+                Ok(None),
+            )
+            .unwrap()
+    };
+    let page = apply(
+        crate::workspace_control::Action::OpenBrowser {
+            url: "https://example.test/delegated".to_owned(),
+            reveal: false,
+            area_id: None,
+            new_target: false,
+        },
+        "delegated-browser",
+    );
+    apply(
+        crate::workspace_control::Action::Select {
+            view_id: page.view_id.clone(),
+            reveal: false,
+            expected_browser_area: None,
+        },
+        "delegated-select",
+    );
+    apply(
+        crate::workspace_control::Action::Close {
+            view_id: page.view_id,
+            expected_browser_area: None,
+        },
+        "delegated-close",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert!(runtime.snapshot.browser_views.is_empty());
+}
+
+#[test]
 fn inbound_waiting_caller_cannot_allocate_a_private_view() {
     let t = tree();
     let (mut runtime, _requests, _views) =

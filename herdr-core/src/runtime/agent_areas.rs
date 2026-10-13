@@ -302,8 +302,21 @@ impl Runtime {
     }
 
     pub(super) fn agent_tab_waiting_in(&self, key: &WorkspaceKey, tab_id: &str) -> bool {
-        self.agent_layout_of(key)
-            .is_some_and(|layout| layout.tree.display(tab_id).is_none())
+        // Delegated tabs live in canvases, not the ordinary admission tree.
+        // Their absence from that tree is not an overflow refusal.
+        self.catalog_workspaces()
+            .filter(|workspace| workspace.device_id == key.0)
+            .flat_map(|workspace| &workspace.checkouts)
+            .filter(|checkout| checkout.path == key.1)
+            .any(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id) && !tab.delegated)
+            })
+            && self
+                .agent_layout_of(key)
+                .is_some_and(|layout| layout.tree.display(tab_id).is_none())
     }
 
     pub(super) fn finish_agent_admission(&mut self, path: &str, id: u64) {
@@ -530,9 +543,8 @@ impl Runtime {
 
     /// Takes a node's tabs as they stand into its Workspaces' Agent areas,
     /// as a local session does for this machine's (`reconcile_agent_topology`).
-    /// A checkout the node lists with no tab is left alone, like an answer
-    /// that has not arrived, so a startup placeholder cannot erase the saved
-    /// tree.
+    /// An empty checkout clears its saved tree only when the catalog is
+    /// fully answered, so an unresolved startup placeholder cannot erase it.
     pub(super) fn reconcile_node_agent_topology(&mut self, device: &str) {
         if device == self.node.as_str()
             || !self.arranges_agent_areas(device)

@@ -9,6 +9,95 @@ use crate::workspace_control::{Action, Query, checkout_caller_id};
 const TABS: [&str; 3] = ["w-order:t1", "w-order:t2", "w-order:t3"];
 
 #[test]
+fn delegated_local_caller_can_manage_background_views() {
+    let (mut runtime, _checkout, directory) = setup("delegated-caller");
+    let checkout = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+        .find(|checkout| checkout.path == directory.to_string_lossy())
+        .unwrap();
+    checkout
+        .tabs
+        .iter_mut()
+        .find(|tab| tab.id.as_deref() == Some(TABS[1]))
+        .unwrap()
+        .delegated = true;
+    runtime
+        .reconcile_agent_topology(
+            &key(&directory),
+            &TABS
+                .iter()
+                .map(|tab| (tab.to_string(), *tab == TABS[1]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    runtime.sync_workspace_view();
+    assert!(
+        runtime
+            .agent_layout_of(&key(&directory))
+            .unwrap()
+            .tree
+            .display(TABS[1])
+            .is_none()
+    );
+    let before = runtime.snapshot.workspace_view.clone();
+    let caller = "w-order:t2:p";
+    control_file(
+        &mut runtime,
+        caller,
+        &directory,
+        "c.md",
+        true,
+        "delegated-file",
+    );
+    let page = control(
+        &mut runtime,
+        caller,
+        open_page("https://example.test/delegated", false),
+        "delegated-browser",
+    );
+    control(
+        &mut runtime,
+        caller,
+        Action::Select {
+            view_id: page.view_id.clone(),
+            reveal: false,
+            expected_browser_area: None,
+        },
+        "delegated-select",
+    );
+    control(
+        &mut runtime,
+        caller,
+        Action::Close {
+            view_id: page.view_id,
+            expected_browser_area: None,
+        },
+        "delegated-close",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert!(runtime.snapshot.browser_views.is_empty());
+    let presentation = &runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views
+        .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+        .unwrap()
+        .view_presentations[TABS[1]];
+    assert!(
+        presentation
+            .layout
+            .displays()
+            .any(|display| display.path.ends_with("c.md"))
+    );
+}
+
+#[test]
 fn rejected_background_open_preserves_documents_columns_and_save_generation() {
     let (mut runtime, checkout, directory) = setup("background-refusal");
     open(&mut runtime, &checkout, &directory, "a.md");
