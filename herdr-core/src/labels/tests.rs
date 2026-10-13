@@ -822,6 +822,138 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
 }
 
 #[test]
+fn a_null_goal_is_valid_but_an_absent_or_invalid_goal_is_not() {
+    use super::analysis::{AnalysisPhase, LabelEnd};
+    use super::context_label::{parse, request};
+    for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
+        let mut answer = json!({"goal": null, "goal_changed": false, "line": ""});
+        if phase == AnalysisPhase::TurnEnd {
+            answer["end"] = json!("done");
+        }
+        let parsed = parse(phase, answer.clone()).unwrap();
+        assert_eq!(parsed.goal, None);
+        assert_eq!(parsed.line, "");
+        assert_eq!(
+            parsed.end,
+            if phase == AnalysisPhase::TurnStart {
+                LabelEnd::Working
+            } else {
+                LabelEnd::Done
+            }
+        );
+        let schema = request(phase, "pane", "null-goal".into(), "context").output_schema;
+        assert_eq!(
+            schema["properties"]["goal"]["type"],
+            json!(["string", "null"])
+        );
+        answer["goal_changed"] = json!(true);
+        assert!(parse(phase, answer.clone()).is_err());
+        answer["goal_changed"] = json!(false);
+        for invalid in [json!(""), json!("짧음"), json!(42)] {
+            answer["goal"] = invalid;
+            assert!(parse(phase, answer.clone()).is_err());
+        }
+        answer.as_object_mut().unwrap().remove("goal");
+        assert!(
+            parse(phase, answer).is_err(),
+            "null is explicit, not a missing field"
+        );
+    }
+}
+
+#[test]
+fn greetings_keep_the_native_title_until_real_work_sets_a_goal() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let greeting = [("user", "안녕하세요"), ("assistant", "안녕하세요!")];
+    let path = harness.session("greeting", "native-greeting", &greeting);
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", json!({"type":"custom-title", "customTitle":"Claude 이름 질문", "sessionId":"native-greeting"})).unwrap();
+    }
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+    }));
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(task(shown(&worker, &idle)), None);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+        "agent_session":{"kind":"path", "value":path},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    let projection = crate::sidebar::project_agents(payload);
+    assert!(projection.excluded.is_empty());
+    assert_eq!(projection.agents[0].identity_label, "Claude 이름 질문");
+
+    let named = [
+        greeting[0],
+        greeting[1],
+        ("user", "너의 이름은 뭐니?"),
+        ("assistant", "저는 Claude입니다."),
+    ];
+    harness.session("greeting", "native-greeting", &named);
+    harness.input.record("w1:p1", turn_at(2) - 300, false);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+    }));
+    observe(&mut worker, &agent(&path, "idle", 2));
+    settle(&mut worker, &woken);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+
+    let working_turn = [
+        named[0],
+        named[1],
+        named[2],
+        named[3],
+        ("user", "로그인 화면 만들어줘"),
+    ];
+    harness.session("greeting", "native-greeting", &working_turn);
+    harness.input.record("w1:p1", turn_at(4) - 300, false);
+    harness.backend.begin("사용자 로그인 화면");
+    let working = agent(&path, "working", 3);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("사용자 로그인 화면")
+    );
+
+    // A false change flag keeps the goal, while the turn's own answer
+    // still reaches the row even if the provider returned null.
+    let mut completed_turn = working_turn.to_vec();
+    completed_turn.push(("assistant", "배포 환경을 선택해 주세요."));
+    harness.session("greeting", "native-greeting", &completed_turn);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "배포 환경을 선택하세요", "end": "question",
+    }));
+    let question = agent(&path, "idle", 4);
+    observe(&mut worker, &question);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        store.target(LOCAL_TARGET)["w1:p1"].goal.as_deref(),
+        Some("사용자 로그인 화면")
+    );
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.line, "배포 환경을 선택하세요");
+    assert_eq!(record.end, Some(super::analysis::LabelEnd::Question));
+    let label = shown(&worker, &question).unwrap();
+    assert_eq!(
+        label.expected_reply.as_deref(),
+        Some("배포 환경을 선택하세요")
+    );
+    assert!(label.question);
+}
+
+#[test]
 fn the_providers_answer_is_judged_before_it_is_shown() {
     use super::analysis::{AnalysisPhase, LabelEnd};
     use super::context_label::parse_text;
