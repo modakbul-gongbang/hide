@@ -34,17 +34,22 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
   if (current) lastWorkspace.current = current;
   const workspace = current ?? lastWorkspace.current;
   const available = live && current !== null && deviceConnected(rest, target.deviceId);
-  const { record, write } = projectSettings(rest, target);
   const [page, setPage] = useState<Page>(initialPage);
   const [intent, setIntent] = useState<{ id: string; field: keyof ProjectSettingsPatch; patch: ProjectSettingsPatch; failed: boolean } | null>(null);
-  const pending = write?.state === "pending";
+  const { record, write } = projectSettings(rest, target, intent?.id);
+  const waiting = useRef(false);
+  const pending = write?.state === "pending" || (intent !== null && !intent.failed && write?.request_id !== intent.id);
+  useEffect(() => { if (write && write.request_id === intent?.id && write.state !== "pending") waiting.current = false; }, [write, intent?.id]);
   const blocked = !available || pending || (record !== null && record.version !== 1);
   const previous = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const close = () => useUiStore.getState().closeOverlay("project_settings");
   const save = (field: keyof ProjectSettingsPatch, patch: ProjectSettingsPatch) => {
-    if (blocked) return;
+    if (blocked || waiting.current) return;
     const id = crypto.randomUUID();
-    setIntent({ id, field, patch, failed: !actions.setProjectSettings(target, patch, id) });
+    waiting.current = true;
+    const sent = actions.setProjectSettings(target, patch, id);
+    if (!sent) waiting.current = false;
+    setIntent({ id, field, patch, failed: !sent });
   };
   const stateFor = (field: keyof ProjectSettingsPatch): ReactNode => {
     const retry = intent?.field === field ? intent : write?.patch?.[field] !== undefined ? { id: write.request_id, patch: write.patch } : null;
@@ -52,6 +57,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     const state = write?.request_id === retry.id ? write.state : intent?.failed ? "failed" : "pending";
     return <div className="flex flex-wrap items-center gap-sm" aria-live="polite">
       <Status tone={state === "failed" ? "error" : state === "pending" ? "pending" : "ok"}>{t(`projectSettings.${state === "failed" ? "failed" : state === "pending" ? "pending" : "saved"}`)}</Status>
+      {state === "failed" ? <Note tone="error">{t(settingsErrorKey(write?.error))}</Note> : null}
       {state === "failed" ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, patch: retry.patch, failed: !actions.setProjectSettings(target, retry.patch, retry.id) })}>{t("projectSettings.retry")}</Button> : null}
     </div>;
   };
@@ -64,7 +70,11 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
   const [repositoryEditing, setRepositoryEditing] = useState(record?.repository?.mode === "repository");
   const [repositoryInvalid, setRepositoryInvalid] = useState(false);
   const confirmedRepository = record?.repository?.mode === "repository" ? record.repository.repository : null;
-  useEffect(() => { if (confirmedRepository !== null) setRepositoryDraft(confirmedRepository); }, [confirmedRepository]);
+  useEffect(() => {
+    if (write?.state === "pending") return;
+    setRepositoryDraft(confirmedRepository ?? "");
+    setRepositoryEditing(confirmedRepository !== null);
+  }, [confirmedRepository, write?.state, intent?.failed]);
   const detected = workspace?.home_issues?.repository ?? (workspace?.tasks?.source?.kind === "github" ? workspace.tasks.source.name : null);
   const branches = workspace?.branches ?? [];
   const base = workspace ? projectBaseBranch(rest, workspace) : { branch: "", missing: null };
@@ -107,7 +117,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
               {page === "connections" ? <>
                 <Group title={t("projectSettings.repository")} note={t("projectSettings.repositoryNote")}>
                   <Row label={t("projectSettings.repository")} detail={<>{workspace?.is_git ? <Value>{confirmedRepository ?? detected ?? t("projectSettings.repositoryMissing")}</Value> : <Note>{t("projectSettings.folder")}</Note>}{stateFor("repository")}</>}>
-                    <Select value={repositoryEditing ? "repository" : "auto"} disabled={blocked || !workspace?.is_git} onValueChange={(value) => { setRepositoryEditing(value === "repository"); if (value === "auto") save("repository", { repository: { mode: "auto" } }); }}>
+                    <Select value={confirmedRepository !== null ? "repository" : "auto"} disabled={blocked || !workspace?.is_git} onValueChange={(value) => { if (value === "repository") setRepositoryEditing(true); if (value === "auto") save("repository", { repository: { mode: "auto" } }); }}>
                       <SelectTrigger aria-label={t("projectSettings.repository")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">{t("projectSettings.automatic")}</SelectItem><SelectItem value="repository">{t("projectSettings.override")}</SelectItem></SelectContent>
                     </Select>
                   </Row>
@@ -121,9 +131,11 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
                       {resolvedSource ? resolvedSource.failure ? t("board.sourceReadFailed", { source: resolvedSource.label }) : resolvedSource.reading ? t("board.reading") : resolvedSource.kind === "local" ? t("issueSettings.local") : resolvedSource.label : t(available ? "board.reading" : "settings.unavailable")}
                     </Note>
                     {resolvedSource?.failure ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => actions.refreshProjectOverview(target.workspaceId)}>{t("projectSettings.retry")}</Button> : null}
+                    {workspace?.checkouts.some((checkout) => checkout.github?.failure_category === "not_logged_in") ? <Button size="sm" variant="ghost" onClick={() => actions.openSettings("github")}>{t("projectSettings.accountSettings")}</Button> : null}
+                    {!workspace?.is_git ? <Note>{t("projectSettings.folder")}</Note> : null}
                     {stateFor("issue_source")}
                   </>}>
-                    <Select value={source?.value ?? "auto"} disabled={blocked || !workspace} onValueChange={(value) => save("issue_source", { issue_source: value as "auto" | "github" | "local" })}><SelectTrigger aria-label={t("issueSettings.sourceMenu")}><SelectValue /></SelectTrigger><SelectContent>{source?.options.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>)}</SelectContent></Select>
+                    <Select value={workspace && !workspace.is_git && projectIssueSource(rest, workspace) === "github" ? "github" : source?.value ?? "auto"} disabled={blocked || !workspace} onValueChange={(value) => save("issue_source", { issue_source: value as "auto" | "github" | "local" })}><SelectTrigger aria-label={t("issueSettings.sourceMenu")}><SelectValue /></SelectTrigger><SelectContent>{!workspace?.is_git ? <SelectItem value="github" disabled>GitHub</SelectItem> : null}{source?.options.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>)}</SelectContent></Select>
                   </Row>
                 </Group>
                 <Group title={t("projectSettings.linearName")}><Row label={t("projectSettings.linearName")} detail={<Note>{t("projectSettings.linear")}</Note>}><Button size="sm" variant="outline" disabled>{t("projectSettings.linear")}</Button></Row></Group>
@@ -151,4 +163,17 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
       </Tabs>
     </DialogContent>
   </Dialog>;
+}
+
+function settingsErrorKey(code: string | null | undefined) {
+  switch (code) {
+    case "project_settings_busy": return "projectSettings.errorBusy" as const;
+    case "project_settings_branch_unavailable": return "projectSettings.errorBranch" as const;
+    case "project_settings_newer_version": return "projectSettings.newerVersion" as const;
+    case "project_settings_invalid_repository": return "projectSettings.repositoryInvalid" as const;
+    case "project_settings_not_git": return "projectSettings.folder" as const;
+    case "project_settings_limit": case "project_settings_link_limit": return "projectSettings.errorLimit" as const;
+    case "project_settings_device_unavailable": case "project_settings_project_unavailable": case "project_settings_project_missing": return "projectSettings.unavailable" as const;
+    default: return "projectSettings.errorSave" as const;
+  }
 }

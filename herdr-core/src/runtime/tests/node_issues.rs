@@ -2388,3 +2388,45 @@ fn a_node_project_sends_its_issues_once_as_tasks() {
         serde_json::json!({"repository": "acme/app", "issues": [], "overflow": false})
     );
 }
+
+#[test]
+fn confirmed_override_names_remote_search_and_auto_source_before_a_provider_reply() {
+    let repo = repo(None, "12-fix-login");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    assert_eq!(
+        node_project(&shared.lock().unwrap())
+            .unwrap()
+            .tasks
+            .source
+            .as_ref()
+            .unwrap()
+            .kind,
+        "local"
+    );
+    dispatch(
+        &shared,
+        "project_settings_set",
+        serde_json::json!({"device_id": NODE, "root": repo.root, "request_id": "override", "patch": {"repository": {"mode": "repository", "repository": "example/override"}}}),
+    );
+    let id = crate::project_settings::key(NODE, &repo.root);
+    wait(&shared, "durable remote override", |runtime| {
+        runtime.snapshot.ui_state.project_settings.contains_key(&id)
+    });
+    let runtime = shared.lock().unwrap();
+    let project = node_project(&runtime).unwrap();
+    assert_eq!(
+        project.home_issues.repository.as_deref(),
+        Some("example/override")
+    );
+    assert_eq!(project.tasks.source.as_ref().unwrap().kind, "github");
+    assert!(project.tasks.source.as_ref().unwrap().reading);
+    assert!(task_ids(project).is_empty());
+    let (targets, _) = runtime.github_search_targets();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].repository.as_deref(), Some("example/override"));
+}

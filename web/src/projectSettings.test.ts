@@ -40,4 +40,14 @@ describe("confirmed scoped project settings", () => {
     expect(projectSettings(rest, settingsTarget(project))).toMatchObject({ record: null, write: { request_id: "intent", patch: { issue_source: "github" } } });
     expect(projectSettings(rest, { ...settingsTarget(project), deviceId: "remote" }).write).toBeNull();
   });
+  it("finds a correlated busy refusal while another request is pending", () => {
+    const rest = snapshot();
+    rest.ui_state!.project_settings_writes = {
+      active: { device_id: "local", root: "/project", request_id: "active", state: "pending", error: null },
+      refusal: { device_id: "local", root: "/project", request_id: "second", state: "failed", error: "project_settings_busy" },
+    };
+    expect(projectSettings(rest, settingsTarget(project), "second").write).toMatchObject({ request_id: "second", state: "failed", error: "project_settings_busy" });
+    expect(projectSettings(rest, settingsTarget(project), "active").write?.state).toBe("pending");
+  });
+
 });

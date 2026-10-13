@@ -14,11 +14,11 @@ export type ProjectSettingsTarget = { deviceId: string; root: string; workspaceI
 export const settingsTarget = (workspace: Workspace): ProjectSettingsTarget => ({ deviceId: workspace.device_id, root: workspace.path, workspaceId: workspace.id, label: workspace.label });
 
 /** The durable identity belongs to the core. Match its tuple, never a visible checkout id. */
-export function projectSettings(rest: SnapshotRest | null, target: ProjectSettingsTarget): { record: ProjectSettings | null; write: ProjectSettingsWrite | null } {
+export function projectSettings(rest: SnapshotRest | null, target: ProjectSettingsTarget, requestId?: string): { record: ProjectSettings | null; write: ProjectSettingsWrite | null } {
   const entry = Object.entries(rest?.ui_state?.project_settings ?? {}).find(([, row]) => row.device_id === target.deviceId && row.root === target.root);
   const record = entry?.[1] ?? null;
   // A failed first write has no saved record yet; receipts carry their scope too.
-  const write = Object.values(rest?.ui_state?.project_settings_writes ?? {}).find((row) => row.device_id === target.deviceId && row.root === target.root) ?? null;
+  const write = Object.values(rest?.ui_state?.project_settings_writes ?? {}).find((row) => row.device_id === target.deviceId && row.root === target.root && (!requestId || row.request_id === requestId)) ?? null;
   return { record, write };
 }
 

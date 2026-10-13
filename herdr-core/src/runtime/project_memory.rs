@@ -39,6 +39,7 @@ pub(super) struct ProjectMemoryWork {
     reads: ReadFence,
     /// The catalog Project an action runs for, with the action.
     pub(super) action: Option<(String, MemoryAction)>,
+    failure: Option<(String, MemoryAction)>,
     /// The Project whose Memory turns on once the hook update its switch
     /// started lands, by catalog Project.
     enable_after_hook_update: Option<String>,
@@ -171,6 +172,78 @@ impl Runtime {
             .get_or_insert_with(MemorySnapshot::default)
     }
 
+    /// One navigation intent, scoped before any focus or Tools state moves.
+    pub(super) fn navigate_project_memory(
+        &mut self,
+        payload: events::ProjectMemoryNavigatePayload,
+    ) -> bool {
+        let usable = self.catalog_workspaces().any(|workspace| {
+            workspace.id == payload.workspace_id
+                && workspace.device_id == payload.device_id
+                && workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.id == payload.checkout_id && checkout.exists)
+        });
+        if !usable {
+            self.set_error(
+                "memory.project_unavailable",
+                "This project's checkout is unavailable",
+                true,
+            );
+            return true;
+        }
+        let Some(key) = self
+            .workspace_key(&payload.workspace_id, &payload.checkout_id)
+            .filter(|key| key.0 == payload.device_id)
+        else {
+            self.set_error(
+                "memory.project_unavailable",
+                "This project's checkout is unavailable",
+                true,
+            );
+            return true;
+        };
+        if payload.request_id.is_empty()
+            || payload.request_id.len() > 128
+            || !self.separate_view_areas()
+        {
+            self.set_error(
+                "memory.navigation_unavailable",
+                "Memory navigation is unavailable",
+                true,
+            );
+            return true;
+        }
+        if payload.device_id == self.node.as_str() {
+            self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+            if self.snapshot.navigator.focused_checkout_id.as_deref()
+                == Some(payload.checkout_id.as_str())
+            {
+                self.bring_device_forward(payload.device_id);
+                self.show_project_memory_at(&key, payload.workspace_id);
+                self.sync_workspace_view();
+            }
+        } else {
+            let device = payload.device_id;
+            let request = payload.request_id;
+            let project = payload.workspace_id;
+            self.request_remote_control(events::RemoteControlPayload {
+                target_id: device.clone(),
+                request_id: request.clone(),
+                focus_device: false,
+                report_pane_focus_outcome: false,
+                request: events::RemoteControlRequest::FocusWorkspace {
+                    workspace_id: project.clone(),
+                    checkout_id: Some(payload.checkout_id),
+                },
+            });
+            self.attach_memory_navigation(&device, &request, project);
+            self.sync_workspace_view();
+        }
+        true
+    }
+
     /// Opens a catalog Project's Memory for a screen, or reads it again; no
     /// `workspace_id` closes it (`memory_open`). Opening another Project
     /// leaves nothing of the previous one, and its reads can no longer land.
@@ -184,6 +257,7 @@ impl Runtime {
             if open {
                 self.project_memory = ProjectMemoryWork {
                     action: self.project_memory.action.take(),
+                    failure: self.project_memory.failure.take(),
                     enable_after_hook_update: self.project_memory.enable_after_hook_update.take(),
                     // The tracker follows every Project's promotions and may
                     // be mid-check; closing a read must not drop its flight.
@@ -538,6 +612,17 @@ impl Runtime {
             .as_ref()
             .filter(|(workspace_id, _)| self.memory_opened(workspace_id))
             .map(|(_, action)| *action);
+        let preparing = self
+            .project_memory
+            .enable_after_hook_update
+            .as_deref()
+            .is_some_and(|id| self.memory_opened(id));
+        let failure = self
+            .project_memory
+            .failure
+            .as_ref()
+            .filter(|(id, _)| self.memory_opened(id))
+            .map(|(_, action)| *action);
         let ai_ready = self.ai_active() && self.ai_settings.is_some() && !self.usage_paused();
         let Some(project) = self
             .snapshot
@@ -566,7 +651,9 @@ impl Runtime {
                 None
             };
         project.forgotten = work.forgotten;
-        project.pending_action = action;
+        project.pending_action = action.or(preparing.then_some(MemoryAction::Enable));
+        project.preparing_hooks = preparing;
+        project.action_failure = failure;
     }
 
     pub(super) fn hooks_support_memory(&self) -> bool {
@@ -585,7 +672,9 @@ impl Runtime {
         let (node, path) = match self.memory_folder(&payload.workspace_id) {
             Ok(folder) => folder,
             Err(_) => {
-                self.set_error(
+                self.memory_action_failed(
+                    &payload.workspace_id,
+                    payload.action,
                     "memory.project_unavailable",
                     "This Project is no longer registered",
                     false,
@@ -600,7 +689,9 @@ impl Runtime {
                     "component": "memory", "kind": "memory.action_unreachable",
                     "workspace_id": payload.workspace_id, "device": node.as_str(), "reason": reason,
                 }));
-                self.set_error(
+                self.memory_action_failed(
+                    &payload.workspace_id,
+                    payload.action,
                     "memory.project_unreachable",
                     crate::memory_command::next_action(reason),
                     true,
@@ -608,13 +699,38 @@ impl Runtime {
                 return true;
             }
         };
+        if self.project_memory.enable_after_hook_update.is_some() {
+            self.memory_action_failed(
+                &payload.workspace_id,
+                payload.action,
+                "memory.action_busy",
+                "Wait for the pending Memory change to finish",
+                false,
+            );
+            return true;
+        }
+        if let Some((_, running)) = &self.project_memory.action {
+            self.memory_action_failed(
+                &payload.workspace_id,
+                payload.action,
+                "memory.action_busy",
+                format!(
+                    "Wait for the Memory change \"{}\" to finish",
+                    running.as_str()
+                ),
+                false,
+            );
+            return true;
+        }
         if payload.action == MemoryAction::Enable && !self.hooks_support_memory() {
             // Turning Memory on is the operator's word to bring the agent
             // hooks that carry it up to date: the kit's Reinstall of this
             // Mac's hook parts, which owns every hook write (PRD device-parity
             // D-27). Memory turns on once they land.
             if self.hook_diagnosis.is_none() {
-                self.set_error(
+                self.memory_action_failed(
+                    &payload.workspace_id,
+                    payload.action,
                     "memory.hooks_unread",
                     "Hide is still reading the agent hooks; try again in a moment",
                     false,
@@ -625,25 +741,18 @@ impl Runtime {
             if !parts.is_empty() {
                 let node = self.node.clone();
                 self.queue_kit_reinstall(node.as_str(), parts);
+                self.project_memory.failure = None;
                 self.project_memory.enable_after_hook_update = Some(payload.workspace_id);
+                self.sync_project_memory();
                 return true;
             }
             // No agent here takes Memory's hooks; Memory is on for the ones
             // installed later, which the kit sets up with Memory.
         }
-        if let Some((_, running)) = &self.project_memory.action {
-            self.set_error(
-                "memory.action_busy",
-                format!(
-                    "Wait for the Memory change \"{}\" to finish",
-                    running.as_str()
-                ),
-                false,
-            );
-            return true;
-        }
         let Some(context) = self.worker_context.clone() else {
-            self.set_error(
+            self.memory_action_failed(
+                &payload.workspace_id,
+                payload.action,
                 "memory.worker_unavailable",
                 "The Project Memory writer is unavailable",
                 true,
@@ -665,7 +774,9 @@ impl Runtime {
                         "workspace_id": payload.workspace_id,
                         "reason": reason,
                     }));
-                    self.set_error(
+                    self.memory_action_failed(
+                        &payload.workspace_id,
+                        payload.action,
                         "memory.promotion_unavailable",
                         "Hide cannot start an agent for this Project right now",
                         true,
@@ -677,7 +788,9 @@ impl Runtime {
         };
         let action = payload.action;
         let number = payload.number;
-        self.project_memory.action = Some((payload.workspace_id.clone(), action));
+        self.project_memory.failure = None;
+        let action_workspace = payload.workspace_id.clone();
+        self.project_memory.action = Some((action_workspace.clone(), action));
         self.sync_project_memory();
         let database = self.memory_database_path();
         let spawn = thread::Builder::new()
@@ -705,7 +818,9 @@ impl Runtime {
             });
         if let Err(error) = spawn {
             self.project_memory.action = None;
-            self.set_error(
+            self.memory_action_failed(
+                &action_workspace,
+                action,
                 "memory.worker_failed",
                 format!("The Project Memory writer could not start: {error}"),
                 true,
@@ -714,13 +829,30 @@ impl Runtime {
         true
     }
 
+    fn memory_action_failed(
+        &mut self,
+        workspace: &str,
+        action: MemoryAction,
+        kind: &str,
+        message: impl Into<String>,
+        retryable: bool,
+    ) {
+        self.project_memory.failure = Some((workspace.to_owned(), action));
+        self.set_error(kind, message, retryable);
+        self.sync_project_memory();
+    }
+
     fn finish_memory_action(
         &mut self,
         action: MemoryAction,
         number: Option<u64>,
         result: Result<MemoryActionOutcome, String>,
     ) -> bool {
-        self.project_memory.action = None;
+        let workspace = self
+            .project_memory
+            .action
+            .take()
+            .map(|(workspace, _)| workspace);
         match result {
             Ok(outcome) => {
                 if let Some((kind, message)) = outcome.diagnostic {
@@ -752,11 +884,45 @@ impl Runtime {
                     _ => {}
                 }
             }
-            Err(message) => self.set_error("memory.action_failed", message, true),
+            Err(message) => {
+                if let Some(workspace) = workspace {
+                    self.memory_action_failed(
+                        &workspace,
+                        action,
+                        "memory.action_failed",
+                        message,
+                        true,
+                    );
+                }
+            }
         }
         self.sync_project_memory();
         self.refresh_project_memory();
         true
+    }
+
+    pub(super) fn settle_memory_hook_preparation(&mut self) {
+        if self.project_memory.enable_after_hook_update.is_none() {
+            return;
+        }
+        let kit = self.kit_state(self.node.as_str());
+        let failed = !kit.busy
+            && (kit.unavailable.is_some()
+                || kit.components.iter().any(|part| {
+                    matches!(
+                        part.id,
+                        hide_kit::ComponentId::ClaudeCodeHook | hide_kit::ComponentId::CodexHook
+                    ) && part.state == hide_kit::ComponentState::Failed
+                }));
+        if failed && let Some(workspace) = self.project_memory.enable_after_hook_update.take() {
+            self.memory_action_failed(
+                &workspace,
+                MemoryAction::Enable,
+                "memory.hook_preparation_failed",
+                "Agent hook preparation failed; repair the kit or retry Memory",
+                true,
+            );
+        }
     }
 
     /// Turns Memory on for the Project whose switch started a hook update,
@@ -1139,6 +1305,40 @@ mod tests {
             "a card that is not there shows nothing"
         );
         assert_eq!(load.search, None);
+
+        // The writer's real SQLite failure must leave both the switch and
+        // existing cards intact, including when the same action is retried.
+        let saved_database = temp.path().join("saved-memory.sqlite3");
+        std::fs::rename(&database, &saved_database).unwrap();
+        std::fs::create_dir(&database).unwrap();
+        for action in [MemoryAction::Disable, MemoryAction::Enable] {
+            let payload = events::MemoryActionPayload {
+                workspace_id: "project".to_owned(),
+                action,
+                number: None,
+                numbers: Vec::new(),
+            };
+            assert!(
+                mutate_memory(
+                    &crate::node::test_node(),
+                    node.as_ref(),
+                    &database,
+                    &root,
+                    &payload,
+                    None,
+                )
+                .is_err()
+            );
+        }
+        std::fs::remove_dir(&database).unwrap();
+        std::fs::rename(saved_database, &database).unwrap();
+        let unchanged = read(Some(1), None);
+        assert!(unchanged.state.unwrap().enabled);
+        assert_eq!(unchanged.rows.len(), 1);
+        assert_eq!(
+            unchanged.expanded.unwrap().body,
+            "Run tests with nextest before a merge"
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ import {frame, icon, num, text} from './pen-system.mjs';
 
 const NAV = [['connections', 'link', '연결'], ['work', 'git-branch', '작업 방식'], ['memory', 'brain', '기억']];
 
-export function projectSettingsScreens(tokens, parts, {screenSheet, screenIconButton}) {
+export function projectSettingsScreens(tokens, parts, {screenSheet, screenIconButton, screenInput}) {
   const {group, row, select, status, button, sw, paragraph} = parts;
   const W = num(tokens, '--size-settings-sheet-w');
   const H = num(tokens, '--size-project-settings-sheet-h');
@@ -20,7 +20,7 @@ export function projectSettingsScreens(tokens, parts, {screenSheet, screenIconBu
       group(`${p}-repository`, inner, {title: 'GitHub 저장소', rows: [
         row(`${p}-repo-row`, inner, {label: 'GitHub 저장소', controls: [select(`${p}-repo-choice`, state === 'override' ? '저장소 선택' : '자동 감지', 200)], controlsWidth: 200,
           detail: note(`${p}-repo-value`, long ? 'example/아주-긴-프로젝트-이름-with-mixed-script' : 'example/hide')}),
-        ...(state === 'override' ? [row(`${p}-repo-draft`, inner, {label: '저장소 선택', controls: [select(`${p}-repo-input`, 'example/another', 200)], controlsWidth: 200, detail: result})] : []),
+        ...(state === 'override' ? [row(`${p}-repo-draft`, inner, {label: '저장소 선택', controls: [screenInput(`${p}-repo-input`, {content: 'example/another', width: 200}), button(`${p}-repo-apply`, '적용', {variant: 'outline'})], controlsWidth: 256, detail: result})] : []),
       ], note: 'Hide의 연결만 바꿔요. Git remote와 GitHub 권한은 그대로예요.'}),
       group(`${p}-issues`, inner, {title: '이슈 출처', rows: [row(`${p}-issue-row`, inner, {label: '이슈 출처', controls: [select(`${p}-source-choice`, '자동 · GitHub', 200)], controlsWidth: 200, detail: result})]}),
       group(`${p}-linear`, inner, {title: 'Linear', rows: [row(`${p}-linear-row`, inner, {label: 'Linear', controls: [{...button(`${p}-linear-button`, '준비중', {variant: 'outline'}), opacity: num(tokens, '--opacity-disabled')}], controlsWidth: 70, detail: '준비중'})]}),

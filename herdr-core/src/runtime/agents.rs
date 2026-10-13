@@ -2578,6 +2578,7 @@ impl Runtime {
                 {
                     self.record_created_device_tab(target_id, tab_id, cwd);
                 }
+                self.acknowledge_memory_navigation(target_id, request_id);
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));
@@ -2604,6 +2605,7 @@ impl Runtime {
             }
             // A tab move is settled above; no other action reports an order.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                self.drop_pending_choice(target_id, request_id);
                 if tracked_remote_operation {
                     self.fail_remote_operation(
                         target_id,

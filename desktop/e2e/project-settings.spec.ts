@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, type ElectronApplication } from "@playwright/test";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { showProjectRow } from "../../web/e2e/wire";
 import { captureNativeWindow } from "./native-window";
 import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 
@@ -24,18 +25,41 @@ test("Project settings keep confirmed values through a failed save and restart",
     app = launched.app;
     let page = launched.page;
     const gear = () => page.locator('[data-project]', { hasText: "sample" }).locator('[data-row-settings]');
-    await gear().click();
+    await (await showProjectRow(page, gear())).click();
     let sheet = page.locator('[data-project-settings]');
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("tab")).toHaveText(["Connections", "Working style", "Memory"]);
-    // The real discovery answer on a repository without a GitHub remote.
-    await expect(sheet).toContainText("Local");
+    // Discovery finds gh on this controlled PATH, but this repository has no
+    // GitHub remote. Auto keeps its actual provider failure instead of Local.
+    await expect(sheet).toContainText("Automatic (GitHub)");
+    await expect(sheet).toContainText("GitHub read failed");
+    await captureNativeWindow(app, "project-settings-connections-native", { state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, daemonPid: run.daemonPid(), build: "worktree debug", provider: "actual discovery failure, no GitHub remote" });
     await sheet.getByRole("combobox", { name: "Issue source", exact: true }).click();
     await page.getByRole("option", { name: "Local", exact: true }).click();
     await expect(sheet).toContainText("Saved");
     const stateFile = path.join(run.env.HIDE_STATE_DIR!, "core-state.json");
     const stored = () => JSON.parse(fs.readFileSync(stateFile, "utf8")) as { project_settings: Record<string, { device_id: string; root: string; issue_source?: string; new_work?: string }> };
     await expect.poll(() => Object.values(stored().project_settings).find((record) => record.root === repo)?.issue_source).toBe("local");
+    const connection = sheet.getByRole("combobox", { name: "GitHub repository", exact: true });
+    await connection.click();
+    await page.getByRole("option", { name: "Choose repository", exact: true }).click();
+    await sheet.getByRole("textbox", { name: "owner/repository" }).fill("example/private-fixture");
+    await sheet.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(connection).toContainText("Choose repository");
+    await expect(sheet).toContainText("Saved");
+    const repositoryBackup = `${stateFile}.before-repository-failure`;
+    fs.renameSync(stateFile, repositoryBackup);
+    fs.mkdirSync(stateFile);
+    try {
+      await connection.click();
+      await page.getByRole("option", { name: "Detect automatically", exact: true }).click();
+      await expect(sheet).toContainText("Couldn't save");
+      await expect(connection).toContainText("Choose repository");
+      await expect(sheet).toContainText("example/private-fixture");
+      await screenshot(page, "project-settings-repository-save-failed");
+    } finally { fs.rmdirSync(stateFile); fs.renameSync(repositoryBackup, stateFile); }
+    await sheet.getByRole("button", { name: "Try again" }).click();
+    await expect(connection).toContainText("Detect automatically");
     await sheet.getByRole("tab", { name: "Working style" }).click();
     await expect(sheet).toContainText("Unsupported");
     const location = sheet.getByRole("combobox", { name: "Start new work in" });
@@ -62,16 +86,54 @@ test("Project settings keep confirmed values through a failed save and restart",
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
     await expect(gear()).toBeFocused();
+    await gear().click();
+    await sheet.getByRole("tab", { name: "Memory", exact: true }).click();
+    await sheet.getByRole("button", { name: "Open project Memory" }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(page.locator("[data-memory]")).toBeVisible();
+    await captureNativeWindow(app, "project-settings-memory-open-native", { build: "worktree debug", project: repo, daemonPid: run.daemonPid() });
     await app.close();
     app = null;
     expect(run.hide(["stop"]).status).toBe(0);
     launched = await launch(run.env);
     app = launched.app;
     page = launched.page;
-    await gear().click();
+    await (await showProjectRow(page, gear())).click();
     sheet = page.locator('[data-project-settings]');
     await sheet.getByRole("tab", { name: "Working style" }).click();
     await expect(sheet.getByRole("combobox", { name: "Start new work in" })).toContainText("New worktree");
+    // B18: project + opens the same confirmation, never starts blindly.
+    await page.keyboard.press("Escape");
+    await page.locator('[data-project]', { hasText: "sample" }).locator('[data-row-start]').click();
+    const confirmation = page.locator('[data-start-worktree]');
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.getByRole("combobox")).toContainText("main");
+    await expect(confirmation.getByRole("textbox")).toHaveValue("");
+  } finally {
+    if (app) await app.close();
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
+test("Project settings fit a narrow native window in every language and theme", async () => {
+  const herdr = await startHerdr({ agents: false });
+  const run = isolate(herdr, "project-settings-narrow");
+  let app: ElectronApplication | null = null;
+  try {
+    const repo = path.join(run.env.HOME!, "projects", "sample");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "README.md"), "Fixture\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Initial"], { cwd: repo });
+    herdr.run(["workspace", "create", "--cwd", repo, "--label", "sample 프로젝트 이름이 아주 길어지는 경우에도 설정 열기", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    const launched = await launch(run.env);
+    app = launched.app;
+    const page = launched.page;
+    const gear = () => page.locator('[data-project]', { hasText: "sample" }).locator('[data-row-settings]');
+    await (await showProjectRow(page, gear())).click();
+    const sheet = page.locator('[data-project-settings]');
     // Actual narrow window and largest supported interface text in all scripts.
     await fitWindow(app, { width: 720, height: 480 });
     for (const language of ["en", "ko", "ja", "zh-CN"]) {
@@ -100,13 +162,7 @@ test("Project settings keep confirmed values through a failed save and restart",
         }
       }
     }
-    // B18: project + opens the same confirmation, never starts blindly.
-    await page.keyboard.press("Escape");
-    await page.locator('[data-project]', { hasText: "sample" }).locator('[data-row-start]').click();
-    const confirmation = page.locator('[data-start-worktree]');
-    await expect(confirmation).toBeVisible();
-    await expect(confirmation.getByRole("combobox")).toContainText("main");
-    await expect(confirmation.getByRole("textbox")).toHaveValue("");
+    await captureNativeWindow(app, "project-settings-narrow-native", { build: "worktree debug", daemonPid: run.daemonPid(), width: 720, height: 480, scale: 17 / 13 });
   } finally {
     if (app) await app.close();
     run.cleanup();

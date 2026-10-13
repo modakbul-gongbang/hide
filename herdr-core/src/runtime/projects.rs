@@ -3242,9 +3242,19 @@ impl Runtime {
                     loading: awaiting.contains(&workspace.path),
                     ..Default::default()
                 });
-            let home_issues = project
+            let mut home_issues = project
                 .map(|project| project.issues.clone())
                 .unwrap_or_default();
+            if let Some(crate::project_settings::RepositoryConnection::Repository { repository }) =
+                crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    self.node.as_str(),
+                    &workspace.path,
+                )
+                .and_then(|record| record.repository.as_ref())
+            {
+                home_issues.repository = Some(repository.clone());
+            }
             if workspace.home_issues != home_issues {
                 workspace.home_issues = home_issues;
                 changed = true;

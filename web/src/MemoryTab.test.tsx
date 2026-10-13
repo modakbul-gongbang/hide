@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
-import { useMemoryProject } from "./MemoryTab";
+import { MemorySettings, useMemoryProject } from "./MemoryTab";
 import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -401,4 +401,19 @@ describe("the Memory tab", () => {
     expect(container.querySelector('[data-memory="unreadable"]')).not.toBeNull();
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
   });
+  it("shows the requested Memory failure with scoped Retry and keeps the confirmed switch", async () => {
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => {
+      await clientI18n.changeLanguage("en");
+      root.render(<TooltipProvider><MemorySettings project={memory({ action_failure: "disable" })} actions={actions} disabled={false} /></TooltipProvider>);
+    });
+    expect(container.querySelector("[data-memory-switch='on']")).not.toBeNull();
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("Could not change Memory");
+    await click("[role=alert] button");
+    expect(sent("memory_action")).toEqual([{ workspace_id: "p", action: "disable", number: null }]);
+    await act(async () => root.render(<TooltipProvider><MemorySettings project={memory({ pending_action: "enable", preparing_hooks: true })} actions={actions} disabled={false} /></TooltipProvider>));
+    expect(container.textContent).toContain("Preparing agent hooks");
+    expect(container.querySelector("[data-memory-switch]")?.hasAttribute("disabled")).toBe(true);
+  });
+
 });

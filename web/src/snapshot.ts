@@ -1554,6 +1554,8 @@ export type ProjectMemory = {
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;
+  preparing_hooks?: boolean;
+  action_failure?: MemoryAction | null;
   expanded: MemoryCard | null;
   search: { query: string; numbers: number[] } | null;
 };

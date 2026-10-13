@@ -1728,9 +1728,11 @@ The base branch is also the project's existing Git comparison and merge base; an
 Plain folders cannot select worktree creation or a Git base.
 Original-checkout branch protection and main file-write blocking are separate unsupported rows.
 
-Memory uses the existing consent, kit and confirmed/pending action controls; turning it off keeps existing cards.
+Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
+Turning it off keeps existing cards.
 While the dialog is open its project owns the daemon's single Memory read slot, and the Tools project is restored when it closes.
-Open project Memory closes the dialog and opens that project's usable checkout and Memory tool; without a usable checkout it gives a local recovery reason.
+Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout and Memory tool; a delayed remote focus changes Tools only on arrival, and refusal leaves the earlier checkout's Tools unchanged.
+Without a usable checkout it gives a local recovery reason.
 All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.
 `web/src/ProjectSettingsSheet.tsx` owns the dialog and `web/src/projectSettings.ts` reads its confirmed scoped choices.
 

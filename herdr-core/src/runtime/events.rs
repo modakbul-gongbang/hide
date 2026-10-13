@@ -164,6 +164,15 @@ pub(super) struct CreateTabPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProjectMemoryNavigatePayload {
+    pub(super) device_id: String,
+    pub(super) workspace_id: String,
+    pub(super) checkout_id: String,
+    pub(super) request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FocusCheckoutPayload {
     /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
     #[serde(default)]
@@ -1377,6 +1386,7 @@ pub(super) enum Event {
     ArchiveOpen(ArchiveOpenPayload),
     MemoryAction(MemoryActionPayload),
     MemoryOpen(MemoryOpenPayload),
+    ProjectMemoryNavigate(ProjectMemoryNavigatePayload),
     MemoryExpand(MemoryExpandPayload),
     MemorySearch(MemorySearchPayload),
     RetryConnect(RetryConnectPayload),
@@ -1606,6 +1616,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "memory_open" => decode!(MemoryOpenPayload, MemoryOpen),
+        "project_memory_navigate" => decode!(ProjectMemoryNavigatePayload, ProjectMemoryNavigate),
         "memory_expand" => decode!(MemoryExpandPayload, MemoryExpand),
         "memory_search" => decode!(MemorySearchPayload, MemorySearch),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
@@ -1827,6 +1838,7 @@ impl Runtime {
             },
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::MemoryOpen(payload) => self.open_project_memory(payload.workspace_id),
+            Event::ProjectMemoryNavigate(payload) => self.navigate_project_memory(payload),
             Event::MemoryExpand(payload) => {
                 self.expand_memory_card(&payload.workspace_id, payload.number)
             }

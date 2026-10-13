@@ -147,17 +147,23 @@ impl Runtime {
                                 .map(|candidate| candidate.reference.clone())
                         });
                     if let Some(reference) = reference {
-                        if !record.link_scopes.contains_key(&checkout.path)
+                        let scope_id = settings::link_scope_key(
+                            &checkout.path,
+                            checkout.branch.as_deref(),
+                            reference.number,
+                        );
+                        if !record.link_scopes.contains_key(&scope_id)
                             && record.link_scopes.len() >= crate::issues::ISSUE_LIMIT
                         {
                             return Err("project_settings_link_limit");
                         }
-                        record.link_scopes.entry(checkout.path.clone()).or_insert(
-                            settings::LinkScope {
+                        record
+                            .link_scopes
+                            .entry(scope_id)
+                            .or_insert(settings::LinkScope {
                                 branch: checkout.branch.clone(),
                                 reference,
-                            },
-                        );
+                            });
                     }
                 }
             }
@@ -171,7 +177,9 @@ impl Runtime {
                         code,
                         "Finish the pending Project settings write before another change",
                     );
-                    return false;
+                    let refusal = format!("{id}:{}", payload.request_id);
+                    self.settings_write_status(&refusal, &payload, WriteState::Failed, Some(code));
+                    return true;
                 }
                 self.push_diagnostic(code, "Project settings change refused");
                 self.settings_write_status(&id, &payload, WriteState::Failed, Some(code));
@@ -214,7 +222,7 @@ impl Runtime {
         error: Option<&str>,
     ) {
         let statuses = &mut self.snapshot.ui_state.project_settings_writes;
-        if !statuses.contains_key(id) && statuses.len() >= settings::LIMIT {
+        if !statuses.contains_key(id) && statuses.len() >= settings::LIMIT * 2 {
             // Completed receipts are replaceable; an active caller retains its
             // receipt until its write settles. The pending map has the same cap.
             if let Some(retired) = statuses
@@ -311,19 +319,28 @@ impl Runtime {
             // The one search slot spans repository targets. Keep its running
             // worker bounded, but refuse its old answer and queued old intent.
             self.github_search.pending = None;
+            if let Some(active) = self.github_search.active.as_mut() {
+                active.invalidated = true;
+            }
             if let Some(slot) = self.snapshot.issue_work.search.take() {
                 self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::failed(
                     slot.request_id,
                     slot.query,
-                    "Repository connection changed. Search again.",
+                    "project_settings_repository_changed",
                 ));
             }
-            if let Some(slot) = self.snapshot.pr_work.feedback.as_mut() {
+            if let Some(slot) = self
+                .snapshot
+                .pr_work
+                .feedback
+                .as_mut()
+                .filter(|slot| slot.device_id == after.device_id && slot.root == after.root)
+            {
                 slot.phase = "failed".into();
                 slot.body = None;
                 slot.failed_checks.clear();
                 slot.change_requests.clear();
-                slot.message = Some("Repository connection changed. Read again.".into());
+                slot.message = Some("project_settings_repository_changed".into());
             }
         }
         if after.device_id == self.node.as_str() {
@@ -348,6 +365,12 @@ impl Runtime {
                 self.device_github_read_generation
                     .remove(&(after.device_id.clone(), after.root.clone()));
                 self.refresh_device_pull_requests(&after.device_id, &after.root);
+            }
+            if base_changed {
+                if let Some(entry) = self.device_worktrees.get_mut(&after.device_id) {
+                    entry.discard_answer |= entry.in_flight.is_some();
+                }
+                self.request_device_worktrees(&after.device_id, true);
             }
             self.refresh_issue_rows(Some(&after.device_id));
         }

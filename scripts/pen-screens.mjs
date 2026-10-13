@@ -4922,7 +4922,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
-    {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton})},
+    {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton, screenInput})},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover')];
       return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: account cards and their windows above the sidebar chips. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);

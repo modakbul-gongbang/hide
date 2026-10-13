@@ -1,6 +1,14 @@
 import type { Catalog, Catalogs } from "../schema";
 
 export const projectSettingsEnglish = {
+  "projectSettings.errorBranch": "That branch is no longer available. Choose an existing branch and retry.",
+  "projectSettings.accountSettings": "GitHub account settings",
+  "projectSettings.errorBusy": "Another change is saving. Retry when it finishes.",
+  "projectSettings.errorLimit": "The saved setting limit was reached. Contact support to review stored settings.",
+  "projectSettings.errorSave": "Could not save. Check the connection and private storage access, then retry.",
+  "projectSettings.repositoryChanged": "The repository connection changed. Read again.",
+  "projectSettings.memoryFailed": "Could not change Memory. Check the project and device, then retry.",
+  "projectSettings.memoryPreparing": "Preparing agent hooks…",
   "projectSettings.linearName": "Linear",
   "projectSettings.title": "Project settings",
   "projectSettings.open": "Settings for {{project}}",
@@ -47,6 +55,14 @@ export const projectSettingsEnglish = {
 } as const;
 
 const ko = {
+  "projectSettings.errorBranch": "해당 브랜치를 사용할 수 없어요. 현재 존재하는 브랜치를 선택하고 다시 시도해주세요.",
+  "projectSettings.accountSettings": "GitHub 계정 설정",
+  "projectSettings.errorBusy": "다른 변경을 저장 중이에요. 완료되면 다시 시도해주세요.",
+  "projectSettings.errorLimit": "저장할 수 있는 설정 한도에 도달했어요. 저장된 설정을 확인할 수 있도록 지원을 요청해주세요.",
+  "projectSettings.errorSave": "저장하지 못했어요. 연결 상태와 개인 저장 공간의 접근 권한을 확인한 뒤 다시 시도해주세요.",
+  "projectSettings.repositoryChanged": "저장소 연결이 바뀌었어요. 다시 읽어주세요.",
+  "projectSettings.memoryFailed": "기억 설정을 변경하지 못했어요. 프로젝트와 기기를 확인한 뒤 다시 시도해주세요.",
+  "projectSettings.memoryPreparing": "에이전트 훅을 준비하고 있어요…",
   "projectSettings.linearName": "Linear",
   "projectSettings.title": "프로젝트 설정",
   "projectSettings.open": "{{project}} 설정",
@@ -93,6 +109,14 @@ const ko = {
 } satisfies Catalog<typeof projectSettingsEnglish>;
 
 const zhCN = {
+  "projectSettings.errorBranch": "该分支已不可用。请选择现有分支后重试。",
+  "projectSettings.accountSettings": "GitHub 账户设置",
+  "projectSettings.errorBusy": "正在保存另一项更改。完成后重试。",
+  "projectSettings.errorLimit": "已达到设置存储上限。请联系支持检查已存储的设置。",
+  "projectSettings.errorSave": "无法保存。请检查连接和私人存储的访问权限后重试。",
+  "projectSettings.repositoryChanged": "仓库连接已更改。请重新读取。",
+  "projectSettings.memoryFailed": "无法更改记忆设置。请检查项目和设备后重试。",
+  "projectSettings.memoryPreparing": "正在准备代理钩子…",
   "projectSettings.linearName": "Linear",
   "projectSettings.title": "项目设置",
   "projectSettings.open": "{{project}} 的设置",
@@ -139,6 +163,14 @@ const zhCN = {
 } satisfies Catalog<typeof projectSettingsEnglish>;
 
 const ja = {
+  "projectSettings.errorBranch": "そのブランチは利用できません。存在するブランチを選んで再試行してください。",
+  "projectSettings.accountSettings": "GitHub アカウント設定",
+  "projectSettings.errorBusy": "別の変更を保存中です。完了後に再試行してください。",
+  "projectSettings.errorLimit": "設定の保存上限に達しました。保存済みの設定についてサポートに連絡してください。",
+  "projectSettings.errorSave": "保存できませんでした。接続とプライベートストレージのアクセス権を確認して再試行してください。",
+  "projectSettings.repositoryChanged": "リポジトリ接続が変わりました。再度読み込んでください。",
+  "projectSettings.memoryFailed": "記憶を変更できませんでした。プロジェクトとデバイスを確認して再試行してください。",
+  "projectSettings.memoryPreparing": "エージェントフックを準備中…",
   "projectSettings.linearName": "Linear",
   "projectSettings.title": "プロジェクト設定",
   "projectSettings.open": "{{project}} の設定",

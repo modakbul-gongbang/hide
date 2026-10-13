@@ -101,6 +101,22 @@ impl ProjectSettings {
         }
     }
 
+    pub(crate) fn link_scope(
+        &self,
+        path: &str,
+        branch: Option<&str>,
+        number: u32,
+    ) -> Option<&LinkScope> {
+        self.link_scopes
+            .get(&link_scope_key(path, branch, number))
+            .or_else(|| {
+                // The first additive record keyed only by checkout path.
+                self.link_scopes.get(path).filter(|scope| {
+                    scope.branch.as_deref() == branch && scope.reference.number == number
+                })
+            })
+    }
+
     pub(crate) fn patched(&self, patch: Patch) -> Result<Self, &'static str> {
         if self.version != VERSION {
             return Err("project_settings_newer_version");
@@ -185,4 +201,9 @@ pub(crate) fn base_choice<'a>(
         Some(BaseBranchChoice::Branch { branch }) => Some(branch),
         None => legacy.get(root).map(String::as_str),
     }
+}
+
+/// A path can carry several branches and each branch can acquire a new bare token.
+pub(crate) fn link_scope_key(path: &str, branch: Option<&str>, number: u32) -> String {
+    format!("{path}\0{}\0{number}", branch.unwrap_or(""))
 }

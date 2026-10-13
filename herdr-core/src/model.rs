@@ -2564,6 +2564,8 @@ pub struct ProjectMemorySnapshot {
     /// The operator's Memory action still running for this Project; another
     /// waits for it.
     pub pending_action: Option<MemoryAction>,
+    pub preparing_hooks: bool,
+    pub action_failure: Option<MemoryAction>,
     /// The one card shown in full (`memory_expand`).
     pub expanded: Option<MemoryCardSnapshot>,
     /// The matcher's answer to the shell's `memory_search`.
@@ -3589,6 +3591,8 @@ pub struct PrChangeRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrFeedbackSnapshot {
     pub request_id: String,
+    pub device_id: String,
+    pub root: String,
     pub pr_number: u32,
     /// `reading`, `ready` or `failed`.
     pub phase: String,

@@ -379,3 +379,267 @@ fn old_pr_body_answer_cannot_link_same_number_in_new_repository() {
         Some("github:example/first#7")
     );
 }
+
+#[test]
+fn fresh_search_uses_confirmed_override_before_its_provider_read() {
+    let mut runtime = fixture();
+    change(
+        &mut runtime,
+        "target",
+        serde_json::json!({"repository": {"mode": "repository", "repository": "example/second"}}),
+    );
+    assert!(runtime.github.project("/fixture/project").is_none());
+    let (targets, _) = runtime.github_search_targets();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].repository.as_deref(), Some("example/second"));
+}
+
+#[test]
+fn same_query_retry_does_not_join_a_previous_repository_worker() {
+    let mut runtime = fixture();
+    runtime.github_search.active = Some(crate::runtime::issues::ActiveSearch {
+        run: 1,
+        invalidated: false,
+        request: crate::runtime::issues::SearchRequest {
+            request_id: "old".into(),
+            query: "same".into(),
+        },
+        note: None,
+    });
+    runtime.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::working(
+        "old".into(),
+        "same".into(),
+    ));
+    change(
+        &mut runtime,
+        "connection",
+        serde_json::json!({"repository": {"mode": "repository", "repository": "example/second"}}),
+    );
+    runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "github_search", "payload": {"request_id": "new", "query": "same"}})).unwrap());
+    assert_eq!(
+        runtime
+            .github_search
+            .active
+            .as_ref()
+            .unwrap()
+            .request
+            .request_id,
+        "old"
+    );
+    assert_eq!(
+        runtime.github_search.pending.as_ref().unwrap().request_id,
+        "new"
+    );
+    // No real provider may run in this fixture. Its old completion drains
+    // the new intent, which fails at the unavailable worker boundary.
+    runtime.ingest_github_search(1, Ok(Vec::new()));
+    let answer = runtime.snapshot.issue_work.search.as_ref().unwrap();
+    assert_eq!(answer.request_id, "new");
+    assert_eq!(answer.phase, "failed");
+}
+
+#[test]
+fn a_busy_second_write_has_its_own_failed_receipt() {
+    let mut runtime = fixture();
+    runtime.worker_context = Some(RuntimeWorkerContext {
+        runtime: std::sync::Weak::new(),
+        notifier: ChangeNotifier::noop(),
+    });
+    change(
+        &mut runtime,
+        "first",
+        serde_json::json!({"issue_source": "github"}),
+    );
+    change(
+        &mut runtime,
+        "second",
+        serde_json::json!({"issue_source": "local"}),
+    );
+    let rejected = runtime
+        .snapshot
+        .ui_state
+        .project_settings_writes
+        .values()
+        .find(|receipt| receipt.request_id == "second")
+        .unwrap();
+    assert_eq!(rejected.state, WriteState::Failed);
+    assert_eq!(rejected.error.as_deref(), Some("project_settings_busy"));
+    let saved = runtime.ui_state_to_save();
+    runtime.acknowledge_project_settings_save(&saved, true);
+    let id = crate::project_settings::key(crate::node::TEST_NODE, "/fixture/project");
+    assert_eq!(
+        runtime.snapshot.ui_state.project_settings[&id].issue_source,
+        Some(IssueSourceChoice::Github)
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.project_settings_writes[&id].request_id,
+        "first"
+    );
+}
+
+#[test]
+fn repository_changes_preserve_each_branch_and_bare_number_after_restart() {
+    let mut runtime = fixture();
+    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .id
+        .clone();
+    for (branch, number, repository, next) in [
+        ("7-task", 7, "example/first", "example/second"),
+        ("8-task", 8, "example/second", "example/third"),
+        ("8-task", 9, "example/third", "example/fourth"),
+    ] {
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout.branch = Some(branch.into());
+        checkout.branch_issue = Some(format!("#{number}"));
+        runtime.issue_candidates.insert(
+            checkout_id.clone(),
+            crate::issues::IssueCandidate {
+                reference: crate::issues::IssueReference {
+                    repository: repository.into(),
+                    number,
+                },
+                source: "fixture".into(),
+            },
+        );
+        change(
+            &mut runtime,
+            next,
+            serde_json::json!({"repository": {"mode": "repository", "repository": next}}),
+        );
+    }
+    let (saved, _, _) = crate::persistence::load(&runtime.state_path);
+    runtime.snapshot.ui_state = saved;
+    for (branch, number, repository) in [
+        ("7-task", 7, "example/first"),
+        ("8-task", 8, "example/second"),
+        ("8-task", 9, "example/third"),
+    ] {
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout.branch = Some(branch.into());
+        checkout.branch_issue = Some(format!("#{number}"));
+        checkout.issue = None;
+        checkout.task_key = None;
+        runtime.issue_candidates.clear();
+        runtime.snapshot.navigator.workspaces[0]
+            .home_issues
+            .repository = Some("example/fourth".into());
+        runtime.sync_issues();
+        assert_eq!(
+            runtime.issue_candidates[&checkout_id].reference.repository,
+            repository
+        );
+    }
+}
+
+#[test]
+fn project_memory_navigation_scopes_tools_without_a_front_workspace() {
+    let mut runtime = fixture();
+    let checkout = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    runtime = super::workspace_view::with_new_views(runtime, "project-settings-memory");
+    assert!(runtime.snapshot.workspace_view.is_none());
+    runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "project_memory_navigate", "payload": {"device_id": crate::node::TEST_NODE, "workspace_id": "visible-id", "checkout_id": checkout.id, "request_id": "memory"}})).unwrap());
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(view.path, checkout.path);
+    assert!(view.tools);
+    assert_eq!(view.tool, crate::workspace_views::Tool::Memory);
+    assert_eq!(
+        runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap()
+            .workspace_id,
+        "visible-id"
+    );
+    let before = runtime.snapshot.workspace_view.clone();
+    runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "project_memory_navigate", "payload": {"device_id": "other-device", "workspace_id": "visible-id", "checkout_id": checkout.id, "request_id": "wrong-device"}})).unwrap());
+    assert_eq!(runtime.snapshot.workspace_view, before);
+}
+
+#[test]
+fn delayed_memory_choice_changes_only_its_checkout_and_a_refusal_changes_neither() {
+    let mut runtime = fixture();
+    let first = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    let mut second = first.clone();
+    second.id = "second-checkout".into();
+    second.path = "/fixture/second".into();
+    runtime.snapshot.navigator.workspaces[0]
+        .checkouts
+        .push(second.clone());
+    runtime = super::workspace_view::with_new_views(runtime, "delayed-settings-memory");
+    runtime.focus_checkout("visible-id", &first.id);
+    runtime.sync_workspace_view();
+    let before = runtime.snapshot.workspace_view.clone();
+    let key = (crate::node::TEST_NODE.to_owned(), second.path.clone());
+    runtime.choose_when_in_front(crate::node::TEST_NODE, "refused", key.clone());
+    runtime.attach_memory_navigation(crate::node::TEST_NODE, "refused", "visible-id".into());
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    runtime.drop_pending_choice(crate::node::TEST_NODE, "refused");
+    runtime.focus_checkout("visible-id", &second.id);
+    runtime.sync_workspace_view();
+    assert_ne!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        crate::workspace_views::Tool::Memory
+    );
+    runtime.focus_checkout("visible-id", &first.id);
+    runtime.sync_workspace_view();
+    runtime.choose_when_in_front(crate::node::TEST_NODE, "accepted", key);
+    runtime.attach_memory_navigation(crate::node::TEST_NODE, "accepted", "visible-id".into());
+    runtime.acknowledge_memory_navigation(crate::node::TEST_NODE, "accepted");
+    runtime.focus_checkout("visible-id", &second.id);
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        crate::workspace_views::Tool::Memory
+    );
+    runtime.focus_checkout("visible-id", &first.id);
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+}
+
+#[test]
+fn connection_change_invalidates_only_feedback_owned_by_that_project() {
+    let mut runtime = fixture();
+    runtime.snapshot.pr_work.feedback = Some(crate::model::PrFeedbackSnapshot {
+        request_id: "other".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        root: "/fixture/other".into(),
+        pr_number: 7,
+        phase: "reading".into(),
+        body: None,
+        failed_checks: vec![],
+        change_requests: vec![],
+        message: None,
+    });
+    change(
+        &mut runtime,
+        "first",
+        serde_json::json!({"repository": {"mode": "repository", "repository": "example/first"}}),
+    );
+    assert_eq!(
+        runtime.snapshot.pr_work.feedback.as_ref().unwrap().phase,
+        "reading"
+    );
+    runtime.snapshot.pr_work.feedback.as_mut().unwrap().root = "/fixture/project".into();
+    change(
+        &mut runtime,
+        "second",
+        serde_json::json!({"repository": {"mode": "repository", "repository": "example/second"}}),
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .pr_work
+            .feedback
+            .as_ref()
+            .unwrap()
+            .message
+            .as_deref(),
+        Some("project_settings_repository_changed")
+    );
+    assert!(!runtime.ingest_pr_feedback("other", Err("obsolete provider response".into())));
+}

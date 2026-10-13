@@ -449,6 +449,8 @@ impl Runtime {
     pub(super) fn read_pr_feedback(&mut self, payload: PrFeedbackReadPayload) -> bool {
         let mut slot = PrFeedbackSnapshot {
             request_id: payload.request_id,
+            device_id: String::new(),
+            root: String::new(),
             pr_number: payload.pr_number,
             phase: "reading".into(),
             body: None,
@@ -459,6 +461,10 @@ impl Runtime {
         let place = self
             .open_pull_request(&payload.workspace_id, payload.pr_number)
             .and_then(|(machine, workspace, _)| {
+                slot.device_id = machine
+                    .clone()
+                    .unwrap_or_else(|| self.node.as_str().to_owned());
+                slot.root = workspace.path.clone();
                 self.github_place(machine.as_deref(), &workspace.path)
             });
         let place = match place {
