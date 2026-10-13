@@ -7,7 +7,7 @@ import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // a machine. The folds are this scene's own ui state, applied by `applyEvent`
 // the way the core applies the same events, so a chevron really folds.
 
-import type { AgentRow, Checkout, MarkCounts, PullRequest, SleepingSession, SnapshotRest, Workspace } from "../snapshot";
+import type { AgentRow, Checkout, MarkCounts, PullRequest, SidebarTabKey, SleepingSession, SnapshotRest, Workspace } from "../snapshot";
 import { galleryAgentState } from "./agentStates";
 
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
@@ -29,6 +29,7 @@ export const OFFLINE_DEVICE = "build-box";
 
 /** The fold choices the core would keep in its ui state. */
 export type SceneFolds = {
+  collapsedTabs?: SidebarTabKey[];
   collapsedCheckouts: string[];
   collapsedWorkspaces: string[];
   /** Parents whose descendants are unfolded; every other parent is folded, the core's default. */
@@ -168,7 +169,7 @@ export function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
         },
     pull_request: spec.pr ? { url: "", review: null, ...spec.pr } : null,
     github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: nowSeconds * 1000, unavailable_reason: null },
-    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", empty: false, delegated: false, panes: panes.map(pane) }] : [],
+    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", sidebar: { manual_name: null, number: 1 }, empty: false, delegated: false, panes: panes.map(pane) }] : [],
     active_tab_id: panes.length ? `${spec.id}:t1` : null,
     strip: [],
     next_tab_label: "2",
@@ -410,6 +411,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       left_sidebar_visible: true,
       collapsed_workspace_ids: folds.collapsedWorkspaces,
       session_collapsed_checkout_ids: folds.collapsedCheckouts,
+      sidebar_collapsed_tabs: folds.collapsedTabs ?? [],
       workspace_registrations: world?.registrations ?? workspaces.map((row) => registrationOf(row, "local")),
     },
     ...(world ? { status: { remote: world.remote } } : {}),
@@ -528,6 +530,11 @@ function toggled(list: string[], id: string): string[] {
  */
 export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Record<string, unknown> }): SceneFolds | null {
   const { kind, payload } = event;
+  if (kind === "sidebar_tab_expanded") {
+    const key = { device_id: String(payload.device_id), checkout_id: String(payload.checkout_id), tab_id: String(payload.tab_id) };
+    const kept = (folds.collapsedTabs ?? []).filter((row) => row.device_id !== key.device_id || row.checkout_id !== key.checkout_id || row.tab_id !== key.tab_id);
+    return { ...folds, collapsedTabs: payload.expanded ? kept : [...kept, key] };
+  }
   if (kind === "checkout_agents_toggle") return { ...folds, collapsedCheckouts: toggled(folds.collapsedCheckouts, String(payload.checkout_id)) };
   if (kind === "session_fold_toggle" && payload.key === "no_agents/local") return { ...folds, noAgentsOpen: !folds.noAgentsOpen };
   if (kind === "project_checkouts_fold" && String(payload.workspace_id) in SLEEPING_PROJECTS) {

@@ -1169,6 +1169,18 @@ A later Herdr projection failure retains these accepted values under the existin
 The last-commit age stays in place whatever the pointer does and while the menu is open.
 An opened checkout and its agent rows share one small group fill; no card border nests inside another.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
+Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
+A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
+Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
+A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--spacing-xl` (24px) further in and each lineage level retains its 18px indent.
+Tab groups are separated by `--spacing-md` (12px), without another card or border.
+The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
+Headers open their real tab with click, Enter or Space, while the separate chevron changes disclosure only, without focus, read-state or process effects.
+Groups start open, and core-owned `sidebar_collapsed_tabs` saves collapsed choices by device, checkout and tab identity across restart and reconnect.
+When two agents become one, the singleton is shown regardless of the retained choice; a second agent restores the same live tab's name and choice.
+Accepted tab removal retires its choice, failed or disconnected session reads retain it, and stale disclosure targets change nothing.
+A collapsed header represents a focused agent it hides, without unfolding; focus changes reveal the nearest visible row with minimal scrolling, and unchanged focus retains the operator's scroll.
+Arrow Up/Down and Home/End traverse visible header and agent controls, skipping collapsed roots; root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for headers or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.

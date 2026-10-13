@@ -160,6 +160,10 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 
 ## Web screen list
 
+The Projects Sidebar screen and production gallery include actual-tab headers over multi-agent root groups, a header-free singleton, 24px grouped-root indentation and the existing 18px lineage step.
+Headers use the sidebar caption and row tokens, expose name/count and disclosure only, and separate tab groups with `--spacing-md` rather than another card.
+`scripts/pen-screens.mjs` owns the corresponding composed header and grouped tree offsets; `web/src/gallery/sceneData.ts` supplies explicit tab naming metadata and applies the same disclosure event for interactive comparison.
+
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.

@@ -13,6 +13,7 @@ import { splitByOrigin } from "./hideAiOrigin";
 import { deviceListedAgents } from "./navigation";
 import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout, projectExpanded } from "./projects";
 import { checkoutAgentRows } from "./projectBoard";
+import { sidebarTabGroups } from "./sidebarTabs";
 import { contextWorkspaces, contextAgents } from "./remote";
 import { DIGITS, type Digit } from "./shortcuts";
 import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
@@ -56,7 +57,8 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
   for (const row of projects) if (row.kind === "raised") for (const item of [...row.agents, ...(row.expanded ? row.more : [])]) append(item.agent);
   const collapsed = rest?.ui_state?.session_collapsed_checkout_ids ?? [];
   const checkout = (workspace: import("./snapshot").Workspace, value: Checkout) => {
-    for (const row of checkoutAgentRows(workspace, agents, "sidebar").get(value.id) ?? []) {
+    const grouped = sidebarTabGroups(value, workspace.device_id, checkoutAgentRows(workspace, agents, "sidebar").get(value.id) ?? [], agents, rest?.ui_state?.sidebar_collapsed_tabs ?? []);
+    for (const row of grouped.flatMap((group) => group.expanded || collapsed.includes(value.id) ? group.rows : [])) {
       // Digits number the roots; an opened root's children and grandchildren take none.
       if (row.depth === 0 && (!collapsed.includes(value.id) || row.agent.state.needs_you)) append(row.agent, value.id);
     }

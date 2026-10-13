@@ -3913,9 +3913,19 @@ function buildProjectsSidebar(tokens) {
   // An opened checkout's tree row: the chevron lane sits in the checkout glyph's
   // column, so the marks start under the checkout name, one indent per level.
   const TREE_STATUS = {working: ['●', '$--agent-working'], waiting: ['○', '$--agent-working'], asking: ['?', '$--warning'], approval: ['!', '$--warning'], done: ['✓', '$--success'], seen: ['○', '$--muted-foreground']};
-  function tree(id, {status, ...options}) {
+  function tree(id, {status, grouped = false, ...options}) {
     const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
-    return screenTreeRow(id, {symbol, color, inset: nameColumn - num(tokens, '--size-lineage-chevron') - xs, width: row, ...options});
+    return screenTreeRow(id, {symbol, color, inset: nameColumn - num(tokens, '--size-lineage-chevron') - xs + (grouped ? num(tokens, '--spacing-xl') : 0), width: row, ...options});
+  }
+
+  function tabGroupHeader(id, name, count, expanded = true) {
+    const titleInset = nameColumn + markSlot + num(tokens, '--size-agent-badge-compact') + 2 * xs;
+    return frame(id, 'Tab agent group', {width: row, height: num(tokens, '--size-sidebar-line') + 2 * xs, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xs', padding: [xs, xs, xs, titleInset]}, [
+      text(`${id}-title`, name, {size: '$--text-caption', fill: '$--subtle-foreground'}),
+      text(`${id}-count`, String(count), {size: '$--text-caption', fill: '$--muted-foreground'}),
+      frame(`${id}-spacer`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      icon(`${id}-fold`, expanded ? 'chevron-down' : 'chevron-right', {size: num(tokens, '--size-lineage-chevron'), fill: '$--muted-foreground'}),
+    ]);
   }
 
   // An opened checkout and its agent rows, on one small group fill.
@@ -4112,15 +4122,16 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-          tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
-          tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
-          tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
-          tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
-          tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
-          tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-          tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
-          tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
+          tabGroupHeader(`psb-tab-main-${s}`, '탭 1', 14),
+          tree(`psb-t0-${s}`, {grouped: true, title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
+          tree(`psb-t1-${s}`, {grouped: true, title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+          tree(`psb-t2-${s}`, {grouped: true, title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
+          tree(`psb-t3-${s}`, {grouped: true, title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+          tree(`psb-t4-${s}`, {grouped: true, title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
+          tree(`psb-t5-${s}`, {grouped: true, title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
+          tree(`psb-t6-${s}`, {grouped: true, title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
+          tree(`psb-t7-${s}`, {grouped: true, title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+          tree(`psb-t8-${s}`, {grouped: true, title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),

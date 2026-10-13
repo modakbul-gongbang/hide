@@ -49,6 +49,7 @@ mod session;
 pub(crate) mod session_search;
 mod session_state;
 mod session_work;
+mod sidebar_tabs;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;

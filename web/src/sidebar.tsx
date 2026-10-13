@@ -30,6 +30,8 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu, type SidebarTreeSlot } from "./components/sidebar-agent-row";
 import { TreeChevron, TreeRails } from "./components/agent-tree";
 import { sidebarTreeLines } from "./sidebarTree";
+import { moveSidebarKey, sidebarTabGroups } from "./sidebarTabs";
+import { tabSurface } from "./recent";
 import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
 import { Usage } from "./components/usage";
@@ -496,6 +498,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.session_collapsed_checkout_ids ?? NO_IDS);
+  const collapsedTabs = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
@@ -535,7 +538,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
     () => (numbered ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null),
-    [numbered, frontScope, rows, openCheckouts, workspaces, raisedOpen],
+    [numbered, frontScope, rows, openCheckouts, collapsedTabs, workspaces, raisedOpen],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
@@ -555,7 +558,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   };
   if (!loaded) return <ListLoading />;
   return (
-    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true">
+    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true" onKeyDown={moveSidebarKey}>
       {catalogLine ? (
         <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
@@ -887,11 +890,12 @@ function FoldRow({
 }
 
 /** The fold on a project or checkout row: a folded one is always shown, an open one waits for the pointer (D-3). */
-function FoldToggle({ open, label, onToggle, ...data }: { open: boolean; label: string; onToggle: () => void } & Record<`data-${string}`, string>) {
+function FoldToggle({ open, label, onToggle, disabled, ...data }: { open: boolean; label: string; onToggle: () => void; disabled?: boolean } & Record<`data-${string}`, string>) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-expanded={open}
       aria-label={label}
       className={cn(
@@ -1297,7 +1301,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1394,7 +1398,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1570,14 +1574,50 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  * joined by elbow rails. A grandchild's chevron opens the tree popover
  * rooted on it. A dormant conversation has no pane or numbered shortcut.
  */
-function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context, label }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext; label?: string }) {
+function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext }) {
+  const { t } = useInterfaceTranslation();
+  const collapsed = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs ?? NO_TAB_FOLDS);
+  const focused = useShellStore((s) => s.focusedPaneId);
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, deviceId, checkout.path, localDeviceId(s.rest)));
+  const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents, collapsed), [checkout, deviceId, agentRows, context.agents, collapsed]);
+  const titleInset = `calc(${inset} + var(--size-agent-mark) + var(--size-agent-badge-compact) + var(--spacing-xs) * 2)`;
+  return <ul data-checkout-agents-open={checkout.id}>
+    {groups.map((group, index) => {
+      const header = groupTabs && group.header;
+      const expanded = !header || group.expanded;
+      const selected = workspaceScreen && !expanded && sidebarFocusPane(focused, context.agents, new Set(group.rows.map((row) => row.agent.pane_id))) !== null;
+      const naming = group.tab?.sidebar;
+      const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
+      return <li key={group.tab?.id ?? "unplaced"} className={cn(groupTabs && index > 0 && "mt-md")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
+        {header && group.tab?.id ? <div data-sidebar-tab-row={group.tab.id} className={cn("group/row relative flex items-center rounded-sm pr-xs text-caption", selected ? "bg-selected" : "hover:bg-accent")}>
+          <Hint label={t("sidebar.tabAgents", { name, count: group.count })} reveals>
+            <button type="button" data-sidebar-tab={group.tab.id} disabled={removing} aria-label={t("sidebar.tabAgents", { name, count: group.count })} aria-current={selected ? "true" : undefined} aria-expanded={expanded}
+              className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => context.actions.openSurface(tabSurface(checkout, group.tab!.id!, deviceId))} />
+          </Hint>
+          <span className="pointer-events-none flex min-h-(--size-sidebar-line) min-w-0 flex-1 items-center gap-xs py-xs" style={{ paddingLeft: titleInset }}>
+            <span className="min-w-0 truncate text-subtle-foreground" data-sidebar-tab-title="true">{name}</span>
+            <span className="shrink-0 text-muted-foreground" aria-hidden="true">{group.count}</span>
+          </span>
+          <FoldToggle open={expanded} disabled={removing} label={expanded ? t("sidebar.hideAgentsIn", { name }) : t("sidebar.showAgentsIn", { name })} onToggle={() => context.actions.setSidebarTabExpanded(deviceId, checkout.id, group.tab!.id!, !expanded)} data-sidebar-tab-toggle={group.tab.id} />
+        </div> : null}
+        {expanded ? <AgentTreeRows checkoutId={checkout.id} deviceId={deviceId} agentRows={group.rows} inset={header ? `calc(${inset} + var(--spacing-xl))` : inset} context={context} /> : null}
+      </li>;
+    })}
+    {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
+  </ul>;
+}
+
+const NO_TAB_FOLDS: readonly import("./snapshot").SidebarTabKey[] = [];
+
+function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
   // Which devices are reachable now, as one value, so a reconnect redraws the rows that name one.
   const reachable = useShellStore((s) => [localDeviceId(s.rest), ...(s.rest?.status?.remote ?? []).filter((row) => row.state === "connected").map((row) => row.target_id)].join("\n"));
   return (
-    <ul {...(label === undefined ? { "data-checkout-agents-open": checkoutId } : { "aria-label": label, "data-home-agents": "true" })}>
+    <ul>
       {lines.map((line) => {
         if (line.kind === "more") {
           return (
@@ -1628,7 +1668,6 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
           />
         );
       })}
-      {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
     </ul>
   );
 }
