@@ -186,7 +186,7 @@ fn parse_wall_time(text: &str) -> Option<WallTime> {
 /// matched within the last window, in which case it has just passed and
 /// the reset that passed is meant.
 fn resolve_reset(text: &str, now_unix_seconds: u64) -> Result<u64, Cause> {
-    let line = parse_wall_time(text).ok_or_else(|| Cause::FormatChanged)?;
+    let line = parse_wall_time(text).ok_or(Cause::FormatChanged)?;
     let now = i64::try_from(now_unix_seconds).map_err(|_| Cause::FormatChanged)?;
     let zone = Zone::load(&line.zone).map_err(|_| Cause::FormatChanged)?;
     let (year_now, _, _) = civil_from_days(

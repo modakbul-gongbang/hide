@@ -45,15 +45,22 @@ impl Runtime {
     /// agent with no figure, or one whose window has reset, has no reading
     /// and is never held back (D-07).
     fn weekly_readings(&self) -> BTreeMap<ProviderId, UsageReading> {
-        self.usage_order()
-            .into_iter()
+        hide_agent_adapter::ADAPTERS
+            .iter()
+            .filter_map(|row| ProviderId::from_id(row.herdr.name))
             .filter_map(|provider| {
-                let (used_percent, resets_at_s) = self.snapshot.navigator.usage
+                let (used_percent, resets_at_s) = self
+                    .snapshot
+                    .navigator
+                    .usage
                     .weekly_reading(provider.as_str(), unix_milliseconds() / 1000)?;
-                Some((provider, UsageReading {
-                    used_percent,
-                    resets_at_unix_ms: Some(resets_at_s.saturating_mul(1000)),
-                }))
+                Some((
+                    provider,
+                    UsageReading {
+                        used_percent,
+                        resets_at_unix_ms: Some(resets_at_s.saturating_mul(1000)),
+                    },
+                ))
             })
             .collect()
     }
