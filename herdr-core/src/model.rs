@@ -3072,6 +3072,13 @@ pub struct UiStateSnapshot {
     pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
+    /// Private choices keyed by machine plus canonical main-worktree root.
+    /// Missing fields retain legacy path-based issue/base behavior.
+    #[serde(default)]
+    pub project_settings: BTreeMap<String, crate::project_settings::ProjectSettings>,
+    /// Bounded transient write receipts; never restored or saved as choices.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_settings_writes: BTreeMap<String, crate::project_settings::WriteStatus>,
     /// Agent panes whose descendants the operator opened in the sidebar tree.
     /// Absence is the default folded state, so a row with children starts
     /// folded and shows its descendant badge until the operator opens it.
@@ -3622,6 +3629,8 @@ impl Default for UiStateSnapshot {
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
+            project_settings: BTreeMap::new(),
+            project_settings_writes: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,

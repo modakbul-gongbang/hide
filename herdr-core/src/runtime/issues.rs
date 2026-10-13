@@ -78,6 +78,7 @@ impl Runtime {
             &self.invalid_links,
         );
         let sources = self.snapshot.ui_state.project_issue_sources.clone();
+        let settings = self.snapshot.ui_state.project_settings.clone();
         let mut local_links = BTreeMap::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() || !workspace.is_git {
@@ -89,7 +90,12 @@ impl Runtime {
                 .map(|checkout| checkout.github.clone())
                 .unwrap_or_default();
             let local_source = crate::tasks::source_kind(
-                sources.get(&workspace.path).map(String::as_str),
+                crate::project_settings::issue_choice(
+                    &settings,
+                    &sources,
+                    self.node.as_str(),
+                    &workspace.path,
+                ),
                 workspace.is_git,
                 &workspace.home_issues,
                 &status,
@@ -174,6 +180,7 @@ impl Runtime {
     pub(super) fn sync_tasks(&mut self) -> bool {
         let mut changed = false;
         let sources = &self.snapshot.ui_state.project_issue_sources;
+        let settings = &self.snapshot.ui_state.project_settings;
         let store = &self.local_issues;
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() {
@@ -181,7 +188,12 @@ impl Runtime {
                 // projected with its session (`project_node_issues`).
                 continue;
             }
-            let choice = sources.get(&workspace.path).map(String::as_str);
+            let choice = crate::project_settings::issue_choice(
+                settings,
+                sources,
+                self.node.as_str(),
+                &workspace.path,
+            );
             changed |= project_tasks(
                 workspace,
                 None,
@@ -639,11 +651,12 @@ impl Runtime {
             .map(|checkout| checkout.github.clone())
             .unwrap_or_default();
         crate::tasks::source_kind(
-            self.snapshot
-                .ui_state
-                .project_issue_sources
-                .get(&workspace.path)
-                .map(String::as_str),
+            crate::project_settings::issue_choice(
+                &self.snapshot.ui_state.project_settings,
+                &self.snapshot.ui_state.project_issue_sources,
+                &workspace.device_id,
+                &workspace.path,
+            ),
             workspace.is_git,
             &workspace.home_issues,
             &status,
@@ -687,6 +700,16 @@ impl Runtime {
         node: Option<&str>,
         root: &str,
     ) -> Result<crate::github::Where, String> {
+        if let Some(crate::project_settings::RepositoryConnection::Repository { repository }) =
+            crate::project_settings::get(
+                &self.snapshot.ui_state.project_settings,
+                node.unwrap_or(self.node.as_str()),
+                root,
+            )
+            .and_then(|record| record.repository.as_ref())
+        {
+            return Ok(crate::github::Where::Repository(repository.clone()));
+        }
         let Some(node) = node else {
             return Ok(crate::github::Where::Checkout(PathBuf::from(root)));
         };
@@ -1596,7 +1619,12 @@ impl Runtime {
                 ..Default::default()
             };
             let notes = listed.and_then(|listed| listed.notes.get(&workspace.path));
-            let choice = sources.get(&workspace.path).map(String::as_str);
+            let choice = crate::project_settings::issue_choice(
+                &self.snapshot.ui_state.project_settings,
+                sources,
+                target,
+                &workspace.path,
+            );
             let local = crate::tasks::source_kind(
                 choice,
                 workspace.is_git,

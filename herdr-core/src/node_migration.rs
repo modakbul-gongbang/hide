@@ -362,6 +362,12 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/project_settings/{key}",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
         "/expanded_inactive_checkout_project_paths/*",
         Mechanism::Owned,
         Moves::Stays,

@@ -375,12 +375,13 @@ impl Runtime {
                     .get(&workspace.path)
                     .copied()
                     .unwrap_or(0),
-                base_override: self
-                    .snapshot
-                    .ui_state
-                    .project_base_branches
-                    .get(&workspace.path)
-                    .cloned(),
+                base_override: crate::project_settings::base_choice(
+                    &self.snapshot.ui_state.project_settings,
+                    &self.snapshot.ui_state.project_base_branches,
+                    self.node.as_str(),
+                    &workspace.path,
+                )
+                .map(str::to_owned),
                 bases: self
                     .github
                     .project(&workspace.path)
@@ -1038,7 +1039,17 @@ impl Runtime {
                         .take(crate::issues::ISSUE_LIMIT)
                         .collect(),
                     root: PathBuf::from(&workspace.path),
-                    repository: None,
+                    repository: crate::project_settings::get(
+                        &self.snapshot.ui_state.project_settings,
+                        self.node.as_str(),
+                        &workspace.path,
+                    )
+                    .and_then(|record| match record.repository.as_ref() {
+                        Some(crate::project_settings::RepositoryConnection::Repository {
+                            repository,
+                        }) => Some(repository.clone()),
+                        _ => None,
+                    }),
                     generation: self
                         .github_generations
                         .get(&workspace.path)
@@ -1344,7 +1355,23 @@ impl Runtime {
         store: crate::github_store::GithubStore,
         restored: Option<crate::model::GithubSnapshot>,
     ) {
-        if let Some(restored) = restored {
+        if let Some(mut restored) = restored {
+            // A saved provider cache may predate the private connection choice.
+            // Reuse it only when its repository agrees with that choice.
+            restored.projects.retain(|project| {
+                crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    self.node.as_str(),
+                    &project.root_path,
+                )
+                .and_then(|record| record.repository.as_ref())
+                .is_none_or(|connection| match connection {
+                    crate::project_settings::RepositoryConnection::Repository { repository } => {
+                        project.issues.repository.as_ref() == Some(repository)
+                    }
+                    crate::project_settings::RepositoryConnection::Auto => false,
+                })
+            });
             self.github = restored;
             self.apply_pull_requests();
             self.refresh_worktree_projection();
@@ -2870,7 +2897,23 @@ impl Runtime {
         let mut repositories: Vec<(String, String)> = listed
             .projects
             .iter()
-            .filter_map(|(root, project)| Some((root.clone(), project.repository.clone()?)))
+            .filter_map(|(root, project)| {
+                let explicit = crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    device_id,
+                    root,
+                )
+                .and_then(|record| match record.repository.as_ref() {
+                    Some(crate::project_settings::RepositoryConnection::Repository {
+                        repository,
+                    }) => Some(repository.clone()),
+                    _ => None,
+                });
+                Some((
+                    root.clone(),
+                    explicit.or_else(|| project.repository.clone())?,
+                ))
+            })
             .collect();
         let total = repositories.len();
         let in_front = self
@@ -3003,6 +3046,21 @@ impl Runtime {
             .link_origin(device_id)
             .is_some_and(LinkOrigin::reports_own_facts)
         {
+            return false;
+        }
+        let (repositories, _) = self.node_github_repositories(device_id);
+        if request.projects.iter().any(|project| {
+            let root = project.root.to_string_lossy();
+            let generation = self
+                .device_github_reads
+                .get(&(device_id.to_owned(), root.to_string()))
+                .map(|read| read.generation)
+                .unwrap_or(0);
+            project.generation != generation
+                || !repositories.iter().any(|(path, repository)| {
+                    path == root.as_ref() && project.repository.as_ref() == Some(repository)
+                })
+        }) {
             return false;
         }
         for project in &request.projects {

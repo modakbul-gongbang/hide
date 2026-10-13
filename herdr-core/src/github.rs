@@ -96,6 +96,7 @@ type KnownChecks = HashMap<(u32, String), PullRequestChecks>;
 
 struct CachedProject {
     generation: u64,
+    repository: Option<String>,
     answer: GithubProjectSnapshot,
     /// Kept across a failed read, so a pull request that merged while GitHub
     /// was unreachable still has the checks it was last seen with.
@@ -150,7 +151,10 @@ fn read(
         .projects
         .iter()
         .filter_map(|project| {
-            let cached = cache.get(&project.root).map(|cached| cached.generation);
+            let cached = cache
+                .get(&project.root)
+                .filter(|cached| cached.repository == project.repository)
+                .map(|cached| cached.generation);
             read_reason(cached, project.generation).map(|reason| (project, reason))
         })
         .collect();
@@ -176,6 +180,7 @@ fn read(
         for (project, _) in due {
             let known = cache
                 .get(&project.root)
+                .filter(|cached| cached.repository == project.repository)
                 .map(|cached| cached.checks.clone())
                 .unwrap_or_default();
             let answer = read_root(
@@ -192,6 +197,7 @@ fn read(
                 project.root.clone(),
                 CachedProject {
                     generation: project.generation,
+                    repository: project.repository.clone(),
                     answer,
                     checks,
                 },

@@ -39,6 +39,7 @@ mod pane_prediction;
 mod pane_reopen;
 pub(crate) mod project_memory;
 mod project_sessions;
+mod project_settings;
 mod projects;
 mod pull_requests;
 mod recent_checkouts;
@@ -1104,6 +1105,7 @@ pub struct Runtime {
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
+    project_settings_pending: BTreeMap<String, project_settings::Pending>,
     /// Where the SSH config that names each registered device's host lives;
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
@@ -2084,6 +2086,7 @@ impl Runtime {
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,
+            project_settings_pending: BTreeMap::new(),
             pet_active_at_unix_ms: unix_milliseconds(),
             agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,

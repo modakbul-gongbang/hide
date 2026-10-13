@@ -66,6 +66,8 @@ mod operator_focus;
 mod pane_geometry;
 #[path = "tests/project_sessions.rs"]
 mod project_sessions;
+#[path = "tests/project_settings.rs"]
+mod project_settings;
 #[path = "tests/projects.rs"]
 mod projects;
 #[path = "tests/pull_requests.rs"]

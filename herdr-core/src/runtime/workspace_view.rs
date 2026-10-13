@@ -913,6 +913,11 @@ impl Runtime {
     /// panel the file already held while the panel is a projection.
     pub(super) fn ui_state_to_save(&self) -> UiStateSnapshot {
         let mut state = self.snapshot.ui_state.clone();
+        for (id, pending) in &self.project_settings_pending {
+            state
+                .project_settings
+                .insert(id.clone(), pending.record.clone());
+        }
         state
             .resolved_sessions
             .extend(self.pending_session_resolutions.clone());
