@@ -18,6 +18,29 @@ describe("a right-click in a terminal", () => {
     expect(terminalMenuItems(pane, "reviewer", context({})).some((item) => item.id === "copy")).toBe(false);
   });
 
+  it("offers URL opening and copying before the ordinary terminal actions", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({ link: { target: { kind: "url", url: "https://example.test/docs" }, found: null } }));
+    expect(items.slice(0, 4).map((item) => item.label)).toEqual(["Open in Hide", "Open in default browser", "Copy link", "Paste"]);
+    expect(items[3]?.separated).toBe(true);
+  });
+
+  it("lets an HTML link open its rendered page, its source, its default app or its file manager", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({
+      link: { target: { kind: "path", path: "report.HTML", line: 12, column: null }, found: { real: "/project/report.HTML", kind: "file" }, inCheckout: true },
+      reveal: { label: "explorer.revealFinder" },
+    }));
+    expect(items.slice(0, 5).map((item) => item.label)).toEqual(["Open in browser", "Open source", "Open in default application", "Reveal in Finder", "Copy path"]);
+  });
+
+  it("treats a directory named .html as a folder and names the host's actual file manager", () => {
+    const items = terminalMenuItems(pane, "reviewer", context({
+      link: { target: { kind: "path", path: "./pages.html", line: null, column: null }, found: { real: "/project/pages.html", kind: "directory" } },
+      reveal: { label: "explorer.revealFileExplorer" },
+    }));
+    expect(items.slice(0, 4).map((item) => item.label)).toEqual(["Open", "Open in default application", "Reveal in File Explorer", "Copy path"]);
+    expect(items.some((item) => item.id === "link_source")).toBe(false);
+  });
+
   it("zooms a pane that has siblings, unzooms a zoomed one, and says why a lone pane cannot zoom", () => {
     const zoom = (over: Partial<TerminalMenuContext>) => terminalMenuItems(pane, "reviewer", context(over)).find((item) => item.id === "toggle_zoom");
     expect(zoom({ paneCount: 2 })).toMatchObject({ label: "Zoom pane", unavailable: null });

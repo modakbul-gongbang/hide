@@ -65,6 +65,15 @@ describe("pathLookups", () => {
   it("has nowhere to look for a relative path without a folder", () => {
     expect(pathLookups("src/a.ts", null, null)).toEqual([]);
   });
+
+  it("keeps the drive when resolving paths in a Windows pane", async () => {
+    expect(pathLookups("src/report.HTML", "C:/repo/sub", "C:/repo")).toEqual(["C:/repo/sub/src/report.HTML", "C:/repo/src/report.HTML"]);
+    expect(pathLookups("C:/repo/../report.HTML", null, null)).toEqual(["C:/report.HTML"]);
+    expect(pathLookups("../../report.HTML", "C:/repo", null)).toEqual(["C:/report.HTML"]);
+    expect(pathLookups("../../report.HTML", "//server/share/repo", null)).toEqual(["//server/share/report.HTML"]);
+    const chosen = await resolveGroups(linkCandidates([row("src/report.HTML:2", 40)], 0), { cwd: "C:/repo", root: "C:/repo" }, host(["C:/repo/src/report.HTML"]));
+    expect(chosen[0]?.resolved.found?.real).toBe("C:/repo/src/report.HTML");
+  });
 });
 
 describe("resolveGroups", () => {

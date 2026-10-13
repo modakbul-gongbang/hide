@@ -18,8 +18,10 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { linkCandidates } from "../../web/src/terminalLinks";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { toPage } from "../src/main/wirePath";
+import { printFileCommand, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { measureFor, quietFor } from "../../web/e2e/wait";
@@ -79,7 +81,7 @@ async function withProbe(page: Page): Promise<void> {
     .toBe("object");
 }
 
-/** Prints `lines` in the fixture pane through `cat`, so the shell draws them as a program would. */
+/** Prints `lines` in the fixture pane through a program, using the pane's shell. */
 async function print(page: Page, paneId: string, lines: string[], last: string): Promise<void> {
   // Leave the old row before replacing its text so xterm requests fresh links
   // when the next real hover enters it, including after an empty/error answer.
@@ -90,9 +92,10 @@ async function print(page: Page, paneId: string, lines: string[], last: string):
   await page.mouse.move(away.x, away.y);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], `clear; cat '${file}'\n`], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  const command = printFileCommand(herdr.shell, file);
+  const sent = spawnSync(herdr.bin, ["pane", "run", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => page.evaluate(([id, text]) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).includes(text), [paneId, last] as const), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id), paneId), { timeout: 20_000 }).toContain(last);
 }
 
 /** Where `text` is on the screen of `paneId`: its row and the column of its `offset`th character. */
@@ -348,6 +351,92 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => sent.get("terminal_click") ?? 0).toBe(clicksBefore + 1);
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
+});
+
+// @platform: File URLs, physical paths and the file-manager reveal label follow the host OS.
+test("terminal HTML opens a rendered page and right-click offers actions for the exact link or path", { tag: "@platform" }, async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
+  const html = path.join(checkout, "src", "report.HTML");
+  fs.writeFileSync(html, "<!doctype html><title>Terminal HTML</title>\n<h1>Rendered terminal report</h1>\n");
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1024, height: 681 });
+  const page = await shellPage(app);
+  const sent = countSent(page);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.5));
+  await enterWorkspace(page, "fixture");
+  await recordMacOS();
+  // Clipboard writes are recorded in this private renderer; QA leaves the
+  // operator's clipboard and OS applications alone.
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text; },
+  } }));
+  const copied = () => page.evaluate(() => (window as unknown as { copied?: string }).copied);
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await showFileViews(page, paneId);
+  await print(page, paneId, [
+    "html src/report.HTML:2",
+    `url ${origin}/a.html`,
+    `osc8 \u001b]8;;${pathToFileURL(html).href}#L2\u001b\\HTML source label\u001b]8;;\u001b\\`,
+    "folder ./src",
+    "plain MENU-END",
+  ], "MENU-END");
+  const clicks = sent.get("terminal_click") ?? 0;
+  let point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y);
+  await expect(viewTab(page, "Terminal HTML")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children
+    .filter((child) => "webContents" in child)
+    .some((child) => (child as Electron.WebContentsView).webContents.getTitle() === "Terminal HTML"))).toBe(true);
+  await screenshot(page, "terminal-html-rendered");
+
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Open in browser", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toBeVisible();
+  await screenshot(page, "terminal-html-menu");
+  await page.getByRole("menuitem", { name: "Open source", exact: true }).click();
+  await expect(page.locator('[data-view-tab-bar] [role="tab"][data-tab-kind="file"][aria-label*="report.HTML"]')).toBeVisible();
+  await expect(page.locator(".cm-activeLine").first()).toHaveText("<h1>Rendered terminal report</h1>");
+  await screenshot(page, "terminal-html-source");
+
+  point = await pointOf(page, paneId, "HTML source label", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Copy path", exact: true }).click();
+  await expect.poll(copied).toBe(toPage(fs.realpathSync(html)));
+  point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  const reveal = process.platform === "darwin" ? "Reveal in Finder" : process.platform === "win32" ? "Reveal in File Explorer" : "Open Containing Folder";
+  await page.getByRole("menuitem", { name: reveal, exact: true }).click();
+  expect(await opened()).toEqual([{ how: "reveal", target: fs.realpathSync(html) }]);
+
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await screenshot(page, "terminal-url-menu");
+  await expect(page.getByRole("menuitem", { name: "Open in Hide", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
+  await expect.poll(copied).toBe(`${origin}/a.html`);
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Open in default browser", exact: true }).click();
+  expect(await opened()).toContainEqual({ how: "external", target: `${origin}/a.html` });
+
+  point = await pointOf(page, paneId, "./src", { offset: 1 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  point = await pointOf(page, paneId, "MENU-END", { offset: 2 });
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  expect(sent.get("terminal_click") ?? 0).toBe(clicks);
+  expect(sent.get("reveal_path")).toBe(1);
 });
 
 /** A current native frame of this exact candidate, without activating any app. */
