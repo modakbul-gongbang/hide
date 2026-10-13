@@ -120,25 +120,19 @@ impl NodePanes {
                 },
                 None => refused("hide_unavailable"),
             };
-            if let ProofAnswer::Refused { reason } = &answer {
+            if let ProofAnswer::Refused { reason, .. } = &answer {
                 record_refusal(&node, named.as_deref(), reason, "core");
             }
-            let persistent = match &answer {
-                ProofAnswer::WorkspaceInfo {
-                    token, issued_new, ..
-                } => Some((token.clone(), *issued_new)),
-                _ => None,
-            };
-            let delivered = send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
-            if let Some((token, issued_new)) = persistent
-                && let Some(state) = panes.state.get()
-            {
-                if delivered {
-                    let _ = state.pane_capabilities.claim(&token);
-                } else if issued_new {
-                    state.pane_capabilities.revoke(&token);
-                }
-            }
+            send_proof(
+                panes
+                    .state
+                    .get()
+                    .map(|state| state.pane_capabilities.as_ref()),
+                &node,
+                &link,
+                request,
+                answer,
+            );
         });
     }
 
@@ -363,11 +357,11 @@ fn answer_hook(
             attested.as_ref(),
         )?;
         if let Some(named) = hook.token.as_deref()
-            && state.pane_capabilities.get(named).is_some()
+            && state
+                .pane_capabilities
+                .hook_reference(named, node, link, &hook.request_id)?
+                .is_some()
         {
-            if state.pane_capabilities.vouched(named, node, link).is_none() {
-                return Err("credential_expired");
-            }
             let prior = state.pane_capabilities.validate(
                 named,
                 state.herdr_socket.as_deref(),
@@ -478,7 +472,36 @@ fn prefix(text: &str, chars: usize) -> &str {
 fn refused(reason: &str) -> ProofAnswer {
     ProofAnswer::Refused {
         reason: reason.to_owned(),
+        next_action: pane_auth::refusal_next_action(reason).to_owned(),
     }
+}
+
+/// Claim guidance only if a waiting node caller accepted it. A late or lost
+/// answer releases a new token without revoking an already held reference.
+pub(crate) fn send_proof(
+    registry: Option<&pane_auth::Registry>,
+    node: &str,
+    link: &RemoteHost,
+    request: u64,
+    answer: ProofAnswer,
+) -> bool {
+    let persistent = match &answer {
+        ProofAnswer::WorkspaceInfo {
+            token, issued_new, ..
+        } => Some((token.clone(), *issued_new)),
+        _ => None,
+    };
+    let delivered = send_reply(node, link, Call::PaneProofAnswer { request, answer });
+    if let Some((token, issued_new)) = persistent
+        && let Some(registry) = registry
+    {
+        if delivered {
+            let _ = registry.claim(&token);
+        } else if issued_new {
+            registry.revoke(&token);
+        }
+    }
+    delivered
 }
 
 fn send_reply(node: &str, link: &RemoteHost, call: Call) -> bool {
@@ -572,6 +595,18 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn a_core_proof_refusal_has_the_same_recovery_advice_as_the_node() {
+        assert_eq!(
+            serde_json::to_value(refused("pane_changed")).unwrap()["next_action"],
+            "Reconnect the pane and retry"
+        );
+        assert_eq!(
+            serde_json::to_value(refused("checkout_not_registered")).unwrap()["next_action"],
+            "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry"
+        );
+    }
 
     #[test]
     fn a_full_proof_limit_never_calls_the_link_from_its_reader() {

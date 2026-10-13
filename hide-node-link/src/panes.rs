@@ -7,6 +7,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Recovery advice shared by local and device pane refusals.
+pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
+pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
+
+pub fn refusal_next_action(reason: &str) -> &'static str {
+    match reason {
+        "checkout_not_registered" | "caller_unavailable" => CHECKOUT_NEXT_ACTION,
+        _ => PANE_NEXT_ACTION,
+    }
+}
+
 /// Streams one link carries at once.
 pub const MAX_STREAMS: usize = 8;
 /// The most bytes of a stream one message carries.
@@ -175,6 +186,7 @@ pub enum ProofAnswer {
     },
     Refused {
         reason: String,
+        next_action: String,
     },
 }
 

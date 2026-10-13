@@ -64,6 +64,29 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
             remote_hooks.is_file(),
             "private remote kit lacks its hook sibling"
         );
+        // A named reference can disappear while the pane stays alive. The
+        // actual remote CLI must still send a new kernel proof and get guidance.
+        let missing = fixture.remote.environment.home.join("gone-reference.json");
+        ensure!(
+            !missing.exists(),
+            "missing-reference fixture already exists"
+        );
+        let guidance = fixture
+            .remote
+            .run_in_pane(&format!(
+                "HIDE_CAP_REF={} {} workspace info --hook",
+                quote(&missing),
+                quote(&remote_hide),
+            ))?
+            .json()?;
+        ensure!(
+            guidance["context"]["device_id"] == "remote"
+                && guidance["capabilities"]
+                    .as_array()
+                    .is_some_and(|caps| caps.iter().any(|cap| cap == "workspace.info")),
+            "fresh remote proof did not return remote guidance: {guidance}"
+        );
+
         let send = format!(
             "{} request send remote-child --intent bridge-1 --body {}",
             quote(&fixture.hide),

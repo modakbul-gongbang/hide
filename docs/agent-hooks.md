@@ -103,13 +103,16 @@ This delivery path has its own bounded private diagnostics; Memory's request run
 
 Memory has one store, `project-memory.sqlite3` in the core's state folder, which only the core opens, whichever machine the agent runs on (PRD core-host-node-move D-12, B14).
 The hook asks for it through `hide workspace memory --event <event> --runtime <runtime> --session <id>`, the same pane credential and node link its letters come by, on its own thread beside the letter pull; on another machine the request goes through that machine's node to the core.
-These reads and SessionStart guidance use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 30).
+These reads and SessionStart guidance use one typed proof-and-answer request through the local bootstrap service, forwarded with the node's fresh caller proof when the core is elsewhere (NodeLink protocol 31).
 The service accepts only the `LetterPull`, `Memory` and read-only `WorkspaceInfo` variants of `HookCommand`, never Workspace actions or letter confirmation, and reuses the ordinary core executors after credential validation.
 A letter or Memory one-shot token stays inside the core and is revoked before the answer is sent, even if the caller ended or the request unwound; no reusable credential is returned by those two reads.
 The guidance read returns the same persistent reference and scoped capabilities that bootstrap followed by info returned, in one child and one proof exchange.
 The node owns that reference file; a failed answer removes only a newly issued reference, and the core claims a guidance credential only after its proof answer is accepted.
 A live `HIDE_CAP_REF` must agree with the fresh proof and, on a node, its own link; a letter or Memory read does not claim or extend that persistent reference.
+An absent named reference falls back to the fresh proof and records `hook.reference_missing` with the request identity, never its path or token.
+Local and device refusals include the same `next_action` recovery advice.
 The selected route receives one request with no retry through another transport; ambiguous node bridges are refused before any command is sent.
+Every write and read uses the time remaining from the request's start, so partial responses cannot renew the deadline.
 Requests and responses are capped at 16 KiB and 64 KiB, and the existing bootstrap and node proof worker caps still apply.
 The letter and Memory children still run independently and in parallel with the same deadlines and fail-open outcomes.
 The core takes the Project from the caller's attested checkout, read by that checkout's own node, never from anything the hook sends.

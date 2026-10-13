@@ -123,6 +123,7 @@ impl hide_node::ssh::PaneEvents for Events {
             } else if *one_shot {
                 ProofAnswer::Refused {
                     reason: "pane_changed".to_owned(),
+                    next_action: "Reconnect the pane and retry".to_owned(),
                 }
             } else {
                 ProofAnswer::Issued {
@@ -766,18 +767,18 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
     };
     assert_eq!(
         read(&mut overflow),
-        json!({"ok": false, "reason": "bridge_busy"})
+        json!({"ok": false, "reason": "bridge_busy", "next_action": "Reconnect the pane and retry"})
     );
     for reader in &mut waiting {
         assert_eq!(
             read(reader),
-            json!({"ok": false, "reason": "hide_unavailable"})
+            json!({"ok": false, "reason": "hide_unavailable", "next_action": "Reconnect the pane and retry"})
         );
     }
     assert!(links[2].call(Call::Hello, TIMEOUT).is_ok());
     assert_eq!(
         read(&mut request(&sockets[2], 33)),
-        json!({"ok": false, "reason": "hide_unavailable"})
+        json!({"ok": false, "reason": "hide_unavailable", "next_action": "Reconnect the pane and retry"})
     );
     assert_eq!(device.ssh.accepted(), 1);
     for link in &links {
@@ -1138,7 +1139,10 @@ fn a_device_s_pane_socket_lives_with_its_link() {
     let mut answer = String::new();
     BufReader::new(&stream).read_line(&mut answer).unwrap();
     let answer: Value = serde_json::from_str(&answer).unwrap();
-    assert_eq!(answer, json!({"ok": false, "reason": "pane_unavailable"}));
+    assert_eq!(
+        answer,
+        json!({"ok": false, "reason": "pane_unavailable", "next_action": "Reconnect the pane and retry"})
+    );
     device.link.close("contract");
     gone_within(socket, TIMEOUT);
     assert!(
@@ -1197,16 +1201,25 @@ fn a_device_pane_s_proof_crosses_the_link_and_its_refusals_are_reported() {
     // Refused by the core: the caller reads its reason, and the node
     // reports nothing, since the core records what it refused.
     let changed = ask(socket, PROVED_PANE, 'b', true);
-    assert_eq!(changed, json!({"ok": false, "reason": "pane_changed"}));
+    assert_eq!(
+        changed,
+        json!({"ok": false, "reason": "pane_changed", "next_action": "Reconnect the pane and retry"})
+    );
     // Refused by the node: a pane its Herdr does not know.
     let unknown = ask(socket, "w1:p1", 'c', false);
-    assert_eq!(unknown, json!({"ok": false, "reason": "pane_unavailable"}));
+    assert_eq!(
+        unknown,
+        json!({"ok": false, "reason": "pane_unavailable", "next_action": "Reconnect the pane and retry"})
+    );
     // At the cap: sixteen callers that never ask hold every place.
     let waiting = (0..16)
         .map(|_| UnixStream::connect(socket).unwrap())
         .collect::<Vec<_>>();
     let busy = ask(socket, PROVED_PANE, 'd', false);
-    assert_eq!(busy, json!({"ok": false, "reason": "bridge_busy"}));
+    assert_eq!(
+        busy,
+        json!({"ok": false, "reason": "bridge_busy", "next_action": "Reconnect the pane and retry"})
+    );
     drop(waiting);
     let refusals = |heard: &[NodeEvent]| {
         heard

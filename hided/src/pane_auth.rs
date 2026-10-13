@@ -35,11 +35,7 @@ use crate::state_file::new_token;
 
 const MAX_CAPABILITIES: usize = 64;
 const CAPABILITY_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
-/// What a caller can do when its checkout no longer resolves: the same
-/// sentence at bootstrap (CLI), at a refused command (server), and in the
-/// caller's own refusal text.
-pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
-pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
+pub use hide_node_link::panes::{CHECKOUT_NEXT_ACTION, PANE_NEXT_ACTION, refusal_next_action};
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -107,14 +103,6 @@ impl Capability {
             Binding::Pane { .. } => ("pane_changed", PANE_NEXT_ACTION),
             Binding::Checkout => ("checkout_not_registered", CHECKOUT_NEXT_ACTION),
         }
-    }
-}
-
-/// The next step for a refused command, by the daemon's reason.
-pub fn refusal_next_action(reason: &str) -> &'static str {
-    match reason {
-        "checkout_not_registered" | "caller_unavailable" => CHECKOUT_NEXT_ACTION,
-        _ => PANE_NEXT_ACTION,
     }
 }
 
@@ -437,6 +425,30 @@ impl Registry {
     pub fn vouched(&self, token: &str, node: &str, link: &RemoteHost) -> Option<Capability> {
         self.get(token)
             .filter(|capability| capability.vouched_by(node, link))
+    }
+
+    /// A hook's named token constrains a fresh proof only while it exists.
+    /// An extant token must belong to this node and this very connection.
+    pub(crate) fn hook_reference(
+        &self,
+        token: &str,
+        node: &str,
+        link: &RemoteHost,
+        request_id: &str,
+    ) -> Result<Option<Capability>, &'static str> {
+        let Some(cap) = self.get(token) else {
+            herdr_core::diagnostic!(json!({
+                "component": "node_panes",
+                "kind": "hook.reference_missing",
+                "node": node,
+                "request_id": request_id,
+            }));
+            return Ok(None);
+        };
+        if !cap.vouched_by(node, link) {
+            return Err("credential_expired");
+        }
+        Ok(Some(cap))
     }
 
     pub fn revoke_vouched(&self, node: &str, link: &RemoteHost, token: &str) {
@@ -1278,6 +1290,132 @@ mod tests {
         other.context.device_id = "node-b".to_owned();
         assert!(!cap.same_identity(&other));
         assert!(cap.same_identity(&cap));
+    }
+
+    #[test]
+    fn a_named_hook_token_from_another_node_or_link_is_refused_but_a_gone_one_is_not_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link = RemoteHost::detached("node-a");
+        let other = RemoteHost::detached("node-b");
+        let (token, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        for (node, connection) in [("node-b", &other), ("node-a", &other), ("node-b", &link)] {
+            assert_eq!(
+                registry
+                    .hook_reference(&token, node, connection, "hook-1")
+                    .err(),
+                Some("credential_expired")
+            );
+        }
+        assert!(
+            registry
+                .hook_reference(&token, "node-a", &link, "hook-1")
+                .unwrap()
+                .is_some()
+        );
+        registry.revoke(&token);
+        assert!(
+            registry
+                .hook_reference(&token, "node-a", &link, "hook-2")
+                .unwrap()
+                .is_none()
+        );
+        let (fresh, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        assert!(registry.vouched(&fresh, "node-a", &link).is_some());
+        assert!(registry.get(&token).is_none());
+    }
+
+    #[test]
+    fn late_guidance_is_not_claimed_and_releases_only_the_new_token() {
+        use hide_node_link::panes::ProofAnswer;
+        use hide_node_link::protocol::{Outcome, Request, Response};
+        use std::io::BufRead;
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().unwrap();
+        // The real node has already forgotten the waiting caller. Its false
+        // receipt travels back over the real link to the core's claim path.
+        let node = std::thread::spawn(move || {
+            let panes = hide_host::panes::Panes::new();
+            let mut writer = node_end.duplicate();
+            for line in std::io::BufReader::new(node_end).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                let request: Request = serde_json::from_str(&line).unwrap();
+                let Call::PaneProofAnswer {
+                    request: id,
+                    answer,
+                } = request.call
+                else {
+                    panic!("unexpected call");
+                };
+                if id == 100 {
+                    break; // The link ends before the receipt can be sent.
+                }
+                let accepted = panes.answer_proof(id, answer).unwrap();
+                assert_eq!(accepted, json!(false));
+                let response = Response {
+                    id: request.id,
+                    outcome: Outcome::Ok(accepted),
+                };
+                if writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let link =
+            hide_node::ssh::host::over_local_stream("node-a", core_end, None, Box::new(|_| {}))
+                .unwrap();
+        for issued_new in [true, false] {
+            let (token, _) = registry
+                .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+                .unwrap();
+            assert_eq!(registry.claimed(&token), Some(false));
+            let delivered = crate::node_panes::send_proof(
+                Some(&registry),
+                "node-a",
+                &link,
+                99,
+                ProofAnswer::WorkspaceInfo {
+                    token: token.clone(),
+                    issued_new,
+                    answer: json!({"ok":true}),
+                },
+            );
+            assert!(!delivered);
+            assert_eq!(
+                registry.claimed(&token),
+                if issued_new { None } else { Some(false) }
+            );
+            if issued_new {
+                assert_eq!(registry.claim(&token), Err("credential_expired"));
+            }
+            registry.revoke(&token);
+        }
+        let (lost, _) = registry
+            .issue_remote(&device_attestation("node-a"), device_grant("node-a", &link))
+            .unwrap();
+        assert!(!crate::node_panes::send_proof(
+            Some(&registry),
+            "node-a",
+            &link,
+            100,
+            ProofAnswer::WorkspaceInfo {
+                token: lost.clone(),
+                issued_new: true,
+                answer: json!({"ok":true})
+            }
+        ));
+        assert_eq!(registry.claimed(&lost), None);
+        assert_eq!(registry.claim(&lost), Err("credential_expired"));
+        link.close("fixture finished");
+        drop(link);
+        node.join().unwrap();
     }
 
     /// A device's node on a local link that answers `Call::PaneInspect`

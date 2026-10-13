@@ -509,7 +509,7 @@ impl Panes {
                     info = Some(answer);
                     token
                 }
-                ProofAnswer::Refused { reason } => {
+                ProofAnswer::Refused { reason, .. } => {
                     core_refused = true;
                     return Err(reason);
                 }
@@ -828,7 +828,9 @@ fn answer_client(
             answer
         }
         Ok(BootstrapAnswer::Hook(answer)) => answer,
-        Err(reason) => json!({"ok":false,"reason":reason}),
+        Err(reason) => {
+            json!({"ok":false,"reason":reason,"next_action":hide_node_link::panes::refusal_next_action(&reason)})
+        }
     };
     writeln!(stream, "{answer}")
 }
@@ -845,6 +847,32 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_device_bootstrap_refusal_includes_recovery_advice() {
+        use std::io::BufRead;
+        for (reason, advice) in [
+            ("pane_changed", "Reconnect the pane and retry"),
+            ("remote_unavailable", "Reconnect the pane and retry"),
+            ("credential_expired", "Reconnect the pane and retry"),
+            ("invalid_request", "Reconnect the pane and retry"),
+            (
+                "checkout_not_registered",
+                "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry",
+            ),
+        ] {
+            let (mut writer, reader) = LocalStream::pair().unwrap();
+            answer_client(&mut writer, Err(reason.to_owned())).unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(reader)
+                .read_line(&mut line)
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"ok":false,"reason":reason,"next_action":advice})
+            );
+        }
+    }
 
     /// A starting service removes what a killed node or an older Hide's
     /// bridge left, and never a folder whose socket answers or one another

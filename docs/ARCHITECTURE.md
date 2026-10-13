@@ -1142,7 +1142,7 @@ Once a Workspace action result has reached the CLI, a lost acknowledgement of a 
 Hook reads (`hide inbox --hook`, `hide workspace memory` and SessionStart's `hide workspace info --hook`) use one proof-and-answer exchange through the bootstrap socket on both the core and a node, without a WebSocket upgrade.
 `hide_node_link::panes::HookCommand` admits only `LetterPull`, `Memory` and read-only `WorkspaceInfo`; a Workspace action, a letter send or confirmation, and a Factory or browser command cannot be represented on this route.
 The caller selects one live route before sending, refuses ambiguous node bridges before sending to any, and never retries a sent request through another transport.
-A node sends the typed command with its fresh kernel proof over its own link (NodeLink protocol 30); the core reuses the same credential issuance, validation, delivery executor and Memory lookup as the Workspace route.
+A node sends the typed command with its fresh kernel proof over its own link (NodeLink protocol 31); the core reuses the same credential issuance, validation, delivery executor and Memory lookup as the Workspace route.
 Letter and Memory requests own fresh one-shot tokens, held internally and revoked on every return and unwind before their answers are sent; a local reference file is removed with them and a node creates no reference file.
 Workspace guidance returns its read-only info and the same persistent reference previously obtained by bootstrap followed by info, with unchanged capabilities and lifetime.
 The core claims that reference after the local answer is written or the node accepts its proof answer; a late node answer cannot claim it, and a failed delivery removes only newly issued authority.

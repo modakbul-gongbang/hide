@@ -551,20 +551,27 @@ pub fn request_hook(
     env: &Env,
     mut command: hide_node_link::panes::HookCommand,
 ) -> Result<Value, String> {
-    use hide_node_link::panes::{
-        HOOK_REQUEST_LIMIT, HOOK_RESPONSE_LIMIT, HookCommand, HookRequest,
-    };
+    use hide_node_link::panes::{HOOK_REQUEST_LIMIT, HookCommand, HookRequest};
     let started = std::time::Instant::now();
     let timeout = if matches!(command, HookCommand::Memory { .. }) {
         MEMORY_WITHIN
     } else {
         TIMEOUT
     };
+    let request_id = fresh_request_id()?;
     let named = match std::env::var(crate::env::HIDE_CAP_REF) {
         Ok(path) if path.is_empty() => return Err("invalid_reference".to_owned()),
         Ok(path) => match read_reference(Path::new(&path)) {
             Ok(reference) => Some((PathBuf::from(path), reference)),
-            Err(reason) if reason == "credential_expired" => None,
+            Err(reason) if reason == "credential_expired" => {
+                herdr_core::diagnostic!(json!({
+                    "component": "workspace_cli",
+                    "kind": "hook.reference_missing",
+                    "request_id": request_id,
+                    "pane_id": env.pane_id,
+                }));
+                None
+            }
             Err(reason) => return Err(reason),
         },
         Err(_) => None,
@@ -600,7 +607,6 @@ pub fn request_hook(
     };
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|_| "reference_unavailable".to_owned())?;
-    let request_id = fresh_request_id()?;
     let token = named.map(|(_, reference)| reference.token);
     let line = loop {
         let hook = HookRequest {
@@ -621,27 +627,71 @@ pub fn request_hook(
         }
         *prompt = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
     };
-    let within = timeout
-        .checked_sub(started.elapsed())
-        .ok_or("request_timeout")?;
-    stream
-        .set_read_timeout(Some(within))
-        .map_err(|_| "hide_unavailable")?;
-    let _ = stream.set_write_timeout(Some(within));
-    writeln!(stream, "{line}").map_err(|_| "hide_unavailable")?;
-    let mut line = String::new();
-    BufReader::new(stream)
-        .take(HOOK_RESPONSE_LIMIT as u64 + 1)
-        .read_line(&mut line)
-        .map_err(|_| "request_timeout")?;
-    if line.len() > HOOK_RESPONSE_LIMIT || !line.ends_with('\n') {
-        return Err("invalid_response".to_owned());
+    let remaining = || {
+        timeout
+            .checked_sub(started.elapsed())
+            .filter(|left| !left.is_zero())
+    };
+    let line = format!("{line}\n");
+    let mut pending = line.as_bytes();
+    while !pending.is_empty() {
+        let within = remaining().ok_or("request_timeout")?;
+        stream
+            .set_write_timeout(Some(within))
+            .map_err(|_| "hide_unavailable")?;
+        let written = stream.write(pending).map_err(|_| "hide_unavailable")?;
+        if written == 0 {
+            return Err("hide_unavailable".to_owned());
+        }
+        pending = &pending[written..];
     }
+    let line = read_hook_line(
+        |within, bytes| {
+            stream.set_read_timeout(Some(within))?;
+            stream.read(bytes)
+        },
+        remaining,
+    )?;
     let answer: Value = serde_json::from_str(&line).map_err(|_| "invalid_response")?;
     if answer["ok"] == true && answer["request_id"] != request_id {
         return Err("invalid_response".to_owned());
     }
     Ok(answer)
+}
+
+/// Each blocking read gets only the time left in the original request.
+/// The clock is supplied so a trickling peer's deadline is tested without
+/// sleeping or making a scheduler speed assertion.
+fn read_hook_line(
+    mut read: impl FnMut(Duration, &mut [u8]) -> std::io::Result<usize>,
+    mut remaining: impl FnMut() -> Option<Duration>,
+) -> Result<String, String> {
+    use hide_node_link::panes::HOOK_RESPONSE_LIMIT;
+    let mut answer = Vec::new();
+    let mut chunk = [0; 4096];
+    loop {
+        let within = remaining()
+            .filter(|left| !left.is_zero())
+            .ok_or("request_timeout")?;
+        let read = read(within, &mut chunk).map_err(|_| "request_timeout")?;
+        remaining()
+            .filter(|left| !left.is_zero())
+            .ok_or("request_timeout")?;
+        if read == 0 {
+            return Err("invalid_response".to_owned());
+        }
+        let end = chunk[..read]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|at| at + 1);
+        answer.extend_from_slice(&chunk[..end.unwrap_or(read)]);
+        if answer.len() > HOOK_RESPONSE_LIMIT {
+            return Err("invalid_response".to_owned());
+        }
+        if end.is_some() {
+            return String::from_utf8(answer).map_err(|_| "invalid_response".to_owned());
+        }
+    }
 }
 
 /// The relay socket for one `hide browser` page command: the same scoped
@@ -1041,6 +1091,43 @@ async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::sync::{Arc, mpsc};
+
+    #[test]
+    fn a_trickling_hook_response_cannot_renew_the_request_deadline() {
+        use std::cell::Cell;
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut allowed = Vec::new();
+        let answer = read_hook_line(
+            |within, bytes| {
+                allowed.push(within);
+                elapsed.set(elapsed.get() + Duration::from_secs(4));
+                bytes[0] = b' ';
+                Ok(1)
+            },
+            || Duration::from_secs(10).checked_sub(elapsed.get()),
+        );
+        assert_eq!(answer, Err("request_timeout".to_owned()));
+        assert_eq!(allowed, [10, 6, 2].map(Duration::from_secs));
+    }
+
+    #[test]
+    fn a_hook_response_requires_a_bounded_complete_line() {
+        for (bytes, expected) in [
+            (b"{}\n".to_vec(), Ok("{}\n".to_owned())),
+            (b"{}".to_vec(), Err("invalid_response".to_owned())),
+            (
+                vec![b' '; hide_node_link::panes::HOOK_RESPONSE_LIMIT + 1],
+                Err("invalid_response".to_owned()),
+            ),
+        ] {
+            let mut peer = std::io::Cursor::new(bytes);
+            let answer = read_hook_line(
+                |_, chunk| std::io::Read::read(&mut peer, chunk),
+                || Some(Duration::from_secs(10)),
+            );
+            assert_eq!(answer, expected);
+        }
+    }
 
     // Mode bits widen the file for the refusal.
     #[cfg(unix)]
