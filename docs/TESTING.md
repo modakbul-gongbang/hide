@@ -278,6 +278,8 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
    A rule that depends on what Herdr said and in what order is tested through the runtime: dispatch an event, feed a session payload, read the snapshot (`herdr-core/src/runtime/tests/session_navigation.rs`, for example `view_authority_an_external_tab_focus_is_followed_and_reported` and `view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it`).
    Why: the unit test cannot see a pending request being superseded, and an e2e spec sees it only when the scheduler happens to produce it.
+   Native usage reads return one bounded page: an accounting fixture follows `has_more` and the checkpoint to completion (`usage_drain` in `hide-session/tests/it/usage.rs`), while a test of the page budget inspects each step itself.
+   A two-line session may yield after its metadata under load, so its first page is not a promise of the whole event set; token and identity expectations apply to the completed read without extending a read's time budget.
 2. **Decide Herdr's answers with `FakeHerdr`.**
    `herdr-core/src/fake_herdr.rs` is the one fake Herdr socket: the test supplies a responder by method, the fake checks each answer against the pinned schema, and `methods()`, `calls()` and `wait_for_requests` read what the core asked.
    Why: fifteen hand-written listeners used to differ in a socket detail, and the one that differed failed under load for weeks.
