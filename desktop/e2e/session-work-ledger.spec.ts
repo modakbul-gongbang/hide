@@ -7,7 +7,7 @@ import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture } f
 import { chord } from "../../web/e2e/chords";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
-import { captureNativeWindow } from "./native-window";
+import { captureElectronWindow } from "./electron-window";
 
 test("@platform session work records, drafts, ended work and search render in both themes on a narrow native Tools column", async () => {
   test.setTimeout(240_000);
@@ -47,6 +47,7 @@ test("@platform session work records, drafts, ended work and search render in bo
     await expect(record.locator('[data-record-task]')).toHaveCount(3, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
     await record.locator(`[data-record-child="${child}"] > summary`).click();
+    const fixtureIdentity = { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8" }).trim(), home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, daemon: run.daemonPid(), parent: herdr.panes[0], child, provider: "scripted", github: "scripted" };
     for (const theme of ["light", "dark"] as const) {
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="general"]').click();
@@ -54,32 +55,34 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-interface-language]').click();
       await page.locator('[data-language-option="ko"]').click();
       await page.keyboard.press("Escape");
-      const facts = { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8" }).trim(), home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, daemon: run.daemonPid(), parent: herdr.panes[0], child, theme, tools: await page.locator('[data-column="tools"]').boundingBox(), provider: "scripted", github: "scripted" };
-      await captureNativeWindow(app, `record-chapters-children-${theme}`, facts);
+      const facts = { ...fixtureIdentity, theme, tools: await page.locator('[data-column="tools"]').boundingBox() };
+      await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
       await record.getByText("닫힘 1", { exact: true }).click();
-      await captureNativeWindow(app, `record-closed-${theme}`, facts);
+      await captureElectronWindow(app, `record-closed-${theme}`, facts);
       await missed.getByRole("button", { name: "되돌리기", exact: true }).click();
       await missed.locator('[data-missed-issue]').click();
       await expect(page.locator('[data-new-issue-title]')).toHaveValue("한국어 요청 줄바꿈 확인", { timeout: 30_000 });
-      await captureNativeWindow(app, `record-issue-draft-${theme}`, facts);
+      await captureElectronWindow(app, `record-issue-draft-${theme}`, facts);
       await page.locator('[data-new-issue]').getByRole("button", { name: "취소", exact: true }).click();
       await page.keyboard.press(chord("search", "electron"));
       await page.locator('[data-palette-input]').fill(NEXT_GOAL);
       await expect(page.locator('[data-palette-group="sessions"]')).toContainText(NEXT_GOAL, { timeout: 30_000 });
-      await captureNativeWindow(app, `record-search-${theme}`, facts);
+      await captureElectronWindow(app, `record-search-${theme}`, facts);
       await page.keyboard.press("Escape");
       const divider = page.locator('[data-column-divider="tools"]');
       for (let step = 0; step < 4; step += 1) await divider.press("ArrowRight");
-      await captureNativeWindow(app, `record-narrow-${theme}`, { ...facts, tools: await page.locator('[data-column="tools"]').boundingBox() });
+      await captureElectronWindow(app, `record-narrow-${theme}`, { ...facts, tools: await page.locator('[data-column="tools"]').boundingBox() });
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
       await page.locator('[data-ai-agent-summary="true"]').click();
       await page.keyboard.press("Escape");
       await expect(record.locator('[data-record-task]')).toHaveCount(0);
       await expect(record.locator('[data-record-request]')).toHaveCount(3);
-      await captureNativeWindow(app, `record-summaries-off-${theme}`, facts);
+      await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
+      await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+      await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
       await page.locator('[data-ai-agent-summary="false"]').click();
@@ -96,7 +99,7 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-settings-tab="general"]').click();
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await page.keyboard.press("Escape");
-      await captureNativeWindow(app, `record-ended-${theme}`, { parent: herdr.panes[0], home: run.env.HOME, state: run.env.HIDE_STATE_DIR });
+      await captureElectronWindow(app, `record-ended-${theme}`, { ...fixtureIdentity, theme, tools: await page.locator('[data-column="tools"]').boundingBox() });
     }
   } catch (error) { failures.push(error); }
   finally {
