@@ -1771,7 +1771,6 @@ fn fresh_catalog() -> CatalogCache {
         spaces: Vec::new(),
         worktrees: crate::model::WorktreeCatalogSnapshot::default(),
         workspaces: Vec::new(),
-        asked: BTreeSet::new(),
         paths: Default::default(),
         built_at: Instant::now(),
         purposes_synced: None,
