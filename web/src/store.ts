@@ -575,7 +575,7 @@ export const useShellStore = create<Store>((set, get) => ({
     const cursors = {
       usage: frame.type === "snapshot"
         ? payload.usage ?? null
-        : payload.usage ? share(get().usage, payload.usage) : get().usage,
+        : payload.usage && (payload.revision ?? get().revision) >= get().revision ? share(get().usage, payload.usage) : get().usage,
       revision: frame.type === "snapshot" ? (payload.revision ?? get().revision) : Math.max(payload.revision ?? 0, get().revision),
       // A whole snapshot resets every terminal, so the old cursor names
       // output those terminals no longer hold.

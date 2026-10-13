@@ -40,6 +40,9 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().usage).toBe(retained);
     store.applyFrame({ type: "delta", payload: { revision: 3, rest: { ui_state: { sidebar_width: 300 } } } });
     expect(useShellStore.getState().usage).toBe(retained);
+    store.applyFrame({ type: "delta", payload: { revision: 1, usage } });
+    expect(useShellStore.getState().usage).toBe(retained);
+    expect(useShellStore.getState().revision).toBe(3);
     store.applyFrame({ type: "delta", payload: { revision: 4, usage: { nodes: [] } } });
     expect(useShellStore.getState().usage?.nodes).toEqual([]);
     store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
