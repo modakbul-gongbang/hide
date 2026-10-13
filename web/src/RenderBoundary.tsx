@@ -2,10 +2,13 @@
 // render error React does not catch unmounts the whole page, the core's
 // socket with it, and leaves the window blank until a reload that draws
 // the same snapshot and fails again. Each boundary keeps its siblings and
-// the connection, records the failure as a diagnostic once until the part
-// draws again (design 13: no banner), and draws the part again on the next
-// change to the core's snapshot or the page's own state, since a render
-// reads nothing else. It listens to the stores only while its part is down.
+// the connection, records the failure as a diagnostic once per error until
+// the part draws again (design 13: no banner), and draws the part again on
+// the next change to the core's snapshot or the page's own state, since a
+// render reads nothing else. It listens to the stores only while its part
+// is down, and a change to the diagnostic list alone is not a change: a
+// part's own diagnostic would otherwise draw it, and two failing parts
+// would draw each other, again and again.
 
 import { Component, type ReactNode } from "react";
 import { AreaEmpty } from "./AreaEmpty";
@@ -17,6 +20,14 @@ import { useUiStore } from "./ui";
 /** A failure's message kept in the diagnostic, which may quote a whole value (engineering 15). */
 const MESSAGE_CAP = 300;
 
+/** The shell store's fields no part draws from; a change to them alone draws nothing again. */
+const DIAGNOSTIC_FIELDS: ReadonlySet<string> = new Set(["diagnostics", "diagnosticsDropped"]);
+
+function changedBeyondDiagnostics(state: object, previous: object): boolean {
+  const before = previous as Record<string, unknown>;
+  return Object.entries(state).some(([key, value]) => !DIAGNOSTIC_FIELDS.has(key) && value !== before[key]);
+}
+
 type Props = {
   /** Names the part in the diagnostic. */
   region: string;
@@ -27,7 +38,7 @@ type Props = {
 
 export class RenderBoundary extends Component<Props, { failed: boolean }> {
   override state = { failed: false };
-  /** The message last recorded, so a part failing on every change logs once. */
+  /** The message last recorded, so a part failing the same way on every change logs once. */
   private recorded: string | null = null;
   private stopListening: (() => void) | null = null;
 
@@ -37,30 +48,36 @@ export class RenderBoundary extends Component<Props, { failed: boolean }> {
 
   override componentDidCatch(error: unknown): void {
     const message = (error instanceof Error ? error.message : String(error)).slice(0, MESSAGE_CAP);
-    // Recorded before listening: the diagnostic is itself a store change.
-    if (message !== this.recorded) {
-      this.recorded = message;
-      useShellStore.getState().noteDiagnostic(`render_failed region=${this.props.region}: ${message}`);
-    }
-    this.retryOnNextChange();
+    if (message === this.recorded) return;
+    this.recorded = message;
+    useShellStore.getState().noteDiagnostic(`render_failed region=${this.props.region}: ${message}`);
+  }
+
+  // The listening follows `failed`, so a remount (StrictMode's included) picks it up again.
+  override componentDidMount(): void {
+    this.listenWhileFailed();
   }
 
   override componentDidUpdate(_props: Props, previous: { failed: boolean }): void {
     if (previous.failed && !this.state.failed) this.recorded = null;
+    this.listenWhileFailed();
   }
 
   override componentWillUnmount(): void {
     this.stopListening?.();
+    this.stopListening = null;
   }
 
-  private retryOnNextChange(): void {
-    if (this.stopListening) return;
+  private listenWhileFailed(): void {
+    if (!this.state.failed || this.stopListening) return;
     const retry = () => {
       this.stopListening?.();
       this.stopListening = null;
       this.setState({ failed: false });
     };
-    const shell = useShellStore.subscribe(retry);
+    const shell = useShellStore.subscribe((state, previous) => {
+      if (changedBeyondDiagnostics(state, previous)) retry();
+    });
     const page = useUiStore.subscribe(retry);
     this.stopListening = () => {
       shell();

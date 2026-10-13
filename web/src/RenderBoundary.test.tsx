@@ -2,7 +2,7 @@
 // A part that cannot draw (docs/UI_BEHAVIOR.md, A part that cannot be drawn):
 // its siblings keep drawing, the failure is a diagnostic once until the part
 // draws again, and the next change to the page's state draws it again.
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RenderBoundary } from "./RenderBoundary";
@@ -97,4 +97,43 @@ it("records a failure that repeats on every change once, and again after the par
     "render_failed region=screen: Agent scope references a missing row: wN1:p3",
     "render_failed region=screen: Agent scope references a missing row: wN1:p3",
   ]);
+});
+
+it("still draws a part again when it failed on its first draw under StrictMode's remount", () => {
+  useShellStore.setState({ rest: { missing: "wN1:p2" } as never });
+  act(() =>
+    root.render(
+      <StrictMode>
+        <RenderBoundary region="screen" fallback={<p data-part="failed">failed</p>}>
+          <Board />
+        </RenderBoundary>
+      </StrictMode>,
+    ),
+  );
+  expect(shown("[data-part=failed]")).toBe("failed");
+  snapshot(null);
+  expect(shown("[data-part=board]")).toBe("board");
+});
+
+it("settles when two parts fail with a new message each time, rather than drawing each other on each diagnostic", () => {
+  let attempts = 0;
+  function Restless(): never {
+    attempts += 1;
+    throw new Error(`attempt ${attempts}`);
+  }
+  act(() =>
+    root.render(
+      <>
+        <RenderBoundary region="sidebar" fallback={null}>
+          <Restless />
+        </RenderBoundary>
+        <RenderBoundary region="screen" fallback={null}>
+          <Restless />
+        </RenderBoundary>
+      </>,
+    ),
+  );
+  const mounted = failures().length;
+  snapshot(null);
+  expect(failures()).toHaveLength(mounted + 2);
 });

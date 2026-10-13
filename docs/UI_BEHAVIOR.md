@@ -46,8 +46,8 @@ Web owner: `web/src/RenderBoundary.tsx`, `web/src/App.tsx`.
 
 A part of the window that fails to draw takes no other part with it: the top row, each window-wide notice, the sidebar, the screen in the center, each overlay and the browser displays' bridge fail on their own, and the page keeps its connection to the core.
 The sidebar, at its own width, and the center screen show one quiet line in their place, `이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.`; the top row keeps an empty strip of its height the window is dragged from, and a notice, an overlay or the bridge that fails is left out.
-A part is drawn again on the next change to the core's snapshot or to the page's own state, and nothing listens for that change while every part draws.
-The failure is a diagnostic naming the part and the error, once until the part draws again; there is no banner.
+A part is drawn again on the next change to the core's snapshot or to the page's own state, a new diagnostic not counted, and nothing listens for that change while every part draws.
+The failure is a diagnostic naming the part and the error, once per error until the part draws again; there is no banner.
 Only when the window's frame itself cannot draw does the line take the whole window, under the drag strip.
 
 ### The three columns
