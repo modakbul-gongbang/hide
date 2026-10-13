@@ -814,10 +814,21 @@ impl Runtime {
     }
 
     pub fn ingest_usage(&mut self, usage: Vec<crate::usage::model::AgentUsage>) -> bool {
-        if self.snapshot.navigator.usage.nodes[0].agents == usage {
+        let mut changed = false;
+        for reading in usage {
+            if let Some(row) = self.snapshot.navigator.usage.nodes[0]
+                .agents
+                .iter_mut()
+                .find(|row| row.agent == reading.agent)
+                && row.limits != reading.limits
+            {
+                row.limits = reading.limits;
+                changed = true;
+            }
+        }
+        if !changed {
             return false;
         }
-        self.snapshot.navigator.usage.nodes[0].agents = usage;
         if self
             .snapshot
             .ui_state

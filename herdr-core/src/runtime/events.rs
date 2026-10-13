@@ -3746,6 +3746,9 @@ impl Runtime {
                     }
                     self.usage_popover_open = open;
                 }
+                if payload.usage_window_visible.is_some() || payload.usage_popover_open.is_some() {
+                    self.feed_usage_ledger();
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();

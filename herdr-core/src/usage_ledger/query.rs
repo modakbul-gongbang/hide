@@ -47,6 +47,7 @@ pub struct Day {
     pub pending: bool,
     pub amount: Amount,
     pub top_agents: Vec<Contribution>,
+    pub agents: Vec<Contribution>,
     pub other_agents: usize,
 }
 
@@ -363,11 +364,11 @@ fn range(
         }
         contributors.sort_by(|(a, x), (b, y)| y.cmp(x).then_with(|| a.cmp(b)));
         let count = contributors.len();
-        let top_agents = contributors
+        let agents: Vec<_> = contributors
             .into_iter()
-            .take(3)
             .map(|(agent, n)| contribution(agent, n, amount.new_tokens))
             .collect();
+        let top_agents = agents.iter().take(3).cloned().collect();
         range.days.push(Day {
             date: date.to_string(),
             week: (range.days.len() / 7) as u16,
@@ -378,6 +379,7 @@ fn range(
             pending: reading && amount.calls == 0,
             amount,
             top_agents,
+            agents,
             other_agents: count.saturating_sub(3),
         });
         date = shift(date, 1)?;

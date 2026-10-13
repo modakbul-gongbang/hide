@@ -1,0 +1,65 @@
+//! Lifecycle and publication only. Parsing, SQLite and projections stay on
+//! the owned worker; UI hints replace two flags and never enqueue reads.
+use std::sync::{Arc, Mutex};
+
+use super::Runtime;
+use crate::{
+    handle::ChangeNotifier,
+    usage::consumption::Publication,
+    usage_ledger::worker::{Activity, Worker},
+};
+
+pub(crate) fn spawn_worker(
+    runtime: &Arc<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+) -> Result<Worker, &'static str> {
+    let (path, device, own) = {
+        let guard = runtime.lock().map_err(|_| "usage_runtime_unavailable")?;
+        let directory = guard
+            .state_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .ok_or("usage_state_unavailable")?;
+        (
+            hide_kit::layout::usage_store(directory),
+            guard.node.to_string(),
+            guard.own_node(),
+        )
+    };
+    let weak = Arc::downgrade(runtime);
+    let worker = Worker::spawn(path, device, own, move |report| {
+        let value = Publication::prepare(report, crate::links::now_ms());
+        if let Some(runtime) = weak.upgrade()
+            && let Ok(mut guard) = runtime.lock()
+        {
+            guard.ingest_ledger(value);
+            drop(guard);
+            notifier.notify();
+        }
+    })?;
+    let mut guard = runtime.lock().map_err(|_| "usage_runtime_unavailable")?;
+    guard.usage_ledger_client = Some(worker.client());
+    guard.feed_usage_ledger();
+    Ok(worker)
+}
+
+impl Runtime {
+    pub(super) fn feed_usage_ledger(&self) {
+        if let Some(client) = &self.usage_ledger_client {
+            client.activity(Activity {
+                visible: self.usage_window_visible,
+                open: self.usage_popover_open,
+            });
+        }
+    }
+
+    pub(crate) fn ingest_ledger(&mut self, value: Publication) {
+        let own = &mut self.snapshot.navigator.usage.nodes[0];
+        own.history = value.history;
+        for (name, consumption) in value.agents {
+            if let Some(row) = own.agents.iter_mut().find(|row| row.agent == name) {
+                row.consumption = consumption;
+            }
+        }
+    }
+}

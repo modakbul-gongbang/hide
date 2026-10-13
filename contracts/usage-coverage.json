@@ -3,14 +3,10 @@
     "agent": "claude-code",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "public_table"
         }
       },
       "five_hour": {
@@ -21,14 +17,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -42,14 +34,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -60,25 +48,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "claude_transcript"
         }
       },
       "weekly": {
@@ -94,14 +74,10 @@
     "agent": "codex",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "public_table"
         }
       },
       "five_hour": {
@@ -112,14 +88,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -133,14 +105,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -155,25 +123,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "codex_rollout"
         }
       },
       "weekly": {
@@ -189,14 +149,10 @@
     "agent": "grok",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "recorded"
         }
       },
       "five_hour": {
@@ -210,14 +166,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -231,14 +183,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -252,25 +200,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "grok_updates"
         }
       },
       "weekly": {
@@ -290,14 +230,10 @@
     "agent": "opencode",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "recorded"
         }
       },
       "five_hour": {
@@ -311,14 +247,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -332,14 +264,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -353,25 +281,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "open_code_parts"
         }
       },
       "weekly": {
@@ -390,14 +310,10 @@
     "agent": "pi",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "recorded"
         }
       },
       "five_hour": {
@@ -411,14 +327,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -432,14 +344,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -453,25 +361,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "pi_session"
         }
       },
       "weekly": {
@@ -490,14 +390,10 @@
     "agent": "omp",
     "cells": {
       "cost": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "cost",
+          "source": "recorded"
         }
       },
       "five_hour": {
@@ -511,14 +407,10 @@
         }
       },
       "models": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "models",
+          "source": "usage_record"
         }
       },
       "monthly": {
@@ -532,14 +424,10 @@
         }
       },
       "project": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "scoped": {
@@ -553,25 +441,17 @@
         }
       },
       "session": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "attribution",
+          "source": "usage_record"
         }
       },
       "tokens": {
-        "support": "unsupported",
+        "support": "supported",
         "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
+          "type": "tokens",
+          "source": "omp_session"
         }
       },
       "weekly": {

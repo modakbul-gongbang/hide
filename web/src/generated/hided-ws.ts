@@ -215,7 +215,14 @@ export type LimitCell =
       observed_at_ms: number;
     };
 export type UsageCause =
-  "signed_out" | "not_installed" | "offline" | "timed_out" | "rate_limited" | "format_changed" | "capped";
+  | "signed_out"
+  | "not_installed"
+  | "offline"
+  | "timed_out"
+  | "rate_limited"
+  | "format_changed"
+  | "capped"
+  | "no_records";
 export type WindowKind = "five_hour" | "weekly" | "monthly";
 export type WindowOutcome =
   | {
@@ -237,6 +244,24 @@ export type WindowOutcome =
       state: "unreadable";
       cause: UsageCause;
     };
+export type ConsumptionCell =
+  | {
+      state: "unsupported";
+    }
+  | {
+      state: "loading";
+    }
+  | {
+      state: "unavailable";
+      cause: UsageCause;
+      last_checked_at_ms: number | null;
+    }
+  | {
+      state: "reading";
+      value: ConsumptionReading;
+      freshness: "fresh" | "stale" | "fallback";
+      observed_at_ms: number;
+    };
 /**
  * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
  */
@@ -248,13 +273,12 @@ export interface UsageSnapshot {
 export interface NodeUsage {
   node: string;
   agents: AgentUsage[];
+  history: UsageHistory | null;
 }
 export interface AgentUsage {
   agent: string;
   limits: LimitCell;
-  consumption: {
-    state: "unsupported";
-  };
+  consumption: ConsumptionCell;
 }
 export interface LimitReading {
   /**
@@ -273,6 +297,108 @@ export interface WindowReading {
         label: string;
       };
   outcome: WindowOutcome;
+}
+export interface ConsumptionReading {
+  popover: UsageRange;
+  year: UsageRange;
+  retained: {
+    since: string | null;
+    amount: UsageAmount;
+    /**
+     * @maxItems 32
+     */
+    providers: string[];
+  } | null;
+}
+export interface UsageRange {
+  /**
+   * @maxItems 371
+   */
+  days: UsageDay[];
+  amount: UsageAmount;
+  since: string | null;
+  active_days: number;
+  observed_days: number;
+  peak: {
+    date: string;
+    new_tokens: number;
+  } | null;
+  current_streak: number;
+  longest_streak: number;
+  reading: boolean;
+  limited: boolean;
+  files_done: number;
+  files_total: number;
+}
+export interface UsageDay {
+  date: string;
+  week: number;
+  weekday: number;
+  today: boolean;
+  recent_week: boolean;
+  level: number;
+  pending: boolean;
+  amount: UsageAmount;
+  /**
+   * @maxItems 3
+   */
+  top_agents: UsageContribution[];
+  /**
+   * @maxItems 6
+   */
+  agents: UsageContribution[];
+  other_agents: number;
+}
+export interface UsageAmount {
+  calls: number;
+  new_tokens: number;
+  tokens: UsageTokens;
+  cost: UsageCost;
+}
+export interface UsageTokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cache_write_1h: number;
+  reasoning: number | null;
+}
+export interface UsageCost {
+  micro_usd: number;
+  partial: boolean;
+  waiting: boolean;
+  stale: boolean;
+  incomplete: boolean;
+  /**
+   * @maxItems 8
+   */
+  unpriced_models: string[];
+  other_unpriced_models: number;
+}
+export interface UsageContribution {
+  agent: string;
+  new_tokens: number;
+  share_basis_points: number;
+}
+export interface UsageHistory {
+  popover: UsageHistorySurface;
+  year: UsageHistorySurface;
+}
+export interface UsageHistorySurface {
+  range: UsageRange;
+  /**
+   * @maxItems 6
+   */
+  shares: UsageShare[];
+}
+export interface UsageShare {
+  contribution: UsageContribution;
+  since: string | null;
+  lifetime: UsageAmount;
+  /**
+   * @maxItems 32
+   */
+  providers: string[];
 }
 export interface UsagePreferences {
   /**

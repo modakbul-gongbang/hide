@@ -55,6 +55,7 @@ mod terminal;
 mod terminal_input;
 mod tree_close;
 mod usage_limit;
+pub(crate) mod usage_ledger;
 mod view_areas;
 mod view_bookmarks;
 mod workspace_control;
@@ -1294,6 +1295,7 @@ pub struct Runtime {
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
     usage_window_visible: bool,
+    usage_ledger_client: Option<crate::usage_ledger::worker::Client>,
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
     /// The usage limit and the weekly figures the label and Memory routers
@@ -2020,6 +2022,7 @@ impl Runtime {
             ai_start_observing: false,
             background_ai_providers: Vec::new(),
             usage_window_visible: false,
+            usage_ledger_client: None,
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             usage_limits: Arc::new(hide_ai::UsageLimits::new()),

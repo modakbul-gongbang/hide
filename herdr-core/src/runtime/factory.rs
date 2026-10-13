@@ -1260,6 +1260,7 @@ mod tests {
         let rows = UsageSnapshot {
             nodes: vec![NodeUsage {
                 node: crate::node::TEST_NODE.into(),
+                history: None,
                 agents: vec![
                     row("claude", 40.0, Some((100.0, 2_000))),
                     row("codex", 99.0, None),

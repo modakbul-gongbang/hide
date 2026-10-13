@@ -273,3 +273,80 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
         "an agent worked lately, so labels are judged by a fresh figure"
     );
 }
+
+/// Limits and historical accounting have independent producers. An old
+/// limits read must not erase the ledger, and a ledger publish must not
+/// change whether background work may run.
+#[test]
+fn limits_and_ledger_publications_preserve_each_others_values() {
+    use crate::usage::consumption::Publication;
+    use crate::usage_ledger::{
+        query,
+        store::{Daily, Totals},
+        worker::Report,
+    };
+    use hide_session::usage::Tokens;
+    let mut runtime = two_agents();
+    let now = unix_milliseconds();
+    let zone = jiff::tz::TimeZone::UTC;
+    let date = crate::usage_ledger::local_day(now, &zone).unwrap();
+    let projection = query::prepare(
+        &[Daily {
+            device: crate::node::TEST_NODE.into(),
+            agent: "claude".into(),
+            day: date,
+            model: "fixture-model".into(),
+            totals: Totals {
+                calls: 1,
+                tokens: Tokens {
+                    input: 20,
+                    output: 10,
+                    cache_write: 30,
+                    cache_read: 900,
+                    ..Default::default()
+                },
+                missing_cost_calls: 1,
+                ..Default::default()
+            },
+        }],
+        &[],
+        None,
+        crate::node::TEST_NODE,
+        now,
+        &zone,
+    )
+    .unwrap()
+    .unwrap();
+    runtime.ingest_usage(vec![weekly("claude", Some(93.0), next_week_ms())]);
+    runtime.ingest_ledger(Publication::prepare(
+        Report {
+            projection: Some(std::sync::Arc::new(projection)),
+            progress: Vec::new(),
+            failure: None,
+            price_failure: None,
+        },
+        now,
+    ));
+    let usage = &runtime.snapshot.navigator.usage;
+    let published = serde_json::to_value(usage).unwrap();
+    assert_eq!(
+        published["nodes"][0]["history"]["popover"]["range"]["amount"]["new_tokens"],
+        60
+    );
+    assert_eq!(
+        published["nodes"][0]["agents"][0]["consumption"]["value"]["popover"]["amount"]["tokens"]["cache_read"],
+        900
+    );
+    assert!(row(&runtime, "claude").past_limit);
+    runtime.ingest_usage(vec![weekly("claude", Some(20.0), next_week_ms())]);
+    let updated = serde_json::to_value(&runtime.snapshot.navigator.usage).unwrap();
+    assert_eq!(
+        published["nodes"][0]["history"],
+        updated["nodes"][0]["history"]
+    );
+    assert_eq!(
+        published["nodes"][0]["agents"][0]["consumption"],
+        updated["nodes"][0]["agents"][0]["consumption"]
+    );
+    assert!(!row(&runtime, "claude").past_limit);
+}

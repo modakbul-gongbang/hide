@@ -2137,7 +2137,12 @@ Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 A snapshot section is declared there once the web reads it through the contract (`usageSnapshot`, `usagePreferences`, `uiStateUsageHints`); the type generator emits only what a frame reaches, so `web/scripts/gen-types.mjs` names each such `$def` to emit beside the frames.
 Usage has one node row for the core's own node and one agent row per declared adapter (`herdr-core/src/usage/model.rs`); each row separates limit and consumption cells.
 A cell is unsupported, loading, unavailable with a cause, or a reading with freshness and observation time; limit readings contain independently typed five-hour, weekly and scoped windows.
-Consumption is uninhabited in layers 1 and 2 and is published as unsupported.
+Consumption readings carry prepared popover and year ranges for that agent, plus retained totals and native provider ids.
+Each node also carries optional all-agent history and share rows; selecting a filter never makes the shell recompute totals.
+Limit and ledger publications update only their own cells, so neither worker can erase the other’s values.
+The core owns the ledger worker, feeds it only actual window visibility and usage-open hints, and joins it outside the runtime lock on shutdown.
+Worker publication builds shared range values before locking the runtime; snapshots clone those references, and serialization remains outside the lock.
+A failed start publishes unavailable consumption instead of leaving a loading cell forever.
 The UI preferences store pinned `(agent, window)` pairs (at most three) and hidden agents; `usage_pin_set` and `usage_hidden_set` are desired-state events, and a generic `ui_state_update` preserves these fields so a stale window cannot overwrite another window's choice.
 The core rejects undeclared windows and account windows reported as not offered; Hide preserves the agent's pins for Show.
 
