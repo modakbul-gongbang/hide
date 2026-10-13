@@ -353,10 +353,9 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
     let menu_bytes = serialize_snapshot_delta(&menu).unwrap();
     let menu_wire: serde_json::Value = serde_json::from_slice(&menu_bytes).unwrap();
     assert!(menu_wire["rest"]["navigator"].get("usage").is_none());
-    assert!(menu_wire.get("usage").is_none());
     assert!(
-        menu_bytes.len() < bytes.len() / 2,
-        "unrelated UI echo must omit the historical arrays"
+        menu_wire.get("usage").is_none(),
+        "unrelated UI echo must omit usage regardless of calendar density"
     );
     let unchanged = runtime.snapshot_delta_payload(menu.revision);
     assert!(unchanged.rest.is_none() && unchanged.usage.is_none());
