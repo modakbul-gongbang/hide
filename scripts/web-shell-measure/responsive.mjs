@@ -97,7 +97,7 @@ try {
   const screenshot = await page.send("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(output, "browser.png"), Buffer.from(screenshot.data, "base64"));
   await phase("idle", () => sleep(20000));
-  await phase("warm-echo", () => driver("warm-echo", "key-echo.mjs", { MEASURE_ECHO_REPEATS: "50" }));
+  await phase("warm-echo", () => driver("warm-echo", "key-echo.mjs", { MEASURE_ECHO_REPEATS: "50", MEASURE_ECHO_PREFIX: "w" }));
   await phase("warm-zoom", () => driver("warm-zoom", "topology.mjs", { MEASURE_TOPOLOGY_ZOOM_ONLY: "1", MEASURE_TOPOLOGY_ROUNDS: "20" }));
   await phase("status-churn", async () => {
     for (let n = 0; n < 8; n += 1) {
@@ -111,7 +111,7 @@ try {
   }
   await sleep(3000);
   await phase("driven-zoom", () => driver("driven-zoom", "topology.mjs", { MEASURE_TOPOLOGY_ZOOM_ONLY: "1", MEASURE_TOPOLOGY_ROUNDS: "20" }));
-  await phase("driven-echo", () => driver("driven-echo", "key-echo.mjs", { MEASURE_ECHO_REPEATS: "50" }));
+  await phase("driven-echo", () => driver("driven-echo", "key-echo.mjs", { MEASURE_ECHO_REPEATS: "50", MEASURE_ECHO_PREFIX: "d" }));
   await phase("ordered-keys", () => driver("ordered-keys", "key-count.mjs", { MEASURE_KEY_COUNT: "1000" }));
   await page.send("Page.navigate", { url: "about:blank" });
   await sleep(2000);

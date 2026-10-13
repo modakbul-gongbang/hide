@@ -21,6 +21,8 @@ import { connectPage } from "./cdp.mjs";
 const cdpPort = process.env.MEASURE_CDP_PORT;
 const repeats = Number(process.env.MEASURE_ECHO_REPEATS ?? 50);
 const paneId = process.env.MEASURE_PANE_ID;
+const markerPrefix = process.env.MEASURE_ECHO_PREFIX ?? "a";
+if (!/^[a-z]$/.test(markerPrefix)) throw new Error("MEASURE_ECHO_PREFIX must be one lowercase letter");
 if (!cdpPort || !paneId) throw new Error("MEASURE_CDP_PORT and MEASURE_PANE_ID are required");
 
 const page = await connectPage(cdpPort);
@@ -64,7 +66,7 @@ const samples = [];
 const node_t0_samples = [];
 const hops = [];
 for (let i = 0; i < repeats; i += 1) {
-  const prefix = `a${String(i).padStart(4, "0")}`;
+  const prefix = `${markerPrefix}${String(i).padStart(4, "0")}`;
   await page.evaluate(`window.__hideProbe.arm(${JSON.stringify(prefix)}); "armed"`);
   for (const character of prefix) await key(character);
   await page.evaluate("window.__hideProbe.waitArmed()", true);
@@ -94,5 +96,5 @@ for (let i = 0; i < repeats; i += 1) {
 page.close();
 console.log(JSON.stringify({
   method: "t0 = the page's capture-phase keydown for the marker's last key; t1 = xterm write completion with the marker in the parsed buffer; both on the page's clock, the CDP dispatch hop excluded; node_t0_samples = t1 minus this process's clock before the CDP keyDown, a cross-check across two clocks (clock_offset_ms per hop = this process minus the page, by a bracketed round trip); the pane runs stty -echo -icanon; cat; one timed key per sample, its four preceding keys typed and drawn first; nearest-rank percentiles computed by summarize.py",
-  load, pane_id: paneId, keys_typed: repeats * 7, ws_frames_by_type: frames, samples, node_t0_samples, hops,
+  load, pane_id: paneId, marker_prefix: markerPrefix, keys_typed: repeats * 7, ws_frames_by_type: frames, samples, node_t0_samples, hops,
 }, null, 2));

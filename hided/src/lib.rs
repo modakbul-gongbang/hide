@@ -58,8 +58,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use herdr_core::{CoreOptions, SCHEMA_VERSION};
-#[cfg(test)]
-use serde_json::Value;
 use tokio::sync::Notify;
 
 use crate::attachments::Attachments;

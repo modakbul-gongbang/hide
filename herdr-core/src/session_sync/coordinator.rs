@@ -2698,11 +2698,13 @@ mod focus_readback_order_tests {
             });
             context.notifier = notifier;
             let (sender, ready) = channel();
-            let mut cache = CatalogState::default();
-            cache.wake = Some(RepublishWaker {
-                sender,
-                pending: Arc::new(AtomicBool::new(false)),
-            });
+            let mut cache = CatalogState {
+                wake: Some(RepublishWaker {
+                    sender,
+                    pending: Arc::new(AtomicBool::new(false)),
+                }),
+                ..Default::default()
+            };
             let publish = |replica: &mut SessionReplica, cache: &mut CatalogState| {
                 assert!(publish_replica(
                     &context,
