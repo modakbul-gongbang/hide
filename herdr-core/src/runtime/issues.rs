@@ -1123,7 +1123,8 @@ impl Runtime {
                 Ok(crate::github::Where::Repository(repository)) => Some(repository),
                 Ok(crate::github::Where::Checkout(_)) => workspace.home_issues.repository.clone(),
                 Err(_) => None,
-            };
+            }
+            .filter(|repository| crate::issues::is_repository(repository));
             if on_node && repository.is_none() {
                 continue;
             }

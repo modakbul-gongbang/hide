@@ -1476,7 +1476,7 @@ mod tests {
         drop(store);
         // Reproduce the historical v11 shape before the first docs check.
         let connection = rusqlite::Connection::open(&database).unwrap();
-        connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; PRAGMA user_version=11;").unwrap();
+        connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE card_promotions DROP COLUMN repository; PRAGMA user_version=11;").unwrap();
         drop(connection);
         let store = super::memory::open_memory_store(&database).unwrap();
         assert_eq!(

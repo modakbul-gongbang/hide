@@ -1690,6 +1690,7 @@ A query with a GitHub project the core reads (its own or a node's that dials it)
 A pull request's row, held or found on GitHub, leads with its PR mark without the number and says its state in the muted word; a found one's state is the core's (`pr_state`), as a held one's is.
 The query's words match like a search box, and a query is capped at 200 characters.
 The same query already searching is not started again, and an answer for an older query is dropped.
+Search targets use confirmed project repository choices and valid catalog repository names; an unknown or malformed local name is resolved by the worker, while a node project without a valid name is left out.
 Choosing a GitHub result opens it in the browser.
 
 ### Keys and results
