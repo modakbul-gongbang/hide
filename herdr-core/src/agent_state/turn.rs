@@ -819,7 +819,7 @@ pub(crate) fn verb_of(
 /// The notification state machine. Transport and subscription policy stay
 /// in hided; the status transition and descendant raise live with agent state.
 pub mod push {
-    use super::super::tally::phone::{AgentKey, Projection};
+    use super::super::tally::phone::{AgentKey, PhoneAgent, Projection};
     use std::collections::{BTreeMap, BTreeSet};
     use std::time::Duration;
     /// What a root agent's notification says, or would say.
@@ -883,6 +883,10 @@ pub mod push {
         pub key: AgentKey,
         pub title: String,
         pub state: NoticeState,
+        /// The row's own status code and already-chosen second-line sentence.
+        /// Delivery notices carry neither; no transport generates a sentence.
+        pub status_code: Option<String>,
+        pub detail: Option<String>,
         /// The project (`project`, or the part of `project · branch` before the
         /// branch separator); empty when the agent has no place.
         pub place: String,
@@ -892,14 +896,9 @@ pub mod push {
     /// to Needs You; a delegated row never notifies on its own (PRD B9).
     /// Existing human delivery notices own undelivered-letter and
     /// unconfirmed-watch notifications.
-    fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
-        let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
+    fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, &PhoneAgent)> {
+        let mut roots = BTreeMap::new();
         for agent in projection.agents() {
-            let place = agent
-                .place
-                .as_deref()
-                .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
-                .unwrap_or_default();
             let state = if agent.root_pane_id != agent.pane_id {
                 // Its root carries any raise; clear a delegated row's previous
                 // state without a disappearance grace.
@@ -909,7 +908,7 @@ pub mod push {
             } else {
                 Effective::from_group(&agent.group)
             };
-            roots.insert(agent.key(), (state, agent.title.clone(), place));
+            roots.insert(agent.key(), (state, agent));
         }
         roots
     }
@@ -959,7 +958,7 @@ pub mod push {
             };
             let mut notices = Vec::new();
             let mut seen = BTreeSet::new();
-            for (key, (state, title, place)) in &now {
+            for (key, (state, agent)) in &now {
                 let before = last
                     .get(key)
                     .copied()
@@ -971,9 +970,15 @@ pub mod push {
                 if let Some(announced) = state.announced() {
                     notices.push(Notice {
                         key: key.clone(),
-                        title: title.clone(),
+                        title: agent.title.clone(),
                         state: announced,
-                        place: place.clone(),
+                        status_code: Some(agent.status_code.clone()),
+                        detail: agent.detail.clone(),
+                        place: agent
+                            .place
+                            .as_deref()
+                            .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
+                            .unwrap_or_default(),
                     });
                 } else if *state == Effective::Seen
                     && matches!(before, Effective::NeedsYou | Effective::Done)

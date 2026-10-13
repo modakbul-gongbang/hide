@@ -112,6 +112,9 @@ struct StoredUiState {
     first_run: Option<crate::model::FirstRun>,
     #[serde(default)]
     desktop_notifications: bool,
+    /// Absent in a store from before the split: keep the old shared choice.
+    #[serde(default)]
+    desktop_notifications_done: Option<bool>,
     #[serde(default)]
     screen_intros_seen: BTreeSet<crate::model::ScreenIntro>,
     #[serde(default = "default_sidebar_width")]
@@ -369,6 +372,9 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             agent_onboarding_agents: stored.agent_onboarding_agents,
             first_run: stored.first_run,
             desktop_notifications: stored.desktop_notifications,
+            desktop_notifications_done: stored
+                .desktop_notifications_done
+                .unwrap_or(stored.desktop_notifications),
             screen_intros_seen: stored.screen_intros_seen,
             sidebar_width: stored.sidebar_width,
             font_size: stored.font_size,
@@ -478,6 +484,7 @@ pub fn save(
         agent_onboarding_agents: state.agent_onboarding_agents.clone(),
         first_run: state.first_run,
         desktop_notifications: state.desktop_notifications,
+        desktop_notifications_done: Some(state.desktop_notifications_done),
         screen_intros_seen: state.screen_intros_seen.clone(),
         sidebar_width: state.sidebar_width,
         font_size: state.font_size,

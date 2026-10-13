@@ -365,8 +365,10 @@ fn leaving_the_notification_step_sets_the_switch_its_press_names() {
     assert!(allowed.dispatch_json(&advance("notifications", true)));
     assert_eq!(step(&allowed), Some(FirstRunStep::Project));
     assert!(allowed.snapshot().ui_state.desktop_notifications);
+    assert!(!allowed.snapshot().ui_state.desktop_notifications_done);
 
     let mut not_now = at(FirstRunStep::Notifications);
+    not_now.snapshot.ui_state.desktop_notifications_done = true;
     assert!(not_now.dispatch_json(&event(
         "desktop_notifications_set",
         serde_json::json!({"enabled": true}),
@@ -374,14 +376,17 @@ fn leaving_the_notification_step_sets_the_switch_its_press_names() {
     assert!(not_now.dispatch_json(&advance("notifications", false)));
     assert_eq!(step(&not_now), Some(FirstRunStep::Project));
     assert!(!not_now.snapshot().ui_state.desktop_notifications);
+    assert!(!not_now.snapshot().ui_state.desktop_notifications_done);
 
     let mut kept = at(FirstRunStep::Notifications);
     kept.snapshot.ui_state.desktop_notifications = true;
+    kept.snapshot.ui_state.desktop_notifications_done = true;
     assert!(kept.dispatch_json(&event(
         "first_run_advance",
         serde_json::json!({"from": "notifications"}),
     )));
     assert!(kept.snapshot().ui_state.desktop_notifications);
+    assert!(kept.snapshot().ui_state.desktop_notifications_done);
 
     let mut stale = at(FirstRunStep::Project);
     assert!(!stale.dispatch_json(&advance("notifications", true)));
@@ -463,6 +468,12 @@ fn the_notification_switch_and_screen_intros_survive_a_save_and_a_restart() {
     };
     assert!(runtime.dispatch_json(&notifications(true)));
     assert!(!runtime.dispatch_json(&notifications(true)));
+    let done = event(
+        "desktop_notifications_done_set",
+        serde_json::json!({"enabled": true}),
+    );
+    assert!(runtime.dispatch_json(&done));
+    assert!(!runtime.dispatch_json(&done));
     let intro = event(
         "screen_intro_seen",
         serde_json::json!({"screen": "factory"}),
@@ -473,14 +484,16 @@ fn the_notification_switch_and_screen_intros_survive_a_save_and_a_restart() {
     // A save built from a snapshot older than both carries neither back.
     let stale = ui_state_update(
         &runtime,
-        serde_json::json!({"desktop_notifications": false, "screen_intros_seen": []}),
+        serde_json::json!({"desktop_notifications": false, "desktop_notifications_done": false, "screen_intros_seen": []}),
     );
     runtime.dispatch_json(&stale);
     assert!(runtime.snapshot().ui_state.desktop_notifications);
+    assert!(runtime.snapshot().ui_state.desktop_notifications_done);
     drop(runtime);
 
     let mut restarted = runtime_at(&path);
     assert!(restarted.snapshot().ui_state.desktop_notifications);
+    assert!(restarted.snapshot().ui_state.desktop_notifications_done);
     restarted.dispatch_json(&event(
         "screen_intro_seen",
         serde_json::json!({"screen": "settings"}),
@@ -496,4 +509,48 @@ fn the_notification_switch_and_screen_intros_survive_a_save_and_a_restart() {
         [ScreenIntro::Factory],
         "an unknown screen is refused"
     );
+}
+
+/// Operator decision 2026-10-13: preserve both old on/off choices, then
+/// persist either new switch independently, including Done-only.
+#[test]
+fn the_old_shared_choice_migrates_and_each_notification_choice_survives_restart() {
+    for old in [false, true] {
+        let folder = scratch_dir("herdr-core-notification-migration-");
+        let path = folder.path().join("state.json");
+        let mut runtime = runtime_at(&path);
+        runtime.dispatch_json(&event(
+            "desktop_notifications_set",
+            serde_json::json!({"enabled": !old}),
+        ));
+        runtime.dispatch_json(&event(
+            "desktop_notifications_set",
+            serde_json::json!({"enabled": old}),
+        ));
+        drop(runtime);
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        stored
+            .as_object_mut()
+            .unwrap()
+            .remove("desktop_notifications_done");
+        std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+        let mut runtime = runtime_at(&path);
+        assert_eq!(runtime.snapshot().ui_state.desktop_notifications, old);
+        assert_eq!(runtime.snapshot().ui_state.desktop_notifications_done, old);
+        for (needs_you, done) in [(true, false), (false, true), (true, true), (false, false)] {
+            runtime.dispatch_json(&event(
+                "desktop_notifications_set",
+                serde_json::json!({"enabled": needs_you}),
+            ));
+            runtime.dispatch_json(&event(
+                "desktop_notifications_done_set",
+                serde_json::json!({"enabled": done}),
+            ));
+            drop(runtime);
+            runtime = runtime_at(&path);
+            assert_eq!(runtime.snapshot().ui_state.desktop_notifications, needs_you);
+            assert_eq!(runtime.snapshot().ui_state.desktop_notifications_done, done);
+        }
+    }
 }
