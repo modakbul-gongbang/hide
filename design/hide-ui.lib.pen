@@ -17738,7 +17738,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "HideTabStrip: 180 preferred, equal title compression through 104, then a leading 40 identity. Only the active tab adds the 24 toolbar close for 64 total. Compact marks retain notice, dirty and preview meaning; overflow keeps a contiguous active range.",
+          "content": "180 preferred, equal title compression through 104, then compact and marks. Two or more agent panes add a neutral pane icon and count beside the title. Shells and internal subagents do not count. The count folds at compact/mark density, while renaming, or below 48 of title room; tooltip and accessible name retain the count.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -17866,6 +17866,38 @@
               "fontWeight": "600"
             },
             {
+              "type": "frame",
+              "id": "ntwEP",
+              "x": 0,
+              "y": 0,
+              "name": "Agent pane count",
+              "enabled": false,
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "UYGtT",
+                  "name": "Pane icon",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "layout-panel-left",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "kO8JQ",
+                  "name": "Pane count",
+                  "fill": "$--muted-foreground",
+                  "content": "2",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
               "id": "awt-keycap",
               "type": "ref",
               "ref": "Ec2W1",
@@ -17974,6 +18006,48 @@
               "enabled": false
             },
             "awt-close": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "u2zGfR",
+          "type": "ref",
+          "ref": "adaptive-work-tab-master",
+          "name": "State / Agent panes 2",
+          "width": 180,
+          "descendants": {
+            "awt-tab-label": {
+              "content": "pane 작업"
+            },
+            "ntwEP": {
+              "enabled": true
+            },
+            "kO8JQ": {
+              "content": "2"
+            },
+            "awt-keycap": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "M7BD4c",
+          "type": "ref",
+          "ref": "adaptive-work-tab-master",
+          "name": "State / Agent panes 12",
+          "width": 180,
+          "descendants": {
+            "awt-tab-label": {
+              "content": "pane 작업"
+            },
+            "ntwEP": {
+              "enabled": true
+            },
+            "kO8JQ": {
+              "content": "12"
+            },
+            "awt-keycap": {
               "enabled": false
             }
           }

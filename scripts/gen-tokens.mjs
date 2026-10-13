@@ -37,6 +37,8 @@ function color(value) {
 
 export function generate(root = process.cwd()) {
   const tokens = readTokens(root);
+  const smallControl = tokens['--size-control-sm'];
+  if (smallControl?.type !== 'number') throw new Error('Expected numeric --size-control-sm');
   const theme = [], mapped = [], light = [], dark = [], rest = [], fixed = [];
   for (const [name, token] of Object.entries(tokens)) {
     if (token.type === 'color') {
@@ -62,6 +64,10 @@ export function generate(root = process.cwd()) {
   }
   const css = [
     '/* Generated from design/tokens.json by scripts/gen-tokens.mjs. Do not edit. */',
+    // Container query conditions need a compiled length, not a var() expression.
+    // Reserve two existing small controls' worth of title room for the count.
+    `@custom-variant agent-tab-count-room (@container tab-title (min-width: ${smallControl.value * 2}px));`,
+    '',
     '@theme static {',
     '  --color-*: initial;',
     '  --text-*: initial;',
