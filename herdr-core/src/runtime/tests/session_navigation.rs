@@ -3762,6 +3762,93 @@ fn restored_checkout_waits_for_initial_path_facts() {
     );
 }
 
+#[test]
+fn a_known_saved_checkout_does_not_wait_for_an_unrelated_unknown_path() {
+    let (mut runtime, checkout, repository, _) = split_workspace_checkouts("restore-known");
+    let repository = repository.to_string_lossy().into_owned();
+    let unrelated = format!("{repository}/not-yet-answered");
+    let mut payload = split_workspace_payload(
+        &[("w-order:t1", &repository), ("w-order:t2", &unrelated)],
+        "w-order:t1",
+    );
+    payload.focused_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.restore_hint_pending = true;
+    runtime.catalog_paths = runtime.ask_paths(BTreeSet::from([repository]));
+    runtime.begin_catalog_coordinator();
+
+    runtime.ingest_session(Ok(payload));
+    assert!(
+        !runtime.restore_hint_pending,
+        "the saved pane's facts are known"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id,
+        Some(checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    assert!(!runtime.catalog_paths.knows(&unrelated));
+}
+
+#[test]
+fn a_removed_saved_checkout_restores_the_panes_known_current_checkout() {
+    let (mut runtime, checkout, repository, worktree) =
+        split_workspace_checkouts("restore-removed");
+    let repository = repository.to_string_lossy().into_owned();
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let mut before = split_workspace_payload(
+        &[("w-order:t1", &repository), ("w-order:t2", &worktree_path)],
+        "w-order:t2",
+    );
+    before.focused_pane_id = Some("w-order:t2:p".to_owned());
+    runtime.ingest_session(Ok(before));
+    let saved_checkout = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|row| row.path == worktree_path)
+        .expect("linked checkout")
+        .id
+        .clone();
+    runtime.snapshot.ui_state.focused_checkout_id = Some(saved_checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t2:p".to_owned());
+    runtime.restore_hint_pending = true;
+    std::fs::remove_dir_all(&worktree).unwrap();
+    runtime.catalog_paths = runtime.ask_paths(BTreeSet::from([repository.clone(), worktree_path]));
+    runtime.begin_catalog_coordinator();
+    let unrelated = format!("{repository}/unanswered");
+    let mut after = split_workspace_payload(
+        &[("w-order:t2", &repository), ("w-order:t3", &unrelated)],
+        "w-order:t2",
+    );
+    after.focused_pane_id = Some("w-order:t2:p".to_owned());
+
+    runtime.ingest_session(Ok(after));
+    assert!(
+        !runtime.restore_hint_pending,
+        "the moved pane has known facts"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id,
+        Some(checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t2:p")
+    );
+    assert_ne!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&saved_checkout)
+    );
+    assert!(!runtime.catalog_paths.knows(&unrelated));
+}
+
 fn restored_selection_opens_on_herdrs_focus(
     saved_pane: Option<&str>,
     saved_checkout: Option<&str>,

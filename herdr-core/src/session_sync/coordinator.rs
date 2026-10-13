@@ -2667,10 +2667,11 @@ mod focus_readback_order_tests {
     }
 
     #[test]
-    fn failed_and_timed_out_paths_keep_accepted_catalog_without_a_new_revision() {
+    fn unchanged_or_failed_paths_keep_accepted_catalog_without_a_notification() {
         for failure in [
-            "node disconnected during read",
-            "node path facts deadline reached",
+            Some("node disconnected during read"),
+            Some("node path facts deadline reached"),
+            None,
         ] {
             let mut replica =
                 SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
@@ -2686,7 +2687,16 @@ mod focus_readback_order_tests {
                 panic!("unexpected {method}")
             });
             let mut context = context_for(&runtime, &herdr);
-            context.node = Some(Arc::new(FailedPaths(failure)));
+            if let Some(failure) = failure {
+                context.node = Some(Arc::new(FailedPaths(failure)));
+            }
+            let (core, notifier) = crate::Core::for_runtime_fixture(Arc::clone(&runtime));
+            let callbacks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let witness = Arc::clone(&callbacks);
+            core.on_change(move || {
+                witness.fetch_add(1, Ordering::SeqCst);
+            });
+            context.notifier = notifier;
             let (sender, ready) = channel();
             let mut cache = CatalogState::default();
             cache.wake = Some(RepublishWaker {
@@ -2705,7 +2715,8 @@ mod focus_readback_order_tests {
             };
             publish(&mut replica, &mut cache);
             ready.recv_timeout(Duration::from_secs(30)).unwrap();
-            let revision = runtime.lock().unwrap().snapshot_delta_payload(0).revision;
+            let revision = core.snapshot_delta_payload(0).unwrap().revision;
+            callbacks.store(0, Ordering::SeqCst);
             // Consume the actual worker's refused/timed-out answer. The
             // accepted catalog and small selection remain its caller's state.
             publish(&mut replica, &mut cache);
@@ -2713,6 +2724,7 @@ mod focus_readback_order_tests {
             assert_eq!(guard.snapshot().navigator.workspaces, before);
             assert_eq!(guard.snapshot().terminal.pane_id.as_deref(), Some("w1:p1"));
             assert_eq!(guard.snapshot_delta_payload(revision).revision, revision);
+            assert_eq!(callbacks.load(Ordering::SeqCst), 0);
         }
     }
 

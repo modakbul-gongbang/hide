@@ -2120,16 +2120,19 @@ impl Runtime {
                     .any(|checkout| checkout.id == checkout_id)
             });
         // A coordinator starts before its first path answer. An absent row
-        // while one of its inputs is still unknown is not evidence that the
-        // saved checkout disappeared. Keep the restore hint until facts can
-        // settle that choice; a known missing path still consumes it.
+        // while the saved pane's directory is still unknown is not evidence
+        // that its checkout disappeared. Unrelated unknown directories must
+        // not hold an already answered restore choice.
         if self.catalog_from_coordinator
             && restored_pane_exists
             && self.snapshot.ui_state.focused_checkout_id.is_some()
             && self
-                .wanted_paths(payload)
-                .iter()
-                .any(|path| !self.catalog_paths.knows(path))
+                .snapshot
+                .ui_state
+                .selected_pane_id
+                .as_deref()
+                .and_then(|pane| Self::pane_cwd(payload, pane))
+                .is_some_and(|path| !self.catalog_paths.knows(&path))
         {
             return;
         }
