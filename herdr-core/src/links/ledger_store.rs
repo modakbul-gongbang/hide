@@ -259,6 +259,27 @@ fn cap(
 }
 
 impl LinkStore {
+    /// An incremental native read may omit the session header. The cursor's
+    /// retained identity is authoritative for the context that changed.
+    pub fn ledger_file_session(
+        &self,
+        device: &str,
+        path: &str,
+    ) -> Result<Option<SessionIdentity>, String> {
+        self.connection
+            .query_row(
+                "SELECT agent,session FROM cursors WHERE device=?1 AND path=?2 AND session IS NOT NULL AND subagent=0",
+                [device, path],
+                |row| Ok(SessionIdentity {
+                    device_id: device.to_owned(),
+                    agent: row.get(0)?,
+                    session_id: row.get(1)?,
+                }),
+            )
+            .optional()
+            .map_err(failed)
+    }
+
     pub fn recover_issue_attempts(&self) -> Result<(), String> {
         self.connection
             .execute(
@@ -1387,29 +1408,37 @@ impl LinkStore {
     /// Apply verified PR creation sightings after each project refresh.
     pub fn refresh_ledger_outputs(&mut self) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(failed)?;
-        tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
+        refresh_outputs(&tx)?;
+        tx.commit().map_err(failed)
+    }
+}
+
+/// Either side of the creation join can arrive last: the repository's
+/// creation fact or a newly read tool sighting. Commit its derived output
+/// with the read rather than waiting for another repository refresh.
+pub(super) fn refresh_outputs(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
             SELECT s.device,s.agent,s.id,'pr',s.repo_name,p.number,p.title,p.url,CASE WHEN p.merged_at IS NOT NULL THEN 'merged' \
             WHEN p.closed_at IS NOT NULL THEN 'closed' ELSE 'open' END,p.created_at,s.at \
             FROM session_prs s JOIN repo_names n ON n.name=s.repo_name JOIN prs p ON p.repo=n.repo AND p.number=s.number \
             WHERE p.created_at IS NOT NULL AND s.at>=p.created_at-?1 AND s.at<=p.created_at+?2 \
             ON CONFLICT(device,agent,id,kind,repo,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state",
             params![CREATED_BEFORE_MS as i64,CREATED_AFTER_MS as i64]).map_err(failed)?;
-        tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device \
+    tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device \
             AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at \
             ORDER BY t.start_at DESC LIMIT 1) WHERE kind='pr'",[]).map_err(failed)?;
-        tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
+    tx.execute("INSERT INTO ledger_outputs(device,agent,id,kind,repo,number,title,url,state,created_at,sighted_at) \
             SELECT s.device,s.agent,s.id,s.kind,s.repo,s.number,f.title,f.url,f.state,f.created_at,s.at \
             FROM ledger_sightings s JOIN ledger_output_facts f ON f.repo=s.repo AND f.kind=s.kind AND f.number=s.number \
             WHERE f.created_at IS NOT NULL AND s.at>=f.created_at-?1 AND s.at<=f.created_at+?2 \
             ON CONFLICT(device,agent,id,kind,repo,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state",
             params![CREATED_BEFORE_MS as i64,CREATED_AFTER_MS as i64]).map_err(failed)?;
-        tx.execute("UPDATE ledger_outputs SET state=COALESCE((SELECT f.state FROM ledger_output_facts f WHERE f.kind=ledger_outputs.kind AND f.number=ledger_outputs.number AND (f.repo=ledger_outputs.repo OR f.repo=(SELECT name FROM repo_names n WHERE n.repo=ledger_outputs.repo LIMIT 1))),state)",[]).map_err(failed)?;
-        tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at ORDER BY t.start_at DESC LIMIT 1) WHERE kind='issue'",[]).map_err(failed)?;
-        // GitHub may arrive after END. Retain the proposed number and the
-        // resolving turn, then attach only that turn's verified creation.
-        tx.execute("UPDATE ledger_missed AS m SET status=?1,issue_number=resolved_issue_number,issue_repo=(SELECT repo FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at LIMIT 1) WHERE m.status=?2 AND m.resolved_issue_number IS NOT NULL AND EXISTS(SELECT 1 FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at)",params![encoded(&MissedStatus::Issue)?,encoded(&MissedStatus::Resolved)?]).map_err(failed)?;
-        tx.commit().map_err(failed)
-    }
+    tx.execute("UPDATE ledger_outputs SET state=COALESCE((SELECT f.state FROM ledger_output_facts f WHERE f.kind=ledger_outputs.kind AND f.number=ledger_outputs.number AND (f.repo=ledger_outputs.repo OR f.repo=(SELECT name FROM repo_names n WHERE n.repo=ledger_outputs.repo LIMIT 1))),state)",[]).map_err(failed)?;
+    tx.execute("UPDATE ledger_outputs SET task=(SELECT output_task FROM ledger_turns t WHERE t.device=ledger_outputs.device AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND ledger_outputs.sighted_at BETWEEN t.start_at AND t.end_at ORDER BY t.start_at DESC LIMIT 1) WHERE kind='issue'",[]).map_err(failed)?;
+    // GitHub may arrive after END. Retain the proposed number and the
+    // resolving turn, then attach only that turn's verified creation.
+    tx.execute("UPDATE ledger_missed AS m SET status=?1,issue_number=resolved_issue_number,issue_repo=(SELECT repo FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at LIMIT 1) WHERE m.status=?2 AND m.resolved_issue_number IS NOT NULL AND EXISTS(SELECT 1 FROM ledger_outputs o JOIN ledger_turns t ON t.device=o.device AND t.agent=o.agent AND t.id=o.id AND t.offset=m.resolved_turn_offset WHERE o.device=m.device AND o.agent=m.agent AND o.id=m.id AND o.kind='issue' AND o.number=m.resolved_issue_number AND o.sighted_at BETWEEN t.start_at AND t.end_at)",params![encoded(&MissedStatus::Issue)?,encoded(&MissedStatus::Resolved)?]).map_err(failed)?;
+    Ok(())
 }
 
 fn assign_outputs(tx: &Transaction<'_>, session: &SessionIdentity) -> Result<(), String> {

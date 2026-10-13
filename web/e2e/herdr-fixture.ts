@@ -282,6 +282,10 @@ export type FixtureLabel = {
    * `question`, else done. A turn start's answer carries none: the provider shim
    * leaves `end` out when the request's schema asks for none. */
   end?: "question" | "blocked" | "done" | "waiting" | "unfinished";
+  work?: { task: {kind:"new";name:string} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
+  at?: number;
+  /** Addresses printed by a real native tool-result record in this turn. */
+  toolOutputs?: string[];
 };
 
 /** Where the fixture's Claude transcripts live: the fixture HOME's, which
@@ -318,6 +322,7 @@ export function labelMarker(label: FixtureLabel): string {
     // One line: the reply asked for when there is one, else the progress.
     line: label.reply ?? label.progress ?? "",
     end: label.end ?? (label.question ? "question" : "done"),
+    work: label.work ?? {task:{kind:"none"},missed:[],resolved:[],output_task_id:null},
   };
   const delay = label.delayMs ? `HIDE_E2E_DELAY_MS ${label.delayMs}\n` : "";
   return `${delay}HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
@@ -325,8 +330,9 @@ export function labelMarker(label: FixtureLabel): string {
 
 export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
   const records = [
-    { type: "user", sessionId, timestamp: "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
-    { type: "assistant", sessionId, timestamp: "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+    { type: "user", sessionId, timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
+    ...fixtureToolResults(sessionId, label),
+    { type: "assistant", sessionId, timestamp: label.at ? new Date(label.at+1000).toISOString() : "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];
   const dir = path.join(projects, "e2e");
   fs.mkdirSync(dir, { recursive: true });
@@ -343,10 +349,18 @@ export function writeFixtureTranscript(projects: string, sessionId: string, labe
  */
 export function continueFixtureTranscript(fixture: Pick<HerdrFixture, "root">, sessionId: string, label: FixtureLabel): void {
   const records = [
-    { type: "user", sessionId, timestamp: "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
-    { type: "assistant", sessionId, timestamp: "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+    { type: "user", sessionId, timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
+    ...fixtureToolResults(sessionId, label),
+    { type: "assistant", sessionId, timestamp: label.at ? new Date(label.at+1000).toISOString() : "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];
   fs.appendFileSync(path.join(claudeProjects(fixture), "e2e", `${sessionId}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+}
+
+function fixtureToolResults(sessionId: string, label: FixtureLabel) {
+  return label.toolOutputs?.length ? [
+    { type: "assistant", sessionId, timestamp: new Date((label.at ?? Date.parse("2026-10-01T09:00:00Z")) + 400).toISOString(), message: { role: "assistant", content: [{ type: "tool_use", id: "fixture-gh", name: "Bash", input: { command: "gh pr create" } }] } },
+    { type: "user", sessionId, timestamp: new Date((label.at ?? Date.parse("2026-10-01T09:00:00Z")) + 500).toISOString(), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "fixture-gh", content: label.toolOutputs.join("\n") }] } },
+  ] : [];
 }
 
 /**

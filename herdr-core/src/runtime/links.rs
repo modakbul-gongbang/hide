@@ -27,6 +27,7 @@ pub(super) struct LinksWork {
     projects_print: Option<u64>,
     panes: Arc<Vec<PaneFact>>,
     parents: Arc<Vec<ParentFact>>,
+    parents_print: Option<u64>,
     generation: u64,
     record_generation: u64,
     search_generation: u64,
@@ -145,7 +146,6 @@ pub(crate) fn spawn_worker(
     let mut guard = runtime.lock().map_err(|_| "runtime lock poisoned")?;
     guard.links_work.client = Some(worker.client());
     guard.feed_links();
-    guard.feed_link_parents();
     Ok(worker)
 }
 
@@ -304,6 +304,7 @@ impl Runtime {
             self.links_work.panes = Arc::new(panes);
             client.panes(Arc::clone(&self.links_work.panes));
         }
+        self.feed_link_parents();
     }
 
     /// What the project facts are built from, without building them.
@@ -477,21 +478,122 @@ impl Runtime {
         panes
     }
 
-    /// Which registered session `hide agent spawn` started for which, from
-    /// the delivery ledger (D-27).
+    /// Registered lineage survives pane removal. Current resolved lineage
+    /// also supplies parents learned outside a delivery registration.
     pub(super) fn feed_link_parents(&mut self) {
         let Some(client) = self.links_work.client.clone() else {
             return;
         };
-        let Ok(ledger) = self.delivery_ledger.as_ref() else {
+        let print = self.link_parents_print();
+        if self.links_work.parents_print == Some(print) {
             return;
+        }
+        self.links_work.parents_print = Some(print);
+        let parents = self.link_parent_facts();
+        if *self.links_work.parents != parents {
+            self.links_work.parents = Arc::new(parents);
+            client.parents(Arc::clone(&self.links_work.parents));
+        }
+    }
+
+    /// Hash borrowed authority facts before allocating a lineage projection.
+    /// A terminal frame or status-only change does not rebuild its maps.
+    fn link_parents_print(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for workspace in &self.snapshot.navigator.workspaces {
+            workspace.device_id.hash(&mut hasher);
+            for checkout in &workspace.checkouts {
+                for tab in &checkout.tabs {
+                    for pane in &tab.panes {
+                        pane.id.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        for agent in &self.snapshot.navigator.agents {
+            (
+                &agent.pane_id,
+                &agent.agent_kind,
+                &agent.session_id,
+                &agent.lineage_parent_pane_id,
+                &agent.herdr_name,
+            )
+                .hash(&mut hasher);
+        }
+        if let Ok(ledger) = self.delivery_ledger.as_ref() {
+            for record in &ledger.agents {
+                (
+                    &record.id,
+                    &record.parent,
+                    &record.actor.device_id,
+                    &record.actor.kind,
+                    &record.session,
+                    &record.name,
+                )
+                    .hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    fn link_parent_facts(&self) -> Vec<ParentFact> {
+        let devices = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| {
+                workspace.checkouts.iter().flat_map(|checkout| {
+                    checkout.tabs.iter().flat_map(|tab| {
+                        tab.panes
+                            .iter()
+                            .map(|pane| (pane.id.as_str(), workspace.device_id.as_str()))
+                    })
+                })
+            })
+            .collect::<HashMap<_, _>>();
+        let agents = &self.snapshot.navigator.agents;
+        let by_pane = agents
+            .iter()
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect::<HashMap<_, _>>();
+        let mut parents = agents
+            .iter()
+            .filter_map(|agent| {
+                let parent = by_pane.get(agent.lineage_parent_pane_id.as_deref()?)?;
+                Some(ParentFact {
+                    device_id: (*devices.get(agent.pane_id.as_str())?).to_owned(),
+                    agent: session_agent(&agent.agent_kind)?.to_owned(),
+                    session_id: agent.session_id.clone()?,
+                    parent_device_id: (*devices.get(parent.pane_id.as_str())?).to_owned(),
+                    parent_agent: session_agent(&parent.agent_kind)?.to_owned(),
+                    parent_session_id: parent.session_id.clone()?,
+                    parent_name: parent
+                        .herdr_name
+                        .clone()
+                        .unwrap_or_else(|| parent.pane_id.clone()),
+                })
+            })
+            .map(|parent| {
+                (
+                    (
+                        parent.device_id.clone(),
+                        parent.agent.clone(),
+                        parent.session_id.clone(),
+                    ),
+                    parent,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let Ok(ledger) = self.delivery_ledger.as_ref() else {
+            return parents.into_values().collect();
         };
         let records = ledger
             .agents
             .iter()
             .map(|record| (record.id.as_str(), record))
             .collect::<HashMap<_, _>>();
-        let mut parents = ledger
+        let registered = ledger
             .agents
             .iter()
             .filter_map(|record| {
@@ -510,11 +612,17 @@ impl Runtime {
                 })
             })
             .collect::<Vec<_>>();
-        parents.sort_by(|left, right| left.session_id.cmp(&right.session_id));
-        if *self.links_work.parents != parents {
-            self.links_work.parents = Arc::new(parents);
-            client.parents(Arc::clone(&self.links_work.parents));
+        for registered in registered {
+            parents.insert(
+                (
+                    registered.device_id.clone(),
+                    registered.agent.clone(),
+                    registered.session_id.clone(),
+                ),
+                registered,
+            );
         }
+        parents.into_values().collect()
     }
 
     /// The Projects `hide links` may read, and which one holds the caller's

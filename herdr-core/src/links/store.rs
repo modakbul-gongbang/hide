@@ -739,6 +739,9 @@ impl LinkStore {
             ],
         )
         .map_err(failed)?;
+        if !facts.prs.is_empty() || !facts.issues.is_empty() {
+            ledger::refresh_outputs(&tx)?;
+        }
         tx.commit().map_err(failed)
     }
 

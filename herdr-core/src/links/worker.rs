@@ -741,11 +741,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 list(store, own, paths, &mut state);
             }
         }
-        read_turn(store, own, paths, &mut state);
+        read_turn(store, own, paths, &mut state, client);
         if state.queue.is_empty() {
             finish_listing(store, &mut state);
         }
-        device_turn(store, sink, &mut state);
+        device_turn(store, sink, &mut state, client);
         // The spinner is the first fill's, never a later listing's (B24).
         let filling = (!state.filled && !state.queue.is_empty())
             || state
@@ -908,7 +908,13 @@ fn finish_listing(store: &LinkStore, state: &mut State) {
 
 /// Reads queued files for one turn: one read budget per file per step, a
 /// file with more waiting goes back to the front.
-fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State) {
+fn read_turn(
+    store: &mut LinkStore,
+    own: &dyn NodeLink,
+    paths: &Paths,
+    state: &mut State,
+    client: &LinkClient,
+) {
     if state.queue.is_empty() {
         return;
     }
@@ -1003,6 +1009,7 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
             }
             continue;
         }
+        refresh_reader_context(client, store, &paths.local_device, &answer);
         state.dirty_at.get_or_insert_with(Instant::now);
         if more {
             state.queue.push_front(candidate);
@@ -1036,7 +1043,7 @@ impl DeviceQueue {
 /// helper. A device that is gone keeps every row it gave; when it returns,
 /// its listing starts where the last one did, so what changed meanwhile is
 /// read then (B40). A failed call leaves the device for [`DEVICE_RETRY`].
-fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
+fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State, client: &LinkClient) {
     let paging = state.devices.values().any(|device| {
         device
             .listing
@@ -1090,6 +1097,7 @@ fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
                 channel.as_ref(),
                 entry,
                 &mut state.write_failure,
+                client,
             );
             state.dirty_at.get_or_insert_with(Instant::now);
         }
@@ -1105,6 +1113,7 @@ fn read_device(
     channel: &dyn NodeLink,
     entry: &mut DeviceQueue,
     write_failure: &mut Option<String>,
+    client: &LinkClient,
 ) {
     let batch = entry
         .queue
@@ -1188,6 +1197,7 @@ fn read_device(
             continue;
         }
         *write_failure = None;
+        refresh_reader_context(client, store, device, answer);
         if answer.has_more && answer.error.is_none() {
             entry.queue.push_back(candidate);
         }
@@ -1325,6 +1335,22 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     if summaries != state.summaries {
         state.summaries = summaries.clone();
         sink.summaries(summaries);
+    }
+}
+
+fn refresh_reader_context(
+    client: &LinkClient,
+    store: &LinkStore,
+    device: &str,
+    answer: &links::ReadAnswer,
+) {
+    if answer.facts.prs.is_empty() && answer.facts.issues.is_empty() {
+        return;
+    }
+    match store.ledger_file_session(device, &answer.path) {
+        Ok(Some(session)) => update_context_ancestors(client, store, &session),
+        Ok(None) => {}
+        Err(code) => log_write(&code, "ledger_reader_context"),
     }
 }
 

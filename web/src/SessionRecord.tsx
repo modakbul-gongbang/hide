@@ -105,7 +105,7 @@ function WorkList({ record, summaries }: { record: RecordValue; summaries: boole
   return <section className="mt-md" data-record-work="true"><h3 className="mb-xs font-medium text-subtle-foreground">{t(tasks.length ? "sessionWork.tasks" : "sessionWork.requests")}</h3>
     {!tasks.length && !requests.length ? <p className="text-micro text-muted-foreground">{t("sessionWork.empty")}</p> : null}
     {chapters.map((chapter) => {
-      const rows = [...tasks.filter((task) => task.chapter_id === chapter.id).map((task) => ({ at: task.at_unix_ms, task, request: null })), ...requests.filter((request) => (request.chapter_id ?? chapterOf(request.at_unix_ms)) === chapter.id).map((request) => ({ at: request.at_unix_ms, task: null, request }))].sort((a, b) => summaries ? a.at - b.at : b.at - a.at);
+      const rows = [...tasks.filter((task) => task.chapter_id === chapter.id).map((task) => ({ at: task.at_unix_ms, task, request: null })), ...requests.filter((request) => !summaries || (request.chapter_id ?? chapterOf(request.at_unix_ms)) === chapter.id).map((request) => ({ at: request.at_unix_ms, task: null, request }))].sort((a, b) => summaries ? a.at - b.at : b.at - a.at);
       if (!rows.length) return null;
       return <div key={chapter.id ?? "raw"}>
       {chapter.goal ? <div className="mt-sm mb-xs flex flex-wrap items-baseline gap-xs"><h4 className="min-w-0 text-caption font-medium">{chapter.goal}</h4><time className="text-micro text-muted-foreground">{new Date(chapter.at_unix_ms).toLocaleString()}</time></div> : null}

@@ -92,6 +92,9 @@ static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
         "각 항목은 {\"kind\":\"leftover|problem|follow_up\",\"text\":\"80자 이내의 한 줄\"}이고 한 턴 최대 3개입니다. 원하면/필요하면 가능하다는 선택적 제안은 놓친 일이 아닙니다. ",
         "<open-missed>의 항목을 이번 턴에서 실제 처리했다고 보고했으면 resolved에 {\"id\":\"실제 ID\",\"issue_number\":null 또는 번호}로 넣고, 아직 처리하지 않은 항목을 반복해서 missed에 넣지 마세요. ",
         "output_task_id는 이번 턴에 이어간 작업이 둘일 때 결과물이 귀속될 한 실제 작업 ID이고, 근거 없으면 null입니다. ",
+        "end는 마지막 답 전체에서 정하고, open-tasks와 open-missed는 work의 ID 판정에만 쓰세요. ",
+        "사용자의 구체적인 승인·선택·정보를 요구한 문장은 본 작업의 진행이 아니라 별도의 후속 결정에 관한 것이어도 1번 question입니다. ",
+        "그 요구를 missed에 옮겨 적고 end를 waiting으로 정하면 틀립니다. CI·빌드 대기도 보고했다면 question이 우선이며 line에 사용자가 할 결정을 쓰세요. ",
         DATA,
     ]
     .concat()

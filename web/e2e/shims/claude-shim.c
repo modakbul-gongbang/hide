@@ -64,6 +64,10 @@ static void fit_schema(char *label, int argc, char **argv) {
   const char *schema = NULL;
   for (int i = 1; i + 1 < argc; i++) if (strcmp(argv[i], "--json-schema") == 0) schema = argv[i + 1];
   if (!schema || strstr(schema, "\"end\"")) return;
+  /* The optional work judgment is the last field of the fixture marker.
+     START still uses v8 and asks for neither work nor end. */
+  char *work = strstr(label, ",\"work\":");
+  if (work) { work[0] = '}'; work[1] = 0; }
   char *field = strstr(label, ",\"end\":\"");
   char *close = field ? strchr(field + strlen(",\"end\":\""), '"') : NULL;
   if (close) memmove(field, close + 1, strlen(close + 1) + 1);
@@ -78,6 +82,11 @@ static int provider(int argc, char **argv) {
   prompt[len] = 0;
   char *label = NULL;
   for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
+  /* A draft may quote the label marker in its original assistant context.
+     Its title/body schema selects the explicit draft answer instead. */
+  for (int i = 1; i + 1 < argc; i++) {
+    if (strcmp(argv[i], "--json-schema") == 0 && strstr(argv[i + 1], "\"title\"") && strstr(argv[i + 1], "\"body\"")) label = NULL;
+  }
   if (!label) {
     /* A judgment's input is JSON, where a label cannot stand unescaped: a spec
        that drives one names a file whose one-line answer every such call gets. */
