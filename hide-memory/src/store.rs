@@ -6709,7 +6709,10 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let now = 30 * DAY_MS;
         let words = candidate("Lint before tests", CandidateRelation::New);
         store
-            .apply_candidates(&sourced_batch(&project, "one", "s1"), &[words.clone()])
+            .apply_candidates(
+                &sourced_batch(&project, "one", "s1"),
+                std::slice::from_ref(&words),
+            )
             .unwrap();
         let card = store.item_by_number(&project, 1).unwrap().unwrap();
         store
