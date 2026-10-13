@@ -120,11 +120,10 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
     return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       frame(`${p}-nav-h`, 'Title', {width: 'fill_container', padding: [0, '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${p}-nav-ht`, L.settings, {size: 'title', weight: '600'})]),
-      ...GROUPS.flatMap(([group, items]) => [
+      frame(`${p}-nav-pages`, 'Pages · scroll when taller than the available height', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', clip: true}, GROUPS.flatMap(([group, items]) => [
         groupLabel(`${p}-nav-${group}`, group === 'machine' && machine ? machine : L.groups[group]),
         ...items.map(([key, glyph]) => navItem(`${p}-nav-${key}`, glyph, L.nav[key], page === key)),
-      ]),
-      frame(`${p}-nav-sp`, 'Spacer', {width: 'fill_container', height: 'fill_container'}, []),
+      ])),
       navItem(`${p}-nav-about`, 'info', L.about, page === 'about'),
     ]);
   }
