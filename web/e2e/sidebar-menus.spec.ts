@@ -23,6 +23,28 @@ test.describe.configure({ timeout: 180_000 });
 const BRANCH = "feature/menus";
 const SESSION = "5b0c7e2a-menu-e2e-session";
 
+/** A menu snapshots its choices when opened, so wait for the core's stored choice before reopening. */
+function storedIssueSource(page: Page): (source: string) => Promise<void> {
+  let requestedPath: string | undefined;
+  let sources: Record<string, string> = {};
+  page.on("websocket", socket => {
+    socket.on("framesent", frame => {
+      if (typeof frame.payload !== "string") return;
+      const event = JSON.parse(frame.payload);
+      if (event.kind === "issue_source_set") requestedPath = event.payload.project_path;
+    });
+    socket.on("framereceived", frame => {
+      if (typeof frame.payload !== "string") return;
+      const incoming = JSON.parse(frame.payload);
+      if (incoming.payload?.rest?.ui_state) sources = incoming.payload.rest.ui_state.project_issue_sources ?? {};
+    });
+  });
+  return async source => {
+    await expect.poll(() => requestedPath === undefined ? undefined : sources[requestedPath] ?? "auto",
+      { message: `the core stored issue source ${source}` }).toBe(source);
+  };
+}
+
 function git(cwd: string, args: string[]): void {
   execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "ignore" });
 }
@@ -145,6 +167,7 @@ test("the project row's menu lists the board's items, and Pin registers and pins
 // choice is the one the old Settings tab sent and the stored value comes back
 // as the checked item, by pointer and by keyboard.
 test("the project row's Issue source submenu shows the stored choice and changes it", async ({ page }) => {
+  const stored = storedIssueSource(page);
   const { projectRow, stop } = await startMenus(page);
   try {
     let menu = await openMenu(page, projectRow, "repo actions");
@@ -157,6 +180,7 @@ test("the project row's Issue source submenu shows the stored choice and changes
     await screenshot(page, "sidebar-menus-issue-source-dark");
     await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
+    await stored("local");
     // The stored choice comes back checked the next time the menu opens.
     menu = await openMenu(page, projectRow, "repo actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
@@ -175,6 +199,7 @@ test("the project row's Issue source submenu shows the stored choice and changes
     await submenu.getByRole("menuitemradio", { name: /^Automatic/ }).focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menu")).toHaveCount(0);
+    await stored("auto");
     menu = await openMenu(page, projectRow, "repo actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
     await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
@@ -186,6 +211,7 @@ test("the project row's Issue source submenu shows the stored choice and changes
 // project's menu and the checkout's; that row's Issue source reads the stored
 // choice too, so a choice made there is still checked when the menu reopens.
 test("a plain folder's row shows the stored Issue source, not Automatic", async ({ page }) => {
+  const stored = storedIssueSource(page);
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
@@ -206,6 +232,7 @@ test("a plain folder's row shows the stored Issue source, not Automatic", async 
     await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
     await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
+    await stored("local");
     menu = await openMenu(page, row, "notes actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
     await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
