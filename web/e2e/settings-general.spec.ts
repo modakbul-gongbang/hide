@@ -177,7 +177,45 @@ test("General and About read without sideways scrolling in Korean and English, l
       // The whole list fits beside the page, About included, without a scroll of its own.
       await expect(sheet.locator('[data-settings-tab="about"]')).toBeInViewport({ ratio: 1 });
       expect(await sheet.locator("nav").evaluate((node) => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(0);
+      expect(await sheet.locator("[data-settings-page-list]").evaluate(node => node.scrollHeight - node.clientHeight)).toBeLessThanOrEqual(0);
       await screenshot(page, `settings-about-details-${language}-${theme}-narrow`);
+    }
+
+    // Larger text gives only the page list a scroll region; About stays at
+    // the foot, and keyboard navigation can still reach every page.
+    for (const [language, theme] of [["en", "light"], ["ko", "dark"]] as const) {
+      await sheet.locator('[data-settings-tab="general"]').click();
+      await sheet.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await sheet.locator(`[data-theme-option="${theme}"]`).click();
+      const slider = sheet.locator('[data-font-size] [role="slider"]');
+      await slider.press("End");
+      await expect(slider).toHaveAttribute("aria-valuenow", (await slider.getAttribute("aria-valuemax"))!);
+      const about = sheet.locator('[data-settings-tab="about"]');
+      await sheet.locator('[data-settings-tab="general"]').focus();
+      await expect(about).toBeInViewport({ ratio: 1 });
+      const foot = (await about.boundingBox())!.y;
+      const pages = sheet.locator("[data-settings-page-list]");
+      expect(await pages.evaluate(node => node.scrollHeight - node.clientHeight)).toBeGreaterThan(0);
+      await sheet.locator('[data-settings-tab="general"]').focus();
+      for (const name of ["general", "notifications", "usage", "devices", "shortcuts", "agents", "hideAi", "mobile", "github", "about"]) {
+        const tab = sheet.locator(`[data-settings-tab="${name}"]`);
+        await expect(tab).toBeFocused();
+        await expect(tab).toBeInViewport({ ratio: 1 });
+        await expect(about).toBeInViewport({ ratio: 1 });
+        expect((await about.boundingBox())!.y).toBe(foot);
+        if (name !== "about") await page.keyboard.press("ArrowDown");
+      }
+      if (!(await details.evaluate(node => (node as HTMLDetailsElement).open))) await details.locator("summary").click();
+      const listScroll = await pages.evaluate(node => node.scrollTop);
+      await panel.evaluate(node => node.scrollTo({ top: node.scrollHeight }));
+      expect(await pages.evaluate(node => node.scrollTop)).toBe(listScroll);
+      const pageScroll = await panel.evaluate(node => node.scrollTop);
+      expect(pageScroll).toBeGreaterThan(0);
+      await pages.evaluate(node => node.scrollTo({ top: 0 }));
+      expect(await panel.evaluate(node => node.scrollTop)).toBe(pageScroll);
+      expect((await about.boundingBox())!.y).toBe(foot);
+      await screenshot(page, `settings-about-${language}-${theme}-maximum-text`);
     }
   } finally {
     daemon?.stop();

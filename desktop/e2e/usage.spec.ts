@@ -43,6 +43,7 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
       await page.locator(`[data-theme-option="${language === "en" ? "light" : "dark"}"]`).click();
       await page.locator('[data-settings-tab="usage"]').click();
       await expect(page.locator('[data-usage-settings]')).toBeVisible();
+      await expect(page.locator('[data-settings-tab="about"]')).toBeInViewport({ ratio: 1 });
       const alignment = await page.locator('[data-usage-pin-row]').evaluateAll(rows => rows.map(row => {
         const control = row.querySelector('[role="switch"]')!.getBoundingClientRect();
         const label = row.querySelector('[data-usage-pin-label]')!.getBoundingClientRect();
