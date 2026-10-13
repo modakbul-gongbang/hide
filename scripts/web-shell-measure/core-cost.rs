@@ -251,19 +251,34 @@ fn main() -> Result<()> {
         let rows = current
             .pointer("/rest/navigator/workspaces")
             .and_then(Value::as_array);
-        if rows.is_some_and(|rows| {
-            rows.len() >= config["workspaces"].as_u64().unwrap() as usize
-                && rows.iter().all(|row| {
-                    row["branches"].as_array().is_some_and(|r| r.len() >= 40)
-                        && row["pull_requests"]
-                            .as_array()
-                            .is_some_and(|r| r.len() >= 40)
+        let remote_ready = current
+            .pointer("/rest/status/remote")
+            .and_then(Value::as_array)
+            .is_some_and(|devices| {
+                devices.iter().any(|device| {
+                    device
+                        .pointer("/session/workspaces")
+                        .and_then(Value::as_array)
+                        .is_some_and(|workspaces| !workspaces.is_empty())
                 })
-        }) {
+            });
+        if remote_ready
+            && rows.is_some_and(|rows| {
+                rows.len() >= config["workspaces"].as_u64().unwrap() as usize
+                    && rows.iter().all(|row| {
+                        row["branches"].as_array().is_some_and(|r| r.len() >= 40)
+                            && row["pull_requests"]
+                                .as_array()
+                                .is_some_and(|r| r.len() >= 40)
+                    })
+            })
+        {
             break current;
         }
         if Instant::now() >= deadline {
-            return Err("release core catalog did not converge".into());
+            return Err(
+                "release core local catalog and populated remote session did not converge".into(),
+            );
         }
         std::thread::sleep(Duration::from_millis(100));
     };
@@ -288,17 +303,45 @@ fn main() -> Result<()> {
     } else {
         220
     };
+    let ui_state = current
+        .pointer("/rest/ui_state")
+        .ok_or("initial UI state missing")?;
+    let expanded_paths = ui_state
+        .get("expanded_paths")
+        .ok_or("initial expanded paths missing")?;
+    let selected_path = ui_state
+        .get("selected_path")
+        .ok_or("initial selected path missing")?;
+    let shortcut_bindings = ui_state
+        .get("shortcut_bindings")
+        .ok_or("initial shortcuts missing")?;
     for sample in 0..100 {
+        let requested_width = if sample % 2 == 0 {
+            first_width
+        } else {
+            441 - first_width
+        };
         let changed = event(
             &core,
             "ui_state_update",
-            json!({"sidebar_width":if sample % 2 == 0 {first_width} else {441 - first_width}}),
+            json!({"sidebar_width":requested_width,"expanded_paths":expanded_paths,
+                "selected_path":selected_path,"shortcut_bindings":shortcut_bindings}),
         )?;
         if !changed {
             return Err("measured sidebar event did not change state".into());
         }
-        let (revision, _, owner_ms, encode_ms, bytes) = read(&core, cursor)?;
-        samples.push(json!({"owner_read_ms":owner_ms,"transport_encode_ms":encode_ms,"bytes":bytes,"revision":revision}));
+        let (revision, observed, owner_ms, encode_ms, bytes) = read(&core, cursor)?;
+        let observed_width = observed
+            .pointer("/rest/ui_state/sidebar_width")
+            .and_then(Value::as_u64);
+        if observed_width != Some(requested_width) {
+            return Err(format!(
+                "sidebar sample {sample}: requested {requested_width}, observed {observed_width:?}"
+            )
+            .into());
+        }
+        samples.push(json!({"owner_read_ms":owner_ms,"transport_encode_ms":encode_ms,"bytes":bytes,
+            "revision":revision,"requested_sidebar_width":requested_width,"observed_sidebar_width":observed_width}));
         cursor = revision;
     }
     let load_after = host_load()?;

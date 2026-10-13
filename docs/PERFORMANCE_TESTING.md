@@ -433,6 +433,9 @@ It links the measured worktree's existing release libraries; its identity record
 The real Local node supplies the populated catalogs, and the adapter preserves its reader, progress, lifecycle and path identity behavior.
 One actual PathFacts call is held for the same 500 ms observation interval in both builds while Herdr confirms a zoom; the core observation and later convergence are recorded separately from page latency.
 A hundred sidebar state changes record the owner read and transport encode costs: the baseline owner read includes its first JSON encoding and the transport includes its parse and envelope encoding, while the typed candidate captures immutable data and encodes once at transport.
+Measurement waits for both the populated local catalog and a remote session with workspaces, and saves that actual initial inventory.
+Each update preserves the UI event's required expansion, selection and shortcut fields; each measured snapshot must carry the requested sidebar width, recorded beside that sample.
+Dispatch's changed result alone proves neither a valid payload nor that the requested state was applied; any mismatched observation invalidates the run.
 These clocks exclude observation parsing, daemon owner-channel queueing, sockets, terminal drawing and native paint, so only their combined processing cost is directly comparable.
 
 The fixture owns its private home, state, sockets, SSH service, staged binaries and child processes, and ends them on success or failure.
