@@ -19,7 +19,7 @@ struct Gate {
     local: hide_node::Local,
     armed: AtomicBool,
     path: String,
-    started: mpsc::Sender<Vec<String>>,
+    started: mpsc::Sender<(Vec<String>, Instant)>,
     release: Mutex<mpsc::Receiver<()>>,
 }
 impl NodeLink for Gate {
@@ -28,7 +28,7 @@ impl NodeLink for Gate {
             && paths.contains(&self.path)
             && self.armed.swap(false, Ordering::AcqRel)
         {
-            let _ = self.started.send(paths.clone());
+            let _ = self.started.send((paths.clone(), Instant::now()));
             self.release
                 .lock()
                 .unwrap()
@@ -72,6 +72,38 @@ impl NodeLink for Gate {
     }
     fn pinned(&self, root: &str) -> Option<hide_node_link::RootIdentity> {
         self.local.pinned(root)
+    }
+}
+
+// The reader under observation may block. Its release cannot depend on that
+// reader returning, and the timer is joined on every exit path.
+struct ReleaseTimer(Option<std::thread::JoinHandle<Instant>>);
+impl ReleaseTimer {
+    fn start(release: mpsc::Sender<()>, until: Instant) -> std::io::Result<Self> {
+        Ok(Self(Some(
+            std::thread::Builder::new()
+                .name("path-gate-release".into())
+                .spawn(move || {
+                    std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                    let released = Instant::now();
+                    let _ = release.send(());
+                    released
+                })?,
+        )))
+    }
+    fn finish(mut self) -> Result<Instant> {
+        self.0
+            .take()
+            .unwrap()
+            .join()
+            .map_err(|_| "gate release timer panicked".into())
+    }
+}
+impl Drop for ReleaseTimer {
+    fn drop(&mut self) {
+        if let Some(timer) = self.0.take() {
+            let _ = timer.join();
+        }
     }
 }
 
@@ -271,23 +303,23 @@ fn main() -> Result<()> {
             "--no-focus",
         ],
     )?;
-    let held_paths = held.recv_timeout(Duration::from_secs(30))?;
+    let (held_paths, gate_started) = held.recv_timeout(Duration::from_secs(30))?;
+    let gate_until = gate_started + Duration::from_millis(500);
+    let timer = ReleaseTimer::start(release, gate_until)?;
     let zoom_started = Instant::now();
     let confirmation = herdr(&options, &["pane", "zoom", pane])?;
     let confirmation_ms = zoom_started.elapsed().as_secs_f64() * 1000.0;
     let mut first_seen = None;
-    let gate_until = Instant::now() + Duration::from_millis(500);
     while Instant::now() < gate_until {
         let (_, frame, _, _, _) = read(&core, 0)?;
         if frame.pointer("/rest/zoomed").and_then(Value::as_str) == Some(pane) {
-            first_seen = Some(zoom_started.elapsed().as_secs_f64() * 1000.0);
+            first_seen = Some(Instant::now());
             break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    std::thread::sleep(gate_until.saturating_duration_since(Instant::now()));
-    let release_ms = zoom_started.elapsed().as_secs_f64() * 1000.0;
-    release.send(())?;
+    let released = timer.finish()?;
+    let release_ms = released.duration_since(zoom_started).as_secs_f64() * 1000.0;
     let until = Instant::now() + Duration::from_secs(30);
     let converged = loop {
         let (_, frame, _, _, _) = read(&core, 0)?;
@@ -304,7 +336,8 @@ fn main() -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "method":"real Core and private Herdr; one actual Local PathFacts call gated before answering; no terminal drawing or DOM clock",
             "confirmation":confirmation,"herdr_confirmed_ms":confirmation_ms,
-            "core_zoom_before_release_ms":first_seen,"released_ms":release_ms,"converged_ms":converged,
+            "core_zoom_before_release_ms":first_seen.filter(|seen| *seen < released).map(|seen| seen.duration_since(zoom_started).as_secs_f64() * 1000.0),
+            "released_ms":release_ms,"gate_held_ms":released.duration_since(gate_started).as_secs_f64() * 1000.0,"converged_ms":converged,
             "held_paths":held_paths,
         }))?,
     )?;
