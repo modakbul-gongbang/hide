@@ -24,7 +24,9 @@ An off-lock store remains core-owned and must name its scope, freshness rule, re
 On a high-frequency path such as keystroke ingress, added observational work is limited to bounded in-memory writes.
 It must not introduce lock waiting, disk access, a subprocess or large serialization into that path.
 The existing short Runtime admission is not permission to add another contended lock or blocking observer; pass owned data to an existing off-lock owner when work needs those resources.
-Snapshot capture takes owned data under the lock and serialization follows outside it (`runtime/snapshot_delta.rs`, `handle.rs::snapshot_delta`).
+Snapshot capture takes immutable typed sections under the lock and `handle.rs::snapshot_delta_payload` transfers them out of the core owner thread.
+The WebSocket transport encodes the selected sections and its envelope once on a blocking transport worker; internal roots and phone followers use the retained typed state without decoding transport bytes.
+Each rest field has its own revision and `Arc`, with navigator selection and lists, terminal metadata fields and status fields stamped independently; an unchanged value keeps its allocation and a changed value alone is copied.
 Usage lives in its own top-level snapshot section, revisioned independently of navigation; later deltas carry it only when limits or ledger values change.
 An omitted usage section preserves the previous value; an empty `nodes` array clears it, and a future revision cursor resets to a full snapshot.
 The shell stores usage separately, so a usage-only delta preserves navigation identity and an unrelated menu or layout change neither serializes nor compares historical day arrays.
@@ -63,6 +65,9 @@ At most 64 panes wait at once; a pane past the cap keeps its event cwd and logs 
 `wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.
 A separate 250 ms coordinator tick advances every bounded asynchronous operation, so an acknowledgement or topology wait reaches its deadline even when Herdr emits no event.
 A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
+Before the coordinator's first path answer, a registered checkout's empty tab list cannot prune its saved Agent area layout, and a saved selection whose pane still exists keeps its restore hint until the path facts settle its checkout.
+Only an unknown directory of the saved pane holds that restore choice; another pane's unanswered directory cannot delay a known restore or keep a removed checkout selected.
+An answered missing path or a pane Herdr no longer holds is still a removal; the absence of an answer alone is not.
 A publish whose catalog inputs did not move costs nothing per agent, tab or checkout beyond the projection itself (D-18): the catalog is rebuilt only when the registrations, the session's spaces or the worktrees change or its refresh window passes, the purpose mirror is synced only when that catalog or the unconfirmed created purposes change, and the core compares paths by their names while the node resolves them, repositories and branch notes included, only when the set of paths asked changes or the catalog's refresh passes (`workspace::PathIndex`), so an agent status change repeats none of them and the worktree projection under the lock walks no path.
 The node's answer for the paths asked stands until that set changes or the refresh passes, so a path created or relinked inside that window is read as the node last answered for up to `CATALOG_REFRESH_INTERVAL`.
 The Git context refreshes local worktree state when a watched Git HEAD, index or ref changes, Herdr worktree topology changes, or Overview's local project scope opens; content-only working-tree edits wait for the next explicit Overview read.
@@ -777,7 +782,7 @@ The link record (PRD link-graph) keeps which sessions made or worked on which pu
 Owners: `herdr-core/src/links/` (`store.rs` the SQLite store, `worker.rs` the one writer, `query.rs` the `hide links` answer), `herdr-core/src/runtime/links.rs` (the facts handed in and the panel applied), `hide-session` (the shared line parser the link facts come from), and `hide-host/src/serve.rs` (`link_files`, `link_read`).
 
 It lives in its own file, `links.sqlite3` beside `session-search.sqlite3` (`hide_kit::layout::links_store`), so the two have separate failure, write-lock and size boundaries; it reads the search index's retention policy through a read-only `ATTACH`, and neither Rebuild index nor Copied history Off touches it.
-One worker thread, `hide-links`, spawned in `Core::create` and joined in `Drop for Core`, owns the only write connection; the core hands it owned facts (each GitHub project's pull requests with their issue links and sources, the navigator's worktrees, live panes' session ids and branches, and the coordination ledger's parents) when they change, and it applies them as idempotent upserts.
+One worker thread, `hide-links`, spawned in `Core::create` and joined in `Drop for Core`, owns the only write connection; the core hands it owned facts (each GitHub project's pull requests with their issue links and sources, the navigator's worktrees, live panes' session ids and branches, and the core's resolved parent relationships) when they change, and it applies them as idempotent upserts.
 The schema moves by `PRAGMA user_version`; a newer version than this build knows is refused (`links_store_newer`), and a file that fails `quick_check` is set aside once as `links.sqlite3.corrupt` and rebuilt from the session files still there, with a diagnostic for what could not be rebuilt.
 The file is private, `secure_delete` is on and `max_page_count` caps it at 64 MiB; crossing the cap refuses the write (`links_store_full`) and the panel says so.
 
@@ -790,7 +795,7 @@ A link is closed by an end time, never deleted, and only when its source says it
 Retention follows each Project's Copied history: Off keeps a line only while its file exists, which the own node answers for all of them in one `real_paths` call (a call that fails removes nothing; an OpenCode session, which lives in OpenCode's database, until its read finds it gone), otherwise a line stays while it ended within the period, or within a year while its pull request is still open; the prune runs every 30 minutes on the worker.
 A repository is keyed by GitHub's repository id when `gh repo view` gives it, so a rename keeps its rows.
 
-A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 18); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
+A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 32 includes bounded request and issue facts); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
 The panel's read is one request at a time, the latest only, answered as `link_panel` on its own delta revision beside `rest`; `links_open` names the pull request or issue, a generation fence drops an answer for one no longer shown, and a failure keeps the lines read before.
 A store that cannot open is tried again every 15 s, and while it is closed, or while the worker's writes keep failing, the panel's answer is that failure rather than a record that stopped growing.
 The worker re-reads an open panel after it writes, and publishes the small per-Project summary (`link_summaries`: session counts by pull request and issue, each session's pull request chips, and whether the first fill of this machine or of a device is running; a later listing turns no spinner) at most every 2 s and only when it changed.
@@ -798,6 +803,37 @@ The summary also names, in the core only and never on the wire, the checkouts wh
 The runtime stamps that onto `CheckoutSnapshot.landed` (`runtime/links.rs`, `associate_landed`) when a summary arrives and on every catalog or GitHub change, only while Git also counts the checkout's HEAD in its base; with no summary nothing is landed, so a checkout with no record of its work, which Git ancestry alone reads as merged, is neither drawn merged nor folded as settled.
 `hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]` is read-only and answers the panel's record as one JSON line (the target, the repository, each pull request with its state, issue links and sources, worktrees and whether each was removed, and each session with its ids, device, role, times, request, file path, whether the file is there, and parent).
 It answers through hided's own core without a renderer, scoped by default to the Project of the calling checkout: a target in another Project fails with `other_project` and a hint to pass `--all-projects`, a missing one with `not_found`, an unreadable record with `links_unavailable`, each with a non-zero exit.
+
+### Session work records
+
+The link store's version 2 adds the session work ledger, keyed by device, agent kind and native session id.
+`links/ledger.rs` owns its values and bounds, `links/ledger_store.rs` its transactions, `runtime/session_work.rs` its events, and `web/src/SessionRecord.tsx` its read surface.
+Only `hide-links` writes it; record reads and session search are latest-only mailbox requests, with separate delta revisions and generation fences.
+The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
+
+The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.
+It bounds requests and turns at 2,000 per session, chapters and tasks at 200, missed work at 200, new missed items at three per END and 80 characters each, and continuations at two tasks.
+Oldest entries beyond a retention cap are removed with a diagnostic, and the existing 64 MiB file and Copied history policy govern the whole ledger.
+A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.
+The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
+A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
+
+START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v9`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
+An unassigned session has no goal chapter; an accepted goal creates its first chapter without inventing a title for a greeting.
+Roots count operator requests; a delegated record counts its initial prompt and canonical work requests from its named parent, never reports or other letters.
+Late lineage retracts invalid judgments, restores the last valid END and recomputes output attribution in the same transaction.
+Learned lineage comes from the core's proven parent pane relationship across local and connected-device snapshots, keyed with the owning device's native session identity; retained coordination registrations take precedence and keep ended parents available.
+Project, pane and lineage facts use the same combined snapshot set, and a project's GitHub answers are selected by device as well as path.
+The borrowed lineage fingerprint costs one pass over current local and device panes, agents and registrations; only a change allocates parent facts or posts them to the existing worker mailbox.
+Past requests from summaries Off, failed analysis or a pre-ledger session stay raw and unjudged, without background reclassification when summaries return.
+Completion requires the last assigned END to be Done and every assigned PR to be merged; no assigned PR makes the latter condition true.
+Only a tool-printed address within -2 s to +30 s of GitHub creation makes an output, and descendant outputs are attributed once to the parent's spawn-turn task with their originating session retained.
+
+Missed-work issue previews read the witnessed original turn, repository and bounded regular-file templates through the node, then make one read-only `session_issue_draft` provider request with schema version 1 on a worker.
+Only Create invokes GitHub, in the fixed device/repository where the draft began.
+A durable issue-attempt transaction is acknowledged before the external effect; uncertain completion retries first look up the same title created since that attempt and link it before considering another create.
+Repository or turn changes refuse the action, cancellation leaves missed work unchanged, and provider failure opens an editable title-only form with its reason.
+Templates cannot traverse links or block on special files, and diagnostics keep identity and fixed failure classes rather than private content.
 
 ## Historical usage accounting
 
@@ -1186,13 +1222,16 @@ A bump also compares the release's own PowerShell prompt wrapper (`WINDOWS_POWER
 `hided` is the product daemon that owns one `herdr-core::Core` on its creating thread.
 Axum workers send dispatch and snapshot commands over a channel; they never call `Core::create`, `dispatch_bytes`, `snapshot_delta`, `on_change` or drop the handle from another thread.
 It binds `127.0.0.1` only.
-The WebSocket handshake is the client's first JSON frame `{token, schema_version, have_revision?, have_terminal_sequence?, have_terminal_epoch?}`.
+The WebSocket handshake is the client's first JSON frame `{token, schema_version, snapshot_format?, have_revision?, have_terminal_sequence?, have_terminal_epoch?}`.
+Schema 2 clients that request `snapshot_format: "semantic-rest-v1"` receive `rest_format: "semantic-rest-v1"` on snapshot payloads: a delta replaces only fields it carries, merging navigator, terminal and status by their direct fields, while arrays replace as complete ordered lists.
+Omission retains a value, `null` clears an optional value and an empty array or map clears a collection; `workspace_view` is explicitly null when absent in this format.
+Without the capability, schema 2 keeps the supported complete-rest delta, including the omitted absent `workspace_view`; an unknown format is refused with `schema_mismatch` before snapshot delivery.
 A mismatched token, Origin, or schema version, or a ninth concurrent client, is closed with a reason code (`invalid_token`, `origin_not_allowed`, `schema_mismatch`, `client_limit`) and a diagnostic log line.
-After a valid handshake the daemon reads from the revision the client sent (`have_revision`, the one cursor `Core::snapshot_delta` takes), and then one delta frame per core notification burst.
+After a valid handshake the daemon reads from the revision the client sent (`have_revision`, the cursor `Core::snapshot_delta_payload` takes), and then one delta frame per core notification burst.
 A client with cursor 0 gets a self-contained `snapshot`; a reconnecting client resumes with a `delta` that carries only what changed while it was away.
 When the core cannot serve the cursor, because the client's revision is ahead of the core's after a daemon restart, the daemon re-reads from zero and sends a `snapshot` (`server::classify_frame` owns that rule).
 Terminal output comes beside those frames from the hub (see The terminal path): a client given a delta resumes every pane from `have_terminal_sequence` when `have_terminal_epoch` names this hub, or, naming none or another hub's, has every pane drawn again; a client given a whole snapshot resets its terminals and is told its new cursor in a `terminal` frame with no chunks.
-A frame the daemon cannot produce at all (the core owner thread gone, an empty read, bytes that do not decode) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
+A frame the daemon cannot produce at all (the core owner thread gone or a transport encoding failure) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 The Workspace CLI uses the same `/ws` for checkout-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
@@ -1428,7 +1467,7 @@ The core registers the node as an inbound device, by its node id, named by its h
 Each of those answers is a method of the registration's `LinkOrigin` (`Dialed { ssh_alias }` or `Inbound`), which the store keeps in its old spelling (`ssh_alias`, or `inbound: true`); a stored registration with both or neither is dropped with a diagnostic and the rest of the store loads.
 The attach role ends with its channel, with the core's socket, or after 30 s without a byte from its node (three missed heartbeats), so a half-open connection or a stopped core leaves nothing running on C (B20).
 
-What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 31, whose typed hook proof and answer follows 30's credential-free usage fetch and 29's shell integration call).
+What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 32 adds bounded session request and issue facts after 31's typed hook proof and answer, 30's credential-free usage fetch and 29's shell integration call).
 Within 28 a stream's `StreamOpen` may name the caller its node proved (`hide_node_link::panes::StreamCaller`), an optional field: a stream with no proof carries none and its commands are checked with `Call::PaneInspect`. Both ends of a link run one build (a node dials only its core's build, and a core uploads its own build to a device it dials), so the field never meets a peer that lacks it; its serde default only keeps a line without it readable.
 C reaches M's Herdr through link streams (`Call::LinkOpen` naming Herdr as the end, `LinkWrite`, `LinkClose` down, `link_data` and `link_closed` up; the other end a stream names is M's browser relay, below), at most 32 Herdr streams per link with 64 chunks waiting each (a browser relay stream, whose chunks are a relay's CDP, 128), so C's session sync, controls, doorbell, find and phone reply reach M's Herdr with no socket file on C (D-18).
 A stream C gives up (its reader fell 64 chunks behind, or its open went unanswered) keeps its place until its owner drops it, and the node is always told to close it, so the node's 32 slots never leak.
@@ -1995,6 +2034,12 @@ A pull request is tied to a checkout in one place, `github::pull_request_for_che
 `head_sha` is the commit the worktree reader already holds, so no Git process or file read joins the lock.
 Until that reader first answers, and for a checkout it never lists, the commit `Repository::head_oid` read from Git's own files stands in (`CheckoutSnapshot::head_oid`, core only), so a merged pull request restored from the saved answer reattaches in the first frame instead of after the reader's first pass; the reader's value wins as soon as it exists, because it reruns on a moved HEAD or ref while the file value is only as new as the row's last build.
 `head_oid` is read by the core's own node with the catalog's other path facts (`Call::PathFacts`, `hide_host::catalog::path_facts`), which the coordinator asks off the lock before it builds the catalog, so `build_catalog` and the reconcile under the lock compare names and read no folder; a runtime the coordinator does not feed (a fixture, startup before Herdr answers) asks its own node before it takes anything from the session, and the `packed-refs` read behind it is streamed and capped at 8 MiB, with no process.
+The coordinator establishes catalog ownership before its first ingest and runs path facts on a `BackgroundRead` worker, so neither the first answer nor a refresh holds topology publication.
+There is one active read; changed paths coalesce to the latest request, whose connection and wanted paths fence the answer.
+Agent and PR display metadata cannot invalidate path facts when the wanted paths are unchanged; current registrations and the worktree catalog independently fence the prepared catalog at its final Runtime application.
+A completed answer wakes the existing coalesced republish channel, and the catalog is built from the current replica rather than a captured session.
+Until facts arrive, an existing tab retains its confirmed checkout and a new directory creates no project row; failure retains accepted facts and goes to diagnostics.
+The reader checks owner cancellation between bounded path chunks and joins its current finite node call when the coordinator ends.
 A repository's files are written by whatever runs in it, so each (`HEAD`, a ref, a pointer file, the config) is opened only when its name resolves to a regular file, without waiting on a pipe, and refused past a cap (a pointer at 64 KiB, the config at 1 MiB).
 Discovery takes only a repository whose own `HEAD` is a regular file, as it always has; the files read after it (a ref, `packed-refs`, the config) follow a link as Git does, so a config a dotfile manager links in still names its branches, and one that resolves to something other than a regular file reads as `branch_notes.read_failed`.
 A row the reader never lists keeps the file value for at most the catalog's 30-second refresh after its HEAD moves.
@@ -2037,15 +2082,24 @@ The replica carries the creation cause and a focus-event revision with the autho
 One pending creation pairing per live tab is consumed by its first `tab_focused` event; a later `tab_focused` event gets a new revision and is followed.
 The pinned Herdr emits no event for a focus command that leaves its current tab unchanged; Hide cannot observe that no-op command.
 This metadata remains inside the core projection, adds no terminal-output work, and is removed with its tab; local New and Reopen intents retain their existing focus claim.
-The entry also adds a defaulted `view_bookmarks` key (PRD tab-view-bookmark): Herdr tab id, then View area id, then display id (`view_bookmarks.rs`), left out of the file while empty, so a file without it loads with none and no repair and an older build ignores it.
-It is core-only state and never reaches the snapshot wire; the shell still receives only each area's front.
-One pass, `track_view_bookmarks` (`runtime/view_bookmarks.rs`), keeps it from inside `sync_workspace_view`, which follows every event that can move the screen and precedes every snapshot read, so a tab that becomes visible by any path (an operator event, Herdr's own focus followed by the catalog, `sync_agent_selection`, a device's confirmed switch) is bookmarked in the frame it appears in rather than by a hook on each path.
-The pass compares the front Workspace's shown Agent tabs, active tab and area fronts with what it saw last (`Seen`, runtime only, per Workspace): with nothing changed it compares borrowed ids in a few small vectors (at most six areas) and writes nothing and does no I/O.
-A restore happens when the active tab was not among the tabs shown in any Agent area at the last pass (or the Workspace was not seen yet): each area that still holds a bookmarked display shows it (`SplitTree::show`, which leaves `active_area` alone), the store's generation moves and the editor is reconciled before the snapshot is published, so the tab and the panel's fronts leave in one frame.
-A record happens when the active tab is the same as at the last pass and an area's front differs: the new front is that tab's bookmark, and areas that no longer exist are forgotten with it.
-Tab ids that Herdr no longer lists are pruned where the topology is authoritative, in `reconcile_agent_topology` for local Workspaces and when a device session is refreshed for a device's, so the map is bounded by tabs times six areas and is written through the existing coalesced off-lock save.
-Workspace control resolves the calling pane's tab privately (`Context`, which the CLI sees and compares for `pane_changed`, is unchanged): an open or select without `--reveal` from a tab that is not the active one runs as before, then puts the area fronts and the area in use back and records the caller tab's bookmark (`parked_caller`, `note_control_view`); any other open or select records the active tab, and a pane caller's tab too.
-An area with no earlier front keeps the View, and an open to the side may still add an area, since neither has a front to leave alone.
+Each schema-2 Workspace also stores defaulted private tab presentation state: `view_owner` names the tab projected through `layout`/`views`, `view_presentations` retains other tabs' layouts, visibility and pending background results, and `view_next_id` is the checkout-wide identity high-water mark.
+`view_visibility` preserves tab visibility and the legacy `view_bookmarks` map remains a read-only transition path for older schema-2 fronts.
+The shell receives the existing projected layout and visibility; none of these ownership fields adds a wire field.
+`track_view_bookmarks` compares borrowed shown/active tab ids during the existing Workspace sync, cloning only changed observations and swapping on a newly shown tab or an explicit pending-result choice.
+A first visit inherits the current presentation with freshly minted display, split and area identities; browser pages are independent, while documents keep their shared buffers.
+Tools and widths stay checkout-wide, and ordinary focus among already shown Agent areas does not swap the panel.
+
+Workspace control records the caller's actual tab and native session before an asynchronous read, validates them again at commit, and refuses stale identity without another-tab fallback.
+Under one owner lock, `parked_caller` temporarily projects the caller and suppresses intermediate persistence; `note_control_view` commits its result and restores the complete operator presentation, editor selection and explicit-visibility counters unless `--reveal` was requested.
+Revealing selects the actual caller tab; pane-less checkout callers and GUI events act on the operator presentation.
+Reconcile, preview retirement, close guards, restart hydration and browser inventory inspect all live presentations, so hidden content neither appears in the operator's strip nor loses its shared buffer or browser authority.
+Admission counts the checkout's aggregate 64 displays and six occupied areas, including a temporarily reserved operator layout; an empty presentation owns no View area.
+Each layout retains depth three, and authoritative Agent topology keeps the existing 64-tab admission and prunes closed records.
+The same admission check covers a caller on an inbound node; an unanswered session or unresolved catalog grouping preserves saved state, while an empty checkout in a fully answered catalog prunes its final tab's resources.
+Pruning retires clean documents with no remaining presentation references and retains unsaved buffers without inserting them into another tab's strip.
+Reconciliation in a tab-owned presentation adds an unshown document only when an explicit editor action requests it.
+Every tab-valued owner and tab-keyed map participates in `node_migration::KEYS` with `Moves::Tab` for core moves and returns.
+Changes use the existing coalesced off-lock save and notification path; identical state creates no additional save or publication, and there is no new polling, subprocess or blocking work under Runtime.
 Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
 Request-specific claims reserve slots before the worker starts; reconciliation places acknowledged local effects before external arrivals and does not expire uncertain claims by time.
 An ambiguous local create gets one bounded marker lookup outside the runtime lock, without another mutation; an unresolved claim remains charged for that runtime session.
@@ -2069,7 +2123,7 @@ Dismiss releases a definite failed intent, and ordinary closes retain their exis
 Schema 2 of that file (PRD S7) stores each Workspace's View areas as a binary split tree (`layout`, rules in `herdr-core/src/view_layout.rs`).
 A split node has an `axis`, `row` for first-left and second-right or `column` for first-top and second-bottom, and a `ratio`, the first child's share, clamped to 0.15..0.85; a leaf is an area holding its displays in tab order and naming its `active` display.
 A display is one tab showing one file or diff (`path`, `kind`, `committed`, `preview`, `last_focused_unix_ms`) or one web page (`kind` `browser`, with its `url` and the `title` the page last reported), and the Workspace names its `active_area`, the one it last used, where the next file opens.
-Area, display and split ids (`a<n>`, `d<n>`, `s<n>`) are minted by the core from the Workspace's `next_id` and never reused in that Workspace, so an id in an event names one thing for the Workspace's life; a Workspace with no layout has one empty area `a1`.
+Area, display and split ids (`a<n>`, `d<n>`, `s<n>`) are minted by the core from the checkout-wide `view_next_id`, synchronized with each layout's `next_id` and never reused in that Workspace, so an id in an event names one thing for the Workspace's life; a Workspace with no layout has one empty area `a1`.
 The same invariants hold on load and after every change: an area has at most one preview display, its `active` names one of its displays or is null when it has none, an empty area exists only as the root, `active_area` names an existing area, and the caps hold.
 Loading repairs a file that breaks them in one pass over the tree per rule and reports what it changed as counts in one diagnostic, and a file whose ids or focus stamps come near the end of their numbers, which only a crafted file can, is renumbered, keeping what each area shows and which view was focused last, so minting never overflows.
 The caps are core constants, published in the snapshot as `layout.limits`: 6 areas (`MAX_VIEW_AREAS`), 3 split nodes on the path from the root to any area (`MAX_SPLIT_DEPTH`) and 64 displays per Workspace (`MAX_VIEW_DISPLAYS`, S6's `MAX_VIEW_TABS`).
@@ -2111,7 +2165,8 @@ Reads land on workers, so two can land with no event between them, and an open r
 The reconcile holds the display cap too: such a tab of a Workspace that already has 64 views waits off screen, is reported once with a `view_layout.display_limit` diagnostic, and shows once a view is closed.
 
 With the regions separate, choosing an Agent tab no longer takes the editor off screen: `editor.active_tab_id` is the document of the active area's active display, null while that display is not open (`front_active_view_tab` in `runtime/view_areas.rs`, applied by the reconcile), where before every terminal choice deactivated it.
-The core also owns when a column comes back (PRD three-column-panel D-08, `apply_area_intent_to`): an explicit file open, reveal, History selection, page open, Recent Panels display or CLI `--reveal` turns File Views on, and a `workspace_view` `reveal` (the Explorer's own) or a link that names a folder turns Tools on with the Explorer; a link that names a file leaves Tools as it was (B4, B5); choosing an agent or a tab changes no column (D-17), and a status change, a hover or a menu opening moves nothing, and a refused event moves nothing either.
+The core also owns when a column comes back (PRD three-column-panel D-08, `apply_area_intent_to`): an explicit file open, reveal, History selection, page open, Recent Panels display or CLI `--reveal` turns File Views on, and a `workspace_view` `reveal` (the Explorer's own) or a link that names a folder turns Tools on with the Explorer; a link that names a file leaves Tools as it was (B4, B5).
+Choosing an agent or a tab restores its remembered File Views visibility when newly shown and leaves Tools alone; a status change, a hover or a menu opening moves nothing, and a refused event moves nothing either.
 Each such intent is numbered (`views_calls`, the count in any Workspace) and the number is kept as the called Workspace's last (`views_called`), both on the snapshot's `workspace_view`; the shell reads them to show File Views in a body too narrow for every column, so a call from that page, the CLI or another page reaches it the same way, and a call into one Workspace never moves another's columns.
 The numbers are runtime only and never stored, since which column a narrow body shows is the page's alone.
 The call history follows the Workspace store's 256-entry retention and is forgotten with a removed device.
@@ -2179,7 +2234,10 @@ Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
 Every Explorer path - listing, open, reveal, save, create, rename, move, trash, index and file bytes - is checked against the root the event names, or the focused checkout's root, on the real path.
 A path under a root is walked one component at a time from that root, so a symlink whose target leaves the checkout is refused as `outside_checkout` before its target is read, and a sibling whose name merely starts with the root's path is not inside it.
 A browser display's `file:` address (`browser_open`, `browser_state`, and `view_layout` `navigate`) is a path too: hided decodes it, refuses one that names another host or does not decode as `invalid_path`, checks the path against every registered root the same way, and forwards the URL of the checked path (`browser_url`, `hided/src/file_url.rs`); any other address is the core's to judge.
-Roots come from `rest.navigator.workspaces` (a local workspace whose checkout exists) and are replaced wholesale whenever that section changes: one `RootFollower` keeps a revision cursor behind one lock, so a delta that did not change `rest` never reaches the boundary, and its readers are the boot seed, the notify path and a refused event (`spawn_root_refresh`, `carries_roots`).
+Roots come from retained `navigator.workspaces` (a local workspace whose checkout exists) and device roots also include `status.remote.session.workspaces`.
+One `RootFollower` keeps an independent revision cursor behind one lock and reads complete typed state; `roots_changed` renews the boundary and watchers only when their catalog, remote session, selected root/device, readiness or UI scope changed.
+A normalized reset cursor reapplies current authority; unrelated semantic deltas retain the accepted roots.
+Its readers are the boot seed, the notify path and a refused event (`spawn_root_refresh`, `RootFollower::catch_up`).
 A checkout the core learns after boot, from Herdr's first sync, reaches a client's snapshot and the notify path on separate reads, so a client can name it before the boundary holds it: an event refused as `outside_checkout` (an Explorer event, `file_index`, `file_bytes`, or a device root) first brings the roots current and is checked once more, and only then refused (`admit_event`, `device_root_known`).
 The boundary pins each registered root's physical path and file identity across repeated snapshots and refuses an Explorer request when the root's current spelling no longer resolves to that pin.
 On Windows, active traversal handles deny delete sharing so a root cannot be renamed during file work, and directory rows are enumerated from the verified handle.
@@ -2278,6 +2336,7 @@ Missing or malformed facts disable the affected reader feature while file and Gi
 The audited protocol-24 transition keeps its frozen Claude/Codex and partial OpenCode label/link capabilities, with no new reader or structured user-turn content inferred from the current build.
 Reader requests and returned bodies are checked against the live link before serialization and decoding; draining, closed or replaced links cannot lend their retired facts to a checkpoint.
 Provider-bearing discovery rows are inspected as bounded raw records before their format enum is decoded, and mixed link batches refuse unsupported members without discarding supported results or advancing the refused member's durable cursor.
+Reader header strings decode JSON escapes before provider and requested-path comparison, so a native Windows path keeps the same identity as the request; strings without escapes remain borrowed.
 Filtered discovery rows still count toward the original page and oldest timestamp, so an unsupported provider cannot hide older supported files by shortening pagination.
 A device normally runs the helper this Hide carries, installed by the digest of its bytes; ordinary payload replacement refreshes the Hello facts on a new connection and remains the recovery for an unaudited mismatch.
 The patch wire does not carry complete old and new documents, so `@codemirror/merge`'s two-document view would require an extra read and is not used.

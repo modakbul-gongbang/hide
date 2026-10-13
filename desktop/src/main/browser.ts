@@ -354,10 +354,11 @@ export class BrowserViews {
     // current contract requires it and matches placement to retained rows.
     this.cdpAreas = new Map(retained.flatMap((row) => row.area_id ? [[viewKey(row.workspace, row.id), row.area_id] as const] : []));
     const listed = new Set(retained.map((row) => viewKey(row.workspace, row.id)));
+    const placed = new Set(displays.map((display) => viewKey(workspace ?? "", display.id)));
     for (const page of [...this.pages.values()]) {
       if (!listed.has(page.key)) this.destroy(page, "closed");
-      else if (page.workspace !== workspace) {
-        // The operator left this page's Workspace: nothing is owed to it.
+      else if (page.workspace !== workspace || !placed.has(page.key)) {
+        // A retained page outside the front presentation stays alive and hidden.
         if (this.returnTo === page) this.returnTo = null;
         this.show(page, false);
       }

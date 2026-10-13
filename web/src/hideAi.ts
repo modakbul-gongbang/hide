@@ -89,6 +89,11 @@ export function hideAiCanAnswer(ai: BackgroundAi | undefined): boolean {
   return (ai.fallback ?? []).some((entry) => providerById(ai, entry.provider)?.selectable === true);
 }
 
+/** The feature switch, independent of a provider's temporary availability. */
+export function summariesEnabled(ai: BackgroundAi | undefined): boolean {
+  return ai?.enabled !== false && ai?.chosen !== false && ai?.agent_summary === true;
+}
+
 /** Runs on: every agent the core would accept, and the chosen one even when it has a problem (B34). */
 export function runsOnChoices(ai: BackgroundAi): AiProvider[] {
   return ai.providers.filter((provider) => provider.selectable || provider.id === ai.provider);

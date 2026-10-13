@@ -21,6 +21,7 @@
 //! panel, restarts with File Views on when its views showed, and one written
 //! with two independent tool flags restarts on the tool it showed.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -116,6 +117,29 @@ pub struct WorkspaceView {
     /// that never used it reads as before, and an older build ignores the key.
     #[serde(skip_serializing_if = "Bookmarks::is_empty")]
     pub view_bookmarks: Bookmarks,
+    /// File Views visibility per Agent tab, including legacy stored entries.
+    /// Separate from the existing bookmark shape so older builds can ignore it.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub view_visibility: BTreeMap<String, bool>,
+    /// The Agent tab whose presentation `layout` currently projects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view_owner: Option<String>,
+    /// Presentations parked behind the current one. Documents remain shared.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub view_presentations: BTreeMap<String, Presentation>,
+    /// Checkout-wide identity high water mark, including retired layouts.
+    pub view_next_id: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Presentation {
+    pub layout: Layout,
+    #[serde(default)]
+    pub views: bool,
+    /// An explicit Agent-tab choice must show a background result even if
+    /// that tab is already drawn in another Agent area.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_result: bool,
 }
 
 /// A stored entry as any build since schema 2 wrote it: the columns' fields,
@@ -152,6 +176,14 @@ struct StoredView {
     #[serde(default)]
     view_bookmarks: Bookmarks,
     #[serde(default)]
+    view_visibility: BTreeMap<String, bool>,
+    #[serde(default)]
+    view_owner: Option<String>,
+    #[serde(default)]
+    view_presentations: BTreeMap<String, Presentation>,
+    #[serde(default)]
+    view_next_id: u64,
+    #[serde(default)]
     mode: Option<LegacyMode>,
     #[serde(default)]
     views_over_agents: bool,
@@ -183,6 +215,10 @@ impl StoredView {
             layout: self.layout,
             agent_layout: self.agent_layout,
             view_bookmarks: self.view_bookmarks,
+            view_visibility: self.view_visibility,
+            view_owner: self.view_owner,
+            view_presentations: self.view_presentations,
+            view_next_id: self.view_next_id,
         };
         (view, upgraded)
     }
@@ -213,7 +249,191 @@ fn default_explorer() -> bool {
     true
 }
 
+fn presentation_ids(node: &crate::view_layout::Node, ids: &mut Vec<String>) {
+    match node {
+        crate::view_layout::Node::Area(area) => {
+            ids.push(area.id.clone());
+            ids.extend(area.displays.iter().map(|display| display.id.clone()));
+        }
+        crate::view_layout::Node::Split(split) => {
+            ids.push(split.id.clone());
+            presentation_ids(&split.first, ids);
+            presentation_ids(&split.second, ids);
+        }
+    }
+}
+
+fn remint(node: &mut crate::view_layout::Node, next: &mut u64, active: &str) -> Option<String> {
+    let mut mint = |prefix| {
+        let id = format!("{prefix}{next}");
+        *next += 1;
+        id
+    };
+    match node {
+        crate::view_layout::Node::Area(area) => {
+            let shown = area
+                .active
+                .as_ref()
+                .and_then(|id| area.displays.iter().position(|d| &d.id == id));
+            let in_use = area.id == active;
+            area.id = mint('a');
+            for display in &mut area.displays {
+                display.id = mint('d');
+                if display.kind == DisplayKind::Browser {
+                    display.load = 0;
+                }
+            }
+            area.active = shown.map(|index| area.displays[index].id.clone());
+            in_use.then(|| area.id.clone())
+        }
+        crate::view_layout::Node::Split(split) => {
+            split.id = mint('s');
+            let first = remint(&mut split.first, next, active);
+            let second = remint(&mut split.second, next, active);
+            first.or(second)
+        }
+    }
+}
+
 impl WorkspaceView {
+    pub(crate) fn layouts(&self) -> impl Iterator<Item = &Layout> {
+        std::iter::once(&self.layout)
+            .chain(self.view_presentations.values().map(|view| &view.layout))
+    }
+
+    pub(crate) fn layouts_mut(&mut self) -> impl Iterator<Item = &mut Layout> {
+        std::iter::once(&mut self.layout).chain(
+            self.view_presentations
+                .values_mut()
+                .map(|view| &mut view.layout),
+        )
+    }
+
+    /// An empty presentation remembers visibility but owns no View area.
+    pub(crate) fn occupied_areas(layout: &Layout) -> usize {
+        if layout.display_count() == 0 {
+            0
+        } else {
+            layout.area_count()
+        }
+    }
+
+    /// Every parked layout shares the checkout's original resource budget.
+    pub(crate) fn within_view_budget(&self) -> bool {
+        self.layouts().map(Layout::display_count).sum::<usize>()
+            <= crate::view_layout::MAX_VIEW_DISPLAYS
+            && self.layouts().map(Self::occupied_areas).sum::<usize>()
+                <= crate::view_layout::MAX_VIEW_AREAS
+    }
+
+    pub(crate) fn next_view_identity(&self) -> u64 {
+        self.layouts()
+            .map(|layout| layout.next_id)
+            .max()
+            .unwrap_or(2)
+            .max(self.view_next_id)
+    }
+
+    /// Inheriting a presentation never aliases a native page or its area
+    /// authority. The allocator spans every presentation in this checkout.
+    pub(crate) fn inherited_presentation(&self, tab: &str) -> Presentation {
+        let mut layout = self.layout.clone();
+        let mut next = self.next_view_identity();
+        let in_use = layout.active_area.clone();
+        // Read legacy tab fronts before giving their displays new identities.
+        if let Some(fronts) = self.view_bookmarks.of(tab) {
+            for (area, display) in fronts {
+                if let Some(area) = layout.area_mut(area)
+                    && area.displays.iter().any(|held| &held.id == display)
+                {
+                    area.active = Some(display.clone());
+                }
+            }
+        }
+        if let Some(active) = remint(&mut layout.root, &mut next, &in_use) {
+            layout.active_area = active;
+        }
+        layout.next_id = next;
+        Presentation {
+            views: self.view_visibility.get(tab).copied().unwrap_or(self.views)
+                && layout.displays().next().is_some(),
+            layout,
+            pending_result: false,
+        }
+    }
+
+    /// Swap the projected presentation without changing shared Tools/widths.
+    /// Admission precedes the swap, so refusal leaves every tab untouched.
+    pub(crate) fn project_tab(
+        &mut self,
+        tab: &str,
+    ) -> Result<bool, crate::view_layout::LayoutError> {
+        if self.view_owner.as_deref() == Some(tab) {
+            if let Some(next) = self.view_presentations.remove(tab) {
+                self.view_next_id = self.next_view_identity().max(next.layout.next_id);
+                self.layout = next.layout;
+                self.views = next.views;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if self.view_owner.is_none() {
+            self.view_owner = Some(tab.to_owned());
+            if let Some(fronts) = self.view_bookmarks.of(tab) {
+                for (area, display) in fronts {
+                    if let Some(area) = self.layout.area_mut(area)
+                        && area.displays.iter().any(|held| &held.id == display)
+                    {
+                        area.active = Some(display.clone());
+                    }
+                }
+            }
+            self.views = self.view_visibility.get(tab).copied().unwrap_or(self.views)
+                && self.layout.displays().next().is_some();
+            return Ok(true);
+        }
+        let next = match self.view_presentations.remove(tab) {
+            Some(next) => next,
+            None => {
+                let owners = self.view_presentations.len()
+                    + usize::from(
+                        self.view_owner
+                            .as_ref()
+                            .is_some_and(|owner| !self.view_presentations.contains_key(owner)),
+                    );
+                if owners >= 64 {
+                    return Err(crate::view_layout::LayoutError::DisplayLimit);
+                }
+                if self.layouts().map(Layout::display_count).sum::<usize>()
+                    + self.layout.display_count()
+                    > crate::view_layout::MAX_VIEW_DISPLAYS
+                {
+                    return Err(crate::view_layout::LayoutError::DisplayLimit);
+                }
+                if self.layouts().map(Self::occupied_areas).sum::<usize>()
+                    + Self::occupied_areas(&self.layout)
+                    > crate::view_layout::MAX_VIEW_AREAS
+                {
+                    return Err(crate::view_layout::LayoutError::AreaLimit);
+                }
+                self.inherited_presentation(tab)
+            }
+        };
+        let prior = self
+            .view_owner
+            .replace(tab.to_owned())
+            .expect("checked owner");
+        self.view_next_id = self.next_view_identity().max(next.layout.next_id);
+        let previous = Presentation {
+            layout: std::mem::replace(&mut self.layout, next.layout),
+            views: std::mem::replace(&mut self.views, next.views),
+            pending_result: false,
+        };
+        self.view_visibility.insert(prior.clone(), previous.views);
+        self.view_presentations.insert(prior, previous);
+        Ok(true)
+    }
+
     /// A Workspace seen for the first time shows Agent Views alone, the
     /// Explorer the tool ⌘E brings (B2).
     pub fn new(device_id: &str, path: &str) -> Self {
@@ -229,6 +449,10 @@ impl WorkspaceView {
             layout: Layout::default(),
             agent_layout: crate::agent_layout::Layout::default(),
             view_bookmarks: Bookmarks::default(),
+            view_visibility: BTreeMap::new(),
+            view_owner: None,
+            view_presentations: BTreeMap::new(),
+            view_next_id: 2,
         }
     }
 
@@ -387,6 +611,10 @@ impl V1View {
             layout,
             agent_layout: crate::agent_layout::Layout::default(),
             view_bookmarks: Bookmarks::default(),
+            view_visibility: BTreeMap::new(),
+            view_owner: None,
+            view_presentations: BTreeMap::new(),
+            view_next_id: 2,
         }
     }
 }
@@ -489,6 +717,12 @@ fn settle(
     for view in &mut workspaces {
         view.views_width = view.views_width.map(clamp_column_width);
         view.tools_width = view.tools_width.map(clamp_column_width);
+        for presentation in view.view_presentations.values_mut() {
+            for note in presentation.layout.repair() {
+                repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
+            }
+            presentation.views &= presentation.layout.displays().next().is_some();
+        }
         for note in view
             .layout
             .repair()
@@ -501,6 +735,41 @@ fn settle(
         // panel showed only the tools, or whose views were all dropped, has
         // no view to show.
         view.close_empty_views();
+        // Malformed stored entries use the existing reported repair path.
+        // Keep the visible layout; never load parked resources over the cap.
+        while !view.within_view_budget() || view.view_presentations.len() > 64 {
+            view.view_presentations.pop_last();
+            repairs.push(format!(
+                "{} on {}: dropped a parked presentation over the checkout budget",
+                view.path, view.device_id
+            ));
+        }
+        if view.view_next_id >= u64::MAX / 2 {
+            view.view_next_id = 2;
+            repairs.push(format!(
+                "{} on {}: repaired the checkout identity high-water mark",
+                view.path, view.device_id
+            ));
+        }
+        let mut next = view.next_view_identity();
+        let mut seen = std::collections::HashSet::new();
+        for layout in view.layouts_mut() {
+            let mut ids = Vec::new();
+            presentation_ids(&layout.root, &mut ids);
+            if ids.iter().any(|id| seen.contains(id)) {
+                let active = layout.active_area.clone();
+                layout.active_area =
+                    remint(&mut layout.root, &mut next, &active).expect("active area was repaired");
+                layout.next_id = next;
+                repairs.push("reminted overlapping presentation identities".into());
+                ids.clear();
+                presentation_ids(&layout.root, &mut ids);
+            }
+            seen.extend(ids);
+        }
+        if view.view_owner.is_some() || !view.view_presentations.is_empty() {
+            view.view_next_id = view.next_view_identity();
+        }
         // A bookmark names the areas the repaired layout still has.
         let layout = &view.layout;
         view.view_bookmarks
@@ -574,6 +843,45 @@ mod tests {
             }
         }
         views
+    }
+
+    #[test]
+    fn stored_presentations_with_overlapping_page_authority_are_reported_and_reminted() {
+        let folder = scratch("presentation-identities");
+        let path = folder.path().join("views.json");
+        let mut views = WorkspaceViews::default();
+        let entry = views.entry("local", "/repo");
+        let display = entry.layout.new_browser_display("https://example.test", 5);
+        entry.layout.insert("a1", display, 1).unwrap();
+        entry.view_owner = Some("tab-a".into());
+        entry.view_presentations.insert(
+            "tab-b".into(),
+            Presentation {
+                layout: entry.layout.clone(),
+                views: true,
+                pending_result: false,
+            },
+        );
+        save(&path, &views).unwrap();
+        let (loaded, outcome) = load(&path, 1);
+        assert!(
+            matches!(outcome, LoadOutcome::Loaded { repairs, .. } if repairs.iter().any(|repair| repair.contains("overlapping presentation identities")))
+        );
+        let entry = loaded.get("local", "/repo").unwrap();
+        let a = entry.layout.displays().next().unwrap();
+        let b = entry.view_presentations["tab-b"]
+            .layout
+            .displays()
+            .next()
+            .unwrap();
+        assert_ne!(a.id, b.id);
+        assert_ne!(
+            entry.layout.active_area,
+            entry.view_presentations["tab-b"].layout.active_area
+        );
+        assert_eq!(a.url, b.url);
+        assert_eq!(b.load, 0);
+        assert!(entry.view_next_id > entry.view_presentations["tab-b"].layout.next_id - 1);
     }
 
     /// S7 B14: a nested tree comes back with its axes, ratios, order,
@@ -996,7 +1304,7 @@ mod tests {
     /// and a bookmark naming an area the layout no longer has is dropped on
     /// load.
     #[test]
-    fn bookmarks_survive_a_save_and_a_file_without_them_loads_untouched() {
+    fn tab_view_state_survives_a_save_and_legacy_state_loads_untouched() {
         let folder = scratch("bookmarks");
         let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
@@ -1009,16 +1317,21 @@ mod tests {
         entry.view_bookmarks.record("w:t1", "a1", "d1");
         entry.view_bookmarks.record("w:t1", "a9", "d7");
         entry.view_bookmarks.record("w:t2", "a1", "d1");
+        entry.view_visibility.insert("w:t1".to_owned(), true);
+        entry.view_visibility.insert("w:t2".to_owned(), false);
         save(&path, &views).unwrap();
 
         let (loaded, outcome) = load(&path, 1);
-        let bookmarks = &loaded.get("local", "/repo").unwrap().view_bookmarks;
+        let entry = loaded.get("local", "/repo").unwrap();
+        let bookmarks = &entry.view_bookmarks;
         assert_eq!(
             bookmarks.of("w:t1").unwrap().len(),
             1,
             "the area a9 is gone"
         );
         assert_eq!(bookmarks.of("w:t2").unwrap().get("a1").unwrap(), "d1");
+        assert_eq!(entry.view_visibility.get("w:t1"), Some(&true));
+        assert_eq!(entry.view_visibility.get("w:t2"), Some(&false));
         assert_eq!(
             outcome,
             LoadOutcome::Loaded {
@@ -1037,12 +1350,24 @@ mod tests {
                 .unwrap()
                 .contains("view_bookmarks")
         );
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("view_visibility")
+        );
         let (reloaded, outcome) = load(&path, 2);
         assert!(
             reloaded
                 .get("local", "/repo")
                 .unwrap()
                 .view_bookmarks
+                .is_empty()
+        );
+        assert!(
+            reloaded
+                .get("local", "/repo")
+                .unwrap()
+                .view_visibility
                 .is_empty()
         );
         assert_eq!(

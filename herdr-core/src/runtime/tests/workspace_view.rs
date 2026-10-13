@@ -260,7 +260,19 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
         ))),
         "an unchanged session must not publish another change"
     );
-    runtime.snapshot_delta_payload(recovered.revision);
+    let unchanged = runtime.snapshot_delta_payload(recovered.revision);
+    assert!(std::sync::Arc::ptr_eq(
+        &recovered.current_rest.browser_views.value,
+        &unchanged.current_rest.browser_views.value
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &recovered.current_rest.browser_scopes.value,
+        &unchanged.current_rest.browser_scopes.value
+    ));
+    assert!(!std::sync::Arc::ptr_eq(
+        &initial.current_rest.browser_scopes.value,
+        &recovered.current_rest.browser_scopes.value
+    ));
     assert_eq!(
         runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
         "unchanged session updates preserve authority"

@@ -46,8 +46,10 @@ mod sqlite;
 pub mod turns;
 pub mod usage;
 
-pub use envelope::envelope_sender;
-pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
+pub use envelope::{envelope_header, envelope_sender};
+pub use sightings::{
+    MAX_SIGHTINGS_PER_OUTPUT, PrSighting, issue_addresses, pull_request_addresses,
+};
 
 pub use label_owner::{
     ConfirmedLabelSession, SessionReadScope, confirm_label_session, confirm_session_file,
@@ -586,6 +588,7 @@ pub struct ParsedSession {
     /// Pull request addresses the session's tools printed, in record order
     /// (`sightings`).
     pub pr_sightings: Vec<PrSighting>,
+    pub issue_sightings: Vec<PrSighting>,
     /// What the chunk says about links: branches, pull request addresses,
     /// the run kind and continuation pointers (`links`).
     pub links: links::LinkFacts,
@@ -1253,7 +1256,13 @@ enum LineResult {
     },
     /// A tool's output, which is no turn, and the pull request addresses it
     /// printed.
-    Sightings(Vec<PrSighting>),
+    Sightings(GithubSightings),
+}
+
+#[derive(Default)]
+struct GithubSightings {
+    prs: Vec<PrSighting>,
+    issues: Vec<PrSighting>,
 }
 
 /// Parse Claude Code JSONL records into normalized events.
@@ -1454,7 +1463,7 @@ fn parse_lines_at(
                         parsed.turn_marks.push((line_offset, mark));
                     }
                 }
-                found.event(event.kind, event.at_unix_ms, &event.text);
+                found.event(event.kind, event.at_unix_ms, &event.text, line_offset);
                 parsed.events.push(event);
                 parsed.event_offsets.push(line_offset);
             }
@@ -1469,8 +1478,10 @@ fn parse_lines_at(
             }
             LineResult::TitleSnapshot { .. } => {}
             LineResult::Sightings(sightings) => {
-                found.sightings(&sightings);
-                parsed.pr_sightings.extend(sightings);
+                found.sightings(&sightings.prs);
+                found.issue_sightings(&sightings.issues);
+                parsed.pr_sightings.extend(sightings.prs);
+                parsed.issue_sightings.extend(sightings.issues);
             }
         }
     }
@@ -1624,10 +1635,21 @@ fn collect_text<'a>(value: Option<&'a Value>, into: &mut Vec<&'a str>) {
     }
 }
 
-fn sightings_in(outputs: &[&str], at_unix_ms: u64) -> Vec<PrSighting> {
+fn sightings_in(outputs: &[&str], at_unix_ms: u64) -> GithubSightings {
+    GithubSightings {
+        prs: address_sightings(outputs, at_unix_ms, pull_request_addresses),
+        issues: address_sightings(outputs, at_unix_ms, issue_addresses),
+    }
+}
+
+fn address_sightings(
+    outputs: &[&str],
+    at_unix_ms: u64,
+    addresses: fn(&str) -> Vec<(String, u64)>,
+) -> Vec<PrSighting> {
     let mut found: Vec<PrSighting> = Vec::new();
     for output in outputs {
-        for (repository, number) in pull_request_addresses(output) {
+        for (repository, number) in addresses(output) {
             if found.len() == MAX_SIGHTINGS_PER_OUTPUT {
                 return found;
             }

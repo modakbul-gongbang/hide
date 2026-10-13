@@ -12,7 +12,8 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { runInPane, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { fixtureExecutable } from "../../web/e2e/platform-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, nodeOf, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
@@ -85,7 +86,7 @@ test.afterEach(async () => {
   expect(releaseFailure).toBeNull();
 });
 
-type View = { url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
+type View = { id: number; url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
 
 /** Every page view the window holds, as the main process sees it; a page's popup is a child window, not this one. */
 function views(): Promise<View[]> {
@@ -93,7 +94,7 @@ function views(): Promise<View[]> {
     (BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)?.contentView.children ?? []).flatMap((child) => {
       const contents = (child as { webContents?: Electron.WebContents }).webContents;
       if (!contents) return [];
-      return [{ url: contents.getURL(), title: contents.getTitle(), visible: child.getVisible(), bounds: child.getBounds(), pid: contents.getOSProcessId() }];
+      return [{ id: contents.id, url: contents.getURL(), title: contents.getTitle(), visible: child.getVisible(), bounds: child.getBounds(), pid: contents.getOSProcessId() }];
     }),
   );
 }
@@ -141,11 +142,19 @@ async function slotBounds(page: Page, displayId: string): Promise<View["bounds"]
 const WINDOW = { width: 1024, height: 640 };
 
 /** The window as macOS draws it, page views included, captured by window id without focusing it. */
-async function windowShot(name: string): Promise<void> {
+async function windowShot(name: string, requireNative = false): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (!dir) return;
   const source = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
   const shot = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
+  if (requireNative) {
+    expect(shot.status, shot.stderr).toBe(0);
+    fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({
+      candidate: "worktree desktop/dist/main.js", pid: app!.process().pid,
+      window: source.split(":")[1], daemonPid: run.daemonPid(),
+      method: "screencapture exact background window", collectedAt: new Date().toISOString(),
+    }, null, 2));
+  }
   if (shot.status !== 0) {
     const png = await app!.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.capturePage()).toPNG().toString("base64"));
     fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
@@ -167,17 +176,13 @@ async function nativePageShot(url: string, name: string): Promise<void> {
   fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
 }
 
-function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-
 async function cliFromPane(args: string[], pane = herdr.panes[0]): Promise<Record<string, unknown>> {
-  const sequence = ++cliSequence;
-  const output = path.join(herdr.root, `desktop-cli-${sequence}.json`);
-  const status = path.join(herdr.root, `desktop-cli-${sequence}.status`);
-  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[path.resolve("..", "target", "debug", "hide"), ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", pane, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
-  expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).not.toBeNull();
-  return { status: Number(fs.readFileSync(status, "utf8")), ...(JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
+  const result = await runInPane(herdr, pane, `desktop-cli-${++cliSequence}`, {
+    env: { HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! },
+    argv: [path.resolve("..", "target", "debug", fixtureExecutable("hide")), ...args],
+    stdout: true,
+  });
+  return { status: result.status, ...(JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
 }
 
 function openFromCli(target: string, extra: string[] = []): Promise<Record<string, unknown>> {
@@ -197,6 +202,74 @@ async function expectOnSlot(page: Page, url: string, displayId: string): Promise
 async function displayIdOf(page: Page, text: string): Promise<string> {
   await expect(tab(page, text)).toBeVisible({ timeout: 20_000 });
   return (await tab(page, text).getAttribute("data-display"))!;
+}
+
+// The native child-view lifetime is shared; the pane CLI uses cmd on Windows
+// and a POSIX shell elsewhere, through the same portable fixture boundary.
+for (const width of [1500, 720]) {
+test(`browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller (${width}px)`, { tag: "@platform" }, async () => {
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width, height: 900 });
+  const page = await shellPage(app);
+  await enterWorkspace(page, "fixture");
+  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Other tab", "--no-focus"]) as { result: { tab: { tab_id: string } } };
+  const other = created.result.tab.tab_id;
+  const url = `${origin}/a.html`;
+  const chooseTab = async (id: string) => {
+    // The native screen can leave only one Workspace column visible.
+    // Use its existing toolbar navigation, then call File Views back.
+    if (!(await page.locator('[data-column="agents"]').isVisible())) {
+      await page.locator('[data-column-toggle="views"]').click();
+    }
+    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+    await page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`).click();
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`)).toHaveAttribute("aria-selected", "true");
+    if (!(await page.locator('[data-column="views"]').isVisible())) {
+      await page.locator('[data-column-toggle="views"]').click();
+    }
+  };
+  try {
+    const opened = await openFromCli(url, ["--reveal", "--wait"]);
+    expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    const a = (opened.result as { view_id: string }).view_id;
+    await shownAndSelected(page, url, a);
+    const original = await viewOf(url);
+    await chooseTab(other);
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => displayIdOf(page, "Page A")).not.toBe(a);
+    const b = await displayIdOf(page, "Page A");
+    expect(b).not.toBe(a);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(2);
+    const pageB = (await views()).find((view) => view.url === url && view.id !== original.id)!;
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    const mark = async (id: number, script: string) => app!.evaluate(({ webContents }, { id, script }) => webContents.fromId(id)!.executeJavaScript(script), { id, script });
+    await mark(pageB.id, "window.marker='B'; document.getElementById('q').value='B 한글 입력'");
+    const before = (await views()).find((view) => view.id === pageB.id)!;
+    expect(await openFromCli(url)).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${b}"]`)).toBeVisible();
+    expect((await views()).find((view) => view.id === pageB.id)).toEqual(before);
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    expect(await cliFromPane(["view", "status", a])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
+    const waiting = await openFromCli(`${origin}/c.html`, ["--wait"]);
+    expect(waiting).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await chooseTab(herdr.tab);
+    await expect(tab(page, "Page C")).toBeVisible();
+    await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
+    await chooseTab(other);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await windowShot(`background-tab-B-retained-${width}`, process.platform === "darwin");
+    expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
+    await windowShot(`background-tab-A-revealed-${width}`, process.platform === "darwin");
+  } finally {
+    herdr.run(["tab", "close", other]);
+  }
+});
 }
 
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {

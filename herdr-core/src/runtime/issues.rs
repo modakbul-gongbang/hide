@@ -717,7 +717,7 @@ impl Runtime {
         self.refresh_device_pull_requests(node, root);
     }
 
-    fn next_issue_work_id(&mut self) -> u64 {
+    pub(super) fn next_issue_work_id(&mut self) -> u64 {
         self.next_issue_work_id = self.next_issue_work_id.wrapping_add(1).max(1);
         self.next_issue_work_id
     }
@@ -817,7 +817,7 @@ impl Runtime {
         true
     }
 
-    fn settle_issue_create(&mut self, id: u64, result: Result<String, String>) -> bool {
+    pub(super) fn settle_issue_create(&mut self, id: u64, result: Result<String, String>) -> bool {
         let Some(slot) = self
             .snapshot
             .issue_work
@@ -846,6 +846,9 @@ impl Runtime {
     /// in the store at once and written by the coordinator; a GitHub one is
     /// `gh issue create` on a worker.
     pub(super) fn create_issue(&mut self, payload: IssueCreatePayload) -> bool {
+        if payload.missed.is_some() {
+            return self.create_missed_issue(payload);
+        }
         let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
             self.set_error(
                 "issue_create.unknown_project",

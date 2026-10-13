@@ -24,6 +24,7 @@ import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
 import { localDeviceId, type Checkout, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { summariesEnabled } from "./hideAi";
 import { useUiStore } from "./ui";
 import {
   PURPOSE_HARD_LIMIT,
@@ -66,6 +67,8 @@ function deviceLabel(workspace: Workspace): string | null {
 export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const dialog = useUiStore((s) => s.workspaceDialog);
+  const draft = useShellStore((s) => s.rest?.issue_work?.draft);
+  const summary = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
   // Re-read on every snapshot so a dialog follows its row (a purpose saved
   // elsewhere, a gate that changed) rather than a copy from when it opened.
   useShellStore((s) => s.rest?.navigator?.workspaces);
@@ -74,6 +77,10 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   // dialog still reports the result, so the dialog keeps the last row it saw.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);
   const close = () => useUiStore.getState().setWorkspaceDialog(null);
+  if (summary && draft?.workspace_id) {
+    const place = findTarget(draft.workspace_id);
+    if (place) return <NewIssueDialog key={`missed:${draft.source.session.device_id}:${draft.source.session.session_id}:${draft.source.id}`} actions={actions} workspace={place.workspace} draft={draft} onClose={() => actions.cancelMissedIssueDraft()} />;
+  }
   if (!dialog) return null;
   const key = JSON.stringify(dialog);
   const found = findTarget(dialog.workspaceId, "checkoutId" in dialog ? dialog.checkoutId : undefined);

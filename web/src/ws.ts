@@ -137,6 +137,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         JSON.stringify({
           token,
           schema_version: 2,
+          snapshot_format: "semantic-rest-v1",
           client_kind: hostKind() === "electron" ? "desktop" : "web",
           have_revision: revision,
           have_core: revisionCore ?? undefined,

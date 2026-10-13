@@ -18,9 +18,7 @@ use tokio::sync::broadcast;
 
 use crate::terminal_hub::TerminalHub;
 
-pub struct SnapshotReply {
-    pub bytes: Vec<u8>,
-}
+pub type SnapshotReply = herdr_core::SnapshotDeltaPayload;
 
 type MoveSourceAnswer =
     Result<(herdr_core::MoveSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
@@ -964,8 +962,7 @@ fn owner_loop(
                 have_revision,
                 reply,
             } => {
-                let bytes = core.snapshot_delta(have_revision);
-                let _ = reply.send(Ok(SnapshotReply { bytes }));
+                let _ = reply.send(core.snapshot_delta_payload(have_revision));
             }
             Command::Shutdown => break,
         }

@@ -143,6 +143,10 @@ export interface Handshake {
   client_kind?: "web" | "desktop";
   have_revision?: number;
   /**
+   * Explicitly requests independently retained rest fields, with nested navigator, terminal and status omissions. Missing keeps schema-2 complete-rest replacement. Unknown formats close with schema_mismatch (4003).
+   */
+  snapshot_format?: "semantic-rest-v1";
+  /**
    * The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.
    */
   have_core?: string;
@@ -179,6 +183,10 @@ export interface ServerFrame {
     | "core_link"
     | "agent_notice";
   payload: {
+    /**
+     * Present only after snapshot_format negotiation. Each rest field replaces one semantic value; omissions retain, explicit null/empty values clear. Navigator, terminal and status merge their independently revisioned fields. Cursor zero/reset carries all fields.
+     */
+    rest_format?: "semantic-rest-v1";
     usage?: UsageSnapshot;
     [k: string]: unknown;
   };

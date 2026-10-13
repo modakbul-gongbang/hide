@@ -7,24 +7,48 @@
 pub use herdr_core::agent_state::phone::{AgentKey, PhoneAgent, Projection, project};
 use serde_json::Value;
 
-/// Lays a snapshot frame's `rest` over the one kept so far: a snapshot
-/// replaces it, a delta replaces only the top-level sections it carries,
-/// the same merge the web store does.
-pub fn merge_rest(kept: &mut Value, frame: &Value, full: bool) -> bool {
-    let Some(rest) = frame.get("rest").filter(|rest| rest.is_object()) else {
-        return false;
-    };
-    if full || !kept.is_object() {
-        *kept = rest.clone();
-        return true;
+/// Materialize only the phone/start projection's changed inputs. Immutable
+/// typed sections arrive directly from the owner; transport bytes and the
+/// unrelated editor, layouts and terminal state never enter this follower.
+pub fn update_inputs(
+    kept: &mut Value,
+    rest: &herdr_core::RestSections,
+    have: u64,
+) -> Result<bool, serde_json::Error> {
+    if have == 0 || !kept.is_object() {
+        *kept = serde_json::json!({"navigator": {}, "status": {}, "ui_state": {}});
     }
-    let (Some(kept), Some(incoming)) = (kept.as_object_mut(), rest.as_object()) else {
-        return false;
-    };
-    for (key, value) in incoming {
-        kept.insert(key.clone(), value.clone());
+    let mut changed = false;
+    macro_rules! field {
+        ($group:literal, $key:literal, $stamp:expr) => {
+            if $stamp.revision > have {
+                kept[$group][$key] = serde_json::to_value($stamp.value.as_ref())?;
+                changed = true;
+            }
+        };
     }
-    true
+    field!("navigator", "agents", rest.navigator.agents);
+    field!("navigator", "workspaces", rest.navigator.workspaces);
+    field!("navigator", "devices", rest.navigator.devices);
+    field!(
+        "navigator",
+        "sleeping_sessions",
+        rest.navigator.sleeping_sessions
+    );
+    field!("status", "remote", rest.status.remote);
+    field!("status", "background_ai", rest.status.background_ai);
+    field!("status", "last_error", rest.status.last_error);
+    if rest.task_operation.revision > have {
+        kept["task_operation"] = serde_json::to_value(rest.task_operation.value.as_ref())?;
+        changed = true;
+    }
+    if rest.ui_state.revision > have {
+        kept["ui_state"]["agent_start"] = serde_json::to_value(&rest.ui_state.agent_start)?;
+        kept["ui_state"]["interface_language"] =
+            serde_json::to_value(&rest.ui_state.interface_language)?;
+        changed = true;
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -32,6 +56,38 @@ mod tests {
     use super::*;
     use herdr_core::agent_state::phone::Line;
     use serde_json::json;
+
+    #[test]
+    fn typed_projection_retains_omissions_and_reset_removes_old_phone_state() {
+        let options: herdr_core::CoreOptions = serde_json::from_value(json!({
+            "schema_version": 2, "node_id": "test-node", "app_state_path": ""
+        }))
+        .unwrap();
+        let mut snapshot = herdr_core::Snapshot::initial(&options);
+        let first = herdr_core::RestSections::capture(&snapshot, None, 1);
+        let mut fast = Value::Null;
+        let mut slow = json!({"navigator": {"agents": [agent("old", "working", json!({}))]}});
+        assert!(update_inputs(&mut fast, &first, 0).unwrap());
+        assert!(update_inputs(&mut slow, &first, 0).unwrap());
+        assert_eq!(fast, slow);
+        assert_eq!(
+            project(&fast, "local"),
+            project(&serde_json::to_value(&first).unwrap(), "local")
+        );
+        snapshot.zoomed = Some("fixture:p1".to_owned());
+        let selected = herdr_core::RestSections::capture(&snapshot, Some(&first), 2);
+        let retained = fast.clone();
+        assert!(!update_inputs(&mut fast, &selected, 1).unwrap());
+        assert_eq!(fast, retained);
+        assert!(update_inputs(&mut slow, &selected, 0).unwrap());
+        assert_eq!(
+            fast, slow,
+            "a reader reset independently reconstructs the same phone inputs"
+        );
+        fast["status"]["remote"] = json!([{"target_id":"retired", "session":{"agents":[]}}]);
+        assert!(update_inputs(&mut fast, &selected, 0).unwrap());
+        assert_eq!(fast["status"]["remote"], json!([]));
+    }
 
     fn agent(pane: &str, group: &str, extra: Value) -> Value {
         let mut value = json!({
@@ -270,23 +326,5 @@ mod tests {
             Some("zh-CN"),
             "the string is not validated here"
         );
-    }
-
-    #[test]
-    fn a_delta_replaces_only_the_sections_it_carries() {
-        let mut kept = json!(null);
-        assert!(merge_rest(
-            &mut kept,
-            &json!({"rest": {"navigator": {"agents": []}, "status": {"remote": []}}}),
-            true
-        ));
-        assert!(!merge_rest(&mut kept, &json!({"revision": 3}), false));
-        assert!(merge_rest(
-            &mut kept,
-            &json!({"rest": {"navigator": {"agents": [agent("w1:p1", "done", json!({}))]}}}),
-            false
-        ));
-        assert_eq!(kept["status"], json!({"remote": []}));
-        assert_eq!(project(&kept, "local").groups[0].group, "done");
     }
 }

@@ -120,6 +120,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         }],
         prs,
         prs_read: true,
+        outputs: Vec::new(),
     }
 }
 

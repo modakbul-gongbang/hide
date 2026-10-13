@@ -881,6 +881,8 @@ pub(super) struct IssueCreatePayload {
     pub(super) title: String,
     #[serde(default)]
     pub(super) body: String,
+    #[serde(default)]
+    pub(super) missed: Option<crate::links::ledger::MissedSource>,
 }
 
 /// `issue_detail_request`: one issue's body, labels, author, assignees and
@@ -1367,6 +1369,12 @@ pub(super) enum Event {
     SessionSearch(super::session_search::SearchPayload),
     LinksOpen(super::links::LinksOpenPayload),
     LinksClose,
+    SessionRecordOpen(super::links::RecordOpenPayload),
+    SessionRecordClose,
+    SessionWorkSearch(super::links::RecordSearchPayload),
+    SessionMissedStatus(super::links::MissedStatusPayload),
+    SessionIssueDraft(crate::links::ledger::MissedSource),
+    SessionIssueDraftCancel,
     FactoryAction(Box<super::factory::FactoryActionPayload>),
     FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
     FactoryTaskClose,
@@ -1593,6 +1601,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
+        "session_record_open" => decode!(super::links::RecordOpenPayload, SessionRecordOpen),
+        "session_record_close" => Ok(Event::SessionRecordClose),
+        "session_work_search" => decode!(super::links::RecordSearchPayload, SessionWorkSearch),
+        "session_missed_status" => decode!(super::links::MissedStatusPayload, SessionMissedStatus),
+        "session_issue_draft" => decode!(crate::links::ledger::MissedSource, SessionIssueDraft),
+        "session_issue_draft_cancel" => Ok(Event::SessionIssueDraftCancel),
         "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
             .map(|payload| Event::FactoryAction(Box::new(payload)))
             .map_err(|_| invalid_payload(&kind)),
@@ -1806,6 +1820,12 @@ impl Runtime {
             },
             Event::SessionSearch(payload) => self.request_session_search(payload),
             Event::LinksOpen(payload) => self.open_links(payload),
+            Event::SessionRecordOpen(payload) => self.open_session_record(payload),
+            Event::SessionRecordClose => self.close_session_record(),
+            Event::SessionWorkSearch(payload) => self.search_work_sessions(payload),
+            Event::SessionMissedStatus(payload) => self.set_missed_status(payload),
+            Event::SessionIssueDraft(payload) => self.draft_missed_issue(payload),
+            Event::SessionIssueDraftCancel => self.cancel_session_issue_draft(),
             Event::FactoryAction(payload) => self.factory_action(*payload),
             Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
             Event::FactoryTaskClose => self.factory_task_close(),
@@ -2294,6 +2314,7 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
+                let presentation_key = (self.node.as_str().to_owned(), checkout_path.clone());
                 // Hide owns the visible tab, so the active mark moves here,
                 // on the frame the operator asked for it, and Herdr is told
                 // afterwards. Focusing a tab still does not reorder the
@@ -2323,6 +2344,7 @@ impl Runtime {
                 // answers.
                 self.select_terminal_pane(next_pane_id.clone());
                 self.sync_active_tab_projection();
+                self.choose_view_presentation(presentation_key, payload.tab_id.clone());
                 // The operator chose this tab, so its pane now holds Hide's
                 // keyboard and the read record follows it. Leaving the record
                 // on the pane of the tab just left kept marking that pane read
@@ -2991,7 +3013,12 @@ impl Runtime {
                 }
                 true
             }
-            Event::RemoteControl(payload) => self.request_remote_control(payload),
+            Event::RemoteControl(payload) => {
+                if let RemoteControlRequest::FocusTab { tab_id } = &payload.request {
+                    self.choose_remote_view_presentation(&payload.target_id, tab_id);
+                }
+                self.request_remote_control(payload)
+            }
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
             Event::FileOpen(payload) => {
                 let context_exists = self

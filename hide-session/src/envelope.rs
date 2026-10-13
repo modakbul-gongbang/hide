@@ -10,6 +10,11 @@ const MAX_SENDER_CHARS: usize = 128;
 
 /// The sender named by the first Hide letter header, or `None` without one.
 pub fn envelope_sender(text: &str) -> Option<String> {
+    envelope_header(text).map(|(sender, _)| sender)
+}
+
+/// The canonical envelope sender and kind, for work-giver attribution.
+pub fn envelope_header(text: &str) -> Option<(String, String)> {
     let first = text.trim_start().lines().next()?.trim();
     let header = first.strip_prefix("Hide letter ")?;
     let (envelope, kind) = header.rsplit_once(" [")?;
@@ -28,7 +33,12 @@ pub fn envelope_sender(text: &str) -> Option<String> {
     // The name is the sender's own choice; the facts keep a bounded copy and
     // the core decides how it is shown.
     let name = name.trim();
-    (!name.is_empty()).then(|| name.chars().take(MAX_SENDER_CHARS).collect())
+    (!name.is_empty()).then(|| {
+        (
+            name.chars().take(MAX_SENDER_CHARS).collect(),
+            kind.to_owned(),
+        )
+    })
 }
 
 #[cfg(test)]

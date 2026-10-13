@@ -7,7 +7,8 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { RELATION_ANSWER_TIMEOUT_MS } from "./lineage";
 import { PaneHeaderBand } from "./PaneHeaderBand";
-import type { PaneHeader, PaneFocusRequest, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentRow, PaneHeader, PaneFocusRequest, SnapshotRest, Workspace } from "./snapshot";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -15,29 +16,34 @@ import type { DispatchFn } from "./ws";
 vi.hoisted(() => { HTMLCanvasElement.prototype.getContext = () => null; });
 const savedShell = useShellStore.getState();
 const savedUi = useUiStore.getState();
+const savedScrollIntoView = Element.prototype.scrollIntoView;
 afterEach(() => {
   useShellStore.setState(savedShell, true);
   useUiStore.setState(savedUi, true);
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  Element.prototype.scrollIntoView = savedScrollIntoView;
   document.body.innerHTML = "";
 });
 
 const header: PaneHeader = { working: false, band: { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: {kind: "child", pane_id: "child", label: "자식 검증"}, more: 0, exit_code: null,
   raised: { verb: "approval", what: "하위 검증 권한이 필요합니다", raised_pane_id: "child", pane_id: "child", title: "자식 검증", agent_kind: "codex", open_pane_id: "child", since_unix_ms: null, path: ["부모", "자식 검증"], checkout: "feature", human_notice: true } } };
 
-async function mount(value = header) {
+async function mount(value = header, agents: AgentRow[] = [], options: { rest?: SnapshotRest; paneId?: string } = {}) {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  Element.prototype.scrollIntoView = () => {};
   initializeInterfaceI18n("en");
   useUiStore.setState({relation: null});
-  useShellStore.setState({rest: {status: {pane_focus_request: null}} as SnapshotRest});
+  useShellStore.setState({agents, rest: options.rest ?? {status: {pane_focus_request: null}} as SnapshotRest});
   const events: Parameters<DispatchFn>[0][] = [];
   const actions = createActions(event => {events.push(event); return true;});
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  await act(async () => root.render(<TooltipProvider><PaneHeaderBand paneId="parent" header={value} actions={actions}/></TooltipProvider>));
+  await act(async () => root.render(<TooltipProvider><PaneHeaderBand paneId={options.paneId ?? "parent"} header={value} actions={actions}/></TooltipProvider>));
   const answer = async (outcome: PaneFocusRequest) => {
     await act(async () => useShellStore.setState({rest: {status: {pane_focus_request: outcome}} as SnapshotRest}));
   };
@@ -69,6 +75,132 @@ it("keeps pending, correlated refusal, retry and retired-target feedback in the 
     await answer({request_id: second.requestId, target_pane_id: "child", phase: "failed", message: "Child no longer exists", retryable: false});
     expect(button().disabled).toBe(true);
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("Child no longer exists");
+  } finally { await unmount(); }
+});
+
+// Approved B2 fixture: five direct children, one of each state; the question
+// belongs to the parent until the core explicitly raises it to the operator.
+function childrenFixture(): AgentRow[] {
+  const seed = legacyAgentRow({ id: "parent", pane_id: "parent", identity_label: "Parent", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", detail: null, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working" });
+  const children = ["working", "result", "idle", "unknown", "question"].map((id, index) => ({
+    ...seed, id, pane_id: id, identity_label: `Child ${id}`,
+    status_code: id === "unknown" ? "unknown" as const : id === "question" ? "question" as const : id === "result" ? "done" as const : id === "idle" ? "idle" as const : seed.status_code,
+    activity: id === "unknown" ? "unknown" : id === "result" || id === "idle" ? "stopped" : seed.activity, demand: id === "question" ? "question" : "none",
+    lineage_parent_pane_id: "parent", lineage_child_pane_ids: [],
+    state: { ...seed.state, tree_rank: id === "question" ? 0 : index + 1, line: id === "question" ? { text: "Should these changes share a PR?", mode: "quiet" as const, tone: { kind: "subtle" as const, read: false } } : null },
+  }));
+  return [{ ...seed, lineage_child_pane_ids: [...children.map((child) => child.pane_id), "closed"], direct_child_counts: { error: 0, approval: 0, question: 1, working: 1, done: 1 } }, ...children];
+}
+
+it("shows direct child counts and the core-ranked child line without raising an ordinary child question", async () => {
+  const { container, unmount } = await mount({ working: true, band: null }, childrenFixture());
+  try {
+    const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Child agents 5 · Working: 1 · Reported results: 1 · Child requests: 1 · Unknown state: 1 · Resting: 1");
+    expect(trigger.textContent).not.toContain("!");
+    expect(container.textContent).toContain("Should these changes share a PR?");
+    expect(container.querySelector("[data-pane-working-line]")).not.toBeNull();
+  } finally { await unmount(); }
+});
+
+it("keeps an own approval in the same band and compacts children to the total and raised subtree asks", async () => {
+  const agents = childrenFixture();
+  agents[0]!.descendant_mark = { kind: "raised", count: 2 };
+  const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "approval", reason: "Run the verification command", raised: undefined, action: null, more: 1 } }, agents);
+  try {
+    const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
+    expect(trigger.textContent).toBe("5!2");
+    expect(trigger.getAttribute("aria-label")).toContain("Descendant requests needing you: 2");
+    expect(container.textContent).toContain("Run the verification command");
+    expect(container.querySelector("[data-pane-child-summary]")).toBeNull();
+    expect(container.querySelector("[data-pane-band-more]")).toBeNull();
+  } finally { await unmount(); }
+});
+
+it("never counts a core unknown child as resting or a result when the wire omits the unknown count", async () => {
+  const [parent, ...all] = childrenFixture();
+  const child = all.find((row) => row.pane_id === "unknown")!;
+  const { container, unmount } = await mount({ working: false, band: null }, [{ ...parent!, lineage_child_pane_ids: [child.pane_id], direct_child_counts: { error: 0, approval: 0, question: 0, working: 0, done: 0 } }, child]);
+  try {
+    expect(container.querySelector("[data-pane-tree]")?.getAttribute("aria-label")).toBe("Child agents 1 · Unknown state: 1");
+  } finally { await unmount(); }
+});
+
+it("removes the child band when its last live child leaves and keeps the no-child working line", async () => {
+  const agents = childrenFixture();
+  const { container, unmount } = await mount({ working: true, band: null }, agents);
+  try {
+    await act(async () => useShellStore.setState({ agents: [{ ...agents[0]!, lineage_child_pane_ids: [] }] }));
+    expect(container.querySelector("[data-pane-tree]")).toBeNull();
+    expect(container.querySelector("[data-pane-header-band]")).toBeNull();
+    expect(container.querySelector("[data-pane-working-line]")).not.toBeNull();
+  } finally { await unmount(); }
+});
+
+it("opens a nested parent's raised branch using only root-owned asks within that subtree", async () => {
+  const [seed] = childrenFixture();
+  const leafAsk = { ...header.band!.raised!, raised_pane_id: "leaf", pane_id: "leaf", open_pane_id: "leaf", what: "Allow this nested verification" };
+  const agents = [
+    { ...seed!, id: "root", pane_id: "root", lineage_child_pane_ids: ["parent", "outside"], raised: [leafAsk, { ...leafAsk, raised_pane_id: "outside", pane_id: "outside", open_pane_id: "outside", what: "Unrelated branch request" }] },
+    { ...seed!, lineage_parent_pane_id: "root", lineage_path_pane_ids: ["root", "parent"], lineage_child_pane_ids: ["grand"], raised: [], descendant_mark: { kind: "raised" as const, count: 1 } },
+    { ...seed!, id: "grand", pane_id: "grand", lineage_parent_pane_id: "parent", lineage_path_pane_ids: ["root", "parent", "grand"], lineage_child_pane_ids: ["leaf"] },
+    { ...seed!, id: "leaf", pane_id: "leaf", lineage_parent_pane_id: "grand", lineage_path_pane_ids: ["root", "parent", "grand", "leaf"], lineage_child_pane_ids: [] },
+    { ...seed!, id: "outside", pane_id: "outside", lineage_parent_pane_id: "root", lineage_path_pane_ids: ["root", "outside"], lineage_child_pane_ids: [] },
+  ];
+  const { container, unmount } = await mount({ working: false, band: null }, agents);
+  try {
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-pane-tree]")!.click());
+    const popup = document.querySelector('[data-agent-tree="parent"]')!;
+    expect(popup.querySelector('[data-agent-child="grand"]')).not.toBeNull();
+    expect(popup.querySelector('[data-agent-child="leaf"]')?.textContent).toContain("Allow this nested verification");
+    expect(popup.textContent).not.toContain("Unrelated branch request");
+    await act(async () => popup.querySelector<HTMLButtonElement>('[data-tree-ask-open="leaf"]')!.click());
+    expect(useUiStore.getState().relation).toMatchObject({ sourcePaneId: "parent", targetPaneId: "leaf" });
+  } finally { await unmount(); }
+});
+
+it.each(["parent", "child", "descendant"] as const)("preserves topology but replaces stale child states when the %s device disconnects", async (scope) => {
+  const agents = childrenFixture();
+  agents[0]!.descendant_mark = { kind: "raised", count: 2 };
+  if (scope === "descendant") agents.push({ ...agents[1]!, id: "deep", pane_id: "deep", device_id: "mini", lineage_parent_pane_id: "working", lineage_path_pane_ids: ["parent", "working", "deep"], lineage_child_pane_ids: [] });
+  else agents[scope === "parent" ? 0 : 1]!.device_id = "mini";
+  const rest = { status: { pane_focus_request: null, remote: [{ target_id: "mini", state: "disconnected", message: "Mac mini is not connected" }] } } as unknown as SnapshotRest;
+  const { container, unmount } = await mount({ working: false, band: null }, agents, { rest });
+  try {
+    const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Child agents 5 · Mac mini is not connected");
+    expect(trigger.textContent).toContain("⊘");
+    expect(container.querySelector("[data-pane-child-count]")).toBeNull();
+    expect(container.querySelector("[data-pane-child-summary]")?.textContent).toBe("Mac mini is not connected");
+    await act(async () => trigger.click());
+    expect(document.querySelector('[data-agent-tree="parent"]')).not.toBeNull();
+    if (scope === "child") {
+      const child = document.querySelector('[data-agent-child="working"]')!;
+      expect(child.getAttribute("aria-label")).toContain("Mac mini is not connected");
+      expect(child.getAttribute("aria-label")).not.toContain("Working");
+    }
+  } finally { await unmount(); }
+});
+
+it("keeps online raised requests accessible when another descendant's device is unavailable", async () => {
+  const agents = childrenFixture();
+  const ask = { ...header.band!.raised!, raised_pane_id: "online-ask", pane_id: "online-ask", open_pane_id: "online-ask", what: "Allow the online nested check" };
+  agents[0]!.descendant_mark = { kind: "raised", count: 1 };
+  agents[0]!.raised = [ask];
+  agents[1]!.lineage_child_pane_ids = ["online-ask"];
+  agents.find((row) => row.pane_id === "question")!.device_id = "mini";
+  agents.push({ ...agents[1]!, id: "online-ask", pane_id: "online-ask", lineage_parent_pane_id: "working", lineage_path_pane_ids: ["parent", "working", "online-ask"], lineage_child_pane_ids: [] });
+  const rest = { status: { pane_focus_request: null, remote: [{ target_id: "mini", state: "disconnected", message: "Mac mini is not connected" }] } } as unknown as SnapshotRest;
+  const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "approval", raised: undefined, action: null, more: 1 } }, agents, { rest });
+  try {
+    const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
+    expect(trigger.getAttribute("aria-label")).not.toContain("Descendant requests needing you");
+    expect(container.querySelector("[data-pane-band-more]")).toBeNull();
+    await act(async () => trigger.click());
+    const popup = document.querySelector('[data-agent-tree="parent"]')!;
+    expect(popup.getAttribute("data-agent-tree-mode")).toBe("raised");
+    expect(popup.querySelector('[data-agent-child="online-ask"]')?.textContent).toContain("Allow the online nested check");
+    expect(popup.querySelector<HTMLButtonElement>('[data-tree-ask-open="online-ask"]')!.disabled).toBe(false);
   } finally { await unmount(); }
 });
 

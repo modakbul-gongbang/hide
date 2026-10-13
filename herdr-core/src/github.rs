@@ -764,6 +764,111 @@ pub(crate) fn create_issue(
     })
 }
 
+pub(crate) fn issue_repository(node: &dyn NodeLink, place: &Where) -> Result<String, String> {
+    let output = gh_at(node, place, &["repo", "view", "--json", "nameWithOwner"])
+        .map_err(|_| "issue_github_unavailable")?;
+    let value: serde_json::Value =
+        serde_json::from_str(&output).map_err(|_| "issue_repository_invalid")?;
+    value
+        .get("nameWithOwner")
+        .and_then(serde_json::Value::as_str)
+        .filter(|name| crate::issues::is_repository(name))
+        .map(str::to_owned)
+        .ok_or_else(|| "issue_repository_invalid".into())
+}
+
+/// Reconcile an uncertain create through the repository connection, not
+/// the eventually updated search index. Crossing the page bound refuses a
+/// new create unless this page already proves the attempted time is covered.
+pub(crate) fn reconcile_issue_attempt(
+    node: &dyn NodeLink,
+    place: &Where,
+    repository: &str,
+    title: &str,
+    since: u64,
+) -> Result<Option<crate::issues::IssueSnapshot>, String> {
+    let query =
+        hide_node_link::gh::issue_attempt_query(repository).ok_or("issue_repository_invalid")?;
+    let output = gh_at(node, place, &["api", "graphql", "-f", &query])
+        .map_err(|_| "issue_github_unavailable")?;
+    let value: serde_json::Value =
+        serde_json::from_str(&output).map_err(|_| "issue_reconcile_invalid")?;
+    if value
+        .get("errors")
+        .is_some_and(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty()))
+    {
+        return Err("issue_reconcile_failed".into());
+    }
+    let connection = value
+        .pointer("/data/repository/issues")
+        .ok_or("issue_reconcile_invalid")?;
+    let nodes = connection
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("issue_reconcile_invalid")?;
+    if nodes.len() > 100 {
+        return Err("issue_reconcile_capacity".into());
+    }
+    let more = connection
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("issue_reconcile_invalid")?;
+    // GitHub timestamps have second precision. Include the attempted second.
+    let since = since / 1000 * 1000;
+    let mut oldest = u64::MAX;
+    let mut found = None;
+    for node in nodes {
+        let created = node
+            .get("createdAt")
+            .and_then(serde_json::Value::as_str)
+            .and_then(parse_rfc3339_ms)
+            .ok_or("issue_reconcile_invalid")?;
+        oldest = oldest.min(created);
+        if created < since || node.get("title").and_then(serde_json::Value::as_str) != Some(title) {
+            continue;
+        }
+        let url = node
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("issue_reconcile_invalid")?;
+        let reference = crate::issues::IssueReference::parse(url, None)?;
+        if !reference.repository.eq_ignore_ascii_case(repository)
+            || node.get("number").and_then(serde_json::Value::as_u64)
+                != Some(u64::from(reference.number))
+        {
+            return Err("issue_reconcile_identity_changed".into());
+        }
+        if found.is_some() {
+            return Err("issue_reconcile_ambiguous".into());
+        }
+        found = Some(crate::issues::IssueSnapshot {
+            reference,
+            title: title.into(),
+            url: url.into(),
+            state: node
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .filter(|state| ["OPEN", "CLOSED"].contains(state))
+                .ok_or("issue_reconcile_invalid")?
+                .into(),
+            project_status: None,
+            updated_at_unix_ms: Some(now_unix_ms()),
+            created_at_unix_ms: Some(created),
+            closed_at_unix_ms: None,
+            blocked_by: Vec::new(),
+            sub_issues: Default::default(),
+            labels: Vec::new(),
+        });
+    }
+    if found.is_none() && more && oldest >= since {
+        crate::diagnostic!(
+            serde_json::json!({"component":"session_work","kind":"issue_reconcile.capacity","limit":100})
+        );
+        return Err("issue_reconcile_capacity".into());
+    }
+    Ok(found)
+}
+
 /// One issue as its panel reads it when it opens (PRD overview-lenses-issues
 /// D-40), and the Start dialog's first prompt: the body, labels, author,
 /// assignees and the latest comments, in one `gh issue view` on the caller's
@@ -1786,12 +1891,23 @@ impl GhFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Where {
     Checkout(PathBuf),
+    /// A wire path interpreted only by the node that owns it.
+    DeviceCheckout(String),
+    DeviceRepository {
+        checkout: String,
+        repository: String,
+    },
     Repository(String),
 }
 
 fn gh_at(node: &dyn NodeLink, place: &Where, arguments: &[&str]) -> Result<String, GhFailure> {
     match place {
         Where::Checkout(root) => gh(node, Some(root), arguments),
+        Where::DeviceCheckout(root) => run_gh_call_at(node, Some(root), None, arguments),
+        Where::DeviceRepository {
+            checkout,
+            repository,
+        } => run_gh_call_at(node, Some(checkout), Some(repository), arguments),
         Where::Repository(repository) => run_gh_call(node, None, Some(repository), arguments),
     }
 }
@@ -1806,8 +1922,22 @@ fn run_gh_call(
     repository: Option<&str>,
     arguments: &[&str],
 ) -> Result<String, GhFailure> {
+    run_gh_call_at(
+        node,
+        cwd.map(|cwd| cwd.to_string_lossy()).as_deref(),
+        repository,
+        arguments,
+    )
+}
+
+fn run_gh_call_at(
+    node: &dyn NodeLink,
+    cwd: Option<&str>,
+    repository: Option<&str>,
+    arguments: &[&str],
+) -> Result<String, GhFailure> {
     let call = Call::Gh {
-        cwd: cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
+        cwd: cwd.map(str::to_owned),
         args: arguments
             .iter()
             .map(|argument| (*argument).to_owned())

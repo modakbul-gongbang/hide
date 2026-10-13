@@ -28,12 +28,20 @@ const HOST: &str = "github.com/";
 /// Every distinct `https://github.com/<owner>/<repo>/pull/<number>` in `text`,
 /// in order, up to [`MAX_SIGHTINGS_PER_OUTPUT`].
 pub fn pull_request_addresses(text: &str) -> Vec<(String, u64)> {
+    addresses(text, "pull")
+}
+
+pub fn issue_addresses(text: &str) -> Vec<(String, u64)> {
+    addresses(text, "issues")
+}
+
+fn addresses(text: &str, kind: &str) -> Vec<(String, u64)> {
     let mut found: Vec<(String, u64)> = Vec::new();
     let mut rest = text;
     while let Some(at) = rest.find(HOST) {
         let after = &rest[at + HOST.len()..];
         rest = after;
-        let Some((repository, number)) = parse_address(after) else {
+        let Some((repository, number)) = parse_address(after, kind) else {
             continue;
         };
         if !found
@@ -49,11 +57,11 @@ pub fn pull_request_addresses(text: &str) -> Vec<(String, u64)> {
     found
 }
 
-fn parse_address(after_host: &str) -> Option<(String, u64)> {
+fn parse_address(after_host: &str, kind: &str) -> Option<(String, u64)> {
     let mut parts = after_host.splitn(4, '/');
     let owner = parts.next().filter(|part| is_name(part))?;
     let name = parts.next().filter(|part| is_name(part))?;
-    if parts.next()? != "pull" {
+    if parts.next()? != kind {
         return None;
     }
     let digits: String = parts

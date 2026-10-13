@@ -1,11 +1,13 @@
 import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
+import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { askWhat, TreeButtonFace, VerbText } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { reviewWord } from "./prMark";
 import { AgentTreePopover } from "./components/agent-tree-popover";
+import { StatusMark } from "./components/status-mark";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -18,6 +20,8 @@ import { relationState } from "./lineage";
 import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
 import { useRelationProgress } from "./PaneRelations";
+import { lineText } from "./agentRow";
+import { paneChildren, type PaneChildren } from "./paneChildren";
 
 const LABELS: Record<string, MessageKey> = {
   sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed",
@@ -79,10 +83,21 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const { t } = useInterfaceTranslation();
   const relation = useUiStore((state) => state.relation);
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
+  const rest = useShellStore((state) => state.rest);
+  const agents = usePaneAgents();
+  const children = useMemo(() => paneChildren(paneId, agents, rest), [paneId, agents, rest]);
+  const childConnection = children?.unavailableDevice ? rest?.status?.remote?.find((row) => row.target_id === children.unavailableDevice)?.message ?? t("devices.rail.notConnected") : null;
   const band = header?.band;
   // Before any early return: a hook runs on every render.
   const unreachable = useUnreachable(band?.action?.kind === "child" ? band.action.pane_id : null);
-  if (!band) return header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(2*var(--size-hairline))] bg-agent-working" data-pane-working-line={paneId} /> : null;
+  const workingLine = header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(2*var(--size-hairline))] bg-agent-working" data-pane-working-line={paneId} /> : null;
+  if (!band) return children ? <div className="absolute inset-x-0 top-0 z-10 bg-background">
+    <div className="flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs bg-secondary px-sm text-caption text-muted-foreground" data-pane-header-band="children">
+      <PaneTreeButton paneId={paneId} children={children} agents={agents} actions={actions} connection={childConnection} />
+      <ChildSummary child={children.lead} connection={childConnection} />
+    </div>
+    {workingLine}
+  </div> : workingLine;
   const action = band.action;
   const tracked = action?.kind === "child" && relation?.sourcePaneId === paneId && relation.targetPaneId === action.pane_id ? relation : null;
   const progress = relationState(tracked, outcome, t);
@@ -95,7 +110,8 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const reason = navigation ?? (ask ? null : bandReason(band, t));
   // An ask reads as text on a quiet fill with the warning rail (D-43); the verb carries the colour.
   return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", ask ? "border-l-2 border-warning bg-secondary text-foreground" : TONES[band.tone])} data-pane-header-band={band.kind}>
-    {ask ? <AskBand paneId={paneId} band={band} navigation={navigation} unreachable={unreachable} failed={progress?.phase === "failed"} actions={actions} /> : <>
+    {children ? <PaneTreeButton paneId={paneId} children={children} agents={agents} actions={actions} compact={ask} connection={childConnection} /> : null}
+    {ask ? <AskBand paneId={paneId} band={band} navigation={navigation} unreachable={unreachable} failed={progress?.phase === "failed"} actions={actions} hasTree={children !== null} /> : <>
       <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
       <Hint label={reason ?? label!}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
       {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
@@ -106,12 +122,13 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
 }
 
 /**
- * An ask band (PRD D-43; B4 to B7): verb · what · who · waited · 외 N건 · Open.
+ * An ask band: child total/raised requests · verb · what · who · waited · Open.
  * The pane's own approval or question names no one; a raised descendant's
  * names its provider and title, whose hover gives the path from the root,
- * the checkout and the wait. 외 N건 opens the tree with the raised rows first.
+ * the checkout and the wait. The child trigger opens the raised branches;
+ * the older more-asks trigger remains only when it is the available tree access.
  */
-function AskBand({ paneId, band, navigation, unreachable, failed, actions }: { paneId: string; band: NonNullable<PaneHeader["band"]>; navigation: string | null; unreachable: string | null; failed: boolean; actions: Actions }) {
+function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTree }: { paneId: string; band: NonNullable<PaneHeader["band"]>; navigation: string | null; unreachable: string | null; failed: boolean; actions: Actions; hasTree: boolean }) {
   const { t } = useInterfaceTranslation();
   const rest = useShellStore((state) => state.rest);
   const local = useShellStore((state) => state.agents);
@@ -126,7 +143,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions }: { p
     raised.path.join(" › "),
     [raised.checkout, minutes === null ? null : t("agentSessions.waited", { minutes, verb: t(`agentSessions.verb.${verb}`) })].filter(Boolean).join(" · "),
   ].filter(Boolean).join("\n") : null;
-  const more = band.more > 0 && self ? <AgentTreePopover
+  const more = !hasTree && band.more > 0 && self ? <AgentTreePopover
     parent={self}
     agents={agents}
     raised
@@ -138,10 +155,10 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions }: { p
   /> : null;
   return <>
     <VerbText verb={verb} />
-    <Hint label={navigation ?? what}><span className={cn("min-w-0 flex-1 truncate", failed && "text-destructive")} role={failed ? "alert" : navigation ? "status" : undefined} data-pane-band-navigation={navigation ? failed ? "failed" : "pending" : undefined}>{navigation ?? what}</span></Hint>
+    <Hint label={navigation ?? what}><span className={cn("min-w-0 flex-[3] truncate", failed && "text-destructive")} role={failed ? "alert" : navigation ? "status" : undefined} data-pane-band-navigation={navigation ? failed ? "failed" : "pending" : undefined}>{navigation ?? what}</span></Hint>
     {unreachable && !navigation ? <span className="min-w-0 max-w-1/4 shrink truncate text-muted-foreground" title={unreachable} data-pane-band-unreachable="true">{unreachable}</span> : null}
-    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 shrink items-center gap-xxs text-muted-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
-    {raised?.unreceived_by && minutes !== null ? <span className="min-w-0 max-w-1/4 shrink truncate text-muted-foreground" data-pane-band-unreceived="true">{t("agentSessions.unreceived", { name: raised.unreceived_by, minutes })}</span> : null}
+    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 flex-1 items-center gap-xxs text-muted-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
+    {raised?.unreceived_by && minutes !== null ? <span className="min-w-0 max-w-1/4 flex-1 truncate text-muted-foreground" data-pane-band-unreceived="true">{t("agentSessions.unreceived", { name: raised.unreceived_by, minutes })}</span> : null}
     {raised?.unreceived_by ? null : <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro text-muted-foreground" />}
     {more}
   </>;
@@ -162,11 +179,12 @@ function rows(rest: SnapshotRest | null, local: AgentRow[]): AgentRow[] {
   return [...local, ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.agents ?? [])];
 }
 
-/** Every agent row this page knows, local and from connected devices. */
+/** Every agent row this page knows, including a device's retained topology. */
 export function usePaneAgents(): AgentRow[] {
   const rest = useShellStore((state) => state.rest);
   const local = useShellStore((state) => state.agents);
-  return rows(rest, local);
+  const remote = rest?.status?.remote;
+  return useMemo(() => [...local, ...(remote ?? []).flatMap((row) => row.session?.agents ?? [])], [local, remote]);
 }
 
 /** The pane's own PR mark after its title (B21, B22); a descendant's PRs stay on its own rows. */
@@ -182,24 +200,37 @@ function PaneAgentPrMark({ agent, actions }: { agent: AgentRow; actions: Actions
   return <AgentPrMark agent={agent} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
 }
 
-/** The pane header's child button (B21): a tree icon and the direct child count, opening the tree popover. */
-export function PaneTreeButton({ paneId, actions }: { paneId: string; actions: Actions }) {
+/** The second row's B2 trigger: direct child total and core state counts. */
+function PaneTreeButton({ paneId, children, agents, actions, compact = false, connection }: { paneId: string; children: PaneChildren; agents: AgentRow[]; actions: Actions; compact?: boolean; connection: string | null }) {
   const { t } = useInterfaceTranslation();
-  const agents = usePaneAgents();
-  const parent = agents.find((agent) => agent.pane_id === paneId);
-  if (!parent) return null;
-  const count = (parent.lineage_child_pane_ids ?? []).filter((id) => agents.some((agent) => agent.pane_id === id)).length;
-  if (count === 0) return null;
-  const label = t("agentSessions.tree.children", { count });
+  const count = children.children.length;
+  const label = [t("agentSessions.tree.children", { count }), ...(connection ? [connection] : children.parts.map((part) => t(part.label, { count: part.count })))].join(" · ");
+  const parts = compact ? children.parts.filter((part) => part.kind === "raised") : children.parts;
   return <AgentTreePopover
-    parent={parent}
+    parent={children.parent}
     agents={agents}
+    raised={children.raised > 0}
     onOpenChild={(id, name) => actions.followRelation(paneId, id, name)}
     onGraph={() => actions.openAgentsOverview()}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
-    trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary"><TreeButtonFace count={count} /><ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" /></button>}
+    trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">
+      <TreeButtonFace count={count} />
+      {connection ? <StatusMark symbol="⊘" className="text-muted-foreground" /> : null}
+      {parts.length ? <span className="flex items-center gap-xxs border-l border-border pl-xs" aria-hidden="true">{parts.map((part) => <span key={part.kind} className={cn("flex items-center font-mono text-micro", part.tone)} data-pane-child-count={part.kind}><StatusMark symbol={part.symbol} /><span>{part.count}</span></span>)}</span> : null}
+      <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
+    </button>}
   />;
+}
+
+/** The existing core-ranked child line fills the otherwise unused band slot. */
+function ChildSummary({ child, connection }: { child: AgentRow; connection: string | null }) {
+  const { t } = useInterfaceTranslation();
+  const line = child.state.line;
+  const summary = connection ?? (line ? lineText(t, child, line) : child.identity_label);
+  return <Hint label={connection ?? [child.identity_label, summary].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
+    <span className="flex min-w-0 flex-1 items-center gap-xxs" data-pane-child-summary={child.pane_id}>{connection ? null : <AgentMark kind={child.agent_kind} />}<span className="min-w-0 truncate">{summary}</span></span>
+  </Hint>;
 }
 
 /** Localize the core's facts; no verb or attention decision lives here. */

@@ -21,6 +21,7 @@ mod private_herdr;
 mod real_herdr;
 mod remote_core;
 mod remote_delivery;
+mod responsive_state;
 mod seat;
 #[cfg(unix)]
 mod support;
