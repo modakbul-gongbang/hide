@@ -775,6 +775,41 @@ impl Run for Fixture {
         self.ssh.stop()?;
         self.target.herdr.stop()?;
         self.source.herdr.stop()?;
+        // Temporary baseline: retain only content-free install timings before
+        // successful fixture cleanup removes its private account and logs.
+        use std::io::Read;
+        if let Ok(file) = fs::File::open(self.root.join("m/s/Logs/core.jsonl")) {
+            let mut text = String::new();
+            if file.take(256 * 1024).read_to_string(&mut text).is_ok() {
+                for row in text
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .filter(|row| {
+                        matches!(
+                            row["kind"].as_str(),
+                            Some("host.establish_stage" | "host.upload_stage")
+                        )
+                    })
+                    .take(64)
+                {
+                    let mut safe = serde_json::Map::new();
+                    for key in [
+                        "kind",
+                        "stage",
+                        "phase",
+                        "upload_id",
+                        "package",
+                        "bytes",
+                        "elapsed_ms",
+                    ] {
+                        if let Some(value) = row.get(key) {
+                            safe.insert(key.to_owned(), value.clone());
+                        }
+                    }
+                    eprintln!("install baseline: {}", Value::Object(safe));
+                }
+            }
+        }
         Ok(())
     }
 

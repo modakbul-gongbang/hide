@@ -96,7 +96,7 @@ jobs:
         timeout-minutes: 15
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^core_move::/)' --run-ignored only
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^core_move::/)' --run-ignored only --success-output final
       - name: Terminal attach children end with what started them
         # hided/tests/it/terminal_children.rs (PRD core-host-node-terminal B20):
         # a SIGKILLed hided and a dropped device link each leave no
