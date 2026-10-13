@@ -93,9 +93,9 @@ async function print(page: Page, paneId: string, lines: string[], last: string):
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
   const command = printFileCommand(herdr.shell, file);
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command + "\n"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  const sent = spawnSync(herdr.bin, ["pane", "run", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => page.evaluate(([id, text]) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).includes(text), [paneId, last] as const), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id), paneId), { timeout: 20_000 }).toContain(last);
 }
 
 /** Where `text` is on the screen of `paneId`: its row and the column of its `offset`th character. */
