@@ -817,7 +817,7 @@ Search, archive detail and Memory reads carry the catalog row's expected native 
 Labels, activity, project catalog, content search, archive detail, link sightings and local phone pages use the same before/after native proof; a phone idle poll and a cloned older-page reader cannot retain a replaced owner's history.
 Same-length reads compare the physical file stamp, failed native-file label reads revoke cached native identity and turn authority, and link identity comes only from the proven first header even across incremental chunks.
 The parser reads raw recorded history, including messages on earlier branches, without reconstructing active model context or following a fork's `parentSession` file.
-Pi `session_info.name` is the native/manual title; an explicit empty name clears it, while absence on an incremental read preserves the prior name.
+Pi `session_info.name` has no manual/automatic source and is read as an automatic title; an explicit empty name clears it, while absence on an incremental read preserves the prior name.
 omp's physical first title-v1 slot, or its legacy first session header, supplies the current title and auto/user source.
 The cursor samples that bounded prefix through its existing file descriptor on each omp poll and charges its actual bytes to the existing read allowance, including a refused prefix.
 The label worker rechecks current native-file metadata through its single serialized reader no sooner than three seconds after a successful read, even when Herdr's state is unchanged; a refused or unavailable native read waits fifteen seconds before retrying.

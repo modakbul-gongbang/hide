@@ -1883,7 +1883,7 @@ fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis(
         assert_eq!(
             shown_facts(&worker, &current)
                 .unwrap()
-                .native_title
+                .native_custom_title
                 .as_deref(),
             expected
         );
@@ -1947,7 +1947,7 @@ fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis(
     assert_eq!(
         shown_facts(&worker, &current)
             .unwrap()
-            .native_title
+            .native_custom_title
             .as_deref(),
         Some("Fresh title")
     );
@@ -1965,6 +1965,62 @@ fn a_failed_native_reread_revokes_same_reference_authority_until_a_fresh_native_
     for kind in ["pi", "omp"] {
         failed_native_reread(kind);
     }
+}
+
+#[test]
+fn a_legacy_pi_name_is_replaced_and_cleared_by_the_next_native_read() {
+    use std::io::Write;
+    let harness = Harness::new();
+    let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
+    let folder = crate::fixture::native_session_folder(harness.home.path(), "pi", &cwd);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("native.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n{}\n",
+            json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd}),
+            json!({"type":"session_info", "name":"이전 이름"}),
+        ),
+    )
+    .unwrap();
+    let current = ObservedAgent {
+        agent: Some("pi".into()),
+        cwd: Some(cwd.display().to_string()),
+        ..agent(&path, "idle", 1)
+    };
+    let store = harness.store();
+    let mut facts = super::facts::SessionFacts::default();
+    facts.custom_title = Some("이전 이름".into());
+    store.save_target(
+        LOCAL_TARGET,
+        &std::collections::BTreeMap::from([(
+            current.pane_id.clone(),
+            super::store::PaneRecord {
+                owner: hide_session::label_reference_token("pi", "id", "native-pi"),
+                facts,
+                ..Default::default()
+            },
+        )]),
+    );
+    store.flush();
+    let (mut worker, woken, _) = harness.worker(store);
+    worker.set_summaries(false, Instant::now());
+    for (name, expected) in [("새 이름", Some("새 이름")), ("", None)] {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", json!({"type":"session_info", "name":name})).unwrap();
+        drop(file);
+        observe(&mut worker, &current);
+        worker.tick(Instant::now() + Duration::from_secs(4));
+        settle(&mut worker, &woken);
+        let facts = shown_facts(&worker, &current).unwrap();
+        assert_eq!(facts.native_title.as_deref(), expected);
+        assert!(facts.native_custom_title.is_none());
+    }
+    assert_eq!(harness.backend.calls(), 0);
 }
 
 fn failed_native_reread(kind: &str) {

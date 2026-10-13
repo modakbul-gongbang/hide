@@ -84,7 +84,7 @@ Hiding the column the keyboard is in hands the keyboard to File Views' active ar
 Inside File Views the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside its area's bounds.
 
 An Agent tab shows the focused pane's status mark, provider logo, then title, using the sidebar row's title and mark rules.
-A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's agent title (its task, or its provider's name), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
+A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's chosen agent title (manual name, Hide AI goal, automatic name, then provider, as [Task identity](status-model.md#task-identity) defines), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
 A plain terminal tab shows the terminal icon and that name; terminal titles are never used to guess a process.
 Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
 The foreground process is the process-group leader, or the last returned process when the leader is absent; its name is the basename of `argv0`, falling back to `name` only when `argv0` is empty, and to `Tab N` when both are empty.
