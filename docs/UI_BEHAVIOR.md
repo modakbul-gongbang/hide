@@ -40,6 +40,16 @@ The desktop page's connecting and failure states keep a drag strip of the same h
 Window-wide notices (the connection badge, the notice line, the agent close notice, draft recovery and Workspace notices) run the window's width under the row.
 Windows, Linux and a browser tab keep their own window frame and draw the same row with no traffic-light space.
 
+### A part that cannot be drawn
+
+Web owner: `web/src/RenderBoundary.tsx`, `web/src/App.tsx`.
+
+A part of the window that fails to draw takes no other part with it: the top row, each window-wide notice, the sidebar, the screen in the center, each overlay and the browser displays' bridge fail on their own, and the page keeps its connection to the core.
+The sidebar, at its own width, and the center screen show one quiet line in their place, `이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.`; the top row keeps an empty strip of its height the window is dragged from, and a notice, an overlay or the bridge that fails is left out.
+A part is drawn again on the next change to the core's snapshot or to the page's own state, a new diagnostic not counted, and nothing listens for that change while every part draws.
+The failure is a diagnostic naming the part and the error, once per error until the part draws again; there is no banner.
+Only when the window's frame itself cannot draw does the line take the whole window, under the drag strip.
+
 ### The three columns
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
@@ -741,7 +751,7 @@ The core hands the web a source-neutral task (the id the source shows, URL, titl
 
 Every card is an issue; a worktree or a pull request is never a card of its own.
 An issue's stage is its checkout's: 완료 when the worktree is merged (as the Agents view says), 리뷰 with an open pull request, and 진행 중 otherwise; agents and the issue's own state never move it.
-An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards.
+An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards; the checkout's agents ride only on the issue the checkout works on, and the other card carries the chip without agent rows.
 Git ancestry against the base the core resolves, in the local branch or in its `origin/` copy as of the last fetch, reads a branch with no commits of its own as merged once its base resolves, which is why merged also needs the link record and why a Local issue is never closed by a merge, only by the operator.
 백로그 holds the open issues no checkout works on, most recently changed first; past 20 cards the rest wait behind `+N · 최근 갱신 순`.
 The primary checkout or a folder is a card only while an agent works there on a linked issue; an agent there with no issue is on the Agents view, not an issue.
