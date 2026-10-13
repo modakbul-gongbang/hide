@@ -3,13 +3,188 @@ use super::*;
 use crate::view_layout::Layout as ViewLayout;
 use crate::workspace_control::{Action, Query, checkout_caller_id};
 
-// The View list and layout are the Workspace's; each Agent tab remembers
-// File Views visibility and, per View area, the display that was in front
-// while it was the active tab, and gets them back when shown again. Every
-// test drives the events the shell sends and reads the tree the runtime holds
-// after the frame that event produced.
+// The core projects one tab-owned presentation; documents stay shared.
+// Tests drive public events/actions and inspect the published operator frame.
 
 const TABS: [&str; 3] = ["w-order:t1", "w-order:t2", "w-order:t3"];
+
+#[test]
+fn rejected_background_open_preserves_documents_columns_and_save_generation() {
+    let (mut runtime, checkout, directory) = setup("background-refusal");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "b.md");
+    for n in 0..61 {
+        control(
+            &mut runtime,
+            "w-order:t2:p",
+            open_page(&format!("https://example.test/{n}"), false),
+            &format!("fill-{n}"),
+        );
+    }
+    runtime.sync_workspace_view();
+    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
+    let frame = runtime.snapshot.workspace_view.clone();
+    let editor = serde_json::to_value(&runtime.snapshot.editor).unwrap();
+    let generation = runtime.workspace_views.as_ref().unwrap().generation;
+    let calls = runtime.workspace_views.as_ref().unwrap().views_calls;
+    let caller = "w-order:t1:p";
+    let context = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .unwrap()
+        .context;
+    let id = format!("{}-refused-file", unix_milliseconds());
+    let action = Action::OpenFile {
+        path: directory.join("c.md").to_string_lossy().into_owned(),
+        beside: true,
+        reveal: false,
+    };
+    let crate::workspace_control::ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &context, &id, &action)
+        .unwrap()
+    else {
+        panic!("host read")
+    };
+    let refused = runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &context,
+            &id,
+            action.clone(),
+            Ok(Some(source.read().unwrap())),
+        )
+        .unwrap_err();
+    assert_eq!(refused.reason, "view_limit");
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                crate::node::TEST_NODE,
+                caller,
+                &context,
+                &id,
+                action,
+                Ok(None)
+            )
+            .unwrap_err(),
+        refused
+    );
+    runtime.sync_workspace_view();
+    let store = runtime.workspace_views.as_ref().unwrap();
+    assert_eq!(
+        (&store.views, store.generation, store.views_calls),
+        (&before, generation, calls)
+    );
+    assert_eq!(runtime.snapshot.workspace_view, frame);
+    assert_eq!(
+        serde_json::to_value(&runtime.snapshot.editor).unwrap(),
+        editor
+    );
+    assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+#[test]
+fn empty_agent_presentations_do_not_consume_view_areas() {
+    let (mut runtime, checkout_id, directory) = setup("empty-tabs");
+    let tabs = (1..=8).map(|n| format!("w-order:t{n}")).collect::<Vec<_>>();
+    let ids = tabs.iter().map(String::as_str).collect::<Vec<_>>();
+    for tab in &tabs {
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &ids,
+            &ids,
+            tab,
+        )));
+        runtime.sync_workspace_view();
+        dispatch_focus_tab(&mut runtime, &checkout_id, tab);
+        assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+        assert!(strip(&runtime, &directory).is_empty());
+        assert!(runtime.snapshot.browser_scopes.len() <= 6);
+        assert_eq!(
+            runtime
+                .workspace_views
+                .as_ref()
+                .unwrap()
+                .views
+                .get(&key(&directory).0, &key(&directory).1)
+                .unwrap()
+                .view_owner
+                .as_deref(),
+            Some(tab.as_str())
+        );
+    }
+    control_file(
+        &mut runtime,
+        "w-order:t1:p",
+        &directory,
+        "a.md",
+        false,
+        "empty-first",
+    );
+    assert!(strip(&runtime, &directory).is_empty());
+    runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &ids,
+        &ids,
+        &tabs[0],
+    )));
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["a.md"]);
+    runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &ids,
+        &ids,
+        &tabs[7],
+    )));
+    runtime.sync_workspace_view();
+    assert!(strip(&runtime, &directory).is_empty());
+}
+
+#[test]
+fn background_open_preserves_operator_preview_and_layout() {
+    let (mut runtime, checkout_id, directory) = setup("preview-isolation");
+    open(&mut runtime, &checkout_id, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout_id, &directory, TABS[1]);
+    runtime.dispatch_json(&explorer_event(
+        "file_open",
+        serde_json::json!({
+            "path": directory.join("b.md"), "workspace_id": "workspace:order",
+            "checkout_id": checkout_id, "preview": true,
+        }),
+    ));
+    let before = columns(&runtime);
+    let b = display_id(&runtime, &directory, "b.md");
+    assert!(layout(&runtime, &directory).display(&b).unwrap().preview);
+    control_file(
+        &mut runtime,
+        "w-order:t1:p",
+        &directory,
+        "b.md",
+        false,
+        "pin-a",
+    );
+    control_file(
+        &mut runtime,
+        "w-order:t1:p",
+        &directory,
+        "c.md",
+        true,
+        "beside-a",
+    );
+    assert_eq!(columns(&runtime), before);
+    assert!(layout(&runtime, &directory).display(&b).unwrap().preview);
+    focus_tab(&mut runtime, &checkout_id, &directory, TABS[0]);
+    assert_eq!(fronts(&runtime, &directory), ["b.md", "c.md"]);
+    let c = display_id(&runtime, &directory, "c.md");
+    let target = area_id(&runtime, &directory, 0);
+    view_act(
+        &mut runtime,
+        &directory,
+        serde_json::json!({"action": "move", "display_id": c, "area_id": target, "index": 0}),
+    );
+    focus_tab(&mut runtime, &checkout_id, &directory, TABS[1]);
+    assert_eq!(columns(&runtime), before);
+}
 
 /// A checkout of a real directory with a live Herdr context, so a tab choice
 /// leaves for Herdr and waits for its answer as it does in the daemon.
@@ -182,52 +357,129 @@ fn dispatch_focus_tab(runtime: &mut Runtime, checkout_id: &str, tab_id: &str) {
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
-fn bookmark(runtime: &Runtime, directory: &Path, tab: &str) -> Vec<(String, String)> {
+fn control(
+    runtime: &mut Runtime,
+    caller: &str,
+    action: Action,
+    reveal_suffix: &str,
+) -> crate::workspace_control::ActionResult {
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .expect("the caller is connected")
+        .context;
+    let id = format!("{}-{reveal_suffix}", unix_milliseconds());
     runtime
-        .workspace_views
-        .as_ref()
-        .and_then(|store| {
-            store
-                .views
-                .get(crate::node::TEST_NODE, &directory.to_string_lossy())
-        })
-        .and_then(|view| view.view_bookmarks.of(tab))
-        .map(|areas| {
-            areas
-                .iter()
-                .map(|(area, display)| (area.clone(), display.clone()))
-                .collect()
-        })
-        .unwrap_or_default()
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &expected,
+            &id,
+            action,
+            Ok(None),
+        )
+        .expect("the action applies")
 }
 
+/// `hide file open [--beside] <name>` from `caller`, with the host read the
+/// daemon does off the lock.
+fn control_file(
+    runtime: &mut Runtime,
+    caller: &str,
+    directory: &Path,
+    name: &str,
+    beside: bool,
+    suffix: &str,
+) {
+    let action = Action::OpenFile {
+        path: directory.join(name).to_string_lossy().into_owned(),
+        beside,
+        reveal: false,
+    };
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .unwrap()
+        .context;
+    let id = format!("{}-{suffix}", unix_milliseconds());
+    let crate::workspace_control::ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("a file needs a host read");
+    };
+    let material = source.read().unwrap();
+    runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &expected,
+            &id,
+            action,
+            Ok(Some(material)),
+        )
+        .unwrap();
+}
+
+fn open_page(url: &str, reveal: bool) -> Action {
+    Action::OpenBrowser {
+        url: url.to_owned(),
+        reveal,
+        area_id: None,
+        new_target: false,
+    }
+}
+
+fn columns(runtime: &Runtime) -> crate::model::WorkspaceViewSnapshot {
+    let mut view = runtime
+        .snapshot
+        .workspace_view
+        .clone()
+        .expect("a published Workspace");
+    view.agent_layout = None;
+    // A later explicit return to a pending result calls File Views. Compare
+    // the restored columns independently of that monotonic call serial.
+    view.views_calls = 0;
+    view.views_called = 0;
+    view
+}
+
+// These expectations come from cli-tab-background-views B1-B24. The old
+// shared-strip/front-only tests are superseded by whole presentations.
 #[test]
-fn each_agent_tab_restores_file_views_visibility_with_its_front() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-visibility");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
+fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
+    let (mut runtime, checkout, directory) = setup("tab-private-list");
+    open(&mut runtime, &checkout, &directory, "a.md");
     runtime.dispatch_json(&explorer_event(
         "file_draft",
         serde_json::json!({"contents_utf8": "unsaved text\n"}),
     ));
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["a.md"],
+        "B2 inherits content"
+    );
+    assert_ne!(
+        display_id(&runtime, &directory, "a.md"),
+        a,
+        "private display identity"
+    );
+    open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"views": false, "tools": true}),
+        serde_json::json!({"views": false, "tools": true, "views_width": 444}),
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3");
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-
-    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1");
+    let b = columns(&runtime);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(
+        strip(&runtime, &directory),
+        ["a.md"],
+        "B7 excludes B's insert"
+    );
+    assert_eq!(published_front_ids(&runtime), [a]);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert!(
-        view.views,
-        "tab 1 gets its visible column in the same frame"
-    );
-    assert!(view.tools, "Tools still belongs to the checkout");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-    assert_eq!(strip(&runtime, &directory), ["a.md", "b.md"]);
+    assert!(view.views && view.tools);
+    assert_eq!(view.views_width, Some(444));
     assert!(
         runtime
             .snapshot
@@ -236,431 +488,481 @@ fn each_agent_tab_restores_file_views_visibility_with_its_front() {
             .iter()
             .any(|tab| tab.label == "a.md" && tab.dirty)
     );
-    let shown = runtime.snapshot_delta_payload(0).documents.unwrap();
-    assert!(
-        shown
-            .changed
-            .iter()
-            .any(|(_, document)| document.contents_utf8.as_deref() == Some("unsaved text\n"))
-    );
-    herdr_focuses(&mut runtime, &directory, "w-order:t1");
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(columns(&runtime), b);
 }
 
 #[test]
-fn a_tab_with_file_views_on_cannot_restore_an_empty_column() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-visibility-empty");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    let a = display_id(&runtime, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    view_event(&mut runtime, serde_json::json!({"views": false}));
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "close", "display_id": a}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert!(strip(&runtime, &directory).is_empty());
-}
-
-/// B1, B2, B3, B6, B22: each tab gets back the View it left in front, the
-/// tab and the panel change in one frame, the strip is one list, and a tab
-/// with no bookmark leaves the panel alone.
-#[test]
-fn a_tab_shown_again_gets_back_the_view_it_had_in_front() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-switch");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"], "no bookmark yet");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-
-    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1");
-    // B2: the same frame that shows the tab shows its View, before Herdr
-    // has answered.
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-        Some("w-order:t1")
-    );
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-    assert_eq!(
-        published_front_ids(&runtime),
-        [display_id(&runtime, &directory, "a.md")],
-        "the snapshot that shows the tab shows its View"
-    );
-    assert_eq!(
-        runtime
-            .snapshot
-            .workspace_view
-            .as_ref()
-            .unwrap()
-            .layout
-            .display_count,
-        2
-    );
-    assert_eq!(strip(&runtime, &directory), ["a.md", "b.md"]);
-    herdr_focuses(&mut runtime, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    assert_eq!(strip(&runtime, &directory), ["a.md", "b.md"], "B3");
-
-    // B22: the View that went behind stays in the strip and picking it is
-    // the tab's new bookmark.
-    let a = display_id(&runtime, &directory, "a.md");
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus", "display_id": a}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-}
-
-/// B4, B5: a bookmark is per View area, an area a tab never remembered keeps
-/// what it shows, and a View that closed leaves its area as it is.
-#[test]
-fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-areas");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    let (b, first) = (
-        display_id(&runtime, &directory, "b.md"),
-        area_id(&runtime, &directory, 0),
-    );
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "split", "display_id": b, "area_id": first,
-            "edge": "right", "request_id": "split-1"}),
-    );
-    assert_eq!(fronts(&runtime, &directory), ["a.md", "b.md"]);
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t1").len(), 2);
-
-    // Tab 2 puts c.md in the right area and d.md in the left one.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    let left = area_id(&runtime, &directory, 0);
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus_area", "area_id": left}),
-    );
-    open(&mut runtime, &checkout_id, &directory, "d.md");
-    assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
-
-    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1");
-    assert_eq!(
-        published_front_ids(&runtime),
-        [
-            display_id(&runtime, &directory, "a.md"),
-            display_id(&runtime, &directory, "b.md")
-        ],
-        "both areas' fronts leave in the snapshot of the switch"
-    );
-    herdr_focuses(&mut runtime, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["a.md", "b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
-
-    // Tab 3 only ever changed the right area: the left one stays.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3");
-    let right = area_id(&runtime, &directory, 1);
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus_area", "area_id": right}),
-    );
-    let b = display_id(&runtime, &directory, "b.md");
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus", "display_id": b}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3");
-    assert_eq!(
-        fronts(&runtime, &directory),
-        ["d.md", "b.md"],
-        "left area kept"
-    );
-
-    // B5: tab 1 remembers b.md; it closes while tab 3 is shown.
-    let b = display_id(&runtime, &directory, "b.md");
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "close", "display_id": b}),
-    );
-    assert_eq!(strip(&runtime, &directory), ["a.md", "d.md", "c.md"]);
-    let before = fronts(&runtime, &directory);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(
-        fronts(&runtime, &directory)[1],
-        before[1],
-        "the right area keeps the front the close left it"
-    );
-    assert_eq!(fronts(&runtime, &directory)[0], "a.md");
-}
-
-/// B7, B8, D-02, D-03, D-04: Agent tabs shown side by side do not swap the
-/// panel when focus moves between them, and what the operator picks next is
-/// the focused tab's bookmark.
-#[test]
-fn moving_focus_between_side_by_side_agent_tabs_leaves_the_panel_alone() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-side-by-side");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    agent_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "split", "tab_id": "w-order:t2", "area_id": "a1",
-            "edge": "right", "request_id": "agent-split"}),
-    );
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-        Some("w-order:t2")
-    );
-    // Tab 2 was not shown before the split, so its (empty) bookmark left
-    // a.md in front; b.md is picked for it.
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t2").len(), 1);
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-        Some("w-order:t1")
-    );
-    assert_eq!(fronts(&runtime, &directory), ["b.md"], "B7: no swap");
-    // B8: a pane of the tab already in focus moves nothing either.
-    runtime.dispatch_json(&operator_focus_event("w-order:t1:p"));
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-
-    // The next View picked belongs to the tab that has focus now.
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["c.md"], "still no swap");
-    assert_eq!(
-        bookmark(&runtime, &directory, "w-order:t1")[0].1,
-        display_id(&runtime, &directory, "c.md")
-    );
-    assert_eq!(
-        bookmark(&runtime, &directory, "w-order:t2")[0].1,
-        display_id(&runtime, &directory, "b.md")
-    );
-}
-
-/// B9, B10, D-21: a tab that Herdr's own focus makes visible is restored like
-/// one the operator chose, and a sidebar pick of an agent counts too.
-#[test]
-fn a_tab_shown_by_herdrs_own_focus_or_a_pane_pick_is_restored_too() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-followed");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    herdr_focuses(&mut runtime, &directory, "w-order:t2");
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-        Some("w-order:t2")
-    );
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-
-    herdr_focuses(&mut runtime, &directory, "w-order:t1");
-    assert_eq!(
-        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-        Some("w-order:t1")
-    );
-    assert_eq!(fronts(&runtime, &directory), ["a.md"], "B10");
-
-    runtime.dispatch_json(&operator_focus_event("w-order:t2:p"));
-    assert_eq!(fronts(&runtime, &directory), ["b.md"], "B9: a pane pick");
-}
-
-/// A restore keeps the area in use and restores File Views visibility along
-/// with the bookmarked fronts.
-#[test]
-fn a_restore_keeps_the_area_in_use_and_restores_file_views() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-quiet");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    let (b, first) = (
-        display_id(&runtime, &directory, "b.md"),
-        area_id(&runtime, &directory, 0),
-    );
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "split", "display_id": b, "area_id": first,
-            "edge": "right", "request_id": "split-quiet"}),
-    );
-    // Tab 1 remembers a.md | b.md, with the right area in use.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    let left = area_id(&runtime, &directory, 0);
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus_area", "area_id": left.clone()}),
-    );
-    open(&mut runtime, &checkout_id, &directory, "d.md");
-    let right = area_id(&runtime, &directory, 1);
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus_area", "area_id": right.clone()}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["a.md", "b.md"]);
-    assert_eq!(layout(&runtime, &directory).active_area, right);
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-
-    // Tab 1 remembers File Views off; tab 2 restores its visible column.
-    view_event(&mut runtime, serde_json::json!({"views": false}));
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
-    assert_eq!(layout(&runtime, &directory).active_area, right);
-}
-
-/// B20, D-11: a tab Herdr no longer lists loses its bookmark and the others
-/// keep theirs, and an area that collapsed loses its entries.
-#[test]
-fn a_closed_tab_and_a_collapsed_area_lose_their_bookmark_entries() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-prune");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    let (b, first) = (
-        display_id(&runtime, &directory, "b.md"),
-        area_id(&runtime, &directory, 0),
-    );
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "split", "display_id": b, "area_id": first,
-            "edge": "right", "request_id": "split-prune"}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t1").len(), 2);
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t2").len(), 1);
-
-    // The right area collapses when its last display goes.
-    let right = area_id(&runtime, &directory, 1);
-    let gone: Vec<String> = layout(&runtime, &directory)
-        .area(&right)
-        .unwrap()
-        .displays
-        .iter()
-        .map(|display| display.id.clone())
-        .collect();
-    for display in gone {
-        view_act(
+fn background_file_beside_preserves_b_on_and_off_and_returns_only_to_a() {
+    for visible in [true, false] {
+        let (mut runtime, checkout, directory) = setup(if visible {
+            "background-on"
+        } else {
+            "background-off"
+        });
+        open(&mut runtime, &checkout, &directory, "a.md");
+        focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+        open(&mut runtime, &checkout, &directory, "b.md");
+        view_event(
             &mut runtime,
+            serde_json::json!({"views": visible, "tools": true, "views_width": 444, "tools_width": 333}),
+        );
+        let before = runtime.snapshot.workspace_view.clone();
+        let editor = runtime.snapshot.editor.active_tab_id.clone();
+        control_file(
+            &mut runtime,
+            "w-order:t1:p",
             &directory,
-            serde_json::json!({"action": "close", "display_id": display}),
+            "c.md",
+            true,
+            "background-beside",
+        );
+        runtime.sync_workspace_view();
+        assert_eq!(
+            runtime.snapshot.workspace_view, before,
+            "B5 exact operator presentation"
+        );
+        assert_eq!(runtime.snapshot.editor.active_tab_id, editor);
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout).as_deref(),
+            Some(TABS[1])
+        );
+        focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+        assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
+        assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+        focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+        assert_eq!(
+            columns(&runtime),
+            {
+                let mut before = before.unwrap();
+                before.agent_layout = None;
+                before.views_calls = 0;
+                before.views_called = 0;
+                before
+            },
+            "B7 B stays independent"
         );
     }
-    let a = display_id(&runtime, &directory, "a.md");
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus", "display_id": a}),
-    );
-    assert_eq!(layout(&runtime, &directory).area_count(), 1);
-    assert!(
-        bookmark(&runtime, &directory, "w-order:t1")
-            .iter()
-            .all(|(area, _)| *area == area_id(&runtime, &directory, 0)),
-        "the collapsed area is forgotten: {:?}",
-        bookmark(&runtime, &directory, "w-order:t1")
-    );
+}
 
-    // Herdr closes tab 2.
+#[test]
+fn hidden_same_url_has_its_own_identity_load_and_retained_scope() {
+    let (mut runtime, checkout, directory) = setup("background-browser");
+    let url = "https://example.test/same";
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page(url, false),
+        "first-browser",
+    );
+    runtime.sync_workspace_view();
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let before = runtime.snapshot.workspace_view.clone();
+    let browser_b = layout(&runtime, &directory)
+        .displays()
+        .next()
+        .unwrap()
+        .clone();
+    let scopes_b = runtime.snapshot.browser_scopes.clone();
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page(url, false),
+        "background-browser",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert_eq!(
+        layout(&runtime, &directory).display(&browser_b.id),
+        Some(&browser_b)
+    );
+    for scope in scopes_b {
+        assert!(runtime.snapshot.browser_scopes.contains(&scope));
+    }
+    let a = runtime
+        .workspace_control_query(crate::node::TEST_NODE, "w-order:t1:p", Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap();
+    assert_eq!(a.len(), 1);
+    assert_ne!(a[0].view_id, browser_b.id);
+    assert!(
+        runtime
+            .browser_route_source(
+                crate::node::TEST_NODE,
+                &directory.to_string_lossy(),
+                &a[0].view_id,
+                a[0].page.as_ref().unwrap().load
+            )
+            .is_some()
+    );
+    assert_eq!(a[0].page.as_ref().unwrap().state, "pending");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(published_front_ids(&runtime), [a[0].view_id.clone()]);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(columns(&runtime), {
+        let mut before = before.unwrap();
+        before.agent_layout = None;
+        before.views_calls = 0;
+        before.views_called = 0;
+        before
+    });
+}
+
+#[test]
+fn first_background_view_does_not_open_bs_empty_column() {
+    let (mut runtime, checkout, directory) = setup("background-first");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let before = runtime.snapshot.workspace_view.clone();
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page("https://example.test/first", false),
+        "hidden-first",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(fronts(&runtime, &directory), ["https://example.test/first"]);
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+}
+
+#[test]
+fn reveal_selects_the_actual_caller_and_checkout_calls_use_the_operator() {
+    let (mut runtime, checkout, directory) = setup("caller-reveal");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page("https://example.test/reveal", true),
+        "reveal-a",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some(TABS[0])
+    );
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["https://example.test/reveal"]
+    );
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    herdr_focuses(&mut runtime, &directory, TABS[0]);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(strip(&runtime, &directory), ["a.md"]);
+    let caller = checkout_caller_id("fixture", &directory.to_string_lossy());
+    control(
+        &mut runtime,
+        &caller,
+        open_page("https://example.test/checkout", false),
+        "checkout-open",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(
+        fronts(&runtime, &directory),
+        ["https://example.test/checkout"]
+    );
+}
+
+#[test]
+fn background_select_uses_as_query_and_keeps_bs_layout() {
+    let (mut runtime, checkout, directory) = setup("background-select");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    open(&mut runtime, &checkout, &directory, "b.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let before = runtime.snapshot.workspace_view.clone();
+    let action = Action::Select {
+        view_id: a.clone(),
+        reveal: false,
+        expected_browser_area: None,
+    };
+    control(&mut runtime, "w-order:t1:p", action, "select-a");
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(published_front_ids(&runtime), [a]);
+}
+
+#[test]
+fn hidden_references_protect_dirty_document_when_bs_copy_closes() {
+    let (mut runtime, checkout, directory) = setup("hidden-close");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    runtime.dispatch_json(&explorer_event(
+        "file_draft",
+        serde_json::json!({"contents_utf8": "shared draft\n"}),
+    ));
+    let a = display_id(&runtime, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let b = display_id(&runtime, &directory, "a.md");
+    control(
+        &mut runtime,
+        "w-order:t2:p",
+        Action::Close {
+            view_id: b,
+            expected_browser_area: None,
+        },
+        "close-b",
+    );
+    runtime.sync_workspace_view();
+    assert!(strip(&runtime, &directory).is_empty());
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(published_front_ids(&runtime), [a.clone()]);
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, "w-order:t1:p", Query::Info)
+        .unwrap()
+        .context;
+    let refused = runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "w-order:t1:p",
+            &expected,
+            &format!("{}-last-dirty", unix_milliseconds()),
+            Action::Close {
+                view_id: a,
+                expected_browser_area: None,
+            },
+            Ok(None),
+        )
+        .unwrap_err();
+    assert_eq!(refused.reason, "unsaved_document");
+}
+
+#[test]
+fn async_completion_is_bound_to_the_original_tab_and_failure_is_atomic() {
+    let (mut runtime, checkout, directory) = setup("async-caller");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    let caller = "w-order:t1:p";
+    let context = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .unwrap()
+        .context;
+    let action = Action::OpenFile {
+        path: directory.join("c.md").to_string_lossy().into_owned(),
+        beside: true,
+        reveal: false,
+    };
+    let id = format!("{}-async", unix_milliseconds());
+    let crate::workspace_control::ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &context, &id, &action)
+        .unwrap()
+    else {
+        panic!("host read")
+    };
+    let material = source.read().unwrap();
+    focus_tab(&mut runtime, &checkout, &directory, TABS[2]);
+    let before = runtime.snapshot.workspace_view.clone();
+    runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &context,
+            &id,
+            action.clone(),
+            Ok(Some(material)),
+        )
+        .unwrap();
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
+    // A native pane moved within the same checkout is no longer the caller
+    // captured at prepare, even though its checkout capability still matches.
+    let id = format!("{}-moved", unix_milliseconds());
+    runtime
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &context, &id, &action)
+        .unwrap();
+    let mut payload = tab_order_payload(&directory.to_string_lossy(), &TABS, &TABS, TABS[2]);
+    payload.layouts[0].panes[0].pane_id = "w-order:moved:p".to_owned();
+    payload.layouts[0].focused_pane_id = "w-order:moved:p".to_owned();
+    payload.layouts[1].panes[0].pane_id = caller.to_owned();
+    payload.layouts[1].focused_pane_id = caller.to_owned();
+    runtime.ingest_session(Ok(payload));
+    runtime.sync_workspace_view();
+    let before = runtime.snapshot.workspace_view.clone();
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                crate::node::TEST_NODE,
+                caller,
+                &context,
+                &id,
+                action,
+                Ok(None)
+            )
+            .unwrap_err()
+            .reason,
+        "pane_changed"
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+}
+
+#[test]
+fn presentation_restart_keeps_background_results_and_visibility() {
+    let (mut runtime, checkout, directory) = setup("presentation-restart");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    view_event(&mut runtime, serde_json::json!({"views": false}));
+    control_file(
+        &mut runtime,
+        "w-order:t1:p",
+        &directory,
+        "c.md",
+        true,
+        "restart-background",
+    );
+    let path = runtime.workspace_views.as_ref().unwrap().path.clone();
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(path, (false, RightPanelSection::default())).0);
+    runtime.sync_workspace_view();
+    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+    assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(strip(&runtime, &directory), ["a.md"]);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+}
+
+#[test]
+fn authoritative_close_prunes_only_the_closed_tabs_resources() {
+    let (mut runtime, checkout, directory) = setup("presentation-prune");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        open_page("https://example.test/a", false),
+        "browser-a",
+    );
+    runtime.sync_workspace_view();
+    let a = display_id(&runtime, &directory, "https://example.test/a");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "b.md");
+    let b = columns(&runtime);
     runtime.ingest_session(Ok(tab_order_payload(
         &directory.to_string_lossy(),
-        &["w-order:t1", "w-order:t3"],
-        &["w-order:t1", "w-order:t3"],
-        "w-order:t1",
+        &TABS[1..],
+        &TABS[1..],
+        TABS[1],
     )));
     runtime.sync_workspace_view();
-    assert!(bookmark(&runtime, &directory, "w-order:t2").is_empty());
-    assert!(!bookmark(&runtime, &directory, "w-order:t1").is_empty());
-    let visibility = &runtime
+    assert_eq!(columns(&runtime), b);
+    assert!(
+        !runtime
+            .snapshot
+            .browser_views
+            .iter()
+            .any(|view| view.view_id == a)
+    );
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.label == "a.md")
+    );
+    let stored = runtime
         .workspace_views
         .as_ref()
         .unwrap()
         .views
         .get(crate::node::TEST_NODE, &directory.to_string_lossy())
-        .unwrap()
-        .view_visibility;
-    assert!(!visibility.contains_key("w-order:t2"));
-    assert!(visibility.contains_key("w-order:t1"));
-}
-
-/// B18, D-07: the bookmarks are in the file and a runtime that reads it back
-/// restores them.
-#[test]
-fn bookmarks_are_saved_and_a_restarted_runtime_restores_them() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-restart");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-
-    view_event(&mut runtime, serde_json::json!({"views": false}));
-
-    let path = runtime.workspace_views.as_ref().unwrap().path.clone();
-    let (saved, _) = crate::workspace_views::load(&path, 1);
-    let entry = saved
-        .get(crate::node::TEST_NODE, &directory.to_string_lossy())
         .unwrap();
-    assert_eq!(entry.view_bookmarks.of("w-order:t1").unwrap().len(), 1);
-    assert_eq!(entry.view_bookmarks.of("w-order:t2").unwrap().len(), 1);
-    assert_eq!(entry.view_visibility.get("w-order:t1"), Some(&true));
-    assert_eq!(entry.view_visibility.get("w-order:t2"), Some(&false));
-
-    // A new process: the file is read back and nothing was observed yet.
-    let panel = (
-        runtime.snapshot.ui_state.right_panel_visible,
-        runtime.snapshot.ui_state.right_panel_section,
-    );
-    runtime.workspace_views = Some(WorkspaceViewStore::open(path, panel).0);
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert!(!stored.view_presentations.contains_key(TABS[0]));
+    assert!(!stored.view_visibility.contains_key(TABS[0]));
 }
 
 #[test]
-fn an_explicit_file_open_before_the_first_pass_wins_over_saved_tab_state() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-restart-open");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    view_event(&mut runtime, serde_json::json!({"views": false}));
+fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
+    let (mut runtime, checkout, directory) = setup("presentation-budget");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    let action = Action::Select {
+        view_id: a,
+        reveal: false,
+        expected_browser_area: None,
+    };
+    control(&mut runtime, "w-order:t1:p", action.clone(), "select-first");
+    runtime.sync_workspace_view();
+    let generation = runtime.workspace_views.as_ref().unwrap().generation;
+    control(&mut runtime, "w-order:t1:p", action, "select-repeat");
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.workspace_views.as_ref().unwrap().generation,
+        generation,
+        "B24 actual transitions only"
+    );
+    let before = runtime.snapshot.workspace_view.clone();
+    let caller = "w-order:t1:p";
+    for index in 0..62 {
+        let action = open_page(&format!("https://example.test/{index}"), false);
+        control(&mut runtime, caller, action, &format!("fill-{index}"));
+    }
+    runtime.sync_workspace_view();
+    let context = runtime
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+        .unwrap()
+        .context;
+    let stored = runtime.workspace_views.as_ref().unwrap().views.clone();
+    let refused = runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &context,
+            &format!("{}-over-cap", unix_milliseconds()),
+            open_page("https://example.test/too-many", false),
+            Ok(None),
+        )
+        .unwrap_err();
+    assert_eq!(refused.reason, "view_layout.display_limit");
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, stored);
+}
 
-    let path = runtime.workspace_views.as_ref().unwrap().path.clone();
-    runtime.workspace_views =
-        Some(WorkspaceViewStore::open(path, (false, RightPanelSection::default())).0);
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+#[test]
+fn ordinary_multi_area_focus_keeps_the_panel_until_explicit_pending_choice() {
+    let (mut runtime, checkout, directory) = setup("presentation-multi-area");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    agent_act(
+        &mut runtime,
+        &directory,
+        serde_json::json!({"action": "split", "tab_id": TABS[1], "area_id": "a1", "edge": "right", "request_id": "agent-split"}),
+    );
+    open(&mut runtime, &checkout, &directory, "b.md");
+    let before = runtime
+        .snapshot
+        .workspace_view
+        .as_ref()
+        .unwrap()
+        .layout
+        .clone();
+    runtime.dispatch_json(&operator_focus_event("w-order:t1:p"));
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().layout,
+        before
+    );
+    control_file(
+        &mut runtime,
+        "w-order:t2:p",
+        &directory,
+        "c.md",
+        false,
+        "shown-background",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().layout,
+        before
+    );
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     assert_eq!(fronts(&runtime, &directory), ["c.md"]);
 }
 
@@ -753,356 +1055,19 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
     let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
     session.workspaces[0].checkouts[0].active_tab_id = Some("remote-tab-2".to_owned());
     runtime.sync_workspace_view();
-    assert_eq!(front(&runtime), Some(ids[1].clone()));
+    assert_ne!(front(&runtime), Some(ids[1].clone()));
+    assert!(
+        runtime
+            .view_layout_of(&(device.to_owned(), "/srv/remote".to_owned()))
+            .unwrap()
+            .displays()
+            .any(|display| display.path.ends_with("y.md")
+                && Some(&display.id) == front(&runtime).as_ref())
+    );
     assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
     let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
     session.workspaces[0].checkouts[0].active_tab_id = Some("remote-tab-1".to_owned());
     runtime.sync_workspace_view();
     assert_eq!(front(&runtime), Some(ids[0].clone()));
     assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
-}
-
-// -- Views an agent opens (PRD D-05, D-06) ---------------------------------
-
-fn control(
-    runtime: &mut Runtime,
-    caller: &str,
-    action: Action,
-    reveal_suffix: &str,
-) -> crate::workspace_control::ActionResult {
-    let expected = runtime
-        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
-        .expect("the caller is connected")
-        .context;
-    let id = format!("{}-{reveal_suffix}", unix_milliseconds());
-    runtime
-        .workspace_control_action(
-            crate::node::TEST_NODE,
-            caller,
-            &expected,
-            &id,
-            action,
-            Ok(None),
-        )
-        .expect("the action applies")
-}
-
-/// `hide file open [--beside] <name>` from `caller`, with the host read the
-/// daemon does off the lock.
-fn control_file(
-    runtime: &mut Runtime,
-    caller: &str,
-    directory: &Path,
-    name: &str,
-    beside: bool,
-    suffix: &str,
-) {
-    let action = Action::OpenFile {
-        path: directory.join(name).to_string_lossy().into_owned(),
-        beside,
-        reveal: false,
-    };
-    let expected = runtime
-        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
-        .unwrap()
-        .context;
-    let id = format!("{}-{suffix}", unix_milliseconds());
-    let crate::workspace_control::ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &expected, &id, &action)
-        .unwrap()
-    else {
-        panic!("a file needs a host read");
-    };
-    let material = source.read().unwrap();
-    runtime
-        .workspace_control_action(
-            crate::node::TEST_NODE,
-            caller,
-            &expected,
-            &id,
-            action,
-            Ok(Some(material)),
-        )
-        .unwrap();
-}
-
-fn open_page(url: &str, reveal: bool) -> Action {
-    Action::OpenBrowser {
-        url: url.to_owned(),
-        reveal,
-        area_id: None,
-        new_target: false,
-    }
-}
-
-/// B12, B13, B14: an agent in a tab the operator is not looking at adds its
-/// View to the strip and bookmarks its own tab; the operator's screen does
-/// not change until that tab is shown, and `--reveal` brings it forward.
-#[test]
-fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-agent-open");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    let strip_before = strip(&runtime, &directory);
-
-    // Tab 1's agent opens a page while the operator looks at tab 2.
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        open_page("https://example.test/a", false),
-        "page-a",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["b.md"], "the screen stays");
-    assert_eq!(strip(&runtime, &directory).len(), strip_before.len() + 1);
-    assert!(strip(&runtime, &directory).contains(&"https://example.test/a".to_owned()));
-    assert_eq!(
-        bookmark(&runtime, &directory, "w-order:t2")[0].1,
-        display_id(&runtime, &directory, "b.md")
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["https://example.test/a"]);
-
-    // The same address again makes no second View: it is the bookmark.
-    let a = display_id(&runtime, &directory, "a.md");
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus", "display_id": a}),
-    );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    let count = strip(&runtime, &directory).len();
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        open_page("https://example.test/a", false),
-        "page-a-again",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(strip(&runtime, &directory).len(), count);
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["https://example.test/a"]);
-
-    // B13: the tab the operator is on opens as before, and remembers it.
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        open_page("https://example.test/own", false),
-        "page-own",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["https://example.test/own"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["https://example.test/own"]);
-
-    // B14: `--reveal` puts it in front now, for the tab on screen and the
-    // tab that asked.
-    control(
-        &mut runtime,
-        "w-order:t2:p",
-        open_page("https://example.test/reveal", true),
-        "page-reveal",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(
-        fronts(&runtime, &directory),
-        ["https://example.test/reveal"]
-    );
-    let reveal = display_id(&runtime, &directory, "https://example.test/reveal");
-    for tab in ["w-order:t1", "w-order:t2"] {
-        assert_eq!(bookmark(&runtime, &directory, tab)[0].1, reveal, "{tab}");
-    }
-}
-
-/// B12: a file an agent opens from another tab goes through the same rule.
-#[test]
-fn an_agents_file_open_from_another_tab_bookmarks_only_its_tab() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-agent-file");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-
-    control_file(
-        &mut runtime,
-        "w-order:t1:p",
-        &directory,
-        "c.md",
-        false,
-        "file",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-    assert_eq!(strip(&runtime, &directory), ["a.md", "c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
-}
-
-/// B15, B16, D-20: a caller with no pane acts on the active tab as before,
-/// and the first View of a Workspace with none is its front whoever opened it.
-#[test]
-fn a_checkout_caller_and_the_first_view_of_an_empty_workspace_act_as_before() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-agent-first");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-
-    // B16: nothing is open, so there is no front to keep.
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        open_page("https://example.test/first", false),
-        "first",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["https://example.test/first"]);
-    let first = display_id(&runtime, &directory, "https://example.test/first");
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t1")[0].1, first);
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t2")[0].1, first);
-
-    // B15: a checkout caller has no tab, so the active tab is the one asked.
-    let caller = checkout_caller_id("abc123", &directory.to_string_lossy());
-    control(
-        &mut runtime,
-        &caller,
-        open_page("https://example.test/checkout", false),
-        "checkout",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(
-        fronts(&runtime, &directory),
-        ["https://example.test/checkout"]
-    );
-    let second = display_id(&runtime, &directory, "https://example.test/checkout");
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t2")[0].1, second);
-    assert_eq!(bookmark(&runtime, &directory, "w-order:t1")[0].1, first);
-}
-
-/// B17, D-06: `hide view select` from a tab that is not on screen bookmarks
-/// its own tab, `--reveal` selects at once, and a split applies as it did.
-#[test]
-fn a_view_select_from_another_tab_waits_for_its_tab_and_reveal_does_not() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-agent-select");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    let (a, b) = (
-        display_id(&runtime, &directory, "a.md"),
-        display_id(&runtime, &directory, "b.md"),
-    );
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        Action::Select {
-            view_id: a.clone(),
-            reveal: false,
-            expected_browser_area: None,
-        },
-        "select",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
-    assert_eq!(fronts(&runtime, &directory), ["a.md"]);
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        Action::Select {
-            view_id: b.clone(),
-            reveal: true,
-            expected_browser_area: None,
-        },
-        "select-reveal",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-
-    // A split changes the shared layout, so it is not held back.
-    let first = area_id(&runtime, &directory, 0);
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        Action::Split {
-            view_id: a,
-            area_id: first,
-            edge: crate::workspace_control::Edge::Right,
-        },
-        "split",
-    );
-    assert_eq!(layout(&runtime, &directory).area_count(), 2);
-}
-
-/// D-05, D-12: with two View areas and the operator's keyboard in the left
-/// one, a select or an open to the side from another tab moves neither the
-/// fronts nor the area in use, and only the caller's tab remembers it.
-#[test]
-fn a_parked_select_and_open_beside_keep_the_operators_area_and_fronts() {
-    let (mut runtime, checkout_id, directory) = setup("bookmark-parked-areas");
-    open(&mut runtime, &checkout_id, &directory, "a.md");
-    open(&mut runtime, &checkout_id, &directory, "b.md");
-    let (b, first) = (
-        display_id(&runtime, &directory, "b.md"),
-        area_id(&runtime, &directory, 0),
-    );
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "split", "display_id": b, "area_id": first,
-            "edge": "right", "request_id": "split-parked"}),
-    );
-    open(&mut runtime, &checkout_id, &directory, "c.md");
-    let (left, right) = (
-        area_id(&runtime, &directory, 0),
-        area_id(&runtime, &directory, 1),
-    );
-    view_act(
-        &mut runtime,
-        &directory,
-        serde_json::json!({"action": "focus_area", "area_id": left}),
-    );
-    // Tab 2 has no bookmark, so the areas stay as tab 1 left them.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
-    assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
-    assert_eq!(layout(&runtime, &directory).active_area, left);
-    let before = published_front_ids(&runtime);
-
-    // b.md sits behind c.md in the right area; selecting it there is what
-    // moves the area in use when it is not held back.
-    let b = display_id(&runtime, &directory, "b.md");
-    control(
-        &mut runtime,
-        "w-order:t1:p",
-        Action::Select {
-            view_id: b.clone(),
-            reveal: false,
-            expected_browser_area: None,
-        },
-        "select-right",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
-    assert_eq!(layout(&runtime, &directory).active_area, left);
-    assert_eq!(published_front_ids(&runtime), before);
-    assert!(bookmark(&runtime, &directory, "w-order:t1").contains(&(right.clone(), b)));
-
-    control_file(
-        &mut runtime,
-        "w-order:t1:p",
-        &directory,
-        "d.md",
-        true,
-        "beside",
-    );
-    runtime.sync_workspace_view();
-    assert_eq!(layout(&runtime, &directory).active_area, left);
-    assert_eq!(&fronts(&runtime, &directory)[..2], ["a.md", "c.md"]);
-    assert!(strip(&runtime, &directory).contains(&"d.md".to_owned()));
-    assert_eq!(
-        bookmark(&runtime, &directory, "w-order:t2").len(),
-        0,
-        "the operator's tab remembers nothing it did not do"
-    );
 }

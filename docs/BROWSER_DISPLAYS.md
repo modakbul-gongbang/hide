@@ -28,6 +28,9 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   The core checks an HTML file against that checkout on its own device and reads it outside the core lock before placing its Browser View.
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
+  A background pane open updates its own Agent tab with independent display and area identities, leaving the operator's same-URL page and load unchanged.
+  A new hidden page can stay pending until that tab is shown.
+  `--reveal` selects the actual caller tab; pane-less callers use the current checkout presentation.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
   If a later status query fails, the refusal still carries the applied open request ID and View ID for reconciliation.
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
@@ -329,9 +332,9 @@ A `mailto:` link from a page on screen goes to the default mail app without aski
 Refused and logged with their scheme only: a scheme no app claims; a scheme Chromium answers itself (`data:`, `blob:`, `javascript:`, every `chrome` one and the like); a scheme macOS hands to a file share, a shell, a script or a remote session (`smb:`, `afp:`, `ftp:`, `ssh:`, `telnet:`, `vnc:`, `news:`, `applescript:`, `shortcuts:`, every `x-apple` one and the like), so one click on an unexpected question never mounts a share or runs anything (`appScheme` in `browserSync.ts`); a link from a hidden page or an HTML file preview; and a link that arrives while a question is open.
 The link never reaches the log, since an app link often carries a sign-in code.
 
-The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces.
+The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces and their live tab presentations.
 A display the inventory no longer names is closed, which ends its renderer process even when its Workspace is in the background.
-A retained display of a Workspace not in front, or not shown in its area, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
+A retained display absent from the current front placements, including another tab of the same Workspace, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
 At most 12 pages live at once (`MAX_LIVE_VIEWS`); past that, the page shown least recently among the hidden ones is closed and loads its address again when it is next shown.
 The host checks every field of a sync before it places anything and drops a message that fails whole; only the shell the daemon serves may send one.
 Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.

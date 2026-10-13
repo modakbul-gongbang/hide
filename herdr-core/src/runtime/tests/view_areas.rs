@@ -970,11 +970,14 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
         .flat_map(|workspace| &mut workspace.checkouts)
         .find(|checkout| checkout.id == checkout_id)
         .unwrap();
+    // The close acts on the current tab's two displays. A different Agent
+    // tab inherits its own copies and therefore is not the last reference.
     checkout.tabs.push(tab(
         "workspace:order",
         &checkout_id,
         Some(pane(pane_id, &directory.to_string_lossy())),
     ));
+    checkout.active_tab_id = checkout.tabs[0].id.clone();
     let first = display(&mut runtime, 0, "notes.md");
     let second = display(&mut runtime, 1, "notes.md");
     let expected = runtime

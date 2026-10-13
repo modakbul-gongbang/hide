@@ -85,7 +85,7 @@ test.afterEach(async () => {
   expect(releaseFailure).toBeNull();
 });
 
-type View = { url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
+type View = { id: number; url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
 
 /** Every page view the window holds, as the main process sees it; a page's popup is a child window, not this one. */
 function views(): Promise<View[]> {
@@ -93,7 +93,7 @@ function views(): Promise<View[]> {
     (BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)?.contentView.children ?? []).flatMap((child) => {
       const contents = (child as { webContents?: Electron.WebContents }).webContents;
       if (!contents) return [];
-      return [{ url: contents.getURL(), title: contents.getTitle(), visible: child.getVisible(), bounds: child.getBounds(), pid: contents.getOSProcessId() }];
+      return [{ id: contents.id, url: contents.getURL(), title: contents.getTitle(), visible: child.getVisible(), bounds: child.getBounds(), pid: contents.getOSProcessId() }];
     }),
   );
 }
@@ -198,6 +198,58 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
   await expect(tab(page, text)).toBeVisible({ timeout: 20_000 });
   return (await tab(page, text).getAttribute("data-display"))!;
 }
+
+test("browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller", async () => {
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1500, height: 900 });
+  const page = await shellPage(app);
+  await enterWorkspace(page, "fixture");
+  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Other tab", "--no-focus"]) as { result: { tab: { tab_id: string } } };
+  const other = created.result.tab.tab_id;
+  const url = `${origin}/a.html`;
+  try {
+    const opened = await openFromCli(url, ["--reveal", "--wait"]);
+    expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    const a = (opened.result as { view_id: string }).view_id;
+    await shownAndSelected(page, url, a);
+    const original = await viewOf(url);
+    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+    await page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`).click();
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => displayIdOf(page, "Page A")).not.toBe(a);
+    const b = await displayIdOf(page, "Page A");
+    expect(b).not.toBe(a);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(2);
+    const pageB = (await views()).find((view) => view.url === url && view.id !== original.id)!;
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    const mark = async (id: number, script: string) => app!.evaluate(({ webContents }, { id, script }) => webContents.fromId(id)!.executeJavaScript(script), { id, script });
+    await mark(pageB.id, "window.marker='B'; document.getElementById('q').value='B 한글 입력'");
+    const before = (await views()).find((view) => view.id === pageB.id)!;
+    expect(await openFromCli(url)).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${b}"]`)).toBeVisible();
+    expect((await views()).find((view) => view.id === pageB.id)).toEqual(before);
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    expect(await cliFromPane(["view", "status", a])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
+    const waiting = await openFromCli(`${origin}/c.html`, ["--wait"]);
+    expect(waiting).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`).click();
+    await expect(tab(page, "Page C")).toBeVisible();
+    await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
+    await page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`).click();
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
+    expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
+    await windowShot("background-tab-B-retained");
+    expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
+    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
+    await windowShot("background-tab-A-revealed");
+  } finally {
+    herdr.run(["tab", "close", other]);
+  }
+});
 
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {
   const report = path.join(herdr.root, "fixture", "리포트 1.html");

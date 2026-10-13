@@ -226,9 +226,8 @@ fn last_focused_showing(
 
 /// The cap with the opens still being read counted, so reads in flight
 /// cannot pass it together.
-fn display_limit(layout: &Layout, pending: usize) -> Option<LayoutRefusal> {
-    (layout.display_count() + pending >= MAX_VIEW_DISPLAYS)
-        .then(|| LayoutError::DisplayLimit.into())
+fn display_limit(displays: usize, pending: usize) -> Option<LayoutRefusal> {
+    (displays + pending >= MAX_VIEW_DISPLAYS).then(|| LayoutError::DisplayLimit.into())
 }
 
 struct LayoutRefusal {
@@ -252,6 +251,8 @@ fn reconcile_layout<'t>(
     layout: &mut Layout,
     key: &WorkspaceKey,
     live: bool,
+    owned: &HashSet<String>,
+    available: usize,
     tabs: &'t [TabFacts],
     requested: Option<&str>,
     now: u64,
@@ -306,14 +307,17 @@ fn reconcile_layout<'t>(
     // that make one are refused at the cap; one that landed after the tree
     // filled waits off screen until a view is closed.
     if live {
-        for tab in tabs.iter().filter(|tab| tab.key.as_ref() == Some(key)) {
+        for tab in tabs
+            .iter()
+            .filter(|tab| tab.key.as_ref() == Some(key) && !owned.contains(&tab.id))
+        {
             if layout
                 .displays()
                 .any(|display| display.tab_id.as_deref() == Some(tab.id.as_str()))
             {
                 continue;
             }
-            if layout.display_count() >= MAX_VIEW_DISPLAYS {
+            if layout.display_count() >= available {
                 unshown.push(tab);
                 continue;
             }
@@ -351,6 +355,30 @@ impl Runtime {
             .views
             .get(&key.0, &key.1)
             .map(|view| &view.layout)
+    }
+
+    pub(super) fn all_view_layouts(&self, key: &WorkspaceKey) -> impl Iterator<Item = &Layout> {
+        self.workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get(&key.0, &key.1))
+            .into_iter()
+            .flat_map(|view| view.layouts())
+            .chain(
+                self.workspace_views
+                    .as_ref()
+                    .and_then(|store| store.view_transaction.as_ref())
+                    .filter(|(owner, _)| owner == key)
+                    .and_then(|(_, layout)| layout.as_ref()),
+            )
+    }
+
+    pub(super) fn caller_view_layout(&self, key: &WorkspaceKey, caller: &str) -> Option<&Layout> {
+        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+        let tab = self.control_caller_tab(key, caller);
+        tab.as_ref()
+            .and_then(|tab| entry.view_presentations.get(tab))
+            .map(|view| &view.layout)
+            .or(Some(&entry.layout))
     }
 
     /// Whether the Workspace of a checkout holds `display_id`, before a
@@ -408,10 +436,47 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Err(LayoutError::UnknownArea(key.1.clone()));
         };
+        let reserved = store
+            .view_transaction
+            .as_ref()
+            .filter(|(owner, _)| owner == key)
+            .and_then(|(_, layout)| layout.as_ref());
+        let reserved_counts = reserved
+            .map(|layout| {
+                (
+                    layout.display_count(),
+                    crate::workspace_views::WorkspaceView::occupied_areas(layout),
+                )
+            })
+            .unwrap_or_default();
         let entry = store.views.entry(&key.0, &key.1);
+        let before = entry.layout.clone();
+        entry.layout.next_id = entry.next_view_identity();
         let stamp = entry.layout.next_stamp(now);
-        let (value, changed) = change(&mut entry.layout, stamp)?;
+        let (value, changed) = match change(&mut entry.layout, stamp) {
+            Ok(done) => done,
+            Err(error) => {
+                entry.layout = before;
+                return Err(error);
+            }
+        };
+        let displays =
+            entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_counts.0;
+        let areas = entry
+            .layouts()
+            .map(crate::workspace_views::WorkspaceView::occupied_areas)
+            .sum::<usize>()
+            + reserved_counts.1;
+        if displays > MAX_VIEW_DISPLAYS || areas > MAX_VIEW_AREAS {
+            entry.layout = before;
+            return Err(if displays > MAX_VIEW_DISPLAYS {
+                LayoutError::DisplayLimit
+            } else {
+                LayoutError::AreaLimit
+            });
+        }
         let views_changed = entry.close_empty_views();
+        entry.view_next_id = entry.next_view_identity();
         if changed || views_changed {
             store.generation += 1;
             self.persist_workspace_views();
@@ -432,11 +497,18 @@ impl Runtime {
         beside: bool,
     ) -> bool {
         let pending = self.pending_view_placements(key);
+        let displays = self.all_view_layouts(key).map(Layout::display_count).sum();
+        let areas = self
+            .all_view_layouts(key)
+            .map(crate::workspace_views::WorkspaceView::occupied_areas)
+            .sum::<usize>();
         let Some(layout) = self.view_layout_of(key) else {
             return true;
         };
         let base = layout.active_area();
-        let refusal = if beside {
+        let refusal = if layout.display_count() == 0 && areas >= MAX_VIEW_AREAS {
+            Some(LayoutError::AreaLimit.into())
+        } else if beside {
             match BESIDE_ORDER
                 .iter()
                 .find_map(|edge| layout.neighbour(&base.id, *edge))
@@ -450,11 +522,12 @@ impl Runtime {
                 {
                     None
                 }
-                Some(_) => display_limit(layout, pending),
-                None if base.displays.is_empty() => display_limit(layout, pending),
+                Some(_) => display_limit(displays, pending),
+                None if base.displays.is_empty() => display_limit(displays, pending),
+                None if areas >= MAX_VIEW_AREAS => Some(LayoutError::AreaLimit.into()),
                 None => match layout.can_split(&base.id, Edge::Right) {
                     Err(error) => Some(error.into()),
-                    Ok(()) => display_limit(layout, pending),
+                    Ok(()) => display_limit(displays, pending),
                 },
             }
         } else if self.new_tab_target(key, false).is_some()
@@ -476,11 +549,19 @@ impl Runtime {
             // whose document holds work stays and the open adds a display.
             None
         } else {
-            display_limit(layout, pending)
+            display_limit(displays, pending)
         };
         match refusal {
             Some(refusal) => {
-                self.set_error(refusal.kind, refusal.message, false);
+                if self
+                    .workspace_views
+                    .as_ref()
+                    .is_some_and(|store| store.view_transaction.is_some())
+                {
+                    self.push_diagnostic(refusal.kind, refusal.message);
+                } else {
+                    self.set_error(refusal.kind, refusal.message, false);
+                }
                 false
             }
             None => true,
@@ -907,11 +988,10 @@ impl Runtime {
     /// reconcile does not put it on screen anyway.
     fn refuse_placement(&mut self, key: &WorkspaceKey, tab_id: &str, error: LayoutError) {
         self.set_error(error.kind(), error.message(), false);
-        let shown = self.view_layout_of(key).is_some_and(|layout| {
-            layout
-                .displays()
-                .any(|display| display.tab_id.as_deref() == Some(tab_id))
-        });
+        let shown = self
+            .all_view_layouts(key)
+            .flat_map(|layout| layout.displays())
+            .any(|display| display.tab_id.as_deref() == Some(tab_id));
         if shown || self.document_kept(tab_id) {
             return;
         }
@@ -937,13 +1017,11 @@ impl Runtime {
         (old_path, old_kind): (&str, DisplayKind),
         new_tab: &str,
     ) {
-        let Some(layout) = self.view_layout_of(key) else {
-            return;
-        };
         match old_tab {
             Some(old_tab) if old_tab != new_tab => {
-                let shown = layout
-                    .displays()
+                let shown = self
+                    .all_view_layouts(key)
+                    .flat_map(|layout| layout.displays())
                     .any(|display| display.tab_id.as_deref() == Some(old_tab.as_str()));
                 if shown {
                     return;
@@ -964,8 +1042,9 @@ impl Runtime {
                 }
             }
             None if old_kind == DisplayKind::File
-                && !layout
-                    .displays()
+                && !self
+                    .all_view_layouts(key)
+                    .flat_map(|layout| layout.displays())
                     .any(|display| display.shows(old_path, DisplayKind::File, None)) =>
             {
                 // The Workspace's checkout is the one the new document is in.
@@ -1014,7 +1093,7 @@ impl Runtime {
             && let Some((device, path)) = key
             && let Some(view) = store.views.get_mut(&device, &path)
         {
-            for display in view.layout.displays_mut() {
+            for display in view.layouts_mut().flat_map(|layout| layout.displays_mut()) {
                 if display.tab_id.as_deref() == Some(tab_id) && display.preview {
                     display.preview = false;
                     changed = true;
@@ -1235,8 +1314,40 @@ impl Runtime {
                 .front_workspace_key()
                 .ok_or_else(|| "No Workspace is in front to open the page in".to_owned())?,
         };
+        let bound_area = area_id.map(str::to_owned).or_else(|| {
+            beside_display.and_then(|id| {
+                self.all_view_layouts(&key)
+                    .find_map(|layout| layout.area_of(id).map(|area| area.id.clone()))
+            })
+        });
+        let caller = pane_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::workspace_control::checkout_caller_id(&key.0, &key.1));
+        let action = crate::workspace_control::Action::OpenBrowser {
+            url: url.to_owned(),
+            reveal: false,
+            area_id: bound_area,
+            new_target: false,
+        };
+        let parked = self
+            .parked_caller(&key, &caller, &action)
+            .map_err(|error| error.next_action.to_owned())?;
+        let area_id = area_id.map(|id| {
+            parked
+                .as_ref()
+                .map_or_else(|| id.to_owned(), |parked| parked.identity(id))
+        });
+        let beside_display = beside_display.map(|id| {
+            parked
+                .as_ref()
+                .map_or_else(|| id.to_owned(), |parked| parked.identity(id))
+        });
+        let before_load = self
+            .workspace_views
+            .as_ref()
+            .map(|store| store.browser_load);
         let load = self.next_browser_load();
-        let display_id = self
+        let placed = self
             .change_view_layout(&key, |layout, stamp| {
                 let shown = layout
                     .displays()
@@ -1261,6 +1372,7 @@ impl Runtime {
                 // always leaves room for. With the page gone it opens where
                 // any page would.
                 let opener = beside_display
+                    .as_deref()
                     .and_then(|opener| layout.area_of(opener))
                     .map(|area| area.id.clone());
                 if let Some(base) = opener {
@@ -1275,12 +1387,27 @@ impl Runtime {
                     }
                     return Ok((display_id, true));
                 }
-                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
+                let area = area_id
+                    .as_deref()
+                    .unwrap_or(&layout.active_area().id)
+                    .to_owned();
                 layout.insert(&area, display, stamp)?;
                 Ok((display_id, true))
             })
-            .map_err(|error| error.message())?;
+            .map_err(|error| error.message());
+        let display_id = match placed {
+            Ok(id) => id,
+            Err(error) => {
+                self.put_back_parked(&key, parked);
+                if let (Some(load), Some(store)) = (before_load, self.workspace_views.as_mut()) {
+                    store.browser_load = load;
+                }
+                return Err(error);
+            }
+        };
         self.apply_area_intent_to(&key, AreaIntent::Views);
+        self.note_control_view(&key, &caller, &action, &display_id, parked)
+            .map_err(|error| error.next_action.to_owned())?;
         Ok((key, display_id))
     }
 
@@ -1347,8 +1474,8 @@ impl Runtime {
         }
         let title = Some(browser_title(&title)).filter(|title| !title.is_empty());
         let Some(display) = self
-            .view_layout_of(&key)
-            .and_then(|layout| layout.display(&display_id))
+            .all_view_layouts(&key)
+            .find_map(|layout| layout.display(&display_id))
             .filter(|display| display.kind == DisplayKind::Browser)
         else {
             // A page's last report can land after its display closed.
@@ -1386,8 +1513,8 @@ impl Runtime {
                     .into_iter()
                     .flat_map(|store| &store.views.workspaces)
                     .flat_map(|view| {
-                        view.layout
-                            .displays()
+                        view.layouts()
+                            .flat_map(|layout| layout.displays())
                             .filter(|display| display.kind == DisplayKind::Browser)
                             .map(|display| {
                                 (
@@ -1419,15 +1546,23 @@ impl Runtime {
         if same_address_and_title {
             return false;
         }
-        self.change_view_layout(&key, |layout, _| {
-            let display = layout
-                .display_mut(&display_id)
-                .ok_or_else(|| LayoutError::UnknownDisplay(display_id.clone()))?;
-            display.url = Some(url);
-            display.title = title;
-            Ok(((), true))
-        })
-        .is_ok()
+        let Some(store) = self.workspace_views.as_mut() else {
+            return false;
+        };
+        let Some(view) = store.views.get_mut(&key.0, &key.1) else {
+            return false;
+        };
+        let Some(display) = view
+            .layouts_mut()
+            .find_map(|layout| layout.display_mut(&display_id))
+        else {
+            return false;
+        };
+        display.url = Some(url);
+        display.title = title;
+        store.generation += 1;
+        self.persist_workspace_views();
+        true
     }
 
     /// A load stamp later than every one given in this process, and than the
@@ -1515,13 +1650,16 @@ impl Runtime {
         };
         let (path, kind, committed) = (display.path.clone(), display.kind, display.committed);
         let tab = display.tab_id.clone();
-        let shared = layout.displays().any(|other| {
-            other.id != display_id
-                && match &tab {
-                    Some(tab) => other.tab_id.as_ref() == Some(tab),
-                    None => other.shows(&path, kind, committed),
-                }
-        });
+        let shared = self
+            .all_view_layouts(key)
+            .flat_map(|layout| layout.displays())
+            .any(|other| {
+                other.id != display_id
+                    && match &tab {
+                        Some(tab) => other.tab_id.as_ref() == Some(tab),
+                        None => other.shows(&path, kind, committed),
+                    }
+            });
         if let Some(tab_id) = tab.as_ref()
             && !shared
         {
@@ -1654,8 +1792,9 @@ impl Runtime {
         let areas = layout.area_count();
         let mut targets: Vec<(String, DisplayKind, Option<bool>)> = Vec::new();
         // A page has no document to read back; the host loads it once shown.
-        for display in layout
-            .displays()
+        for display in self
+            .all_view_layouts(key)
+            .flat_map(|layout| layout.displays())
             .filter(|display| display.kind != DisplayKind::Browser)
         {
             let target = (display.path.clone(), display.kind, display.committed);
@@ -1775,25 +1914,73 @@ impl Runtime {
         let mut unshown: Vec<(String, String, String)> = Vec::new();
         for view in &mut store.views.workspaces {
             let key = (view.device_id.clone(), view.path.clone());
+            let reserved = store
+                .view_transaction
+                .as_ref()
+                .filter(|(owner, _)| owner == &key)
+                .and_then(|(_, layout)| layout.as_ref());
             let requested = requested.as_deref().filter(|requested| {
                 tabs.iter()
                     .any(|tab| tab.id == *requested && tab.key.as_ref() == Some(&key))
             });
+            let owned: HashSet<String> = tabs
+                .iter()
+                .filter(|tab| {
+                    view.view_presentations
+                        .values()
+                        .map(|presentation| &presentation.layout)
+                        .chain(reserved)
+                        .any(|layout| {
+                            layout.displays().any(|display| {
+                                display.tab_id.as_deref() == Some(&tab.id)
+                                    || (tab.key.as_ref() == Some(&key)
+                                        && display.shows(&tab.path, tab.kind, tab.committed))
+                            })
+                        })
+                })
+                .map(|tab| tab.id.clone())
+                .collect();
+            let hidden_count: usize = view
+                .view_presentations
+                .values()
+                .map(|view| view.layout.display_count())
+                .sum::<usize>()
+                + reserved.map_or(0, Layout::display_count);
+            view.layout.next_id = view.next_view_identity();
             let (changed, capped) = reconcile_layout(
                 &mut view.layout,
                 &key,
                 store.live.contains(&key),
+                &owned,
+                MAX_VIEW_DISPLAYS.saturating_sub(hidden_count),
                 &tabs,
                 requested,
                 now,
             );
+            for presentation in view.view_presentations.values_mut() {
+                let (changed, _) = reconcile_layout(
+                    &mut presentation.layout,
+                    &key,
+                    false,
+                    &owned,
+                    0,
+                    &tabs,
+                    None,
+                    now,
+                );
+                stored |= changed;
+                if presentation.views && presentation.layout.displays().next().is_none() {
+                    presentation.views = false;
+                    stored = true;
+                }
+            }
             stored |= changed | view.close_empty_views();
             unshown.extend(
                 capped
                     .into_iter()
                     .map(|tab| (tab.id.clone(), tab.path.clone(), key.1.clone())),
             );
-            for display in view.layout.displays() {
+            for display in view.layouts().flat_map(|layout| layout.displays()) {
                 if let Some(tab_id) = &display.tab_id {
                     *every_preview.entry(tab_id.clone()).or_insert(true) &= display.preview;
                 }
