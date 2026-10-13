@@ -268,6 +268,23 @@ pub(crate) struct CatalogCache {
     purposes_synced: Option<HashMap<String, String>>,
 }
 
+#[derive(Default)]
+struct CatalogState {
+    cache: Option<CatalogCache>,
+    reader: Option<path_facts::PathReader>,
+    connection: u64,
+    wake: Option<RepublishWaker>,
+}
+
+impl CatalogState {
+    fn as_ref(&self) -> Option<&CatalogCache> {
+        self.cache.as_ref()
+    }
+    fn as_mut(&mut self) -> Option<&mut CatalogCache> {
+        self.cache.as_mut()
+    }
+}
+
 pub(crate) struct SessionSyncHandle {
     sender: Sender<CoordinatorMessage>,
     republish_pending: Arc<AtomicBool>,
@@ -363,6 +380,7 @@ impl ActiveSubscription {
 }
 
 mod coordinator;
+mod path_facts;
 mod process_info;
 mod projection;
 mod replica;

@@ -224,6 +224,12 @@ impl Runtime {
         Arc::clone(&self.catalog_paths)
     }
 
+    /// Establish this before the coordinator's first asynchronous read, so
+    /// even an empty initial answer cannot fall back to node I/O under lock.
+    pub(crate) fn begin_catalog_coordinator(&mut self) {
+        self.catalog_from_coordinator = true;
+    }
+
     /// The paths a session applied without a precomputed catalog reads: the
     /// last the coordinator brought once it feeds this runtime, so nothing is
     /// asked under the lock, else what the core's own node answers now.
@@ -300,7 +306,7 @@ impl Runtime {
         }
         spaces
     }
-    pub(super) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
+    pub(crate) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
         payload
             .panes
             .iter()
@@ -330,6 +336,19 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
         inline_paths: Option<Arc<workspace::PathIndex>>,
     ) -> bool {
+        let accepted_tab_paths = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+            })
+            .collect::<HashMap<_, _>>();
         // Catalog reconstruction precedes canonical machine-qualified lineage.
         // Preserve known ownership until that pass, so admission cannot evict
         // the keyboard from an unchanged delegated canvas at the normal cap.
@@ -493,7 +512,7 @@ impl Runtime {
                     // authoritative for attaching the live layout to the
                     // registered checkout. Falling back to the agent record
                     // keeps agent-specific cwd handling intact.
-                    let context_path = layout.panes.iter().find_map(|pane| {
+                    let mut context_path = layout.panes.iter().find_map(|pane| {
                         payload
                             .panes
                             .iter()
@@ -511,6 +530,19 @@ impl Runtime {
                                     .and_then(|agent| agent.cwd.clone())
                             })
                     });
+                    if self.catalog_from_coordinator
+                        && context_path
+                            .as_deref()
+                            .is_some_and(|path| !paths.knows(path))
+                    {
+                        // A changed directory is not a new checkout until the
+                        // node answers. Keep this tab's confirmed placement;
+                        // a new tab with no confirmed place waits for facts.
+                        context_path = accepted_tab_paths.get(&session_tab.tab_id).cloned();
+                        if context_path.is_none() {
+                            continue;
+                        }
+                    }
                     let Some(workspace_snapshot) = find_workspace_for_context(
                         &self.node,
                         &mut workspaces,

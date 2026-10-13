@@ -76,7 +76,13 @@ fn run_coordinator(
     let mut agents_refresh_owed = false;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
-    let mut catalog_cache: Option<CatalogCache> = None;
+    let mut catalog_cache = CatalogState {
+        wake: Some(RepublishWaker {
+            sender: sender.clone(),
+            pending: Arc::clone(&republish_pending),
+        }),
+        ..Default::default()
+    };
     // Herdr events received since the last publish, for the stage records of
     // Hide-started operations (PRD instant-pane-topology D-14).
     let mut arrivals: Vec<HerdrArrival> = Vec::new();
@@ -218,6 +224,7 @@ fn run_coordinator(
                     }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
+                    catalog_cache.connection = subscription_generation;
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
                     active_tab_reads.clear();
                     if let Err(message) = sync_reader.reset() {
@@ -1203,7 +1210,7 @@ fn stand_in_unconfirmed_cwds(
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
-    catalog_cache: &mut Option<CatalogCache>,
+    catalog_cache: &mut CatalogState,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
     arrivals: &mut Vec<HerdrArrival>,
@@ -1323,54 +1330,82 @@ fn publish_replica(
         unconfirmed_created_purposes,
         created_tab_clamps,
         runtime_paths,
+        accepted_tabs,
     ) = match runtime.lock() {
-        Ok(guard) => (
-            guard.node().clone(),
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-            guard.created_tab_clamps(),
-            guard.catalog_paths(),
-        ),
+        Ok(mut guard) => {
+            guard.begin_catalog_coordinator();
+            (
+                guard.node().clone(),
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.created_tab_clamps(),
+                guard.catalog_paths(),
+                guard
+                    .snapshot()
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.checkouts)
+                    .flat_map(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+                    })
+                    .collect::<HashMap<_, _>>(),
+            )
+        }
         Err(_) => return false,
     };
     drop(runtime);
 
-    // The node is asked about every path the catalog and the reconcile read,
-    // here and outside the lock; a set it answered recently is not asked
-    // again until the catalog's own refresh interval runs out.
+    // The reader owns the only blocking work. Its answer describes facts,
+    // never a session to replay; build from the current replica below.
     let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
     wanted.extend(Runtime::session_cwds(&payload));
     wanted.extend(created_tab_clamps.iter().map(|clamp| clamp.path.clone()));
-    let recent = catalog_cache.as_ref().filter(|cache| {
-        cache.asked == wanted && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    let reader = catalog_cache
+        .reader
+        .get_or_insert_with(|| path_facts::PathReader::new(context, catalog_cache.wake.clone()));
+    let answer = reader.poll(path_facts::Request {
+        connection: catalog_cache.connection,
+        paths: wanted.clone(),
+        registrations: registrations.clone(),
+        worktrees: worktrees.clone(),
     });
-    let recent_at = recent.map(|cache| cache.built_at);
-    let (paths, asked) = match recent {
-        Some(cache) => (Arc::clone(&cache.paths), cache.asked.clone()),
-        None => match context
-            .node()
-            .ok_or_else(|| "this target has no node".to_owned())
-            .and_then(|link| workspace::PathIndex::ask(link.as_ref(), wanted.clone()))
-        {
-            Ok(paths) => (Arc::new(paths), wanted),
-            Err(error) => {
-                crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "catalog.path_facts_failed",
-                    "target": context.log_target(),
-                    "message": error,
-                }));
-                // The previous answer stands, the runtime's own before this
-                // coordinator has one, read by names where it is silent, and
-                // the next publish asks again.
-                let previous = catalog_cache
-                    .as_ref()
-                    .map(|cache| Arc::clone(&cache.paths))
-                    .unwrap_or(runtime_paths);
-                (previous, BTreeSet::new())
+    let mut built_at = catalog_cache
+        .as_ref()
+        .map(|cache| cache.built_at)
+        .unwrap_or_else(Instant::now);
+    let mut asked = catalog_cache
+        .as_ref()
+        .map(|cache| cache.asked.clone())
+        .unwrap_or_default();
+    let previous = catalog_cache
+        .as_ref()
+        .map(|cache| Arc::clone(&cache.paths))
+        .unwrap_or(runtime_paths);
+    let paths = match answer {
+        Some(Ok(paths)) => {
+            built_at = Instant::now();
+            asked = wanted;
+            if *previous == paths {
+                previous
+            } else {
+                Arc::new(paths)
             }
-        },
+        }
+        Some(Err(error)) => {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "catalog.path_facts_failed",
+                "target": context.log_target(),
+                "message": error,
+            }));
+            previous
+        }
+        None => previous,
     };
 
     // The catalog is built here, outside the lock, from the cwd the runtime
@@ -1395,21 +1430,34 @@ fn publish_replica(
         clamped = copy;
         &clamped
     };
-    let spaces = Runtime::session_spaces(birth_free, &paths);
+    let mut spaces = Runtime::session_spaces(birth_free, &paths);
+    // An unanswered cwd has no authority to invent a folder project. Known
+    // tabs retain their accepted checkout in the runtime's reconcile.
+    for space in &mut spaces {
+        space.cwds.retain(|cwd| paths.knows(cwd));
+        for layout in &birth_free.layouts {
+            if layout.workspace_id == space.id
+                && let Some(path) = accepted_tabs.get(&layout.tab_id)
+                && layout.panes.iter().any(|pane| {
+                    Runtime::pane_cwd(birth_free, &pane.pane_id)
+                        .is_some_and(|cwd| !paths.knows(&cwd))
+                })
+                && !space.cwds.contains(path)
+            {
+                space.cwds.push(path.clone());
+            }
+        }
+    }
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         Arc::ptr_eq(&cache.paths, &paths)
             && cache.registrations == registrations
             && cache.spaces == spaces
             && cache.worktrees == worktrees
-            && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
         let workspaces =
             workspace::build_catalog(&node, &registrations, &spaces, &worktrees, &paths);
-        // An answer reused from the cache keeps its age, so the node is asked
-        // again once the interval runs out however often the session moves.
-        let built_at = recent_at.unwrap_or_else(Instant::now);
-        *catalog_cache = Some(CatalogCache {
+        catalog_cache.cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
@@ -1419,6 +1467,9 @@ fn publish_replica(
             built_at,
             purposes_synced: None,
         });
+    } else if let Some(cache) = catalog_cache.as_mut() {
+        cache.built_at = built_at;
+        cache.asked = asked;
     }
     let cache = catalog_cache
         .as_mut()
@@ -2460,6 +2511,94 @@ mod focus_readback_order_tests {
         )
     }
 
+    struct HeldPaths {
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        local: hide_node::Local,
+    }
+
+    impl crate::node_access::NodeLink for HeldPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(call, hide_node_link::protocol::Call::PathFacts { .. }) {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            self.local.call(call, timeout)
+        }
+    }
+
+    #[test]
+    fn confirmed_layout_and_known_checkout_publish_while_path_facts_are_held() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let before = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        let herdr = FakeHerdr::start("held-path-topology", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut cache = CatalogState::default();
+        assert!(publish_replica(
+            &context,
+            &mut first.clone(),
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        let mut changed = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", true)).unwrap();
+        changed.state.panes[0].cwd = Some("/unverified/new-checkout".to_owned());
+        assert!(publish_replica(
+            &context,
+            &mut changed,
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        let (panes, focused, zoomed) = view(&runtime);
+        assert_eq!(panes, ["w1:p1"]);
+        assert_eq!(focused.as_deref(), Some("w1:p1"));
+        assert_eq!(zoomed.as_deref(), Some("w1:p1"));
+        let after = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        assert_eq!(after[0].path, before[0].path);
+        assert_eq!(after[0].checkouts[0].path, before[0].checkouts[0].path);
+        assert!(
+            asked.try_recv().is_err(),
+            "only one read runs while inputs move"
+        );
+        release.send(()).unwrap();
+        // The owner cancels remaining chunks and joins this released read.
+        drop(cache);
+    }
+
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
     /// to say go, after telling it the question has arrived.
     fn holding_herdr(
@@ -2528,7 +2667,7 @@ mod focus_readback_order_tests {
             publish_replica(
                 &context,
                 &mut closed,
-                &mut None,
+                &mut CatalogState::default(),
                 &mut None,
                 &mut None,
                 &mut Vec::new(),
@@ -2576,7 +2715,7 @@ mod focus_readback_order_tests {
         assert!(publish_replica(
             &context,
             &mut moved,
-            &mut None,
+            &mut CatalogState::default(),
             &mut None,
             &mut None,
             &mut Vec::new()
