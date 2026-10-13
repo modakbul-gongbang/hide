@@ -100,6 +100,42 @@ fn authoritative_final_node_tab_close_retires_its_private_page() {
         "an unanswered session preserves the saved presentation"
     );
     runtime.snapshot.status.remote[0].session = Some(saved_session);
+    let ready = runtime.snapshot.status.remote[0].catalog.clone();
+    let tabs = std::mem::take(
+        &mut runtime.snapshot.status.remote[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .workspaces[0]
+            .checkouts[0]
+            .tabs,
+    );
+    runtime.snapshot.status.remote[0].catalog.state = "resolving".to_owned();
+    runtime.reconcile_node_agent_topology(NODE);
+    runtime.prune_device_view_bookmarks(NODE);
+    assert_eq!(
+        runtime.workspace_views.as_ref().unwrap().views,
+        before,
+        "an unresolved grouping's empty placeholder is not a tab close"
+    );
+    runtime.snapshot.status.remote[0].catalog = ready;
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .workspaces[0]
+        .checkouts[0]
+        .tabs = tabs;
+    runtime.device_facts.insert(
+        NODE.to_owned(),
+        device_catalog::DeviceFacts {
+            facts: std::collections::BTreeMap::from([(
+                t.main.clone(),
+                device_catalog::Fact::Known(hide_project::facts(Path::new(&t.main)).unwrap()),
+            )]),
+            ..Default::default()
+        },
+    );
     runtime.ingest_remote_session(NODE, Ok(focused_on(&t.main, &[], "t1")));
     runtime.sync_workspace_view();
     let entry = runtime

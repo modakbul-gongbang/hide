@@ -246,7 +246,7 @@ The desktop hides every retained page absent from the current presentation's pla
 Presentations are saved with the Workspace and survive restart and core moves.
 Authoritative topology removes closed-tab records and resources while retaining other tabs' documents.
 An exclusively owned clean document closes with its tab; unsaved content remains recoverable and never enters another tab's strip automatically.
-An unanswered connected-device session preserves saved state; a received session with no tabs closes its final presentation.
+An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
 The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout; a refused operation preserves existing content.

@@ -550,10 +550,12 @@ impl Runtime {
         else {
             return;
         };
+        let empty_authoritative = self.device_catalog_ready(device);
         let topologies = session
             .workspaces
             .iter()
             .flat_map(|workspace| &workspace.checkouts)
+            .filter(|checkout| !checkout.tabs.is_empty() || empty_authoritative)
             .map(|checkout| {
                 (
                     (device.to_owned(), checkout.path.clone()),

@@ -201,9 +201,21 @@ impl Runtime {
     }
 
     /// A device tab Herdr no longer lists loses its View bookmark (D-11).
-    /// A received session with no tabs retires their presentations; no
-    /// session yet leaves the saved state untouched.
+    pub(super) fn device_catalog_ready(&self, target: &str) -> bool {
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .is_some_and(|status| {
+                status.catalog.state == "ready" && status.catalog.refused.is_empty()
+            })
+    }
+
+    /// Only an answered catalog can prove that an empty registered checkout
+    /// has no tabs: while grouping is unresolved it is a placeholder.
     pub(super) fn prune_device_view_bookmarks(&mut self, target: &str) {
+        let empty_authoritative = self.device_catalog_ready(target);
         let Some(session) = self
             .snapshot
             .status
@@ -229,6 +241,7 @@ impl Runtime {
                     )
                 })
             })
+            .filter(|(_, tabs)| !tabs.is_empty() || empty_authoritative)
             .collect();
         let mut pruned = false;
         for (key, tabs) in &listed {
