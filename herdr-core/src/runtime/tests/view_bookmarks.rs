@@ -40,6 +40,31 @@ fn setup(name: &str) -> (Runtime, String, PathBuf) {
     (runtime, checkout_id, directory)
 }
 
+#[test]
+fn a_revealed_browser_keeps_its_page_when_a_tabs_bookmark_is_first_restored() {
+    let (mut runtime, checkout_id, directory) = setup("terminal-browser-reveal");
+    open(&mut runtime, &checkout_id, &directory, "a.md");
+    // A restored Workspace has its saved bookmarks but no runtime observation yet.
+    runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .bookmark_seen
+        .clear();
+    let url = "https://example.test/terminal-report";
+    runtime.dispatch_json(&explorer_event(
+        "browser_open",
+        serde_json::json!({
+            "url": url,
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            "reveal": true,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    runtime.sync_workspace_view();
+    assert_eq!(fronts(&runtime, &directory), [url]);
+}
+
 /// A session snapshot of the three tabs with Herdr focused on `active`.
 fn herdr_focuses(runtime: &mut Runtime, directory: &Path, active: &str) {
     runtime.ingest_session(Ok(tab_order_payload(

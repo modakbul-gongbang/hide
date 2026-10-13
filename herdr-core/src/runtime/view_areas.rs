@@ -79,6 +79,9 @@ pub(super) struct ViewWorkspace {
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserOpenPayload {
     url: String,
+    /// An operator's terminal link brings its owning checkout forward in the same event.
+    #[serde(default)]
+    reveal: bool,
     #[serde(default)]
     area_id: Option<String>,
     /// The page whose own new tab this is: the new page opens beside it, so
@@ -1162,6 +1165,7 @@ impl Runtime {
     pub(super) fn open_browser(&mut self, payload: BrowserOpenPayload) -> bool {
         let BrowserOpenPayload {
             url,
+            reveal,
             workspace,
             pane_id,
             request_id,
@@ -1174,6 +1178,7 @@ impl Runtime {
             pane_id.as_deref(),
             area_id.as_deref(),
             beside_display.as_deref(),
+            reveal,
         );
         if let Err(message) = &outcome {
             self.set_error("browser.open_refused", message.clone(), false);
@@ -1213,6 +1218,7 @@ impl Runtime {
         pane_id: Option<&str>,
         area_id: Option<&str>,
         beside_display: Option<&str>,
+        reveal: bool,
     ) -> Result<(WorkspaceKey, String), String> {
         if !self.separate_view_areas() {
             return Err("This shell does not draw View areas".to_owned());
@@ -1234,6 +1240,20 @@ impl Runtime {
             (None, None) => self
                 .front_workspace_key()
                 .ok_or_else(|| "No Workspace is in front to open the page in".to_owned())?,
+        };
+        let reveal_context = if reveal {
+            Some(
+                self.resolve_caller(
+                    &key.0,
+                    crate::workspace_control::Caller::Checkout {
+                        key: "browser",
+                        path: &key.1,
+                    },
+                )
+                .map_err(|refusal| refusal.next_action.to_owned())?,
+            )
+        } else {
+            None
         };
         let load = self.next_browser_load();
         let display_id = self
@@ -1280,6 +1300,10 @@ impl Runtime {
                 Ok((display_id, true))
             })
             .map_err(|error| error.message())?;
+        if let Some(context) = reveal_context {
+            self.note_active_view(&key, &display_id);
+            self.reveal_workspace_control(&context, &key, &format!("browser-open-{load}"));
+        }
         self.apply_area_intent_to(&key, AreaIntent::Views);
         Ok((key, display_id))
     }

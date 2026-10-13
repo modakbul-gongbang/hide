@@ -18,6 +18,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { linkCandidates } from "../../web/src/terminalLinks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
@@ -348,6 +349,91 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => sent.get("terminal_click") ?? 0).toBe(clicksBefore + 1);
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
+});
+
+test("terminal HTML opens a rendered page and right-click offers actions for the exact link or path", async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
+  const html = path.join(checkout, "src", "report.HTML");
+  fs.writeFileSync(html, "<!doctype html><title>Terminal HTML</title>\n<h1>Rendered terminal report</h1>\n");
+  ({ app } = await launch(run.env));
+  await fitWindow(app, { width: 1024, height: 681 });
+  const page = await shellPage(app);
+  const sent = countSent(page);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.5));
+  await enterWorkspace(page, "fixture");
+  await recordMacOS();
+  // Clipboard writes are recorded in this private renderer; QA leaves the
+  // operator's clipboard and OS applications alone.
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text; },
+  } }));
+  const copied = () => page.evaluate(() => (window as unknown as { copied?: string }).copied);
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await showFileViews(page, paneId);
+  await print(page, paneId, [
+    "html src/report.HTML:2",
+    `url ${origin}/a.html`,
+    `osc8 \u001b]8;;${pathToFileURL(html).href}#L2\u001b\\HTML source label\u001b]8;;\u001b\\`,
+    "folder ./src",
+    "plain MENU-END",
+  ], "MENU-END");
+  const clicks = sent.get("terminal_click") ?? 0;
+  let point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y);
+  await expect(viewTab(page, "Terminal HTML")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".cm-content")).toHaveCount(0);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children
+    .filter((child) => "webContents" in child)
+    .some((child) => (child as Electron.WebContentsView).webContents.getTitle() === "Terminal HTML"))).toBe(true);
+  await nativeCapture("terminal-html-rendered");
+
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Open in browser", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toBeVisible();
+  await nativeCapture("terminal-html-menu");
+  await page.getByRole("menuitem", { name: "Open source", exact: true }).click();
+  await expect(page.locator('[data-view-tab-bar] [role="tab"][data-tab-kind="file"][aria-label*="report.HTML"]')).toBeVisible();
+  await expect(page.locator(".cm-activeLine").first()).toHaveText("<h1>Rendered terminal report</h1>");
+  await nativeCapture("terminal-html-source");
+
+  point = await pointOf(page, paneId, "HTML source label", { offset: 2 });
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Copy path", exact: true }).click();
+  await expect.poll(copied).toBe(fs.realpathSync(html));
+  point = await pointOf(page, paneId, "src/report.HTML:2", { offset: 2 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  const reveal = process.platform === "darwin" ? "Reveal in Finder" : process.platform === "win32" ? "Reveal in File Explorer" : "Open Containing Folder";
+  await page.getByRole("menuitem", { name: reveal, exact: true }).click();
+  expect(await opened()).toEqual([{ how: "reveal", target: fs.realpathSync(html) }]);
+
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await nativeCapture("terminal-url-menu");
+  await expect(page.getByRole("menuitem", { name: "Open in Hide", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
+  await expect.poll(copied).toBe(`${origin}/a.html`);
+  point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 3 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.getByRole("menuitem", { name: "Open in default browser", exact: true }).click();
+  expect(await opened()).toContainEqual({ how: "external", target: `${origin}/a.html` });
+
+  point = await pointOf(page, paneId, "./src", { offset: 1 });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open source", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  point = await pointOf(page, paneId, "MENU-END", { offset: 2 });
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  expect(sent.get("terminal_click") ?? 0).toBe(clicks);
+  expect(sent.get("reveal_path")).toBe(1);
 });
 
 /** A current native frame of this exact candidate, without activating any app. */

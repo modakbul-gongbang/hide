@@ -630,7 +630,12 @@ A failed or skipped higher-precedence candidate leaves that group unresolved ins
 The native host distinguishes confirmed `ENOENT`/`ENOTDIR` absence from other filesystem failures, which reject the batch and reach the existing count/reason diagnostic without paths.
 Answers retain the existing ten-second TTL and 512-entry cache cap.
 An invocation holds its own bounded answer set while the shared cache is pruned, so a cache eviction during resolution cannot change that invocation's result.
-There is no new input, render, snapshot, notification or remote-filesystem work; URL and OSC 8 routing and native path authority are unchanged.
+The terminal's right-click target lookup reuses this parser, invocation budget and cache over the same bounded rows; it runs once when a menu opens, never per input or render frame.
+An xterm hover retains one resolved target and cell range for that terminal, so an OSC 8 label and a plain-text link share the click and menu routes.
+An HTML menu checks checkout-root ownership through the same path cache to offer Open source only inside a registered checkout; choosing the action rechecks ownership before dispatch.
+The menu holds one target and discards a late result when that menu was dismissed or replaced.
+There is no new input, snapshot, notification or remote-filesystem work; one accepted menu result updates that menu, and a chosen HTML open sends one core event through the existing Browser View boundary.
+Native path authority and the operating-system modifier route are unchanged.
 
 Regression owners are `web/src/terminalLinks.test.ts` (finite grammar, per-token bounds and cell ranges), `web/src/terminalLinkProvider.test.ts` (original precedence, missing/failed/over-budget checks, batching, cache and device boundaries), and `desktop/e2e/terminal-links.spec.ts` (real file opening and native path/link interaction).
 For a matched dense-line comparison, record grid columns, token count and fixture spellings, then measure cold and warm hover-to-pointer latency separately with the same window and input sequence.

@@ -31,7 +31,8 @@ import { noteWriteComplete, probeEnabled } from "./probe";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { keyPayload, noteTerminalFocus } from "./keyTarget";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
-import { osc8Handler, registerTerminalLinks, type LinkState, type TerminalLinkActions } from "./terminalLinkProvider";
+import { osc8Handler, registerTerminalLinks, terminalLinkAtCell, terminalPathOwner, type LinkState, type TerminalContextLink, type TerminalLinkActions } from "./terminalLinkProvider";
+import { isHtmlFile } from "./browserViews";
 import { pointerModifiers, wheelRows } from "./wheel";
 import type { TerminalPane } from "./snapshot";
 import { useShellStore, type TerminalChunk } from "./store";
@@ -416,6 +417,19 @@ function selectedText(instance: Instance): string | null {
 export function terminalSelectionText(paneId: string): string | null {
   const instance = instances.get(paneId);
   return instance ? selectedText(instance) : null;
+}
+
+/** Resolves only the cell right-clicked, using the link provider's existing bounds and cache. */
+export async function terminalLinkAt(paneId: string, point: { clientX: number; clientY: number }): Promise<TerminalContextLink | null> {
+  const instance = instances.get(paneId);
+  const geometry = instance && cellGeometry(instance);
+  if (!instance || !geometry || point.clientX < geometry.rect.left || point.clientX >= geometry.rect.right
+    || point.clientY < geometry.rect.top || point.clientY >= geometry.rect.bottom) return null;
+  const cell = cellAt(geometry, point);
+  const link = await terminalLinkAtCell(instance.term, paneId, instance.link, cell.column + 1, instance.term.buffer.active.viewportY + cell.row + 1);
+  if (link?.target.kind !== "path" || link.found?.kind !== "file" || !isHtmlFile(link.found.real)) return link;
+  const owner = await terminalPathOwner(link.found);
+  return { ...link, inCheckout: !!owner };
 }
 
 /** Pastes text as typed input, wrapped in bracketed paste when the program asked for it. */

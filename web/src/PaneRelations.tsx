@@ -11,6 +11,10 @@ import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
 import { translate, useInterfaceTranslation } from "./i18n/client";
 import { splitLabel } from "./areaLayout";
+import { isHtmlFile } from "./browserViews";
+import { revealHost } from "./host";
+import type { TerminalContextLink } from "./terminalLinkProvider";
+import type { RevealHost } from "./revealExternal";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
 // child pane's header returns to its parent, a parent's badge lists every
@@ -119,7 +123,12 @@ type PaneMenuId =
   | "find"
   | "split_right"
   | "split_down"
-  | "toggle_zoom";
+  | "toggle_zoom"
+  | "link_open"
+  | "link_source"
+  | "link_external"
+  | "link_copy"
+  | "link_reveal";
 
 /**
  * What the pane header offers about this pane (B16, B18): its relatives,
@@ -170,15 +179,35 @@ export type TerminalMenuContext = {
   paneCount: number;
   /** The chords the registry and the terminal bind here; "" draws none. */
   chords: { copy: string; paste: string; find: string; splitRight: string; splitDown: string; zoom: string };
+  /** The exact target right-clicked, retained even after the pointer leaves it. */
+  link?: TerminalContextLink | null;
+  reveal?: RevealHost;
 };
 
 /**
- * A right-click in the terminal: editing the text first, then the tab's
+ * A right-click in the terminal: its link first, editing the text, then the tab's
  * layout around this pane, then everything the header menu offers.
  */
 export function terminalMenuItems(pane: PaneRow, title: string, context: TerminalMenuContext): MenuEntry<PaneMenuId>[] {
   const { chords } = context;
   const items: MenuEntry<PaneMenuId>[] = [];
+  const { target, found } = context.link ?? {};
+  if (target?.kind === "url") {
+    items.push(
+      { id: "link_open", label: translate("panes.menu.openInHide"), unavailable: null },
+      { id: "link_external", label: translate("panes.menu.openDefaultBrowser"), unavailable: null },
+      { id: "link_copy", label: translate("panes.menu.copyLink"), unavailable: null },
+    );
+  } else if (target?.kind === "path" && found) {
+    const html = found.kind === "file" && isHtmlFile(found.real);
+    items.push({ id: "link_open", label: translate(html ? "documents.openInBrowser" : "common.open"), unavailable: null });
+    if (html && context.link?.inCheckout) items.push({ id: "link_source", label: translate("panes.menu.openSource"), unavailable: null });
+    items.push({ id: "link_external", label: translate("panes.menu.openDefaultApp"), unavailable: null });
+    const host = context.reveal === undefined ? revealHost() : context.reveal;
+    if (host) items.push({ id: "link_reveal", label: translate(host.label), unavailable: null });
+    items.push({ id: "link_copy", label: translate("workspace.menu.copyPath"), unavailable: null });
+  }
+  const editingStart = items.length;
   if (context.selection) items.push({ id: "copy", label: translate("common.copy"), unavailable: null, shortcut: chords.copy });
   items.push(
     { id: "paste", label: translate("panes.menu.paste"), unavailable: null, shortcut: chords.paste },
@@ -193,6 +222,7 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
       shortcut: chords.zoom,
     },
   );
+  if (editingStart > 0) items[editingStart] = { ...items[editingStart]!, separated: true };
   const paneItems = paneMenuItems(pane, title).map((item, index) => (index === 0 ? { ...item, separated: true } : item));
   return [...items, ...paneItems];
 }
@@ -205,6 +235,20 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState<MenuOpen | null>(null);
   const select = (id: PaneMenuId) => {
+    if (id.startsWith("link_")) {
+      const link = open?.terminal?.link;
+      if (!link) return;
+      const { target, found } = link;
+      if (id === "link_copy") {
+        if (target.kind === "url") return actions.copyText(target.url, "terminal link");
+        if (found) return actions.copyText(found.real, "terminal path");
+        return;
+      }
+      if (target.kind === "url") return actions.openLink(target.url, id === "link_external");
+      if (!found) return;
+      if (id === "link_reveal") return actions.revealExternal(found.real);
+      return actions.openTerminalPath(found, target.line, target.column, id === "link_external", id === "link_source" ? "source" : "auto");
+    }
     switch (id) {
       case "copy_name":
         return actions.copyText(title, "pane name");
@@ -248,7 +292,14 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     menu,
     open: open !== null,
     openAt: (x: number, y: number) => setOpen({ x, y, terminal: null }),
-    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, terminal: context }),
+    openTerminalAt: (x: number, y: number, context: TerminalMenuContext, link?: Promise<TerminalContextLink | null>) => {
+      const opened = { x, y, terminal: context };
+      setOpen(opened);
+      void link?.then((resolved) => {
+        // A late filesystem answer must not reopen a dismissed or newer menu.
+        setOpen((current) => current === opened ? { ...opened, terminal: { ...context, link: resolved } } : current);
+      }).catch((error: unknown) => useShellStore.getState().noteDiagnostic(`terminal menu: the link check failed: ${String(error)}`));
+    },
   };
 }
 

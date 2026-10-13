@@ -10,8 +10,8 @@
 // twice, and a pane on an SSH device or a page with no desktop host offers
 // URLs only, since its paths name files this Mac cannot see.
 //
-// A click opens the link in the front Workspace (a browser display, or the
-// file in View); ⌘-click (Ctrl off macOS) hands it to the operating system.
+// A click opens a URL or HTML as a page, or another file in View.
+// ⌘-click (Ctrl off macOS) hands it to the operating system.
 // A program's own OSC 8 links take the same routes through xterm's link
 // handler, which replaces xterm's confirm dialog.
 
@@ -20,7 +20,7 @@ import { hostBridge, holdsCommandKey, type ProbedPath } from "./host";
 import { remoteTargetOfPane } from "./remote";
 import { screenDeviceId } from "./screenMachine";
 import { bufferRow, type CellRow } from "./selection";
-import { catalogWorkspaces, localDeviceId, type SnapshotRest } from "./snapshot";
+import { catalogWorkspaces, localDeviceId, type Checkout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { JOIN_ROWS, linkCandidates, osc8Target, type LinkCandidate, type LinkTarget } from "./terminalLinks";
 
@@ -30,7 +30,7 @@ export type FoundPath = NonNullable<ProbedPath>;
 /** Where a clicked link goes; `actions.ts` implements it. */
 export type TerminalLinkActions = {
   openLink(url: string, external: boolean): void;
-  openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean): void;
+  openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode?: "auto" | "source"): void;
 };
 
 /** Paths whose answer is kept; the oldest goes first. */
@@ -151,7 +151,25 @@ export function owningCheckout<C extends { path: string }>(real: string, checkou
   return best;
 }
 
-type Resolved = { target: LinkTarget; found: FoundPath | null };
+export type TerminalContextLink = { target: LinkTarget; found: FoundPath | null; inCheckout?: boolean };
+
+/** null is outside every checkout; undefined is an unanswered ownership check. */
+export async function terminalPathOwner(found: FoundPath): Promise<{ checkout: Checkout; path: string; deviceId: string } | null | undefined> {
+  const bridge = hostBridge();
+  if (!bridge) return undefined;
+  const rest = useShellStore.getState().rest;
+  const deviceId = screenDeviceId(rest);
+  const checkouts = catalogWorkspaces(rest)
+    .filter((workspace) => workspace.device_id === deviceId)
+    .flatMap((workspace) => workspace.checkouts)
+    .filter((checkout) => checkout.exists);
+  const roots = await probePaths(checkouts.map((checkout) => checkout.path), (paths) => bridge.probePaths(paths));
+  // An unanswered root might own the file: neither an external open nor a
+  // source menu item is justified until ownership is known. The probe logs it.
+  if (checkouts.some((checkout) => !roots.has(checkout.path))) return undefined;
+  const owner = owningCheckout(found.real, checkouts, roots);
+  return owner ? { checkout: owner.checkout, path: owner.checkout.path + found.real.slice(owner.root.length), deviceId } : null;
+}
 
 /**
  * The first candidate of each group that holds: a URL always, a path when
@@ -162,7 +180,7 @@ export async function resolveGroups(
   groups: LinkCandidate[][],
   context: { cwd: string | null; root: string | null } | null,
   probe: ((paths: string[]) => Promise<ProbedPath[]>) | null,
-): Promise<{ candidate: LinkCandidate; resolved: Resolved }[]> {
+): Promise<{ candidate: LinkCandidate; resolved: TerminalContextLink }[]> {
   const lookups = new Map<LinkCandidate, string[]>();
   if (context && probe) {
     for (const candidate of groups.flat().sort((a, b) => Number(b.original) - Number(a.original))) {
@@ -170,7 +188,7 @@ export async function resolveGroups(
     }
   }
   const answers = probe && lookups.size > 0 ? await probePaths([...lookups.values()].flat(), probe) : new Map<string, ProbedPath>();
-  const chosen: { candidate: LinkCandidate; resolved: Resolved }[] = [];
+  const chosen: { candidate: LinkCandidate; resolved: TerminalContextLink }[] = [];
   for (const group of groups) {
     for (const candidate of group) {
       if (candidate.target.kind === "url") {
@@ -197,9 +215,9 @@ export async function resolveGroups(
 }
 
 /** Per-terminal link state: whether the pointer is over a link, so a click on one is not also the program's. */
-export type LinkState = { hovered: boolean };
+export type LinkState = { hovered: boolean; link?: { range: IBufferRange; resolved: TerminalContextLink } | null };
 
-function open(actions: TerminalLinkActions, resolved: Resolved, event: MouseEvent, selecting: boolean): void {
+function open(actions: TerminalLinkActions, resolved: TerminalContextLink, event: MouseEvent, selecting: boolean): void {
   // A press that dragged across the link selected its text; the release is not a click.
   if (selecting) return;
   const external = holdsCommandKey(event);
@@ -214,6 +232,46 @@ function rangeOf(candidate: LinkCandidate, top: number): IBufferRange {
   return { start: { x: first.start + 1, y: top + first.row }, end: { x: last.end, y: top + last.row } };
 }
 
+function containsCell(range: IBufferRange, x: number, y: number): boolean {
+  return y >= range.start.y && y <= range.end.y
+    && (y !== range.start.y || x >= range.start.x)
+    && (y !== range.end.y || x <= range.end.x);
+}
+
+/** The same bounded row read and cached path check for hover and right-click. */
+async function linksOnRow(term: Terminal, paneId: string, y: number) {
+  const buffer = term.buffer.active;
+  const top = Math.max(1, y - JOIN_ROWS);
+  const bottom = Math.min(buffer.length, y + JOIN_ROWS);
+  const rows: CellRow[] = [];
+  for (let line = top; line <= bottom; line += 1) rows.push(bufferRow(buffer.getLine(line - 1), term.cols));
+  const groups = linkCandidates(rows, y - top);
+  if (groups.length === 0) return [];
+  const rest = useShellStore.getState().rest;
+  const bridge = hostBridge();
+  const chosen = await resolveGroups(groups, paneContext(rest, paneId, screenDeviceId(rest)), bridge ? (paths) => bridge.probePaths(paths) : null);
+  return chosen.map(({ candidate, resolved }) => ({ candidate, resolved, range: rangeOf(candidate, top) }));
+}
+
+/** A right-click's target, including an OSC 8 address behind a program's label. */
+export async function terminalLinkAtCell(term: Terminal, paneId: string, state: LinkState, x: number, y: number): Promise<TerminalContextLink | null> {
+  const hovered = state.link;
+  // An OSC 8 address we refuse does not inherit a different address from its label.
+  if (state.hovered && !hovered) return null;
+  if (hovered && containsCell(hovered.range, x, y)) {
+    const { target, found } = hovered.resolved;
+    if (target.kind === "url" || found) return hovered.resolved;
+    const bridge = hostBridge();
+    const rest = useShellStore.getState().rest;
+    if (!bridge || !paneContext(rest, paneId, screenDeviceId(rest))) return null;
+    const answers = await probePaths([target.path], (paths) => bridge.probePaths(paths));
+    const answer = answers.get(target.path);
+    return answer ? { target, found: answer } : null;
+  }
+  const links = await linksOnRow(term, paneId, y);
+  return links.find(({ range }) => containsCell(range, x, y))?.resolved ?? null;
+}
+
 /**
  * Offers the links of the hovered row. `actions` is read at click time, so a
  * terminal that moves between panes' hosts always opens with the current one.
@@ -221,28 +279,18 @@ function rangeOf(candidate: LinkCandidate, top: number): IBufferRange {
 export function registerTerminalLinks(term: Terminal, paneId: string, state: LinkState, actions: () => TerminalLinkActions): { dispose(): void } {
   return term.registerLinkProvider({
     provideLinks(y, callback) {
-      const buffer = term.buffer.active;
-      const top = Math.max(1, y - JOIN_ROWS);
-      const bottom = Math.min(buffer.length, y + JOIN_ROWS);
-      const rows: CellRow[] = [];
-      for (let line = top; line <= bottom; line += 1) rows.push(bufferRow(buffer.getLine(line - 1), term.cols));
-      const groups = linkCandidates(rows, y - top);
-      if (groups.length === 0) {
-        callback(undefined);
-        return;
-      }
-      const rest = useShellStore.getState().rest;
-      const bridge = hostBridge();
-      void resolveGroups(groups, paneContext(rest, paneId, screenDeviceId(rest)), bridge ? (paths) => bridge.probePaths(paths) : null).then((chosen) => {
-        const links: ILink[] = chosen.map(({ candidate, resolved }) => ({
-          range: rangeOf(candidate, top),
+      void linksOnRow(term, paneId, y).then((chosen) => {
+        const links: ILink[] = chosen.map(({ candidate, resolved, range }) => ({
+          range,
           text: candidate.text,
           activate: (event) => open(actions(), resolved, event, term.hasSelection()),
           hover: () => {
             state.hovered = true;
+            state.link = { range, resolved };
           },
           leave: () => {
             state.hovered = false;
+            state.link = null;
           },
         }));
         callback(links.length > 0 ? links : undefined);
@@ -287,11 +335,14 @@ export function osc8Handler(paneId: string, state: LinkState, actions: () => Ter
         else diagnostic("terminal link: the linked file does not exist");
       });
     },
-    hover() {
+    hover(_event, uri, range) {
       state.hovered = true;
+      const target = osc8Target(uri);
+      state.link = target ? { range, resolved: { target, found: null } } : null;
     },
     leave() {
       state.hovered = false;
+      state.link = null;
     },
   };
 }
