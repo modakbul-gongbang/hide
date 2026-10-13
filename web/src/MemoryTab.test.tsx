@@ -99,7 +99,7 @@ describe("the Memory tab", () => {
         { kind: "failed", number: 7, title: "card 7", start_failure: null },
       ],
     }));
-    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("Operator's words in 3 sessions · pulled in 9 sessions in 14 days");
+    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("your words 3x · 9 sessions");
     // Both cards are asked about, so no list repeats them.
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
     await click("[data-memory-promote='3']");
@@ -110,6 +110,35 @@ describe("the Memory tab", () => {
       { workspace_id: "p", action: "dismiss", number: 3 },
       { workspace_id: "p", action: "promote", number: 7 },
     ]);
+  });
+
+  it("keeps running and legacy open promotions in To ask until merged or closed", async () => {
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: "AGENTS.md", github_failure: null };
+    await render(memory({ rows: [row(3, { promotion: { ...promotion, state: "running", pr_number: null } }), row(7, { promotion })] }));
+    expect(container.querySelector("[data-memory-questions] [data-memory-running='3']")).not.toBeNull();
+    expect(container.querySelector("[data-memory-questions] [data-memory-pr-group='72']")?.textContent).toContain("m7");
+    expect(container.querySelector("[data-memory-cards]")).toBeNull();
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, review: "changes_requested" }] }] } } as unknown as SnapshotRest }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Changes requested");
+    await render(memory({ rows: [row(3), row(7, { promotion: { ...promotion, state: "merged" } })] }));
+    expect(container.querySelector("[data-memory-questions]")).toBeNull();
+    expect(container.querySelector("[data-memory-card='3']")).not.toBeNull();
+    expect(container.querySelector("[data-memory-card='7']")?.textContent).toContain("AGENTS.md");
+  });
+
+  it("selection hides row promotion actions while unknown authority still needs an answer", async () => {
+    await render(memory({ questions: [
+      { kind: "promote", number: 3, title: "card 3", human_session_count: 2, pulled_session_count: 0 },
+      { kind: "docs_disagree", number: 7, title: "card 7", document: { authority: "ask", document: "AGENTS.md", document_at_unix_ms: null, operator_at_unix_ms: 1 } },
+    ] }));
+    expect(container.querySelector("[data-memory-card='3']")?.textContent).toContain("your words 2x");
+    expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("0 sessions");
+    await click("[data-memory-select='3']");
+    expect(container.querySelector("[data-memory-promote='3']")).toBeNull();
+    expect(container.querySelector("[data-memory-dismiss='3']")).toBeNull();
+    expect(container.querySelector("[data-memory-promote='7']")).not.toBeNull();
+    await click("[data-memory-open-batch]");
+    expect(sent("memory_action").at(-1)).toEqual({ workspace_id: "p", action: "promote", number: null, numbers: [3] });
   });
 
   it("says in a failed card's status why its agent never started, with the question its shell stopped at", async () => {
@@ -150,7 +179,7 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
     // An agent not seen yet: no name, and nothing it would follow.
     expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
-    expect(container.querySelector("[data-memory-card='9'] [data-pr-mark]")?.textContent).toContain("924");
+    expect(container.querySelector("[data-memory-pr-group='924']")?.textContent).toContain("924");
     const merged = container.querySelector("[data-memory-card='8']");
     expect(merged?.className).toContain("opacity-");
     expect(merged?.textContent).toContain("AGENTS.md");

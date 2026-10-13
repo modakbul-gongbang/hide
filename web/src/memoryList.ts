@@ -21,7 +21,7 @@ export function memoryCards(project: ProjectMemory): MemoryRow[] {
     const byNumber = new Map(project.rows.map((row) => [row.number, row]));
     return project.search.numbers.flatMap((number) => byNumber.get(number) ?? []);
   }
-  return project.rows.filter((row) => !asked.has(row.number));
+  return project.rows.filter((row) => !asked.has(row.number) && (row.number === project.expanded?.number || !["running", "unconfirmed", "pr_open"].includes(row.promotion?.state ?? "")));
 }
 
 /**
@@ -68,4 +68,25 @@ function startOfDay(date: Date): number {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+/** PR grouping is derived only from confirmed promotion records. */
+export function memoryPullRequests(project: ProjectMemory): { number: number; cards: number[] }[] {
+  const groups = new Map<number, number[]>();
+  for (const row of project.rows) {
+    if (row.promotion?.state !== "pr_open" || row.promotion.pr_number == null) continue;
+    const cards = groups.get(row.promotion.pr_number) ?? [];
+    cards.push(row.number);
+    groups.set(row.promotion.pr_number, cards);
+  }
+  return [...groups].map(([number, cards]) => ({ number, cards: cards.sort((a, b) => a - b) }));
+}
+
+/** The existing durable lifecycle, including attempts started before upgrade. */
+export function memoryInProgress(project: ProjectMemory): MemoryRow[] {
+  return project.rows.filter((row) => row.promotion?.state === "running" || row.promotion?.state === "unconfirmed");
+}
+
+export function selectableMemoryQuestions(project: ProjectMemory): Set<number> {
+  return new Set(project.questions.filter((question) => question.kind !== "docs_disagree" || question.document.authority === "card_newer").map((question) => question.number));
 }

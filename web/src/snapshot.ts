@@ -1474,13 +1474,13 @@ export type ArchiveDetail = {
 };
 
 /** A card's kind (`contracts/snapshot-wire-enums.json`: `memory_card_kind`). */
-export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact";
+export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
 export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
-export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss";
+export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss" | "card_right" | "doc_right";
 
 /** One card of the opened Project, as its two-line row shows it. */
 export type MemoryRow = {
@@ -1496,6 +1496,7 @@ export type MemoryRow = {
   /** Waiting to be checked against the repository again; agents are not given it meanwhile (`확인 중`). */
   verifying: boolean;
   /** Null for an ordinary card, a dismissed one, or one whose pull request closed unmerged. */
+  document_comparison?: MemoryDocument | null;
   promotion: {
     state: MemoryPromotionState;
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
@@ -1510,16 +1511,21 @@ export type MemoryRow = {
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
+  | { kind: "docs_disagree"; number: number; title: string; document: MemoryDocument }
   | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
 
 /**
  * Why a failed promotion's agent never started (`memory_start_failure_code`):
  * `detail` is the line its new pane's shell stopped at, for `shell_starting`.
  */
-export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "other"; detail: string | null };
+export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "card_not_processed" | "other"; detail: string | null };
+
+export type MemoryDocument = { authority: "outdated" | "card_newer" | "ask"; document: string; document_at_unix_ms: number | null; operator_at_unix_ms: number | null };
+export type MemoryDocumentComparison = MemoryDocument & { document_text: string; operator_text: string; source_session: string | null };
 
 /** The card shown in full (`memory_expand`). */
 export type MemoryCard = {
+  document_comparison?: MemoryDocumentComparison | null;
   number: number;
   body: string;
   cited_paths: string[];

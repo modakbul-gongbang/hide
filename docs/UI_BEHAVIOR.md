@@ -541,11 +541,27 @@ While a pass analyzes the Project, a small `분석 중` chip sits beside the swi
 A Project on any linked device shows the same Memory controls and cards as this machine's Projects, read from the core's store with the device's own Project identity.
 The disclosure says cards stay in Hide's Memory, and the delete confirmation removes them from this Project's Memory; neither claims the screen's device owns the store.
 An unavailable link or Memory reader uses the existing unreadable state; its reason is recorded in the diagnostic log.
-`물어볼 것` appears, and the tab's name carries a dot, only while the Project has a card to suggest for the repository's documents or a promotion that ended without a pull request.
-A suggestion shows its reasons (`사람 말이 세션 3개에 · 14일 동안 세션 9개에서 꺼냄`, counted by session and never by how often it was said) with `올리기` and `안 올림`; a failed one shows `PR 없이 끝남` with `다시 시도`, or, in that status slot, why its agent never started: `셸이 질문에서 멈춤: <the question's line>` when the new pane's shell stopped at a startup question, `에이전트가 시작되지 않음`, or `에이전트를 시작하지 못함` for any other refusal, whose words stay in the log; at most three suggestions are open, and a card answered `안 올림` is not suggested again until its text changes.
+`물어볼 것` appears, and the tab's name carries a dot, while the Project has a suggestion, an unresolved document comparison or a failed placement.
+Each compact row has a one-line title and one-line reason, truncating long text; `Compare` reads and opens the document excerpt and original operator words with their dates only when requested.
+A newer operator decision offers `Fix the doc` and `Card is wrong`; unknown or equal dates first offer `Card is right` and `Doc is right`, and cannot be selected until answered.
+Choosing the document marks the card Outdated; choosing the card turns the row into a document correction proposal.
+Eligible rows have checkboxes; selecting one to five shows `N selected · up to 5 per PR`, `Clear` and `Open one PR`, and at five the other checkboxes are disabled.
+The row's single-card action uses the same batch path.
+While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
+Promotion reasons omit zero counts and use short source-session counts.
+Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision when known.
+This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
+Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
+A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
+A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
-A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
+An expanded or searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears.
+Once merged, its ordinary card dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`.
+A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
+Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
+An Outdated comparison dims its card and names the document and its date, asks nothing and is excluded from injection.
+Document references in card metadata and Compare headers show a single-line filename, truncated when needed, with the full path on hover and the date alongside.
 A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
 The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
 When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.

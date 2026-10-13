@@ -2602,6 +2602,8 @@ pub struct MemoryRowSnapshot {
     /// absent for a card that is not, was dismissed or whose pull request
     /// closed unmerged (B30-B32).
     pub promotion: Option<MemoryPromotionSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_comparison: Option<MemoryDocumentSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2640,10 +2642,34 @@ pub struct MemoryPromotionAgentSnapshot {
     pub pane_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryDocumentSnapshot {
+    pub authority: hide_memory::DocumentAuthority,
+    pub document: String,
+    pub document_at_unix_ms: Option<u64>,
+    pub operator_at_unix_ms: Option<u64>,
+}
+
+impl From<&hide_memory::DocumentComparison> for MemoryDocumentSnapshot {
+    fn from(comparison: &hide_memory::DocumentComparison) -> Self {
+        Self {
+            authority: comparison.authority,
+            document: comparison.document.clone(),
+            document_at_unix_ms: comparison.document_at_unix_ms,
+            operator_at_unix_ms: comparison.operator_at_unix_ms,
+        }
+    }
+}
+
 /// One thing the Memory tab asks the operator (B28-B32).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MemoryQuestionSnapshot {
+    DocsDisagree {
+        number: u64,
+        title: String,
+        document: MemoryDocumentSnapshot,
+    },
     /// "저장소 문서로 올릴까요?" with the counts that crossed the bar.
     Promote {
         number: u64,
@@ -2666,7 +2692,8 @@ pub enum MemoryQuestionSnapshot {
 pub struct MemoryStartFailure {
     pub code: MemoryStartFailureCode,
     /// The last line the new pane's shell showed for `shell_starting`, at
-    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters; the other
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters, or the reason
+    /// a worker could not process a card; the other
     /// answers' words are the diagnostic log's (`promotion.start_failed`).
     pub detail: Option<String>,
 }
@@ -2678,6 +2705,7 @@ pub enum MemoryStartFailureCode {
     ShellStarting,
     /// The agent's start ended at the shell without the agent, twice.
     AgentNotStarted,
+    CardNotProcessed,
     /// Any other answer: the device, the lock, Herdr's refusal.
     Other,
 }
@@ -2695,6 +2723,10 @@ impl MemoryStartFailure {
         match crate::coordination::split_refusal(failure) {
             (crate::agent_start::SHELL_STARTING, detail) => Self {
                 code: MemoryStartFailureCode::ShellStarting,
+                detail: detail.and_then(short),
+            },
+            ("card_not_processed", detail) => Self {
+                code: MemoryStartFailureCode::CardNotProcessed,
                 detail: detail.and_then(short),
             },
             (code, _) => Self {
@@ -2718,6 +2750,7 @@ pub enum MemoryCardKind {
     Decision,
     Lesson,
     Fact,
+    Preference,
 }
 
 /// One card in full, as a row expanded in place shows it (B19, B21).
@@ -2725,6 +2758,8 @@ pub enum MemoryCardKind {
 pub struct MemoryCardSnapshot {
     pub number: u64,
     pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_comparison: Option<hide_memory::DocumentComparison>,
     /// Repository-relative files the card rests on (B27).
     pub cited_paths: Vec<String>,
     /// The most recent first.
@@ -2787,6 +2822,8 @@ pub enum MemoryAction {
     Promote,
     /// "안 올림": not until the card changes (B29).
     Dismiss,
+    CardRight,
+    DocRight,
 }
 
 impl MemoryAction {
@@ -2799,6 +2836,8 @@ impl MemoryAction {
             Self::Undo => "undo",
             Self::Promote => "promote",
             Self::Dismiss => "dismiss",
+            Self::CardRight => "card_right",
+            Self::DocRight => "doc_right",
         }
     }
 }
@@ -5509,6 +5548,13 @@ mod memory_start_failure_tests {
                 detail: None,
             }
         );
+        assert_eq!(
+            MemoryStartFailure::of("card_not_processed\u{1f}The owning guide is unavailable"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::CardNotProcessed,
+                detail: Some("The owning guide is unavailable".to_owned()),
+            }
+        );
     }
 }
 
@@ -5897,13 +5943,15 @@ mod wire_enum_tests {
             MemoryCardKind::Decision,
             MemoryCardKind::Lesson,
             MemoryCardKind::Fact,
+            MemoryCardKind::Preference,
         ];
         for variant in card_kinds {
             match variant {
                 MemoryCardKind::Rule
                 | MemoryCardKind::Decision
                 | MemoryCardKind::Lesson
-                | MemoryCardKind::Fact => {}
+                | MemoryCardKind::Fact
+                | MemoryCardKind::Preference => {}
             }
         }
         assert_wire(&contract, "memory_card_kind", &card_kinds);
@@ -5950,11 +5998,13 @@ mod wire_enum_tests {
         let start_failures = [
             MemoryStartFailureCode::ShellStarting,
             MemoryStartFailureCode::AgentNotStarted,
+            MemoryStartFailureCode::CardNotProcessed,
             MemoryStartFailureCode::Other,
         ];
         for variant in start_failures {
             match variant {
                 MemoryStartFailureCode::ShellStarting
+                | MemoryStartFailureCode::CardNotProcessed
                 | MemoryStartFailureCode::AgentNotStarted
                 | MemoryStartFailureCode::Other => {}
             }
@@ -5970,6 +6020,8 @@ mod wire_enum_tests {
             MemoryAction::Undo,
             MemoryAction::Promote,
             MemoryAction::Dismiss,
+            MemoryAction::CardRight,
+            MemoryAction::DocRight,
         ];
         for variant in actions {
             match variant {
@@ -5979,7 +6031,9 @@ mod wire_enum_tests {
                 | MemoryAction::Forget
                 | MemoryAction::Undo
                 | MemoryAction::Promote
-                | MemoryAction::Dismiss => {}
+                | MemoryAction::Dismiss
+                | MemoryAction::CardRight
+                | MemoryAction::DocRight => {}
             }
             assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
         }

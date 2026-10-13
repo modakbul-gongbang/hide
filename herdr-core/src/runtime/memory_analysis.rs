@@ -1927,6 +1927,152 @@ pub(crate) fn write_cards(
     }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
     let mut facts = CheckoutFacts::new(sessions_node, source.evidence_root);
+    let documents =
+        super::memory_verify::repository_sources(sessions_node, &facts, source.evidence_root);
+    let matches = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.relation == CandidateRelation::New
+                && candidate.kind != hide_memory::CandidateKind::Preference
+        })
+        .filter_map(|(index, candidate)| {
+            let words = hide_memory::query_words(&[
+                &candidate.title,
+                &candidate.text,
+                &candidate.aliases.join(" "),
+            ]);
+            let document = documents
+                .iter()
+                .map(|document| {
+                    let lower = document.text.to_lowercase();
+                    let score = words
+                        .iter()
+                        .filter(|word| lower.contains(word.as_str()))
+                        .count();
+                    (score, document)
+                })
+                .filter(|(score, _)| *score >= 2)
+                .max_by_key(|(score, _)| *score)?
+                .1;
+            Some((
+                index,
+                candidate.text.clone(),
+                hide_memory::relevant_excerpt(
+                    &document.path,
+                    &document.text,
+                    document.truncated,
+                    &words,
+                    hide_memory::COMPARISON_EXCERPT_BYTES,
+                ),
+            ))
+        })
+        .take(hide_memory::NEW_CARDS_PER_SESSION)
+        .collect::<Vec<_>>();
+    let mut document_input = 0;
+    let mut duplicates = 0;
+    let mut document_comparisons = vec![None; candidates.len()];
+    if let Some(check) = hide_memory::creation_docs_request(
+        digest(&["creation-docs", &batch_id]),
+        source.project_id,
+        &matches,
+        request.input.chars().count().min(request.input.len()),
+    ) {
+        admit(store)?;
+        document_input = check.input.chars().count();
+        let answer = router
+            .execute(&check, cancel)
+            .map_err(AnalysisFailure::Provider)?;
+        let results = answer.value["results"].as_array().ok_or_else(|| {
+            AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_results".into()))
+        })?;
+        let sent: Value =
+            serde_json::from_str(&check.input).map_err(|error| local(error.to_string()))?;
+        let expected = sent["candidates"]
+            .as_array()
+            .ok_or_else(|| local("creation_docs_input".into()))?;
+        let mut seen = BTreeSet::new();
+        for result in results {
+            let index = result["candidate"].as_u64().ok_or_else(|| {
+                AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_candidate".into()))
+            })? as usize;
+            if !seen.insert(index)
+                || !expected
+                    .iter()
+                    .any(|entry| entry["candidate"].as_u64() == Some(index as u64))
+            {
+                return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                    "creation_docs_unknown_candidate".into(),
+                )));
+            }
+            let entry = expected
+                .iter()
+                .find(|entry| entry["candidate"].as_u64() == Some(index as u64))
+                .expect("the candidate was validated against the sent input");
+            match result["verdict"].as_str() {
+                Some("same") => {
+                    candidates[index].relation = CandidateRelation::Discard;
+                    duplicates += 1;
+                }
+                Some("unrelated") => {}
+                Some("differs") => {
+                    let quote = result["quote"]
+                        .as_str()
+                        .filter(|quote| {
+                            !quote.trim().is_empty()
+                                && quote.len() <= hide_memory::COMPARISON_EXCERPT_BYTES
+                                && entry["excerpt"]
+                                    .as_str()
+                                    .is_some_and(|text| text.contains(*quote))
+                        })
+                        .ok_or_else(|| {
+                            AnalysisFailure::Provider(AiError::InvalidOutput(
+                                "creation_docs_unseen_quote".into(),
+                            ))
+                        })?;
+                    let candidate = &candidates[index];
+                    let human = candidate.human_offsets.iter().max_by_key(|offset| {
+                        candidate.source_times.get(offset).copied().unwrap_or(0)
+                    });
+                    let at = human.and_then(|offset| candidate.source_times.get(offset).copied());
+                    let words = human
+                        .and_then(|offset| {
+                            group
+                                .iter()
+                                .find(|event| event["offset"].as_u64() == Some(*offset))
+                        })
+                        .and_then(|event| event["text"].as_str())
+                        .unwrap_or_default();
+                    let words = hide_memory::redact(words)
+                        .text
+                        .chars()
+                        .take(hide_memory::COMPARISON_EXCERPT_BYTES / 4)
+                        .collect();
+                    document_comparisons[index] = Some(super::memory_verify::compare_document(
+                        sessions_node,
+                        source.evidence_root,
+                        entry["document"]
+                            .as_str()
+                            .expect("the request carries a document path"),
+                        quote,
+                        at,
+                        words,
+                        human.map(|_| source.session_id.to_owned()),
+                    ));
+                }
+                _ => {
+                    return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                        "creation_docs_verdict".into(),
+                    )));
+                }
+            }
+        }
+        if results.len() != expected.len() {
+            return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                "creation_docs_incomplete".into(),
+            )));
+        }
+    }
     let evidence = candidates
         .iter()
         .map(|candidate| match candidate.relation {
@@ -1955,12 +2101,18 @@ pub(crate) fn write_cards(
             &ApplyOptions {
                 new_card_limit: source.new_card_limit,
                 evidence,
+                document_comparisons,
+                reverify_superseded: !documents.is_empty(),
             },
         )
         .map_err(|error| match error {
             hide_memory::MemoryError::Disabled => AnalysisFailure::Disabled,
             error => local(error.to_string()),
         })?;
+    crate::diagnostic!(
+        json!({"component":"memory", "kind":"analysis.session_cards", "project_id":source.project_id, "session_id":source.session_id, "batch_id":batch_id,
+        "created":summary.created, "superseded":summary.superseded, "duplicates_in_docs":duplicates, "extraction_input_chars":request.input.chars().count(), "document_input_chars":document_input })
+    );
     for backfill in output.backfill {
         if let Err(error) = store.fill_aliases(
             source.project_id,
@@ -2521,6 +2673,147 @@ mod tests {
     }
 
     #[test]
+    fn creation_classifies_new_decision_conflicts_with_no_initial_reverification() {
+        for (date, authority) in [
+            (None, hide_memory::DocumentAuthority::Ask),
+            (
+                Some("2026-10-10T00:00:00Z"),
+                hide_memory::DocumentAuthority::CardNewer,
+            ),
+            (
+                Some("2026-10-12T00:00:00Z"),
+                hide_memory::DocumentAuthority::Outdated,
+            ),
+        ] {
+            let mut fixture = Fixture::new();
+            fixture.lines[0]["message"]["content"] = json!(format!(
+                "Always run tests with nextest before a merge. {}",
+                "Extra session context. ".repeat(450)
+            ));
+            fixture.write(&fixture.lines);
+            std::fs::write(
+                fixture.root.join("AGENTS.md"),
+                "Run tests with the ordinary runner before a merge.\n",
+            )
+            .unwrap();
+            if let Some(date) = date {
+                for args in [
+                    vec!["init", "-q"],
+                    vec!["add", "AGENTS.md"],
+                    vec![
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "commit",
+                        "-qm",
+                        "Initial guide",
+                    ],
+                ] {
+                    let status = std::process::Command::new("git")
+                        .args(args)
+                        .current_dir(&fixture.root)
+                        .env("GIT_AUTHOR_DATE", date)
+                        .env("GIT_COMMITTER_DATE", date)
+                        .status()
+                        .unwrap();
+                    assert!(status.success());
+                }
+            }
+            fixture.backend.answers.lock().unwrap().push(json!({"results":[{
+                "candidate":0,"verdict":"differs", "quote":"Run tests with the ordinary runner before a merge."
+            }]}));
+            fixture.answer(&[]);
+            fixture.backend.answers.lock().unwrap().last_mut().unwrap()["candidates"][0]["kind"] =
+                json!("decision");
+            let _ = fixture.pass(false, true);
+            let store = fixture.store();
+            let decision = store
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .unwrap();
+            assert_eq!(decision.kind, CandidateKind::Decision);
+            let comparison = store
+                .document_comparison(&fixture.project_id, 2)
+                .unwrap()
+                .unwrap();
+            assert_eq!(comparison.authority, authority);
+            assert!(
+                comparison
+                    .operator_text
+                    .contains("Always run tests with nextest")
+            );
+            assert!(
+                !store
+                    .retrieve(&hide_memory::RetrievalQuery::session_start(
+                        &fixture.project_id
+                    ))
+                    .unwrap()
+                    .items
+                    .iter()
+                    .any(|card| card.number == 2)
+            );
+            assert_eq!(
+                fixture.calls(),
+                2,
+                "one extraction and one creation comparison, no initial reverify"
+            );
+            let inputs = fixture.backend.inputs.lock().unwrap();
+            assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+            println!(
+                "memory-fixture-inputs extraction={} creation_docs={} authority={authority:?} calls=2",
+                inputs[0].chars().count(),
+                inputs[1].chars().count()
+            );
+            drop(inputs);
+            let _ = fixture.pass(false, false);
+            assert_eq!(
+                fixture.calls(),
+                2,
+                "an unresolved comparison spends no further call"
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicate_document_claim_is_suppressed_within_the_extraction_input_cap() {
+        let mut fixture = Fixture::new();
+        fixture.lines[0]["message"]["content"] = json!(format!(
+            "Always run tests with nextest before a merge. {}",
+            "Extra session context. ".repeat(450)
+        ));
+        fixture.write(&fixture.lines);
+        std::fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Run tests with nextest before a merge.\n",
+        )
+        .unwrap();
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(json!({"results":[{"candidate":0,"verdict":"same","quote":""}]}));
+        fixture.answer(&[]);
+        let _ = fixture.pass(false, true);
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fixture.calls(), 2);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+        println!(
+            "memory-fixture-inputs extraction={} creation_docs={} created=0",
+            inputs[0].chars().count(),
+            inputs[1].chars().count()
+        );
+    }
+
+    #[test]
     fn a_pass_records_receipts_a_live_pane_cannot_and_analyzes_a_closed_session_once() {
         // B1, B2, B3, B27, D-16.
         let fixture = Fixture::new();
@@ -2952,9 +3245,17 @@ mod tests {
         assert_eq!(reports, ["analyzing", "learned one"]);
         assert_eq!(
             memory_kinds(&records),
-            ["receipts.records_skipped", "analysis.records_skipped"]
+            [
+                "receipts.records_skipped",
+                "analysis.session_cards",
+                "analysis.records_skipped"
+            ]
         );
-        for record in &records {
+        for record in records.iter().filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("records_skipped"))
+        }) {
             assert_eq!(record["skipped"], json!({"non_conversation_capacity": 1}));
         }
         let inputs = fixture.backend.inputs.lock().unwrap().clone();
@@ -3812,5 +4113,11 @@ mod tests {
         assert_eq!(promotions[0].1.state, hide_memory::PromotionState::Merged);
         assert_eq!(promotions[0].1.target_path.as_deref(), Some("AGENTS.md"));
         assert_eq!(promotions[0].1.pr_number, None);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        println!(
+            "memory-fixture-inputs pre_promotion={} calls=1",
+            inputs[0].chars().count()
+        );
     }
 }
