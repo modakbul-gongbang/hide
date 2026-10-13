@@ -423,7 +423,9 @@ Idle has no printers or agent churn, then separate windows observe echo, repeate
 Four split panes print in small scale and those four plus one offscreen pane print in operator scale, using one finite Python process per pane.
 Each window records one-second root and process-tree CPU deltas, RSS, host load and application WebSocket payload bytes by type and semantic section.
 JSON section sizes exclude their enclosing punctuation, and payload bytes exclude WebSocket framing and compression.
-The final window navigates the only page away, observes the daemon with zero screen clients, then reconnects it; Chrome remains alive on `about:blank`, so this is a screen-subscription check rather than native window retirement.
+The final window navigates the only page to `about:blank`, records the owned daemon's resources while output continues, then reconnects the page; Chrome remains alive, so this does not observe native window retirement.
+An empty page wire record and the driver's declared client count do not measure the daemon's actual connected clients.
+Verify subscriber retirement and reacquisition separately by sampling the private daemon's `/health` client count and PID as owned renderer tabs open, close, reopen and close, and verify native last-window retirement in its own isolated desktop journey.
 The source-build record does not establish a native screenshot or physical key-to-paint latency.
 The page drivers retain their page-clock DOM, terminal grid and echo endpoints, and an owned native candidate is verified separately.
 
