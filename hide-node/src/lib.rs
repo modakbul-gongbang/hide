@@ -268,6 +268,7 @@ impl NodeLink for Local {
         }
         pending.closed = Some(reason.to_owned());
         self.env.stop.store(true, Ordering::Release);
+        self.env.label_locks.close();
         for answered in pending
             .answers
             .drain(..)
@@ -364,6 +365,16 @@ mod tests {
     fn closing_the_node_releases_a_caller_before_its_machine_work_finishes() {
         let directory = tempfile::tempdir().unwrap();
         let node = Local::new(Some(directory.path().to_path_buf()));
+        let socket = directory.path().join("herdr.sock");
+        let lock = Call::LabelLock {
+            herdr_socket: Some(socket.to_string_lossy().into_owned()),
+            generator: 1,
+        };
+        let LinkAnswer::Parsed(held) = node.call(lock.clone(), Duration::from_secs(5)).unwrap()
+        else {
+            panic!("the own node returns a parsed answer");
+        };
+        assert_eq!(held["held"], true);
         let caller = node.clone();
         let cwd = directory.path().to_string_lossy().into_owned();
         let (finished, outcome) = mpsc::channel();
@@ -393,6 +404,10 @@ mod tests {
         node.close("core stopping");
         let closed = outcome.recv_timeout(Duration::from_secs(1));
         let in_flight = node.in_flight.load(Ordering::Acquire);
+        // The closed node and its unfinished host call still own Env clones.
+        // A replacement must nevertheless take the generator role now.
+        let replacement = Local::new(Some(directory.path().to_path_buf()));
+        let replacement_lock = replacement.call(lock, Duration::from_secs(5));
         // Always release the real host command before asserting, including
         // the old implementation which waits for this command to finish.
         std::fs::write(directory.path().join("release"), "done").unwrap();
@@ -407,6 +422,10 @@ mod tests {
             "{closed:?}"
         );
         assert_eq!(in_flight, 1, "unfinished host work keeps its capacity slot");
+        assert!(
+            matches!(replacement_lock, Ok(LinkAnswer::Parsed(ref answer)) if answer["held"] == true),
+            "closed node retained the generator role: {replacement_lock:?}"
+        );
         assert_eq!(node.in_flight.load(Ordering::Acquire), 0);
         assert!(matches!(
             node.call(Call::Hello, Duration::from_secs(1)),

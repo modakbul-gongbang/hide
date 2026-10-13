@@ -801,6 +801,7 @@ Daily totals hold four fixed token-only context bands, not another table of call
 The separately owned price-fetch thread asks the own node for `Call::UsagePriceFetch`, refused for devices.
 The node owns the bounded public HTTP read; the core parses the returned body and the ledger's sole writer persists the table before publishing it.
 Shutdown closes the own-node link before joining the ledger and price threads, so those joins do not wait for an in-flight HTTP answer.
+Closing also releases the node's label-generator locks, even while unfinished calls retain node references; a lock acquisition completing after close releases its file instead of retaining the role.
 The node's unfinished HTTP work retains its capacity slot and five-second deadline until it ends.
 
 `usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
