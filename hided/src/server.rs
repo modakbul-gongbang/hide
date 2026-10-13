@@ -1183,7 +1183,7 @@ const FACTORY_REQUEST_LIMIT: usize = 256 * 1024;
 const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// What a refused delivery or agent command asks of its caller.
-fn delivery_next_action(code: &str) -> &'static str {
+pub(crate) fn delivery_next_action(code: &str) -> &'static str {
     match herdr_core::coordination::split_refusal(code).0 {
         "agent_pane_required" => {
             "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
@@ -1517,12 +1517,7 @@ async fn scoped_client_loop(
                                         .any(|view| view.view_id == display_id && view.selected)})
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
-                                    core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
-                                        .and_then(|prepared| prepared.run(Duration::from_secs(5)))
-                                        .map_err(|code| {
-                                            let next = delivery_next_action(&code);
-                                            (code, next)
-                                        })?
+                                    crate::hook_request::delivery(&core, &cap, command, hint)?
                                 }
                                 ScopedRequest::Factory(command, hint) => {
                                     core.prepare_factory(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
@@ -1539,14 +1534,7 @@ async fn scoped_client_loop(
                                         })?
                                 }
                                 ScopedRequest::MemoryHook(ask) => {
-                                    let deadline = std::time::Instant::now() + herdr_core::memory_hook::WITHIN;
-                                    let scope = core.memory_scope(&cap.context).map_err(|reason| {
-                                        herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
-                                        ("memory_unavailable".to_owned(), "Continue without Project Memory")
-                                    })?;
-                                    serde_json::to_value(herdr_core::memory_hook::answer(&scope, &ask, deadline)).map_err(|_| {
-                                        ("result_encoding_failed".to_owned(), "Continue without Project Memory")
-                                    })?
+                                    crate::hook_request::memory(&core, &cap, &ask)?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((

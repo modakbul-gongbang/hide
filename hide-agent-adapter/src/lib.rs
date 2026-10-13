@@ -25,22 +25,6 @@ impl AgentId {
     pub const fn adapter(self) -> &'static AgentAdapter {
         &ADAPTERS[self as usize]
     }
-
-    /// Display priority is independent of whether this build reads a session.
-    pub const fn title_priority(self) -> TitlePriority {
-        match self {
-            Self::ClaudeCode | Self::Codex => TitlePriority::GoalFirst,
-            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp => TitlePriority::NativeFirst,
-            Self::Cursor => TitlePriority::GoalOnly,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TitlePriority {
-    GoalFirst,
-    NativeFirst,
-    GoalOnly,
 }
 
 /// The input and output protocol of an agent's own hook: how its payload

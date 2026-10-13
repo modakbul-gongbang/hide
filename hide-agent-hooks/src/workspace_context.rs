@@ -16,27 +16,15 @@ use serde_json::Value;
 
 const CLI_TIMEOUT: Duration = Duration::from_secs(2);
 const OUTPUT_LIMIT: u64 = 16 * 1024;
-const CAP_REF_ENV: &str = "HIDE_CAP_REF";
 
 pub fn live_context() -> Option<String> {
     let program = cli_program()?;
-    // The daemon removes a reference's file when it expires or is revoked;
-    // a command naming that path still runs on a bare bootstrap, but the
-    // context would hand the next session a reference that is gone.
-    let inherited = std::env::var_os(CAP_REF_ENV)
-        .filter(|value| !value.is_empty() && Path::new(value).is_file());
-    let reference = if let Some(value) = inherited {
-        PathBuf::from(value)
-    } else {
-        let answer = run_cli(&program, &["workspace", "bootstrap"], None)?;
-        if answer["ok"] != true {
-            return None;
-        }
-        PathBuf::from(answer["reference"].as_str()?)
-    };
-    run_cli(&program, &["workspace", "info"], Some(&reference))
-        .filter(|answer| answer["ok"] == true)
-        .and_then(|answer| format_context(&program, &reference, &answer))
+    let answer = run_cli(&program, &["workspace", "info", "--hook"])?;
+    if answer["ok"] != true {
+        return None;
+    }
+    let reference = PathBuf::from(answer["reference"].as_str()?);
+    format_context(&program, &reference, &answer)
 }
 
 pub fn cli_program() -> Option<OsString> {
@@ -53,16 +41,13 @@ pub fn cli_program() -> Option<OsString> {
 }
 
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn run_cli(program: &OsString, arguments: &[&str], reference: Option<&Path>) -> Option<Value> {
+fn run_cli(program: &OsString, arguments: &[&str]) -> Option<Value> {
     let mut command = Command::new(program);
     command
         .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    if let Some(reference) = reference {
-        command.env(CAP_REF_ENV, reference);
-    }
     let mut child = OwnedChild::spawn(&mut command).ok()?;
     let deadline = Instant::now() + CLI_TIMEOUT;
     let status = loop {

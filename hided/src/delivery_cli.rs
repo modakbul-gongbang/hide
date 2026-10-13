@@ -165,6 +165,19 @@ fn key(value: &str) -> bool {
 
 pub fn run(env: &Env, command: Command) -> Result<(), String> {
     let result = (|| {
+        if let Command::Pull {
+            prompt_digest,
+            session,
+        } = &command
+        {
+            return crate::workspace_cli::request_hook(
+                env,
+                hide_node_link::panes::HookCommand::LetterPull {
+                    prompt_digest: prompt_digest.clone(),
+                    session: session.clone(),
+                },
+            );
+        }
         let mut credential = crate::workspace_cli::Credential::acquire(env)?;
         let hint = std::env::var(env::HERDR_PANE_ID).ok();
         crate::workspace_cli::request_delivery(&mut credential, command, hint.as_deref())

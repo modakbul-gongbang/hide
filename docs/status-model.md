@@ -583,14 +583,37 @@ The workspace inspector uses the canonical representative agent and disconnected
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
 The provider fallback reads the shared adapter's sidebar label or canonical Herdr kind after common alias normalization, preserving a raw unknown kind and `Agent` for no kind.
-`sidebar.rs` applies the shared adapter's title priority: Claude Code and Codex keep generated `goal`, then proven native title, then provider.
-Grok, OpenCode, Pi and omp use proven native/manual title, then generated goal, then provider.
-Cursor has no native title authority and uses generated goal, then provider.
+`sidebar.rs` chooses the first nonempty, sanitized value in one order for every agent:
+
+1. a proven manual title,
+2. Hide AI's generated task name (`goal`),
+3. the proven native automatic title, including a name whose source cannot be distinguished,
+4. the provider.
+
+With Agent summaries off there is no goal, so the order is manual title, native automatic title, provider.
+A title is manual only when its native record distinguishes a manual rename from automatic naming; a rename command alone is not that proof.
+Claude's explicit empty `ai-title` or `custom-title` clears its stored slot; an absent record preserves it during an incremental read.
+Readers preserve the two title slots through the label overlay instead of combining them before projection.
+No reader capability is granted by the order, and an agent without a native title reader has neither native step.
+The same chosen title reaches the default Agent tab label, phone list and desktop/phone notification title as well as the surfaces above.
+An explicitly renamed Herdr tab keeps its separate tab-label authority ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#agent-areas)).
+
+| Agent and format read | Manual slot | Automatic or source-less slot | Native source inspected |
+| --- | --- | --- | --- |
+| Claude Code 2.1.288 | `custom-title.customTitle` from `/rename` | `ai-title.aiTitle`; summary/compaction records grant no manual name | [Automatic record, line 2](../hide-session/tests/fixtures/adapters/claude-2.1.288/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl#L2) and [manual record, line 10](../hide-session/tests/fixtures/adapters/claude-2.1.288/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl#L10); `hide-session/src/lib.rs::parse_claude_line` reads the two distinct records. |
+| Codex CLI 0.160.0 | None provable from the index | Newest `session_index.jsonl.thread_name`, including a renamed name | [SessionIndexEntry and append_thread_name, lines 24-50](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/rollout/src/session_index.rs#L24-L50) record only id, name and update time, with no manual/automatic source. |
+| Grok 1.0.46 | `summary.json.generated_title` when `title_is_manual` is true | The same title when false or absent | [Native-format summary, line 16](../hide-session/tests/fixtures/adapters/grok-1.0.46/summary.json#L16); `hide-session/src/grok.rs::summary` reads the flag separately from the title. |
+| OpenCode 1.18.30 | None provable from the session row | Root session `title`, including a renamed title | [SessionTable, lines 22-60](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/session/sql.ts#L22-L60) has one title column and no title source. |
+| Pi 1.0.4 | None provable from a name record | `session_info.name`, including `/name` and extension-written names | [SessionInfoEntry, lines 141-145](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/src/core/session-manager.ts#L141-L145) and [appendSessionInfo, lines 1303-1315](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/src/core/session-manager.ts#L1303-L1315) record a name without its source; the CLI and extensions share `AgentSession.setSessionName`. |
+| omp 18.7.0 | First title-v1 slot `source: user`, or legacy first header `titleSource: user` | `source: auto`, or a missing source | [Title slot source parsing, lines 61-79](https://github.com/can1357/oh-my-pi/blob/e0fc1cf4ea354b445a359b37fa5eb58deaa85598/packages/coding-agent/src/session/session-title-slot.ts#L61-L79); `hide-session/src/native_file.rs::title_snapshot` reads the slot or legacy header. |
+| Cursor | No native title reader | No native title reader | `hide-session/src/cursor.rs` and [its native fixture contract](../hide-session/tests/it/cursor.rs) explicitly exclude the sidecar title and database name. |
+
+Codex, OpenCode and Pi therefore show Hide AI's goal ahead of even a renamed native name while summaries are on, because their read format cannot prove a manual source.
+Pi names previously stored as manual, or returned by an older helper that did so, are projected as automatic under the same current session proof.
+Cursor uses generated goal, then provider.
 Its ordinary SQLite chat graph supplies recorded human and assistant text under the same native ID and checkout proof, while its sidecar title and database name remain outside that authority.
 Injected native user records, tool output, shell turns and child graphs supply no root request, structured wait or PR sighting; absent event times stay unknown and recorded times have minute precision.
-A declared priority grants no reader capability; a build that cannot read that provider receives no native title.
-The session adapter gives a manual title priority over the native automatic title.
-Pi 1.0.4's `session_info.name` is a proven native/manual title, and its latest explicit empty name clears the old native name before the generated-goal/provider fallback is applied.
+Pi 1.0.4's latest explicit empty `session_info.name` clears the old native name before the goal/provider fallback is applied.
 Its recorded user/assistant messages feed the existing label worker, while tool output supplies PR sightings and injected extension/compaction context supplies no human request.
 Pi records no structured question/plan wait or child identity, so no `UserTurnFact`, structured content or subagent relationship is inferred from text or `parentSession`.
 omp 18.7.0 takes its current automatic/manual title from the physical first title slot or legacy first session header, with explicit empty values clearing stale names and `title_change` remaining audit history.
@@ -616,7 +639,7 @@ There is no "unsure means done": a turn that did not report its work finished is
 A turn that started or handed off work that still runs is `waiting`, even when the turn itself only reported progress or answered something, unless it asks the operator; its line says what it waits for.
 A turn is the person's message that began it, known by its time and its words, so a request that repeats the last one word for word is a new turn and is asked again.
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise, which for a block is its cause), `question` (a question end on an agent that is not running) and `blocked` (a block end on an agent that is not running), and `sidebar.rs::project_agent` reads those five.
-With Settings › Hide AI › Features › Agent summaries off nothing of the generated label is laid: the row is titled by the session's own proven title or the provider, and has no generated sentence or inferred plain-text question (D-11).
+With Settings › Hide AI › Features › Agent summaries off nothing of the generated label is laid: the row uses manual title, proven native automatic title, then provider, and has no generated sentence or inferred plain-text question (D-11).
 Native questions and plan waits are still read, and a pending native question still supplies its own first line.
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
@@ -809,7 +832,7 @@ Sentences keep their original language in every mode.
 
 | Surface or condition | Hide AI on | Hide AI off |
 | --- | --- | --- |
-| Row title | Claude Code and Codex: generated goal, then proven native/manual title, then provider. Grok, OpenCode, Pi and omp: proven native/manual title, then generated goal, then provider. Cursor: generated goal, then provider. | Proven native/manual title where the adapter can read one, otherwise provider; Cursor uses provider. No Herdr workspace label or control name becomes a title. |
+| Row title | Every adapter: manual title, then Hide AI goal, then proven native automatic title, then provider. See [Task identity](#task-identity). | Every adapter: manual title, then proven native automatic title, then provider. No Herdr workspace label or control name becomes a title. See [Task identity](#task-identity). |
 | Pending native question | `?`, Question, Needs You until answered, including after reading. Second line: turn-end `expected_reply`, otherwise the question's first non-empty line (40 characters including a truncation ellipsis), otherwise `progress`. | The same native `?`, Question and Needs You until answered; its first non-empty line supplies the second line without an AI call. With no question text the status word stands in. |
 | Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: `?`, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no `?` and no Needs You. A stopped, unread Herdr `done` is Done with `✓` and no sentence. A Herdr `idle` is Seen, not Done. |
 | Approval / Herdr blocked pane / native plan wait | `!`, Approval, Needs You until answered, including after reading. The second line follows `expected_reply`, native question, then `progress`; a plan document's heading is never extracted as a sentence. | The same `!`, Approval and Needs You; without a native question sentence the word Approval stands in, including for a plan document. |

@@ -181,6 +181,33 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
 }
 
+#[test]
+fn a_cached_pi_name_is_automatic_with_summaries_on_and_off() {
+    for (summaries, expected) in [(true, "검증 작업"), (false, "기존 Pi 이름")] {
+        let mut runtime = runtime();
+        let mut facts = crate::labels::facts::SessionFacts::default();
+        facts.custom_title = Some("기존 Pi 이름".into());
+        let record = PaneRecord {
+            owner: hide_session::label_reference_token("pi", "id", SESSION),
+            goal: Some("검증 작업".into()),
+            facts,
+            ..Default::default()
+        };
+        let records = [(PANE.to_owned(), record)];
+        runtime.set_label_overlay(LabelOverlay::of_records(
+            records.iter().map(|(pane, record)| (pane, record)),
+            true,
+            summaries,
+        ));
+        let mut payload = projection(SESSION);
+        for agent in &mut payload.agents {
+            agent.agent = Some("pi".into());
+        }
+        runtime.ingest_session(Ok(payload));
+        assert_eq!(row(&runtime)["identity_label"], expected);
+    }
+}
+
 /// B9, B15, B21: an unfinished turn stops the row, and so does a turn that
 /// says it waits when nothing proven wakes the agent; with agent summaries off
 /// the same row is named by its own title, carries no line and never stops.

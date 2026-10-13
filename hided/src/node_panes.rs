@@ -14,7 +14,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use hide_node::ssh::{PaneEvents, RemoteHost};
 use hide_node_link::panes::{
-    MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer, StreamCaller,
+    HookRequest, MAX_CHUNK, MAX_PENDING_CHUNKS, MAX_STREAMS, NodeEvent, PaneIdentity, ProofAnswer,
+    StreamCaller,
 };
 use hide_node_link::protocol::Call;
 use serde_json::json;
@@ -82,6 +83,7 @@ impl NodePanes {
         request: u64,
         proof: Proof,
         one_shot: bool,
+        hook: Option<HookRequest>,
     ) {
         let named = match &proof {
             Proof::Pane { pane_id, .. } => Some(pane_id.clone()),
@@ -100,18 +102,37 @@ impl NodePanes {
             return;
         };
         let panes = Arc::clone(self);
+        let received = std::time::Instant::now();
         let node = node.to_owned();
         let link = link.clone();
         self.runtime.spawn_blocking(move || {
             let _permit = permit;
             let answer = match panes.state.get() {
-                Some(state) => issue(state, &node, &link, proof, one_shot),
+                Some(state) => match hook {
+                    Some(hook)
+                        if one_shot == hook.command.one_shot()
+                            && crate::hook_request::valid(&hook) =>
+                    {
+                        answer_hook(state, &node, &link, proof, hook, received)
+                    }
+                    Some(_) => refused("invalid_request"),
+                    None => issue(state, &node, &link, proof, one_shot),
+                },
                 None => refused("hide_unavailable"),
             };
-            if let ProofAnswer::Refused { reason } = &answer {
+            if let ProofAnswer::Refused { reason, .. } = &answer {
                 record_refusal(&node, named.as_deref(), reason, "core");
             }
-            send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
+            send_proof(
+                panes
+                    .state
+                    .get()
+                    .map(|state| state.pane_capabilities.as_ref()),
+                &node,
+                &link,
+                request,
+                answer,
+            );
         });
     }
 
@@ -177,6 +198,7 @@ impl NodePanes {
             node: node.clone(),
             link: link.clone(),
             caller,
+            received: std::time::Instant::now(),
         });
         self.runtime
             .spawn(serve_stream(state, node, link, stream, attested, receiver));
@@ -233,24 +255,28 @@ impl PaneEvents for Events {
                 identity,
                 nonce: _,
                 one_shot,
+                hook,
             } => panes.proof(
                 node,
                 link,
                 request,
                 Proof::Pane { pane_id, identity },
                 one_shot,
+                hook,
             ),
             NodeEvent::CheckoutProof {
                 request,
                 path,
                 nonce,
                 one_shot,
+                hook,
             } => panes.proof(
                 node,
                 link,
                 request,
                 Proof::Checkout { path, nonce },
                 one_shot,
+                hook,
             ),
             NodeEvent::Revoke { token } => {
                 if let Some(state) = panes.state.get() {
@@ -297,6 +323,83 @@ enum Proof {
 /// names, so a node can never vouch for a caller of another device. Only a
 /// node that dialed this core vouches for a checkout caller; a device this
 /// core dialed proves pane callers only, as it always has.
+fn answer_hook(
+    state: &AppState,
+    node: &str,
+    link: &RemoteHost,
+    proof: Proof,
+    hook: HookRequest,
+    received: std::time::Instant,
+) -> ProofAnswer {
+    let attested = match &proof {
+        Proof::Pane { pane_id, identity } => Some(pane_auth::StreamAttestation {
+            node: node.to_owned(),
+            link: link.clone(),
+            caller: StreamCaller {
+                pane_id: pane_id.clone(),
+                identity: identity.clone(),
+            },
+            received,
+        }),
+        Proof::Checkout { .. } => None,
+    };
+    let one_shot = hook.command.one_shot();
+    let issued = issue(state, node, link, proof, one_shot);
+    let ProofAnswer::Issued { token, issued_new } = issued else {
+        return issued;
+    };
+    let token = crate::hook_request::Token(&state.pane_capabilities, token, issued_new);
+    let result = (|| {
+        let cap = state.pane_capabilities.validate(
+            &token.1,
+            state.herdr_socket.as_deref(),
+            &state.core,
+            attested.as_ref(),
+        )?;
+        if let Some(named) = hook.token.as_deref()
+            && state
+                .pane_capabilities
+                .hook_reference(named, node, link, &hook.request_id)?
+                .is_some()
+        {
+            let prior = state.pane_capabilities.validate(
+                named,
+                state.herdr_socket.as_deref(),
+                &state.core,
+                attested.as_ref(),
+            )?;
+            if !cap.same_identity(&prior) {
+                return Err("pane_changed");
+            }
+        }
+        if link.closed_reason().is_some() {
+            return Err("remote_unavailable");
+        }
+        Ok(crate::hook_request::answer(
+            &state.core,
+            &cap,
+            &hook,
+            state
+                .desktop_renderers
+                .load(std::sync::atomic::Ordering::SeqCst)
+                > 0,
+        ))
+    })();
+    match result {
+        Ok(answer) if !one_shot && answer["ok"] == true => {
+            let answer = ProofAnswer::WorkspaceInfo {
+                token: token.1.clone(),
+                issued_new,
+                answer,
+            };
+            token.keep();
+            answer
+        }
+        Ok(answer) => ProofAnswer::Hook { answer },
+        Err(reason) => refused(reason),
+    }
+}
+
 fn issue(
     state: &AppState,
     node: &str,
@@ -369,13 +472,61 @@ fn prefix(text: &str, chars: usize) -> &str {
 fn refused(reason: &str) -> ProofAnswer {
     ProofAnswer::Refused {
         reason: reason.to_owned(),
+        next_action: pane_auth::refusal_next_action(reason).to_owned(),
     }
 }
 
-fn send_reply(node: &str, link: &RemoteHost, call: Call) {
-    if link.call(call, CALL_TIMEOUT).is_err() {
-        record_refusal(node, None, "control_unanswered", "core");
-        link.close("pane control reply unanswered");
+/// Claim guidance only if a waiting node caller accepted it. A late or lost
+/// answer releases a new token without revoking an already held reference.
+pub(crate) fn send_proof(
+    registry: Option<&pane_auth::Registry>,
+    node: &str,
+    link: &RemoteHost,
+    request: u64,
+    answer: ProofAnswer,
+) -> bool {
+    let persistent = match &answer {
+        ProofAnswer::WorkspaceInfo {
+            token, issued_new, ..
+        } => Some((token.clone(), *issued_new)),
+        _ => None,
+    };
+    let delivered = send_reply(node, link, Call::PaneProofAnswer { request, answer });
+    if let Some((token, issued_new)) = persistent
+        && let Some(registry) = registry
+    {
+        if delivered {
+            let _ = registry.claim(&token);
+        } else if issued_new {
+            registry.revoke(&token);
+        }
+    }
+    delivered
+}
+
+fn send_reply(node: &str, link: &RemoteHost, call: Call) -> bool {
+    let guidance = matches!(
+        &call,
+        Call::PaneProofAnswer {
+            answer: ProofAnswer::WorkspaceInfo { .. },
+            ..
+        }
+    );
+    match link.call(call, CALL_TIMEOUT) {
+        Ok(answer) if guidance => match answer {
+            hide_node_link::link::LinkAnswer::Parsed(value) => {
+                value == serde_json::Value::Bool(true)
+            }
+            hide_node_link::link::LinkAnswer::Raw(value) => {
+                serde_json::from_str::<bool>(value.get()).unwrap_or(false)
+            }
+        },
+        Ok(_) => true,
+        Err(_) => {
+            record_refusal(node, None, "control_unanswered", "core");
+            link.close("pane control reply unanswered");
+            false
+        }
     }
 }
 
@@ -446,6 +597,18 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    fn a_core_proof_refusal_has_the_same_recovery_advice_as_the_node() {
+        assert_eq!(
+            serde_json::to_value(refused("pane_changed")).unwrap()["next_action"],
+            "Reconnect the pane and retry"
+        );
+        assert_eq!(
+            serde_json::to_value(refused("checkout_not_registered")).unwrap()["next_action"],
+            "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry"
+        );
+    }
+
+    #[test]
     fn a_full_proof_limit_never_calls_the_link_from_its_reader() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -475,6 +638,7 @@ mod tests {
                         },
                         nonce: "fixture".to_owned(),
                         one_shot: false,
+                        hook: None,
                     },
                 );
             })

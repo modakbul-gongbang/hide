@@ -1,6 +1,6 @@
 //! SessionStart asks Memory and the Workspace probe at once: run as Claude
 //! Code runs it, the compiled helper beside a stand-in `hide` whose Memory
-//! answer waits until the probe's `workspace bootstrap` has been asked. Asked
+//! answer waits until the probe's `workspace info --hook` has been asked. Asked
 //! one after the other, Memory would wait out its own deadline and the
 //! session would start without it.
 
@@ -15,7 +15,7 @@ use hide_platform::process::OwnedChild;
 
 use crate::{programs, stand_ins};
 
-/// The stand-in `hide`. Memory answers only once the probe's bootstrap has
+/// The stand-in `hide`. Memory answers only once the probe has
 /// been asked; the wait is bounded so a stand-in never outlives its test,
 /// and the helper's Memory deadline ends it sooner.
 const FAKE_HIDE: &str = r#"#!/bin/sh
@@ -24,16 +24,15 @@ echo "$@" >> "$dir/hide-calls"
 case "$1 $2" in
   "workspace memory")
     i=0
-    while [ ! -e "$dir/bootstrap-asked" ]; do
+    while [ ! -e "$dir/workspace-asked" ]; do
       i=$((i+1)); [ "$i" -gt 500 ] && exit 1
       sleep 0.01
     done
     printf '%s\n' '{"type":"workspace_result","ok":true,"result":{"context":"MEMORY-FOR-THIS-SESSION\n","outcome":"provided","count":1}}' ;;
-  "workspace bootstrap")
-    : > "$dir/bootstrap-asked"
-    printf '{"ok":true,"reference":"%s/reference.json"}\n' "$dir" ;;
   "workspace info")
-    echo '{"ok":true,"result":{"context":{"device_id":"local","workspace_id":"w1","checkout_path":"/srv/fixture-checkout"},"capabilities":["workspace.info"]}}' ;;
+    [ "$3" = "--hook" ] || exit 1
+    : > "$dir/workspace-asked"
+    printf '{"ok":true,"reference":"%s/reference.json","result":{"context":{"device_id":"local","workspace_id":"w1","checkout_path":"/srv/fixture-checkout"},"capabilities":["workspace.info"]}}\n' "$dir" ;;
   *) exit 1 ;;
 esac
 "#;
@@ -112,7 +111,7 @@ fn session_start_asks_memory_and_the_workspace_probe_at_once() {
     let context = answer["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_default();
-    // Memory answered, so the probe's bootstrap was asked while Memory was
+    // Memory answered, so the probe was asked while Memory was
     // still waiting for its answer.
     assert!(context.contains("MEMORY-FOR-THIS-SESSION"), "{answer}");
     // The probe's guidance is appended after Memory's, as before.
@@ -129,8 +128,7 @@ fn session_start_asks_memory_and_the_workspace_probe_at_once() {
     assert_eq!(
         calls,
         [
-            "workspace bootstrap",
-            "workspace info",
+            "workspace info --hook",
             "workspace memory --event SessionStart --runtime claude --session fixture-session",
         ]
     );
