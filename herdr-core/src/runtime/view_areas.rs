@@ -79,6 +79,9 @@ pub(super) struct ViewWorkspace {
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserOpenPayload {
     url: String,
+    /// An operator's terminal link brings its owning checkout forward in the same event.
+    #[serde(default)]
+    reveal: bool,
     #[serde(default)]
     area_id: Option<String>,
     /// The page whose own new tab this is: the new page opens beside it, so
@@ -1250,6 +1253,7 @@ impl Runtime {
     pub(super) fn open_browser(&mut self, payload: BrowserOpenPayload) -> bool {
         let BrowserOpenPayload {
             url,
+            reveal,
             workspace,
             pane_id,
             request_id,
@@ -1262,6 +1266,7 @@ impl Runtime {
             pane_id.as_deref(),
             area_id.as_deref(),
             beside_display.as_deref(),
+            reveal,
         );
         if let Err(message) = &outcome {
             self.set_error("browser.open_refused", message.clone(), false);
@@ -1301,6 +1306,7 @@ impl Runtime {
         pane_id: Option<&str>,
         area_id: Option<&str>,
         beside_display: Option<&str>,
+        reveal: bool,
     ) -> Result<(WorkspaceKey, String), String> {
         if !self.separate_view_areas() {
             return Err("This shell does not draw View areas".to_owned());
@@ -1334,9 +1340,17 @@ impl Runtime {
             .unwrap_or_else(|| crate::workspace_control::checkout_caller_id(&key.0, &key.1));
         let action = crate::workspace_control::Action::OpenBrowser {
             url: url.to_owned(),
-            reveal: false,
+            reveal,
             area_id: bound_area,
             new_target: false,
+        };
+        let reveal_context = if reveal {
+            Some(
+                self.resolve_caller(&key.0, crate::workspace_control::Caller::parse(&caller))
+                    .map_err(|refusal| refusal.next_action.to_owned())?,
+            )
+        } else {
+            None
         };
         let parked = self
             .parked_caller(&key, &caller, &action)
@@ -1417,6 +1431,15 @@ impl Runtime {
         self.apply_area_intent_to(&key, AreaIntent::Views);
         self.note_control_view(&key, &caller, &action, &display_id, parked)
             .map_err(|error| error.next_action.to_owned())?;
+        if let Some(context) = reveal_context {
+            self.reveal_workspace_control(
+                &context,
+                &key,
+                &format!("browser-open-{load}"),
+                &caller,
+                area_id.is_some(),
+            );
+        }
         Ok((key, display_id))
     }
 

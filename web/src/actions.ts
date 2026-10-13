@@ -32,7 +32,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
-import { registeredName, screenDeviceId } from "./screenMachine";
+import { registeredName } from "./screenMachine";
 import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -60,9 +60,9 @@ import {
   type Workspace,
   type LinkTarget,
 } from "./snapshot";
-import { fileUrl } from "./browserViews";
+import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
-import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvider";
+import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
@@ -2300,32 +2300,31 @@ export function createActions(send: DispatchFn) {
     /**
      * A path a terminal link names on this Mac (docs/ARCHITECTURE.md, A
      * clicked path is one event). Inside a registered checkout it is one
-     * `reveal_path` naming the checkout whose physical root holds it longest,
-     * which brings that checkout forward with the file in View, at its line,
-     * or the folder in the Explorer; outside every checkout, or on ⌘ (Ctrl
-     * off macOS), the desktop host hands it to macOS.
+     * event naming the checkout whose physical root holds it longest:
+     * `browser_open` for HTML, `reveal_path` for another file, Open source or
+     * a folder. The checkout comes forward with the chosen view; outside
+     * every checkout, or on ⌘ (Ctrl off macOS), the desktop host hands it to
+     * the operating system.
      */
-    openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean) {
+    openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode: "auto" | "source" = "auto") {
       const bridge = hostBridge();
       if (!bridge) return diagnostic("terminal link: this host cannot open a path");
       if (external) return bridge.openPath(found.real);
-      // The paths are this screen's machine's, which the desktop host probes.
-      const screen = screenDeviceId(rest());
-      const checkouts = catalogWorkspaces(rest())
-        .filter((workspace) => workspace.device_id === screen)
-        .flatMap((workspace) => workspace.checkouts)
-        .filter((checkout) => checkout.exists);
-      void probePaths(checkouts.map((checkout) => checkout.path), (paths) => bridge.probePaths(paths)).then((roots) => {
-        // A root the check could not answer might own the path; handing it to
-        // macOS then would open a checkout's file outside View. The failure
-        // is already logged.
-        if (checkouts.some((checkout) => !roots.has(checkout.path))) return;
-        const owner = owningCheckout(found.real, checkouts, roots);
+      void terminalPathOwner(found).then((owner) => {
+        if (owner === undefined) return;
         if (!owner) {
           bridge.openPath(found.real);
           return;
         }
-        const path = owner.checkout.path + found.real.slice(owner.root.length);
+        const { path, deviceId } = owner;
+        if (found.kind === "file" && isHtmlFile(path) && mode === "auto") {
+          dispatch({
+            schema_version: 2,
+            kind: "browser_open",
+            payload: { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true },
+          });
+          return;
+        }
         if (found.kind === "file" && line !== null) requestLine([path, found.real], line, column);
         dispatch({
           schema_version: 2,

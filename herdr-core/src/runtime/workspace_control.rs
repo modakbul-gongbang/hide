@@ -93,7 +93,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn reveal_workspace_control(
+    pub(super) fn reveal_workspace_control(
         &mut self,
         context: &Context,
         key: &(String, String),

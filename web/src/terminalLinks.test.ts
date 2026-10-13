@@ -53,6 +53,9 @@ describe("osc8Target", () => {
   it("reads http(s), file and the vscode://file links Codex writes", () => {
     expect(osc8Target("https://example.com")).toEqual({ kind: "url", url: "https://example.com/" });
     expect(osc8Target("file:///tmp/a%20b.txt")).toEqual({ kind: "path", path: "/tmp/a b.txt", line: null, column: null });
+    expect(osc8Target("file:///C:/repo/report.HTML#L2")).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
+    expect(osc8Target("vscode://file/C:/repo/report.HTML:2")).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
+    expect(parseToken("C:/repo/report.HTML:2")?.target).toEqual({ kind: "path", path: "C:/repo/report.HTML", line: 2, column: null });
     expect(osc8Target("vscode://file/Users/example/p/src/a.ts:12:4")).toEqual({ kind: "path", path: "/Users/example/p/src/a.ts", line: 12, column: 4 });
   });
 
