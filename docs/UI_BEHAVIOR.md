@@ -54,7 +54,8 @@ Only when the window's frame itself cannot draw does the line take the whole win
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
 No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
-File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
+Each Agent tab remembers whether File Views is on or off, while Tools, its tool and both widths are stored per Workspace; all survive a restart.
+A Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
 Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the named Sessions, Explorer and History tabs, in that order with the shown one marked.
 The tool tabs have one keyboard stop; Left, Right, Home and End choose another tool, and the Workspace remembers that choice.
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
@@ -79,14 +80,16 @@ File Views is never empty: closing its last view turns it off in the same transi
 With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
 Tools alone is an ordinary state.
 Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and changes no column in a window wide enough for them all.
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
+Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
 Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
 The divider between File Views and Tools trades width between the two, so the agents keep theirs; the others change one column's width against Agent Views.
 No column gets narrower than its minimum: Agent Views 480px, File Views 360px, Tools 260px; File Views starts at 640px and Tools at its usual tool width until first resized.
-Turning File Views or Tools on or off, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once; a drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent resize nothing.
+Turning File Views or Tools on or off, including a tab's restored File Views visibility, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once.
+A drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent with the same File Views visibility resize nothing.
 Changing Workspace or column geometry during a column drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
 
 Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, Tools or a pane.
@@ -214,22 +217,25 @@ When the last view closes, File Views turns off and Tools stays as it was, with 
 
 ### View bookmarks per Agent tab
 
-The View list, the layout, the columns' state and widths, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
-Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
+The View list, the layout, Tools and both widths, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
+Each Agent tab remembers whether File Views was on and, for every View area, the View that was in front while that tab was the active one, and gets them back when it is shown again.
 Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
 A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
-Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
-A new tab, a delegated child moved to its own tab and every tab right after an update have none.
-The area in use, the keyboard and the columns stay where they were; while File Views is off the bookmark still applies, so turning it on shows the tab's front.
+Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark keeps the fronts and inherits the current visibility.
+A new tab, a delegated child moved to its own tab and a tab without saved state have none.
+The area in use and Tools stay where they were; hiding File Views preserves the views and unsaved text, with the keyboard following the column-hiding rule above.
+While File Views is off the front bookmark still applies, so turning it on shows the tab's front.
+An explicit file, diff or page open or reveal wins over saved tab state, shows File Views and remembers that choice for the active tab.
+If the last view was closed, returning to a tab that remembered File Views on leaves it off rather than opening an empty column or a New tab page.
 Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap File Views under the operator.
 When the front of a View area changes, the active tab remembers the new front.
 The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
 A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
-Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
+Bookmarks and visibility are saved with the Workspace and survive a restart, and a tab that closed or vanished loses both.
 Connected device Workspaces follow the same rules; the visible tab of a device changes when its Herdr's answer lands, and an SSH device has one Agent area.
 The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
 Web owner: none, the shell draws each area's front as the snapshot names it.
-Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.
+Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs` and `herdr-core/src/workspace_views.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/{view-bookmarks,file-view-visibility}.spec.ts`.
 
 A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
 A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.

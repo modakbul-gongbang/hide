@@ -21,6 +21,7 @@
 //! panel, restarts with File Views on when its views showed, and one written
 //! with two independent tool flags restarts on the tool it showed.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -116,6 +117,10 @@ pub struct WorkspaceView {
     /// that never used it reads as before, and an older build ignores the key.
     #[serde(skip_serializing_if = "Bookmarks::is_empty")]
     pub view_bookmarks: Bookmarks,
+    /// File Views visibility per Agent tab, independent of the shared layout.
+    /// Separate from the existing bookmark shape so older builds can ignore it.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub view_visibility: BTreeMap<String, bool>,
 }
 
 /// A stored entry as any build since schema 2 wrote it: the columns' fields,
@@ -152,6 +157,8 @@ struct StoredView {
     #[serde(default)]
     view_bookmarks: Bookmarks,
     #[serde(default)]
+    view_visibility: BTreeMap<String, bool>,
+    #[serde(default)]
     mode: Option<LegacyMode>,
     #[serde(default)]
     views_over_agents: bool,
@@ -183,6 +190,7 @@ impl StoredView {
             layout: self.layout,
             agent_layout: self.agent_layout,
             view_bookmarks: self.view_bookmarks,
+            view_visibility: self.view_visibility,
         };
         (view, upgraded)
     }
@@ -229,6 +237,7 @@ impl WorkspaceView {
             layout: Layout::default(),
             agent_layout: crate::agent_layout::Layout::default(),
             view_bookmarks: Bookmarks::default(),
+            view_visibility: BTreeMap::new(),
         }
     }
 
@@ -387,6 +396,7 @@ impl V1View {
             layout,
             agent_layout: crate::agent_layout::Layout::default(),
             view_bookmarks: Bookmarks::default(),
+            view_visibility: BTreeMap::new(),
         }
     }
 }
@@ -996,7 +1006,7 @@ mod tests {
     /// and a bookmark naming an area the layout no longer has is dropped on
     /// load.
     #[test]
-    fn bookmarks_survive_a_save_and_a_file_without_them_loads_untouched() {
+    fn tab_view_state_survives_a_save_and_legacy_state_loads_untouched() {
         let folder = scratch("bookmarks");
         let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
@@ -1009,16 +1019,21 @@ mod tests {
         entry.view_bookmarks.record("w:t1", "a1", "d1");
         entry.view_bookmarks.record("w:t1", "a9", "d7");
         entry.view_bookmarks.record("w:t2", "a1", "d1");
+        entry.view_visibility.insert("w:t1".to_owned(), true);
+        entry.view_visibility.insert("w:t2".to_owned(), false);
         save(&path, &views).unwrap();
 
         let (loaded, outcome) = load(&path, 1);
-        let bookmarks = &loaded.get("local", "/repo").unwrap().view_bookmarks;
+        let entry = loaded.get("local", "/repo").unwrap();
+        let bookmarks = &entry.view_bookmarks;
         assert_eq!(
             bookmarks.of("w:t1").unwrap().len(),
             1,
             "the area a9 is gone"
         );
         assert_eq!(bookmarks.of("w:t2").unwrap().get("a1").unwrap(), "d1");
+        assert_eq!(entry.view_visibility.get("w:t1"), Some(&true));
+        assert_eq!(entry.view_visibility.get("w:t2"), Some(&false));
         assert_eq!(
             outcome,
             LoadOutcome::Loaded {
@@ -1037,12 +1052,24 @@ mod tests {
                 .unwrap()
                 .contains("view_bookmarks")
         );
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("view_visibility")
+        );
         let (reloaded, outcome) = load(&path, 2);
         assert!(
             reloaded
                 .get("local", "/repo")
                 .unwrap()
                 .view_bookmarks
+                .is_empty()
+        );
+        assert!(
+            reloaded
+                .get("local", "/repo")
+                .unwrap()
+                .view_visibility
                 .is_empty()
         );
         assert_eq!(

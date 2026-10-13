@@ -1,8 +1,8 @@
 //! Agent tab View bookmarks at runtime (PRD tab-view-bookmark).
 //!
 //! A View area is shared by every Agent tab of a Workspace; each tab only
-//! remembers, per area, the display that was in front while it was the active
-//! tab (`WorkspaceView::view_bookmarks`). One pass, `track_view_bookmarks`,
+//! remembers its File Views visibility and, per area, the display that was
+//! in front while it was the active tab. One pass, `track_view_bookmarks`,
 //! keeps that memory: it runs inside `sync_workspace_view`, which follows
 //! every event that can move the screen and precedes every snapshot read, so
 //! a tab that becomes visible by any path (an event, Herdr's own focus
@@ -12,8 +12,8 @@
 //!
 //! - Restore: the active Agent tab was not shown in any Agent area of the
 //!   Workspace at the previous pass. Each area that still holds the bookmarked
-//!   display shows it; nothing opens, closes or splits, and neither the area
-//!   in use, the panel nor the keyboard moves (D-01, D-03, D-12).
+//!   display shows it and File Views takes the tab's remembered visibility.
+//!   Nothing opens, closes or splits, and the area in use and Tools stay put.
 //! - Record: the active tab is the one of the previous pass and an area's
 //!   front changed, so the new front is that tab's bookmark (D-04).
 //!
@@ -33,11 +33,22 @@ pub(super) struct Seen {
     shown: Vec<String>,
     active: Option<String>,
     fronts: Vec<(String, String)>,
+    views: bool,
+    called: u64,
 }
 
 impl Seen {
-    fn is(&self, shown: &[&str], active: Option<&str>, fronts: &[(&str, &str)]) -> bool {
+    fn is(
+        &self,
+        shown: &[&str],
+        active: Option<&str>,
+        fronts: &[(&str, &str)],
+        views: bool,
+        called: u64,
+    ) -> bool {
         self.active.as_deref() == active
+            && self.views == views
+            && self.called == called
             && self
                 .shown
                 .iter()
@@ -72,6 +83,8 @@ struct Plan {
     active: Option<String>,
     restore: Vec<String>,
     record: Vec<(String, String)>,
+    restore_views: Option<bool>,
+    called: u64,
 }
 
 impl Runtime {
@@ -119,11 +132,23 @@ impl Runtime {
         let stamp_now = unix_milliseconds();
         let mut layout_changed = false;
         let mut bookmarks_changed = false;
+        let mut visibility_changed = false;
+        let mut views = false;
         let mut fronts = Vec::new();
         // A Workspace with no stored entry has nothing to write and nothing
         // to remember, and observing it must not make one.
         if let Some(entry) = store.views.get_mut(&plan.key.0, &plan.key.1) {
+            if let Some(restore) = plan.restore_views {
+                let restore = restore && entry.layout.displays().next().is_some();
+                visibility_changed = entry.views != restore;
+                entry.views = restore;
+            }
+            views = entry.views;
             if let Some(active) = plan.active.as_deref() {
+                if entry.view_visibility.get(active).copied() != Some(views) {
+                    entry.view_visibility.insert(active.to_owned(), views);
+                    bookmarks_changed = true;
+                }
                 for (area, display) in &plan.record {
                     bookmarks_changed |= entry.view_bookmarks.record(active, area, display);
                 }
@@ -149,12 +174,14 @@ impl Runtime {
                 shown: plan.shown,
                 active: plan.active,
                 fronts,
+                views,
+                called: plan.called,
             },
         );
         if layout_changed {
             store.generation += 1;
         }
-        if layout_changed || bookmarks_changed {
+        if layout_changed || bookmarks_changed || visibility_changed {
             self.persist_workspace_views();
         }
         layout_changed
@@ -168,16 +195,27 @@ impl Runtime {
         let (shown, active) = self.agent_view_of(key);
         let view = store.views.get(&key.0, &key.1);
         let fronts = view.map(|view| fronts_of(&view.layout)).unwrap_or_default();
+        let views = view.is_some_and(|view| view.views);
+        let called = store.views_called.get(key).copied().unwrap_or(0);
         let seen = store.bookmark_seen.get(key);
-        if seen.is_some_and(|seen| seen.is(&shown, active, &fronts)) {
+        if seen.is_some_and(|seen| seen.is(&shown, active, &fronts, views, called)) {
             return None;
         }
         // D-03: only a tab that no Agent area showed before is restored.
         let newly_shown = active.is_some_and(|active| {
             seen.is_none_or(|seen| !seen.shown.iter().any(|tab| tab == active))
         });
+        // An explicit open or reveal wins over a hidden-tab memory when it
+        // brings another checkout forward in this same transition.
+        let called_now = called > seen.map_or(0, |seen| seen.called);
+        let restore_views = match (active, view) {
+            (Some(active), Some(view)) if newly_shown && !called_now => {
+                view.view_visibility.get(active).copied()
+            }
+            _ => None,
+        };
         let restore = match (active, view) {
-            (Some(active), Some(view)) if newly_shown => view
+            (Some(active), Some(view)) if newly_shown && !called_now => view
                 .view_bookmarks
                 .of(active)
                 .into_iter()
@@ -192,8 +230,9 @@ impl Runtime {
                 .collect(),
             _ => Vec::new(),
         };
-        // D-04: the same active tab as before, so a front that changed is the
-        // operator's (or an agent's) doing for this tab.
+        // An explicit open/reveal records its chosen fronts even on the
+        // first pass. Otherwise only a changed front of the same active tab
+        // is the operator's (or an agent's) doing for this tab (D-04).
         let record = match (active, seen) {
             (Some(active), Some(seen)) if seen.active.as_deref() == Some(active) => fronts
                 .iter()
@@ -205,6 +244,10 @@ impl Runtime {
                 })
                 .map(|(area, display)| ((*area).to_owned(), (*display).to_owned()))
                 .collect(),
+            (Some(_), _) if called_now => fronts
+                .iter()
+                .map(|(area, display)| ((*area).to_owned(), (*display).to_owned()))
+                .collect(),
             _ => Vec::new(),
         };
         Some(Plan {
@@ -213,6 +256,8 @@ impl Runtime {
             active: active.map(str::to_owned),
             restore,
             record,
+            restore_views,
+            called,
         })
     }
 
@@ -349,10 +394,15 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return false;
         };
-        store
-            .views
-            .get_mut(&key.0, &key.1)
-            .is_some_and(|entry| entry.view_bookmarks.retain_tabs(|tab| tabs.contains(&tab)))
+        let Some(entry) = store.views.get_mut(&key.0, &key.1) else {
+            return false;
+        };
+        let before = entry.view_visibility.len();
+        entry
+            .view_visibility
+            .retain(|tab, _| tabs.contains(&tab.as_str()));
+        entry.view_bookmarks.retain_tabs(|tab| tabs.contains(&tab))
+            || before != entry.view_visibility.len()
     }
 }
 
