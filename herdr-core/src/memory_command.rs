@@ -333,7 +333,7 @@ impl PreparedMemory {
                 }
                 crate::diagnostic!(json!({
                     "component": "memory",
-                    "kind": "promotion.outdated",
+                    "kind": if skipped { "promotion.skipped" } else { "promotion.outdated" },
                     "project_id": identity.id,
                     "card": number,
                     "reason_chars": reason.chars().count(),

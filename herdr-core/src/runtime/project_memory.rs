@@ -439,6 +439,13 @@ impl Runtime {
         let project_id = self.project_memory.project_id.clone().unwrap_or_default();
         let mut rows = load.rows;
         let mut questions = Vec::new();
+        let closed = load
+            .promotions
+            .iter()
+            .filter_map(|(number, promotion)| {
+                (promotion.state == hide_memory::PromotionState::ClosedUnmerged).then_some(*number)
+            })
+            .collect::<std::collections::HashSet<_>>();
         let mut open = false;
         for (number, promotion) in &load.promotions {
             open |= matches!(
@@ -463,7 +470,9 @@ impl Runtime {
         }
         questions.extend(rows.iter().filter_map(|row| {
             let document = row.document_comparison.as_ref()?;
-            if document.authority == hide_memory::DocumentAuthority::Outdated
+            if matches!(row.kind, MemoryCardKind::Fact | MemoryCardKind::Preference)
+                || document.authority == hide_memory::DocumentAuthority::Outdated
+                || closed.contains(&row.number)
                 || row.promotion.as_ref().is_some_and(|promotion| {
                     matches!(
                         promotion.state,
@@ -1324,10 +1333,129 @@ mod tests {
             "a fact is never suggested, an open pull request asks nothing"
         );
         assert_eq!(project.usable_cards, 4);
-        MemoryStore::open(&database)
-            .unwrap()
-            .set_enabled(&identity.id, false, false)
+        let mut store = MemoryStore::open(&database).unwrap();
+        // D08 permits rule/lesson/decision corrections, never an unsupported
+        // Fact action. Its comparison remains readable and withheld (D04).
+        for number in [2, 3] {
+            store
+                .set_promotion(
+                    &identity.id,
+                    number,
+                    &promotion(PromotionState::Dismissed, None),
+                )
+                .unwrap();
+        }
+        for authority in [
+            hide_memory::DocumentAuthority::CardNewer,
+            hide_memory::DocumentAuthority::Ask,
+        ] {
+            for number in 1..=4 {
+                store
+                    .set_document_comparison(
+                        &identity.id,
+                        number,
+                        1,
+                        &hide_memory::DocumentComparison {
+                            authority,
+                            document: "AGENTS.md".into(),
+                            document_text: "Repository rule".into(),
+                            document_at_unix_ms: None,
+                            operator_text: "Operator decision".into(),
+                            operator_at_unix_ms: Some(1),
+                            source_session: Some("s-1".into()),
+                        },
+                    )
+                    .unwrap();
+            }
+            let load = load_opened_memory(
+                &crate::node::test_node(),
+                node.as_ref(),
+                &database,
+                &root,
+                Some(4),
+                None,
+            )
             .unwrap();
+            assert!(
+                load.expanded
+                    .as_ref()
+                    .unwrap()
+                    .document_comparison
+                    .is_some()
+            );
+            let generation = runtime.project_memory.reads.begin().unwrap();
+            assert!(runtime.ingest_project_memory(generation, Ok(load)));
+            let project = runtime
+                .snapshot
+                .memory
+                .as_ref()
+                .unwrap()
+                .project
+                .as_ref()
+                .unwrap();
+            let numbers = project
+                .questions
+                .iter()
+                .map(|question| match question {
+                    MemoryQuestionSnapshot::DocsDisagree { number, .. } => *number,
+                    _ => panic!("only eligible document questions"),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(numbers.len(), 3);
+            assert!(numbers.iter().all(|number| [1, 2, 3].contains(number)));
+            assert_eq!(project.usable_cards, 0);
+            assert!(
+                store
+                    .retrieve(&hide_memory::RetrievalQuery::prompt(
+                        &identity.id,
+                        "service port",
+                        vec![]
+                    ))
+                    .unwrap()
+                    .items
+                    .is_empty()
+            );
+        }
+        store
+            .set_promotion(
+                &identity.id,
+                1,
+                &promotion(PromotionState::ClosedUnmerged, Some(925)),
+            )
+            .unwrap();
+        let load = load_opened_memory(
+            &crate::node::test_node(),
+            node.as_ref(),
+            &database,
+            &root,
+            None,
+            None,
+        )
+        .unwrap();
+        let generation = runtime.project_memory.reads.begin().unwrap();
+        assert!(runtime.ingest_project_memory(generation, Ok(load)));
+        let project = runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap();
+        assert!(
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == 1)
+                .unwrap()
+                .promotion
+                .is_none()
+        );
+        assert!(!project.questions.iter().any(|question| matches!(
+            question,
+            MemoryQuestionSnapshot::DocsDisagree { number: 1, .. }
+        )));
+        store.set_enabled(&identity.id, false, false).unwrap();
         let load = load_opened_memory(
             &crate::node::test_node(),
             node.as_ref(),

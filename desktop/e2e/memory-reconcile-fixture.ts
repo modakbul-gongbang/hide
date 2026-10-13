@@ -20,6 +20,7 @@ for number,title,kind in cards:
     db.execute('INSERT INTO memory_sources(item_id,revision,provider,session_id,event_offset,content_hash,human,at_ms) VALUES(?,1,\'codex\',?,1,\'fixture\',1,?)',(item,session,now))
 for number,authority in [(2,'card_newer'),(3,'ask'),(4,'outdated'),(8,'card_newer')]:
   comparison=dict(authority=authority,document='AGENTS.md',document_text='Use one unpooled connection per write.',document_at_unix_ms=None if number==3 else now-86400000 if number==2 else now+86400000,operator_text='Use a pooled connection for all writes.',operator_at_unix_ms=now,source_session='fixture-source-one')
+  if number==4: comparison['document']='docs/architecture/repository-ownership-and-session-verification-guide.md'
   db.execute('INSERT INTO card_comparisons(item_id,revision,data) VALUES(?,1,?)',('fixture-m'+str(number),json.dumps(comparison)))
 for number in [9,10]:
   db.execute('INSERT INTO card_promotions(item_id,state,revision,attempt,branch,pr_number,target_path,started_at_ms,updated_at_ms) VALUES(?,\'pr_open\',1,1,\'fixture-shared-pr\',72,\'AGENTS.md\',?,?)',('fixture-m'+str(number),now,now))

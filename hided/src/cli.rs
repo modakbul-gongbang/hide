@@ -730,8 +730,12 @@ fn memory_text(
             text(&result["card"]),
             text(&result["path"])
         ),
-        MemoryCommand::Outdated { .. } | MemoryCommand::Skipped { .. } => format!(
+        MemoryCommand::Outdated { .. } => format!(
             "{} is marked outdated; Hide checks it again and this attempt ends without a pull request.\n",
+            text(&result["card"])
+        ),
+        MemoryCommand::Skipped { .. } => format!(
+            "{} returns to To ask with its reason. Other cards stay in the shared pull request; retry continues the same branch.\n",
             text(&result["card"])
         ),
         MemoryCommand::Search { .. } => {
@@ -2711,6 +2715,16 @@ mod tests {
             "m3 · rule · active · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nFiles: docs/TESTING.md\n"
         );
         let search = MemoryCommand::Search { words: "x".into() };
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Skipped {
+                    number: 6,
+                    reason: "Guide unavailable".into()
+                },
+                &serde_json::json!({"card":"m6","outcome":"skipped"})
+            ),
+            "m6 returns to To ask with its reason. Other cards stay in the shared pull request; retry continues the same branch.\n"
+        );
         assert_eq!(
             memory_text(&search, &serde_json::json!({"cards": []})),
             "No card matches.\n"

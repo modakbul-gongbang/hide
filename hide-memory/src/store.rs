@@ -209,9 +209,11 @@ pub struct ApplyOptions {
     /// The evidence of each candidate, by its index; a candidate with none
     /// is verified when written and rests on nothing the node can check.
     pub evidence: Vec<Vec<Evidence>>,
-    /// Extraction checks duplicates only; new project claims wait for the
-    /// existing document-aware verification before they can be injected.
-    pub document_check_pending: bool,
+    /// Creation's bounded document verdicts, by candidate index. Conflicts
+    /// are withheld atomically with the new card, without another call.
+    pub document_comparisons: Vec<Option<crate::DocumentComparison>>,
+    /// A changed existing claim uses the established re-verification queue.
+    pub reverify_superseded: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1241,7 +1243,7 @@ impl MemoryStore {
             "SELECT COUNT(*) FROM (SELECT 1 FROM memory_items i \
              JOIN projects p ON p.id=i.project_id \
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-             LEFT JOIN card_promotions c ON c.item_id=i.id \
+             LEFT JOIN card_promotions c ON c.item_id=i.id AND c.revision=i.current_revision \
              WHERE p.enabled=1 AND p.disclosure_version=?1 AND (?2 IS NULL OR i.project_id=?2) \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND i.lifecycle='active' AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?3) \
@@ -1373,9 +1375,17 @@ impl MemoryStore {
                         options.evidence.get(index).map_or(&[], Vec::as_slice),
                         batch.created_at_unix_ms,
                     )?;
-                    if options.document_check_pending && candidate.kind != CandidateKind::Preference
+                    if let Some(comparison) = options
+                        .document_comparisons
+                        .get(index)
+                        .and_then(Option::as_ref)
                     {
-                        transaction.execute("UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id=?1 AND revision=1", [&item_id])?;
+                        let data = serde_json::to_string(comparison)
+                            .map_err(|error| MemoryError::InvalidState(error.to_string()))?;
+                        transaction.execute(
+                            "INSERT INTO card_comparisons(item_id,revision,data) VALUES(?1,1,?2)",
+                            params![item_id, data],
+                        )?;
                     }
                     live_count += 1;
                     summary.created += 1;
@@ -1445,8 +1455,7 @@ impl MemoryStore {
                         options.evidence.get(index).map_or(&[], Vec::as_slice),
                         batch.created_at_unix_ms,
                     )?;
-                    if options.document_check_pending && candidate.kind != CandidateKind::Preference
-                    {
+                    if options.reverify_superseded && candidate.kind != CandidateKind::Preference {
                         transaction.execute("UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id=?1 AND revision=?2", params![target_id,revision])?;
                     }
                     reindex(&transaction, &batch.project_id, target_id, &card)?;
@@ -1852,7 +1861,7 @@ impl MemoryStore {
     pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
             "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure \
-             FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 ORDER BY i.number",
+             FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 AND (p.state NOT IN ('merged','closed_unmerged') OR p.revision=i.current_revision) ORDER BY i.number",
         )?;
         let rows = statement
             .query_map([project_id], |row| {
@@ -2088,7 +2097,7 @@ impl MemoryStore {
                 numbers.push(*number);
             }
             let current: u64 = transaction.query_row("SELECT current_revision FROM memory_items WHERE project_id=?1 AND number=?2 AND lifecycle='active'", params![project_id, number], |row| row.get(0))?;
-            let moving: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE i.project_id=?1 AND i.number=?2 AND c.state IN ('running','pr_open','merged'))", params![project_id, number], |row| row.get(0))?;
+            let moving: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE i.project_id=?1 AND i.number=?2 AND (c.state IN ('running','pr_open') OR (c.state='merged' AND c.revision=i.current_revision)))", params![project_id, number], |row| row.get(0))?;
             if moving
                 || current != promotion.revision
                 || promotion.branch.as_deref() != Some(branch)
@@ -2191,7 +2200,7 @@ impl MemoryStore {
              (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id \
               WHERE rii.item_id=i.id AND ir.turn_id='show' AND ir.created_at_ms>=?2) AS pulled \
              FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-             LEFT JOIN card_promotions p ON p.item_id=i.id \
+             LEFT JOIN card_promotions p ON p.item_id=i.id AND (p.revision=i.current_revision OR p.state IN ('running','pr_open')) \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','lesson') AND r.verified_at_ms IS NOT NULL \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND ((i.promotion_ok_revision IS i.current_revision)=?6) \
              AND (?6 OR i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?7) \
@@ -2227,7 +2236,7 @@ impl MemoryStore {
         number: u64,
     ) -> Result<Option<crate::DocumentComparison>, MemoryError> {
         let data: Option<String> = self.connection.query_row(
-            "SELECT c.data FROM card_comparisons c JOIN memory_items i ON i.id=c.item_id AND i.current_revision=c.revision LEFT JOIN card_promotions p ON p.item_id=i.id WHERE i.project_id=?1 AND i.number=?2 AND (p.state IS NULL OR p.state!='merged')",
+            "SELECT c.data FROM card_comparisons c JOIN memory_items i ON i.id=c.item_id AND i.current_revision=c.revision LEFT JOIN card_promotions p ON p.item_id=i.id AND p.revision=i.current_revision WHERE i.project_id=?1 AND i.number=?2 AND (p.state IS NULL OR p.state!='merged')",
             params![project_id, number], |row| row.get(0)).optional()?;
         data.map(|data| {
             serde_json::from_str(&data)
@@ -2374,7 +2383,7 @@ impl MemoryStore {
             "SELECT i.id,i.number,i.current_revision,r.kind,r.title,r.body,r.aliases,r.cited_paths,i.outdated_reason FROM memory_items i \
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.verified_at_ms IS NULL \
-             AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged') \
+             AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged') \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?2) \
              ORDER BY i.pull_count DESC,i.number LIMIT ?3",
@@ -2670,7 +2679,7 @@ impl MemoryStore {
     fn index(&self, project_id: &str, limit: usize) -> Result<Vec<InjectedItem>, MemoryError> {
         let mut statement = self.connection.prepare(
             "SELECT i.id,i.number,r.revision,r.title,p.target_path,p.pr_number FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-             LEFT JOIN card_promotions p ON p.item_id=i.id AND p.state='merged' \
+             LEFT JOIN card_promotions p ON p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged' \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson','preference') AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision AND p.item_id IS NULL) AND (r.verified_at_ms IS NOT NULL OR p.item_id IS NOT NULL) ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
         )?;
         Ok(statement
@@ -2877,7 +2886,7 @@ impl MemoryStore {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 AND (?4=0 OR (r.verified_at_ms IS NOT NULL AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged'))) ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
+        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 AND (?4=0 OR (r.verified_at_ms IS NOT NULL AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged'))) ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
         let mut candidates = statement
             .query_map(
                 params![project_id, query.fts_expression(), limit as u64, given],
@@ -3085,7 +3094,7 @@ COMMIT;"#,
         let current: u32 =
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if current == 11 {
-            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id NOT IN (SELECT item_id FROM card_promotions WHERE state='merged'); PRAGMA user_version=12;")?;
+            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL WHERE NOT EXISTS (SELECT 1 FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE p.item_id=memory_revisions.item_id AND p.revision=i.current_revision AND p.state='merged'); PRAGMA user_version=12;")?;
         }
         transaction.commit()?;
         version = 12;
@@ -3671,7 +3680,7 @@ const ITEM_SELECT: &str = "SELECT i.id,i.project_id,i.number,r.title,r.aliases,r
 (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id WHERE rii.item_id=i.id),\
 i.pull_count,i.last_used_at_ms,\
 i.confidence,i.salience,i.created_at_ms,i.updated_at_ms,r.cited_paths,\
-(r.verified_at_ms IS NULL AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged') AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision)) \
+(r.verified_at_ms IS NULL AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged') AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision)) \
 FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision";
 
 /// A card's text as stored: body, index line and aliases, each checked.
@@ -4483,6 +4492,118 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             session_id: session_id.to_owned(),
             ..batch(project, id, id)
         }
+    }
+
+    #[test]
+    fn a_merged_pointer_belongs_only_to_the_revision_it_describes() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "first", "first"),
+                &[candidate("Run tests before lint", CandidateRelation::New)],
+            )
+            .unwrap();
+        let item = store.item_by_number(&project, 1).unwrap().unwrap();
+        store
+            .set_promotion(
+                &project,
+                1,
+                &Promotion {
+                    state: PromotionState::Merged,
+                    revision: 1,
+                    attempt: 1,
+                    agent_id: None,
+                    branch: None,
+                    pr_number: None,
+                    target_path: Some("AGENTS.md".into()),
+                    started_at_unix_ms: 100,
+                    updated_at_unix_ms: 100,
+                    failure: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items[0]
+                .text
+                .contains("AGENTS.md")
+        );
+        let newer = Candidate {
+            source_times: BTreeMap::from([(7, 200)]),
+            ..candidate(
+                "Run lint before tests",
+                CandidateRelation::Supersedes { target_id: item.id },
+            )
+        };
+        store
+            .apply_candidates_with(
+                &batch(&project, "next", "next"),
+                &[newer],
+                &ApplyOptions {
+                    reverify_superseded: true,
+                    ..ApplyOptions::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert_eq!(store.pending_cards(&project, 1000, 4).unwrap().len(), 1);
+        assert_eq!(store.due_checks(Some(&project), 1000, 4).unwrap(), 1);
+        assert!(store.promotions(&project).unwrap().is_empty());
+        for query in [
+            RetrievalQuery::session_start(&project),
+            RetrievalQuery::prompt(&project, "run lint tests", vec![]),
+        ] {
+            assert!(store.retrieve(&query).unwrap().items.is_empty());
+        }
+        let comparison = crate::DocumentComparison {
+            authority: crate::DocumentAuthority::Ask,
+            document: "AGENTS.md".into(),
+            document_text: "Run tests before lint".into(),
+            document_at_unix_ms: None,
+            operator_text: "Run lint before tests".into(),
+            operator_at_unix_ms: Some(200),
+            source_session: Some("session-1".into()),
+        };
+        assert!(
+            store
+                .set_document_comparison(&project, 1, 2, &comparison)
+                .unwrap()
+        );
+        assert_eq!(
+            store.document_comparison(&project, 1).unwrap(),
+            Some(comparison)
+        );
+        assert!(store.pending_cards(&project, 1000, 4).unwrap().is_empty());
+        // Its earlier merged revision cannot block a correction of revision 2.
+        store
+            .set_promotion_batch(
+                &project,
+                "correction-r2",
+                &[(
+                    1,
+                    Promotion {
+                        state: PromotionState::Running,
+                        revision: 2,
+                        attempt: 2,
+                        agent_id: None,
+                        branch: Some("correction-r2".into()),
+                        pr_number: None,
+                        target_path: None,
+                        started_at_unix_ms: 1000,
+                        updated_at_unix_ms: 1000,
+                        failure: None,
+                    },
+                )],
+            )
+            .unwrap();
     }
 
     #[test]

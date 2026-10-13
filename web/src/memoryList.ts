@@ -21,7 +21,7 @@ export function memoryCards(project: ProjectMemory): MemoryRow[] {
     const byNumber = new Map(project.rows.map((row) => [row.number, row]));
     return project.search.numbers.flatMap((number) => byNumber.get(number) ?? []);
   }
-  return project.rows.filter((row) => !asked.has(row.number) && (row.number === project.expanded?.number || !(row.promotion?.state === "pr_open" && row.promotion.pr_number != null)));
+  return project.rows.filter((row) => !asked.has(row.number) && (row.number === project.expanded?.number || !["running", "unconfirmed", "pr_open"].includes(row.promotion?.state ?? "")));
 }
 
 /**
@@ -80,6 +80,11 @@ export function memoryPullRequests(project: ProjectMemory): { number: number; ca
     groups.set(row.promotion.pr_number, cards);
   }
   return [...groups].map(([number, cards]) => ({ number, cards: cards.sort((a, b) => a - b) }));
+}
+
+/** The existing durable lifecycle, including attempts started before upgrade. */
+export function memoryInProgress(project: ProjectMemory): MemoryRow[] {
+  return project.rows.filter((row) => row.promotion?.state === "running" || row.promotion?.state === "unconfirmed");
 }
 
 export function selectableMemoryQuestions(project: ProjectMemory): Set<number> {

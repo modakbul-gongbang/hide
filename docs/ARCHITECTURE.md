@@ -189,9 +189,12 @@ Preferences stay injectable but never become repository pointers or promotion ca
 An Undo of any of these verdicts restores the old text as verified and drops the evidence rows of that revision, so the evidence walk does not unverify it again at once.
 An `in_docs` answer naming a file the request did not carry is refused.
 
-Before writing new non-preference candidates, the worker searches the same bounded repository documents without a model and groups lexical matches into one duplicate-only call (`project_memory_creation_docs`).
+Before writing new non-preference candidates, the worker searches the same bounded repository documents without a model and groups lexical matches into one comparison call (`project_memory_creation_docs`).
 Each candidate carries one excerpt of at most 3 KiB; the complete request is trimmed or omitted to stay within 15% of that extraction request's input characters and bytes.
 A candidate already said in a document is discarded and counted in the diagnostic log.
+That same creation answer classifies each sent candidate as same, differs or unrelated; a differing claim is written atomically with its comparison, with dates read from the node and no initial re-verification call.
+An unrelated claim remains ordinary; an existing claim whose revision changes uses the established re-verification queue.
+Merged pointers apply only to the revision they describe, so a changed claim is checked instead of inheriting its older pointer.
 A session makes at most two new cards in all, counted across the groups and passes that analyzed it (`new_card_limit`; `hide memory add` has none), and a session with fewer than three operator events makes none and asks no provider (D-02, D-03).
 The operator's events are the session's `human` events; in a session some agent started, which the coordination ledger records with a `parent` (a handoff has an `origin` and is the operator's), they are sent as `parent_agent` instead (D-04); such a session counts no operator events, so it makes no cards.
 

@@ -536,13 +536,19 @@ A newer operator decision offers `Fix the doc` and `Card is wrong`; unknown or e
 Choosing the document marks the card Outdated; choosing the card turns the row into a document correction proposal.
 Eligible rows have checkboxes; selecting one to five shows `N selected · up to 5 per PR`, `Clear` and `Open one PR`, and at five the other checkboxes are disabled.
 The row's single-card action uses the same batch path.
-Successfully placed cards with one confirmed PR number leave To ask and group under one clickable `In PR <number>` row, opening the shell's existing PR panel.
+While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
+Promotion reasons omit zero counts and use short source-session counts.
+Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision, or a quiet unknown-review label until read.
+This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
+Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
 A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
-A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
+An expanded or searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears.
+Once merged, its ordinary card dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`.
 A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
+Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
 An Outdated comparison dims its card and names the document and its date, asks nothing and is excluded from injection.
 A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
 The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.

@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use hide_ai::{AiError, AiRouter, CancelToken};
+use hide_ai::{AiError, AiRequest, AiRouter, CancelToken};
 use hide_memory::{
     DOCUMENT_EXCERPT_BYTES, DOCUMENT_LIMIT, EXCERPT_SOURCE_BYTES, Excerpt, FILE_EXCERPT_BYTES,
     GLOBAL_EXCERPT_BYTES, GLOBAL_LIMIT, MemoryStore, PROMOTION_CHECKS_PER_PASS, PendingCard,
@@ -96,6 +96,29 @@ fn excerpts(sources: &[Source], words: &[String], limit: usize) -> Vec<Excerpt> 
         .collect()
 }
 
+/// Only text that survived the request's redaction and whole-input cap can
+/// support a repository answer. Loaded files omitted by the cap are unseen.
+fn sent_documents(request: &AiRequest, key: &str, sources: &[Source]) -> Vec<Excerpt> {
+    let input: serde_json::Value =
+        serde_json::from_str(&request.input).expect("the request builder serialized its own input");
+    input[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry["path"].as_str()?;
+            sources
+                .iter()
+                .any(|source| source.path == path)
+                .then(|| Excerpt {
+                    path: path.into(),
+                    text: entry["text"].as_str().unwrap_or_default().into(),
+                    truncated: entry["truncated"].as_bool().unwrap_or(true),
+                })
+        })
+        .collect()
+}
+
 /// Asks about the Project's unverified cards one by one, at most
 /// [`REVERIFY_PER_PASS`] a pass, and applies each answer: a card that holds
 /// goes back to the index with its evidence taken again, an outdated one gets
@@ -159,6 +182,7 @@ pub(super) fn reverify_pending(
             &files,
         )
         .map_err(|error| local(error.to_string()))?;
+        let sent_repository = sent_documents(&request, "files", &repository);
         let verdict = router.execute(&request, cancel).and_then(|answer| {
             parse_verification(&answer.value)
                 .map_err(|error| AiError::InvalidOutput(error.to_string()))
@@ -206,7 +230,9 @@ pub(super) fn reverify_pending(
             Verification::Gone => store.forget_checked(project_id, &card.item_id, card.revision),
             Verification::InDocs { document } => {
                 if card.kind != hide_memory::CandidateKind::Preference
-                    && repository.iter().any(|source| source.path == *document)
+                    && sent_repository
+                        .iter()
+                        .any(|source| source.path == *document)
                 {
                     let item = store
                         .item_by_number(project_id, card.number)
@@ -228,7 +254,7 @@ pub(super) fn reverify_pending(
                 card.number,
                 card.revision,
                 root,
-                &repository,
+                &sent_repository,
                 document,
                 quote,
             ),
@@ -395,11 +421,6 @@ pub(super) fn check_before_suggestion(
     }
     let repository = repository_sources(node, facts, root);
     let global = global_sources(node, home);
-    let known = repository
-        .iter()
-        .chain(&global)
-        .map(|document| document.path.clone())
-        .collect::<Vec<_>>();
     for suggestion in due {
         if cancel.is_cancelled() {
             return Err(AnalysisFailure::Cancelled);
@@ -437,6 +458,12 @@ pub(super) fn check_before_suggestion(
             &excerpts(&global, &words, GLOBAL_EXCERPT_BYTES),
         )
         .map_err(|error| local(error.to_string()))?;
+        let sent_repository = sent_documents(&request, "documents", &repository);
+        let known = sent_repository
+            .iter()
+            .chain(&sent_documents(&request, "global", &global))
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>();
         let verdict = router.execute(&request, cancel).and_then(|answer| {
             parse_promote_check(&answer.value, &known)
                 .map_err(|error| AiError::InvalidOutput(error.to_string()))
@@ -470,7 +497,7 @@ pub(super) fn check_before_suggestion(
                     item.number,
                     item.revision,
                     root,
-                    &repository,
+                    &sent_repository,
                     &document,
                     &quote,
                 )
@@ -567,7 +594,7 @@ fn apply_disagreement(
     number: u64,
     revision: u64,
     root: &str,
-    documents: &[Source],
+    documents: &[Excerpt],
     document: &str,
     quote: &str,
 ) -> Result<bool, hide_memory::MemoryError> {
@@ -585,19 +612,6 @@ fn apply_disagreement(
     let human_source = store.current_human_source(project_id, number)?;
     let human = human_source.as_ref();
     let operator_at = human.and_then(|source| source.at_unix_ms);
-    let document_at = crate::node_access::call_as::<String>(
-        node,
-        hide_node_link::protocol::Call::Git {
-            root: root.into(),
-            command: hide_node_link::git::GitCommand::DocumentTime {
-                path: source.path.clone(),
-            },
-        },
-        std::time::Duration::from_secs(10),
-    )
-    .ok()
-    .and_then(|date| date.trim().parse::<u64>().ok())
-    .and_then(|date| date.checked_mul(1000));
     let operator_text = human
         .and_then(|human| original_words(store, node, project_id, human))
         .unwrap_or_default();
@@ -605,16 +619,52 @@ fn apply_disagreement(
         project_id,
         number,
         revision,
-        &hide_memory::DocumentComparison {
-            authority: hide_memory::DocumentAuthority::by_dates(operator_at, document_at),
-            document: document.into(),
-            document_text: quote.into(),
-            document_at_unix_ms: document_at,
+        &compare_document(
+            node,
+            root,
+            &source.path,
+            quote,
+            operator_at,
             operator_text,
-            operator_at_unix_ms: operator_at,
-            source_session: human.map(|source| source.session_id.clone()),
-        },
+            human.map(|source| source.session_id.clone()),
+        ),
     )
+}
+
+/// Dates come from the node, off the runtime lock. Creation and established
+/// rechecks use the same authority decision without another provider call.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compare_document(
+    node: &dyn NodeLink,
+    root: &str,
+    document: &str,
+    quote: &str,
+    operator_at: Option<u64>,
+    operator_text: String,
+    source_session: Option<String>,
+) -> hide_memory::DocumentComparison {
+    let document_at = crate::node_access::call_as::<String>(
+        node,
+        hide_node_link::protocol::Call::Git {
+            root: root.into(),
+            command: hide_node_link::git::GitCommand::DocumentTime {
+                path: document.into(),
+            },
+        },
+        std::time::Duration::from_secs(10),
+    )
+    .ok()
+    .and_then(|date| date.trim().parse::<u64>().ok())
+    .and_then(|date| date.checked_mul(1000));
+    hide_memory::DocumentComparison {
+        authority: hide_memory::DocumentAuthority::by_dates(operator_at, document_at),
+        document: document.into(),
+        document_text: quote.into(),
+        document_at_unix_ms: document_at,
+        operator_text,
+        operator_at_unix_ms: operator_at,
+        source_session,
+    }
 }
 
 fn original_words(
@@ -690,4 +740,130 @@ fn original_words(
         checkpoint = Some(next);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_reverification_accepts_only_paths_and_quotes_actually_sent() {
+        let temp = tempfile::tempdir().unwrap();
+        let node = hide_node::Local::new(Some(temp.path().join("home")));
+        let mut store = MemoryStore::open(&temp.path().join("memory.sqlite3")).unwrap();
+        store
+            .ensure_project("project", temp.path(), "local")
+            .unwrap();
+        store.set_enabled("project", true, true).unwrap();
+        store
+            .apply_candidates(
+                &hide_memory::AnalysisBatch {
+                    id: "fixture".into(),
+                    project_id: "project".into(),
+                    provider: "codex".into(),
+                    analysis_provider: "codex".into(),
+                    session_id: "fixture".into(),
+                    content_hash: "fixture".into(),
+                    created_at_unix_ms: 1,
+                },
+                &[hide_memory::Candidate {
+                    title: "Run tests".into(),
+                    text: "Run tests".into(),
+                    aliases: Vec::new(),
+                    kind: hide_memory::CandidateKind::Rule,
+                    confidence: 1.0,
+                    salience: 1.0,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: hide_memory::CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        let card = store.item_by_number("project", 1).unwrap().unwrap();
+        let pending = PendingCard {
+            item_id: card.id,
+            number: 1,
+            revision: 1,
+            kind: card.kind,
+            title: card.title,
+            body: card.body,
+            aliases: Vec::new(),
+            cited_paths: Vec::new(),
+            evidence: Vec::new(),
+            outdated_reason: None,
+        };
+        let repository = (0..5)
+            .map(|number| Source {
+                path: format!("docs/guide-{number}.md"),
+                text: format!("{}unseen quote", "x".repeat(9000)),
+                truncated: false,
+            })
+            .collect::<Vec<_>>();
+        let mut files = (0..5)
+            .map(|number| Excerpt {
+                path: format!("src/file-{number}.rs"),
+                text: "x".repeat(FILE_EXCERPT_BYTES),
+                truncated: false,
+            })
+            .collect::<Vec<_>>();
+        files.extend(excerpts(&repository, &[], DOCUMENT_EXCERPT_BYTES));
+        let request = verify_request("fixture", "project", &pending, &[], &files).unwrap();
+        let sent = sent_documents(&request, "files", &repository);
+        assert!(!sent.is_empty());
+        assert!(
+            sent.len() < repository.len(),
+            "the full input cap omits trailing documents"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|document| document.path == "docs/guide-4.md")
+        );
+        assert!(
+            !apply_disagreement(
+                &mut store,
+                &node,
+                "project",
+                1,
+                1,
+                "fixture",
+                &sent,
+                "docs/guide-4.md",
+                "x"
+            )
+            .unwrap()
+        );
+        assert!(
+            !apply_disagreement(
+                &mut store,
+                &node,
+                "project",
+                1,
+                1,
+                "fixture",
+                &sent,
+                &sent[0].path,
+                "unseen quote"
+            )
+            .unwrap()
+        );
+        assert!(store.document_comparison("project", 1).unwrap().is_none());
+        assert!(
+            apply_disagreement(
+                &mut store,
+                &node,
+                "project",
+                1,
+                1,
+                "fixture",
+                &sent,
+                &sent[0].path,
+                "xxxxx"
+            )
+            .unwrap()
+        );
+        assert!(store.document_comparison("project", 1).unwrap().is_some());
+    }
 }

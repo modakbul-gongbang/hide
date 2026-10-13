@@ -53,6 +53,9 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await tab.locator('[data-memory-select="1"]').click();
     await tab.locator('[data-memory-select="2"]').click();
     await expect(tab.locator('[data-memory-selection="2"]')).toBeVisible();
+    await expect(tab.locator('[data-memory-promote="1"]')).toHaveCount(0);
+    await expect(tab.locator('[data-memory-promote="2"]')).toHaveCount(0);
+    await expect(tab.locator('[data-memory-promote="3"]')).toBeVisible();
     await screenshot(page, "memory-two-selected-dark");
     await tab.locator('[data-memory-promote="3"]').click();
     await expect(tab.locator('[data-memory-select="3"]')).toBeEnabled();
@@ -70,6 +73,13 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await fitWindow(app, { width: 900, height: 760 });
     await showTool(page, "memory");
     await screenshot(page, "memory-compact-light-narrow");
+    // A narrow window can widen Tools in the responsive fallback. Prove
+    // the actual column minimum through its existing accessible divider.
+    await fitWindow(app, { width: 1440, height: 900 });
+    await showTool(page, "memory");
+    const divider = page.locator('[data-column-divider="tools"]');
+    for (let step = 0; step < 4; step++) await divider.press("ArrowRight");
+    await expect.poll(() => page.locator('[data-column="tools"]').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(260);
     for (const language of ["en", "ko", "zh-CN", "ja"]) {
       await page.locator("[data-open-settings]").click();
       await page.locator("[data-interface-language]").click();
@@ -79,7 +89,14 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
       await showTool(page, "memory");
       await expect.poll(() => tab.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await expect(tab.locator('[data-memory-pr-group="72"]')).toContainText("72");
-      await screenshot(page, `memory-narrow-${language}`);
+      await tab.locator('[data-memory-cards] [data-memory-card="4"]').scrollIntoViewIfNeeded();
+      await expect(tab.locator('[data-memory-outdated="4"]')).toContainText("docs/");
+      await screenshot(page, `memory-minimum-${language}`);
+      await tab.locator('[data-memory-compare="2"]').click();
+      await expect(tab.locator("[data-memory-comparison]")).toBeVisible();
+      await expect.poll(() => tab.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await screenshot(page, `memory-minimum-compare-${language}`);
+      await tab.locator('[data-memory-compare="2"]').click();
     }
     // Optional bounded interactive inspection of this same private daemon through Aside.
     const inspection = process.env.HIDE_MEMORY_INSPECTION_FILE;
