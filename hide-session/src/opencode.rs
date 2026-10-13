@@ -107,8 +107,13 @@ pub(crate) fn with_read<T>(home: &Path, read: impl FnOnce(&Connection) -> T) -> 
         std::sync::TryLockError::Poisoned(_) => "opencode_db_unreadable".to_owned(),
     })?;
     // Drop order matters: Source's raw handles close before this gate opens.
-    let source = crate::sqlite::Source::admit(home, &path)
-        .map_err(|_| "opencode_db_unreadable".to_owned())?;
+    let source = crate::sqlite::Source::admit(home, &path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            "opencode_db_busy".to_owned()
+        } else {
+            "opencode_db_unreadable".to_owned()
+        }
+    })?;
     let connection = crate::sqlite::open_readonly(
         &crate::sqlite::read_uri(&path, !source.checkpointed_wal).map_err(str::to_owned)?,
         OpenFlags::SQLITE_OPEN_READ_ONLY

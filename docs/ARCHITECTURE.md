@@ -901,7 +901,9 @@ Its private SQLite VFS allows only existing main and WAL files opened read-only,
 A nonempty WAL requires its existing shared-memory index and normal locking; a checkpointed WAL-mode main with absent or empty WAL uses an immutable read, with mmap disabled, while a rollback-mode database retains its normal locks.
 The reader holds the original source handles and records identities and change stamps for the main, companions and bounded ancestor chain; it closes the transaction and connection, validates every handle and name again, and only then returns the buffered result.
 A journal or concurrent source change refuses the read without repairing, copying or writing the provider's files.
-If a native-proof read is refused, the label worker revokes its previous proof and retries after its existing fifteen-second backoff, including OpenCode, without requiring another agent state report.
+An OpenCode transaction or changing companion returns a typed pending read, which retains established session proof but clears current-turn authority.
+The label worker makes one reread after fifteen seconds; a second pending answer logs `read.retry_capped` and waits for a real state/reference change, while a successful read resets the allowance.
+Definitive invalid-source refusals still revoke proof, and a changed requested owner never inherits it.
 OpenCode is referenced by id only; a path reference is refused feature-locally, and no path is ever turned into an id.
 A subagent's child session is never cataloged, searched, read into the root conversation or titled as it; the link graph alone reads it, as its own line under its parent (`Owner::Recorded`).
 `SessionFormat::requires_native_proof` (every native-file reader, and OpenCode) is the one predicate the core's lifecycle gates read: launch confirmation, durable sleep and wake, the proven-id sidebar rule, the fork's route proof and current-execution check (for either placement), task resume scope and resume arguments; `proof_reference_kind` says whether that proof names a path (Pi, omp, Grok, Cursor) or an id (OpenCode).

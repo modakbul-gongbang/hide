@@ -695,6 +695,7 @@ pub fn label_transcript(
     let transcript = hide_session::label_transcript::read(home, request).map_err(|reason| {
         let code = match reason.as_str() {
             "session_file_missing" => ErrorCode::NotFound,
+            "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
             "session_kind_unsupported" => ErrorCode::Unsupported,
             reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
             _ => ErrorCode::Io,

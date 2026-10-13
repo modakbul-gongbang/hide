@@ -159,7 +159,7 @@ impl Source {
             let held = match std::fs::symlink_metadata(&name) {
                 Ok(_) => {
                     if index == 3 {
-                        return Err(changed());
+                        return Err(std::io::ErrorKind::WouldBlock.into());
                     }
                     let file = crate::open_session_file_nofollow(&name)?;
                     if hide_platform::fs::identity::link_count(&file)? != 1 {
@@ -183,7 +183,7 @@ impl Source {
             files.push((name, held));
         }
         if wal && files[2].1.is_none() {
-            return Err(changed());
+            return Err(std::io::ErrorKind::WouldBlock.into());
         }
         let mut folders = Vec::new();
         for folder in path
