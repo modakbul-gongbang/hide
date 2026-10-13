@@ -260,7 +260,7 @@ impl Store {
         self.budget();
         let live: std::collections::HashSet<_> = live
             .iter()
-            .map(|candidate| candidate.path.as_path())
+            .map(|candidate| candidate.path.as_str())
             .collect();
         let tx = self.connection.transaction().map_err(failed)?;
         let paths = {
@@ -284,7 +284,7 @@ impl Store {
             return Err("usage_candidate_capacity");
         }
         for path in paths {
-            if !live.contains(Path::new(&path)) {
+            if !live.contains(path.as_str()) {
                 tx.execute(
                     "DELETE FROM cursors WHERE device=?1 AND agent=?2 AND path=?3",
                     params![device, agent.as_str(), path],
@@ -310,7 +310,7 @@ impl Store {
         if agent == Agent::Cursor || step.events.len() > BATCH_LIMIT {
             return Err("usage_batch_invalid");
         }
-        let path = candidate.path.to_str().ok_or("usage_path_invalid")?;
+        let path = candidate.path.as_str();
         valid_name(path, 4096)?;
         let stamp = encode(candidate)?;
         let checkpoint = encode(&step.checkpoint)?;

@@ -208,7 +208,7 @@ fn replay_copies_restart_and_changed_completed_values_never_add_twice() {
     );
     assert!(
         store
-            .checkpoint("node-a", Agent::Claude, source().path.to_str().unwrap())
+            .checkpoint("node-a", Agent::Claude, source().path.as_str())
             .unwrap()
             .is_some()
     );
@@ -338,7 +338,7 @@ fn batch_failure_rolls_back_totals_and_checkpoint_and_capacity_reports_a_limit()
     assert!(store.daily().unwrap().is_empty());
     assert!(
         store
-            .checkpoint("node-a", Agent::Claude, source().path.to_str().unwrap())
+            .checkpoint("node-a", Agent::Claude, source().path.as_str())
             .unwrap()
             .is_none()
     );

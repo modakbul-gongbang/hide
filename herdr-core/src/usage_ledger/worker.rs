@@ -378,10 +378,7 @@ impl Engine {
             let Some(candidate) = work.queue.pop_front() else {
                 return;
             };
-            let Some(path) = candidate.path.to_str() else {
-                work.fail("usage_path_invalid");
-                return;
-            };
+            let path = candidate.path.as_str();
             match self.store.checkpoint(&self.device, agent, path) {
                 Ok(saved) => {
                     if agent != Agent::OpenCode
@@ -408,7 +405,7 @@ impl Engine {
             own,
             Call::UsageRead {
                 agent,
-                path: candidate.path.to_string_lossy().into_owned(),
+                path: candidate.path.clone(),
                 checkpoint: checkpoint.clone(),
             },
             CALL_TIMEOUT,

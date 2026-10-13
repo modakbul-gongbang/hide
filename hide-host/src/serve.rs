@@ -1193,9 +1193,10 @@ pub fn handle_with_progress(
             checkpoint,
         } => {
             let home = env.home("usage_home_unavailable")?;
-            let step =
-                hide_session::usage::read(Path::new(&home), agent, Path::new(&path), checkpoint)
-                    .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            let path = hide_platform::path::from_wire(&path)
+                .map_err(|_| HostError::new(ErrorCode::InvalidPath, "usage_path_invalid"))?;
+            let step = hide_session::usage::read(Path::new(&home), agent, &path, checkpoint)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
             to_value(step)
         }
         Call::SessionIndexRead {

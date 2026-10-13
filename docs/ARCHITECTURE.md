@@ -756,6 +756,7 @@ It answers through hided's own core without a renderer, scoped by default to the
 ## Historical usage accounting
 
 `Call::UsageFiles` lists native candidates and `Call::UsageRead` returns one bounded, content-free usage step through the node boundary.
+Candidate and read paths use `hide_platform::path` wire spelling, converted to native paths only by the node that reads them.
 Both require the live link's independently advertised `ReaderFeature::Usage`; the node repeats that check before dispatch.
 This optional reader adds no protocol-version requirement: an older peer grants no usage reader and is refused before a call is sent.
 Cursor grants none, and protocol 24's frozen reader facts remain unchanged.

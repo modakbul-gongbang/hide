@@ -26,10 +26,14 @@ fn usage_node_reads_native_metadata_and_resumes_without_conversation_content() {
     )
     .unwrap();
     assert_eq!(listed.files.len(), 1);
-    assert_eq!(listed.files[0].path, path);
+    assert_eq!(
+        listed.files[0].path,
+        hide_platform::path::to_wire(&path).unwrap()
+    );
+    assert!(!listed.files[0].path.contains('\\'));
     let call = Call::UsageRead {
         agent: Agent::Claude,
-        path: path.to_string_lossy().into_owned(),
+        path: listed.files[0].path.clone(),
         checkpoint: None,
     };
     let wire = serde_json::to_value(&call).unwrap();
@@ -45,7 +49,7 @@ fn usage_node_reads_native_metadata_and_resumes_without_conversation_content() {
         handle_in(
             Call::UsageRead {
                 agent: Agent::Claude,
-                path: path.to_string_lossy().into_owned(),
+                path: listed.files[0].path.clone(),
                 checkpoint: Some(first.checkpoint),
             },
             &env,
@@ -60,7 +64,7 @@ fn usage_node_reads_native_metadata_and_resumes_without_conversation_content() {
     let refused = handle_in(
         Call::UsageRead {
             agent: Agent::Claude,
-            path: outside.to_string_lossy().into_owned(),
+            path: hide_platform::path::to_wire(&outside).unwrap(),
             checkpoint: None,
         },
         &env,

@@ -71,7 +71,8 @@ impl std::error::Error for Refusal {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Candidate {
-    pub path: PathBuf,
+    /// Absolute node-qualified spelling, normalized by hide-platform.
+    pub path: String,
     pub size: u64,
     pub modified_ms: u64,
 }
@@ -230,6 +231,10 @@ pub fn list(home: &Path, agent: Agent, since_ms: u64) -> Result<Candidates, Refu
                 out.capped = true;
                 break;
             }
+            let Ok(path) = hide_platform::path::to_wire(&path) else {
+                out.skipped += 1;
+                continue;
+            };
             out.files.push(Candidate {
                 path,
                 size: metadata.len(),
