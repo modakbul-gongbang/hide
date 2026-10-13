@@ -12,7 +12,8 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { runInPane, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { fixtureExecutable } from "../../web/e2e/platform-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, nodeOf, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
@@ -175,17 +176,13 @@ async function nativePageShot(url: string, name: string): Promise<void> {
   fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
 }
 
-function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-
 async function cliFromPane(args: string[], pane = herdr.panes[0]): Promise<Record<string, unknown>> {
-  const sequence = ++cliSequence;
-  const output = path.join(herdr.root, `desktop-cli-${sequence}.json`);
-  const status = path.join(herdr.root, `desktop-cli-${sequence}.status`);
-  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[path.resolve("..", "target", "debug", "hide"), ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", pane, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
-  expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).not.toBeNull();
-  return { status: Number(fs.readFileSync(status, "utf8")), ...(JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
+  const result = await runInPane(herdr, pane, `desktop-cli-${++cliSequence}`, {
+    env: { HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! },
+    argv: [path.resolve("..", "target", "debug", fixtureExecutable("hide")), ...args],
+    stdout: true,
+  });
+  return { status: result.status, ...(JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
 }
 
 function openFromCli(target: string, extra: string[] = []): Promise<Record<string, unknown>> {
@@ -207,7 +204,9 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
   return (await tab(page, text).getAttribute("data-display"))!;
 }
 
-test("browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller", async () => {
+// The native child-view lifetime is shared; the pane CLI uses cmd on Windows
+// and a POSIX shell elsewhere, through the same portable fixture boundary.
+test("browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller", { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   await fitWindow(app, { width: 1500, height: 900 });
   const page = await shellPage(app);
