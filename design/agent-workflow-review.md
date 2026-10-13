@@ -58,7 +58,8 @@ Numeric shortcuts follow the sidebar's drawn order and deduplicate repeated sess
 
 ## Pane header and focus
 
-The identity row is 28pt: child-only parent Return, status mark, provider, title, real session PR/CI, direct-child badge, Zoom, Menu and Close.
+The identity row is 28pt: child-only parent Return, status mark, provider, title, real session PR/CI, Zoom, Menu and Close.
+The approved B2 child total and state counts start the second-row terminal overlay, compacting to the total and operator-raised count beside an ask band; without a core band, the core-ranked child's existing line fills the remaining space.
 Shell panes carry only the shell mark, title and pane actions.
 The title truncates before retained facts and actions; the parent name becomes an icon first at narrow widths.
 Not connected, instrumentation uncertainty and the zoomed `+N` remain in this row.

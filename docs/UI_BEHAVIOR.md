@@ -334,7 +334,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-A pane header is a quiet identity row: the ancestor path, provider, title, the fork mark, the pane's own PR mark, the tree button, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+A pane header is a quiet identity row: the ancestor path, provider, title, the fork mark, the pane's own PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 Every place that draws an agent's mark (the pane header, the Agent tabs, the sidebar and Sessions rows, ⌘K and the recent-pane list, the link sessions, the Agents graph, the Overview lenses, the start picker and the footer's usage chips) draws the logo of that agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
@@ -345,20 +345,27 @@ The PR mark shows the pane's own PRs only, as Sessions draws them (below); a des
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
-The tree button, a tree icon and the direct child count with `자식 에이전트 N` as its tooltip, opens the tree popover (docs/status-model.md, The descendant mark and the tree popover).
-There is no status sentence, child-chip row or relationship sheet.
+The B2 tree button starts the second row over the terminal: a tree icon, the live direct child count, positive core state counts, and a chevron open the existing tree popover ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
+The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
+An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
+The tooltip and accessible name spell out every count, including those hidden by the compact form.
+If the parent or a known descendant's device is not connected, the button keeps the last topology total with a dim disconnected mark and its connection reason, and suppresses state totals and the representative activity line until the connection returns.
+When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space beside its provider.
+With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
-An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, `외 N건` for the other asks under this root, and Open.
-Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
+An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact child total and raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
+The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
+Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.
+The child button opens with the raised branches expanded whenever its core raised count is positive; `외 N건` remains only when this child button is unavailable, providing the same raised-tree access.
 Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge take its pull request's state colour (failed red, mergeable green, pending muted).
 Merge stands for a mergeable pull request and Review for a pending one, so a draft carries neither.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
-Working has a thin blue line; CI wait, waiting and idle have no band.
+Working has a thin blue line; CI wait, waiting and idle have no task band, although their children can fill the second row.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.
 Connection and sleep recovery controls stay in the body, and Not connected stays a chip.
-Bands overlay the terminal and change neither its viewport nor PTY grid.
+The child row and core bands share one overlay slot, with no third row, and change neither the terminal viewport nor PTY grid.
 Pending and failed moves appear at the initiating popover, ancestor step or band with the existing retry rules, plus the Agent-area notice when the source pane is no longer visible.
 
 The pane menu (from its overflow control or a right-click on the header) lists the parent and the other siblings as explicit Open items, then Copy pane name, Copy pane ID and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
