@@ -23,7 +23,7 @@ const SCHEMA_VERSION: i64 = 11;
 /// D-26), which now includes vendors other than the two it was limited to.
 const MEMORY_DISCLOSURE_VERSION: i64 = 3;
 /// One UTC day, the window the machine-wide analysis call count is kept in.
-const DAY_MS: u64 = 86_400_000;
+pub(crate) const DAY_MS: u64 = 86_400_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreMode {

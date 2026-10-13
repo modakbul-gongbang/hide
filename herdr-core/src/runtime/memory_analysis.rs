@@ -116,6 +116,7 @@ pub(super) struct MemoryWork {
 pub(super) struct ProjectMemoryWork {
     pub(super) analysis: MemoryAnalysisState,
     pub(super) checking_card: Option<u64>,
+    pub(super) check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which the Memory tab offers to
     /// bring back (B24).
     pub(super) forgotten: Option<u64>,
@@ -508,6 +509,7 @@ impl Runtime {
             {
                 project.analysis = MemoryAnalysisState::Idle;
                 project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 changed = true;
             }
         }
@@ -691,12 +693,16 @@ impl Runtime {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = state;
                 project.checking_card = card;
+                project.check_resume_at_unix_ms = (state
+                    == MemoryAnalysisState::CheckBudgetExhausted)
+                    .then(|| hide_memory::memory_call_reset_at(now));
             }
             PassReport::Checked { .. } => return false,
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = MemoryAnalysisState::Analyzing;
                 project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
             }
             PassReport::Analyzed {
                 project_id,
@@ -714,6 +720,7 @@ impl Runtime {
                 }
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 match &error {
                     Some(error) => {
                         project.failures = project.failures.saturating_add(1);
@@ -3050,6 +3057,7 @@ mod tests {
             fixture.project_id.clone(),
             ProjectMemoryWork {
                 analysis: MemoryAnalysisState::CheckBudgetExhausted,
+                check_resume_at_unix_ms: Some((yesterday + 1) * 86_400_000),
                 ..ProjectMemoryWork::default()
             },
         );
@@ -3060,6 +3068,47 @@ mod tests {
         assert_eq!(
             runtime.memory_work.projects[&fixture.project_id].analysis,
             MemoryAnalysisState::Idle
+        );
+        assert_eq!(fixture.calls(), 0);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn a_check_budget_hold_confirmed_by_this_pass_keeps_its_reset_time() {
+        let fixture = Fixture::new();
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        fixture.store().mark_unverified(&card.id, 1).unwrap();
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,500)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.apply_memory_report(PassReport::CheckState {
+            project_id: fixture.project_id.clone(),
+            state: MemoryAnalysisState::CheckBudgetExhausted,
+            card: None,
+        });
+        let resume = runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms;
+        assert_eq!(resume, Some((now_ms() / 86_400_000 + 1) * 86_400_000));
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::CheckBudgetExhausted
+        );
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            resume
         );
         assert_eq!(fixture.calls(), 0);
     }

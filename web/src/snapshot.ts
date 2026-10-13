@@ -1543,6 +1543,7 @@ export type ProjectMemory = {
   consent_required: boolean;
   usable_cards: number;
   checking_card: number | null;
+  check_resume_at_unix_ms: number | null;
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;

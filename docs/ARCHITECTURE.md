@@ -175,6 +175,7 @@ With no due cards, nothing is reserved; explicit `add` shares the same analysis 
 Migration preserves the earlier total and starts the new check count at zero, since earlier calls had no category, so the migration day can never exceed its remaining total.
 Each accepted card returns to injection as soon as its answer is stored; a later call's failure retains that progress.
 The worker reports the admitted card number and check-budget deferral into the snapshot, which also carries re-consent and the usable-card count; the web shell draws these facts in existing slots.
+The usable count is zero while the Project is disabled, and a budget hold carries its next UTC-day reset timestamp so the shell can format it in the viewer's timezone.
 Only a check-budget hold confirmed by the current pass survives its end, so a usage pause after a UTC reset cannot retain yesterday's hold.
 An earlier build rejects schema 11 with `WrongSchema`; rolling back the binary does not roll back this schema, and the database remains preserved.
 The provider (`project_memory_verify`, `hide-memory/src/verify.rs`) gets the card, the facts and excerpts of at most five cited files (8 KiB each, chosen by the sections that share words with the card when a file is longer), all locally redacted, and answers `valid`, `outdated` or `gone`: valid takes the evidence again and returns the card to the index, outdated writes the corrected text as the next revision of the same card with a change record that the card's Undo takes back, and gone forgets the card, which Undo takes back too.

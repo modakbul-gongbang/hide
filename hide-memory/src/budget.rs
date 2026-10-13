@@ -13,6 +13,13 @@ pub enum MemoryCallDeferral {
     ReservedForChecks,
 }
 
+/// The next reset of the same UTC-day counters admission reads.
+pub fn memory_call_reset_at(now_unix_ms: u64) -> u64 {
+    (now_unix_ms / crate::store::DAY_MS)
+        .saturating_add(1)
+        .saturating_mul(crate::store::DAY_MS)
+}
+
 pub(crate) fn deferral(
     total: u64,
     checks: u64,

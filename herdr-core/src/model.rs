@@ -2628,6 +2628,8 @@ pub struct ProjectMemorySnapshot {
     pub analysis: MemoryAnalysisState,
     /// Only the card admitted by the running check, never the whole backlog.
     pub checking_card: Option<u64>,
+    /// The UTC-day budget's next reset, drawn in the viewer's timezone.
+    pub check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which Undo brings back (B24).
     pub forgotten: Option<u64>,
     /// The operator's Memory action still running for this Project; another

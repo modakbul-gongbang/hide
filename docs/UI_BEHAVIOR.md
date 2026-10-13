@@ -534,12 +534,14 @@ A suggestion shows its reasons (`사람 말이 세션 3개에 · 14일 동안 �
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
 A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
-A card waiting to be checked against the repository again shows `확인 대기` in its existing status line; only the card the worker is checking shows `확인 중`.
-Exhausted checking calls show `오늘 확인 예산 소진`; a promotion keeps priority in that same status slot.
-When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one, or that the checking budget resumes on the next UTC day.
+A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
+When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.
+The core supplies the checking budget's next reset timestamp, and its explanation draws that date and time in the viewer's timezone and interface language, with no UTC wording.
+With Memory off, stored cards are retained but the list and its empty slot stay hidden behind the existing off disclosure, and the usable count is zero.
 An older consent shows a short re-consent explanation under the existing off disclosure and points to the switch above; it never enables or injects on its own.
 The core supplies the usable count, current card and reasons, and the shell only draws them; no banner, alert, toast or panel is added.
-The word is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
+The checking mark is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
 When the agent is gone and GitHub cannot say whether its pull request came (gh missing or logged out, or GitHub not answering), the line reads `PR 확인 못 함 · <reason>` with no spinner and nothing to press, since restoring GitHub settles it; it is not asked about in `물어볼 것`.
 A card on its way into the repository is never folded under `그 외 N`, and a card opened from a conversation clears a search that leaves it out.
 A card opens in place: `N분 전에 바뀜 · 이전 내용` when a text replaced another (the earlier text with `되돌리기`), its body, its cited files, its sources with their runtime, time and whether they are the operator's words, and `지우기`.
