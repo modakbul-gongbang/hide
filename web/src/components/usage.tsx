@@ -1,6 +1,6 @@
 // Account windows at the sidebar foot. The core owns reads and preferences;
 // this view formats typed outcomes and sends visibility hints.
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { ChartNoAxesCombinedIcon, SettingsIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
@@ -30,7 +30,7 @@ export function useUsageWindowHint(actions: Actions) {
   }, [actions, live]);
 }
 
-export function Usage({ actions }: { actions: Actions }) {
+export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const rows = useShellStore((s) => s.usage?.nodes[0]?.agents ?? NO_ROWS);
   const prefs = useShellStore((s) => s.rest?.ui_state?.usage ?? NO_PREFS);
@@ -75,7 +75,7 @@ export function Usage({ actions }: { actions: Actions }) {
       {node?.history ? <UsageHistory node={node} surface="popover" outline={outline} onHistory={() => { setOpen(false); actions.openUsageHistory(); }} /> : null}
     </PopoverContent>
   </Popover>;
-}
+});
 
 export function UsageWindows({ agent, cell, now, onOutline }: { agent: string; cell: LimitCell | undefined; now: number; onOutline?: (window: UsageOutline) => void }) {
   const { t } = useInterfaceTranslation();

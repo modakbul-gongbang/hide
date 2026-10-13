@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { AGENT_ADAPTERS } from "./agentAdapters";
@@ -10,7 +10,7 @@ import { useShellStore } from "./store";
 import { hasLimits } from "./usage";
 import { compactTokens, usageProvider } from "./usageHistory";
 
-export function UsageOverview({ actions }: { actions: Actions }) {
+export const UsageOverview = memo(function UsageOverview({ actions }: { actions: Actions }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   const node = useShellStore((s) => s.usage?.nodes[0]);
@@ -44,4 +44,4 @@ export function UsageOverview({ actions }: { actions: Actions }) {
     </div>
     {node.history ? <div className="usage-overview-history"><UsageHistory node={node} surface="year" outline={outline} /></div> : null}
   </div>;
-}
+});
