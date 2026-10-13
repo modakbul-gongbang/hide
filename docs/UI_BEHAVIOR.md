@@ -1775,6 +1775,7 @@ A legacy promotion whose original repository cannot be proven shows PR verificat
 Turning it off keeps existing cards.
 While the dialog is open its project owns the daemon's single Memory read slot, and the Tools project is restored when it closes.
 Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout and Memory tool; a delayed remote focus changes Tools only on arrival, and refusal leaves the earlier checkout's Tools unchanged.
+The shell waits for both the target checkout and its Memory tool before calling Tools into the narrow window's visible column slot.
 A newer explicit navigation cancels the delayed Memory choice so its later arrival cannot take the screen back.
 Without a usable checkout it gives a local recovery reason.
 All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.

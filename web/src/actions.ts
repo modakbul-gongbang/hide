@@ -1493,7 +1493,7 @@ export function createActions(send: DispatchFn) {
       const workspace = catalogWorkspaces(rest()).find((row) => row.id === workspaceId && row.device_id === deviceId);
       const checkout = workspace && deviceConnected(rest(), deviceId) ? projectCheckout(workspace, rest()?.ui_state?.recent_checkouts) : null;
       if (!checkout) return false;
-      beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId });
+      beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId, tool: "memory" });
       return dispatch({ schema_version: 2, kind: "project_memory_navigate", payload: { device_id: deviceId, workspace_id: workspaceId, checkout_id: checkout.id, request_id: crypto.randomUUID() } });
     },
 

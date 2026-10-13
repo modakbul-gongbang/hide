@@ -88,6 +88,9 @@ test("Project settings keep confirmed values through a failed save and restart",
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
     await expect(gear()).toBeFocused();
+    // CI's work area can leave room for only one Workspace column. Opening
+    // Memory must call Tools even when Agents would otherwise take that slot.
+    await fitWindow(app, { width: 1024, height: 681 });
     await gear().click();
     await sheet.getByRole("tab", { name: "Memory", exact: true }).click();
     await sheet.getByRole("button", { name: "Open project Memory" }).click();
