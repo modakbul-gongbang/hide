@@ -34,7 +34,7 @@ const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => (
 });
 const memory = (overrides: Partial<ProjectMemory> = {}): ProjectMemory => ({
   workspace_id: "p", unavailable: null, loading: false, enabled: true, capacity_reached: false,
-  rows: [row(3), row(7)], questions: [], analysis: "idle", forgotten: null, pending_action: null,
+  rows: [row(3), row(7)], questions: [], analysis: "idle", consent_required: false, usable_cards: 2, checking_card: null, check_resume_at_unix_ms: null, forgotten: null, pending_action: null,
   expanded: null, search: null, ...overrides,
 });
 
@@ -60,9 +60,11 @@ describe("the Memory tab", () => {
   });
 
   async function render(project: ProjectMemory | null, tool: "memory" | "explorer" = "memory") {
-    useShellStore.setState({ connection: "live", rest, memory: { project } });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>));
+    await act(async () => {
+      useShellStore.setState({ connection: "live", rest, memory: { project } });
+      root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>);
+    });
   }
   const sent = (kind: string) => events.filter((event) => event.kind === kind).map((event) => event.payload);
   const click = async (selector: string) => {
@@ -155,7 +157,7 @@ describe("the Memory tab", () => {
     expect(merged?.textContent).toContain("In the file · not injected");
   });
 
-  it("marks a card waiting to be checked in its status slot and nothing else, quietly", async () => {
+  it("explains waiting once above the list and dims the cards waiting for a check", async () => {
     await render(memory({
       rows: [
         row(3, { verifying: true }),
@@ -164,11 +166,56 @@ describe("the Memory tab", () => {
       ],
     }));
     const mark = container.querySelector("[data-memory-card='3'] [data-memory-verifying]");
-    expect(mark?.textContent).toBe("Checking");
+    expect(mark).toBeNull();
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("Unverified cards wait for a check");
+    expect(container.querySelector("[data-memory-card='3']")?.className).toContain("opacity-");
     expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
     // One status line at a time: a promotion that runs draws its own.
     expect(container.querySelector("[data-memory-card='9'] [data-memory-verifying]")).toBeNull();
     expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("Retry");
+  });
+
+  it("does not call cards already in repository documents a pending check", async () => {
+    await render(memory({ usable_cards: 0, rows: [row(3, { promotion: { state: "merged", agent: null, pr_number: 44, target_path: "AGENTS.md", github_failure: null } })] }));
+    expect(container.querySelector("[data-memory-empty]")).toBeNull();
+    expect(container.textContent).toContain("In the file · not injected");
+  });
+
+  it("marks only the running card as checking and explains zero usable cards", async () => {
+    await render(memory({ usable_cards: 0, analysis: "checking", checking_card: 3, rows: [row(3, { verifying: true }), row(7, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-card='3'] [data-memory-verifying]")?.textContent).toBe("Checking");
+    expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("Each card becomes available as it passes");
+  });
+
+  it("names the day's budget and leaves re-consent to the switch", async () => {
+    await render(memory({ usable_cards: 0, analysis: "check_budget_exhausted", check_resume_at_unix_ms: Date.UTC(2026, 9, 14), rows: [row(3, { verifying: true }), row(7, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("Checks resume from");
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-verifying]")).toBeNull();
+    expect(container.textContent).not.toContain("UTC");
+    await render(memory({ enabled: false, consent_required: true, usable_cards: 0 }));
+    expect(container.querySelector("[data-memory-consent]")?.textContent).toContain("agree again");
+    expect(container.querySelector("[data-memory-empty]")).toBeNull();
+    expect(container.querySelector("[data-memory-card]")).toBeNull();
+    expect(container.querySelector("[data-memory-checks]")).toBeNull();
+    expect(sent("memory_action")).toEqual([]);
+  });
+
+  it("draws the budget reset in the viewer's timezone, including a different calendar day", async () => {
+    const budget = memory({ usable_cards: 0, analysis: "check_budget_exhausted", check_resume_at_unix_ms: Date.UTC(2026, 9, 14), rows: [row(3, { verifying: true })] });
+    try {
+      vi.stubEnv("TZ", "Asia/Seoul");
+      await render(budget);
+      expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("October 14 at 9:00 AM");
+      vi.stubEnv("TZ", "America/Los_Angeles");
+      await render(budget);
+      expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("October 13 at 5:00 PM");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("deletes the Project's data only after the confirmation names the count", async () => {
