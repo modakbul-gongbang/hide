@@ -653,6 +653,7 @@ A root with descendants instead shows the worst state's icon and `PR N`, countin
 The core's own PR projection decides which PRs count; a closed PR is not counted.
 Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
 Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
+Each item's mark has an accessible name for its state in the interface language, so the state is readable without its colour.
 Equal PR numbers in different repositories stay separate.
 Choosing an entry opens the existing PR panel in the project that holds its URL, or the existing URL fallback when the catalog has no match.
 The core verb ladder, read rules and PR summary are owned by [status-model.md](status-model.md#the-sessions-tool).

@@ -102,7 +102,7 @@ export function AgentPrMark({ agent, family, staleness, disabled = false, onOpen
       <DropdownMenuContent align="start" className="w-(--size-pr-popover)" onClick={(event) => event.stopPropagation()} data-pr-list={agent.pane_id}>
         <PrListHead agent={agent} count={family?.length} />
         {entries.map((entry) => (
-          <DropdownMenuItem key={entry.pull.url} onSelect={() => onOpen(entry.pull)} data-pr-list-item={entry.pull.number}>
+          <DropdownMenuItem key={entry.pull.url} aria-label={[`#${entry.pull.number} ${t(PR_LOOK[entry.state].word)}`, entry.pull.title, entry.owners?.map((owner) => owner.identity_label).join(" · ")].filter(Boolean).join(" · ")} onSelect={() => onOpen(entry.pull)} data-pr-list-item={entry.pull.number}>
             <PrListItem pull={entry.pull} state={entry.state} owners={entry.owners} />
           </DropdownMenuItem>
         ))}
@@ -122,10 +122,11 @@ function PrListHead({ agent, count }: { agent: AgentRow; count?: number }) {
 }
 
 function PrListItem({ pull, state, owners }: { pull: AgentPullRequest; state: PrState; owners?: AgentRow[] }) {
+  const { t } = useInterfaceTranslation();
   const names = owners?.map((owner) => owner.identity_label).join(" · ");
   return (
     <>
-      <PrMark state={state} number={pull.number} />
+      <PrMark role="img" aria-label={`#${pull.number} ${t(PR_LOOK[state].word)}`} state={state} number={pull.number} />
       <span className="min-w-0 flex-1">
         <span className="block truncate" title={pull.title}>{pull.title}</span>
         {names ? <span className="block truncate text-micro text-muted-foreground" title={names}>{names}</span> : null}
