@@ -76,8 +76,8 @@ pub(super) struct PromotionStart {
     authority: crate::delivery::worker::Authority,
     actor: crate::delivery::Actor,
     /// The Project's folder, the repository the worktree is made from, and
-    /// the machine that holds it: `None` for the core's own, else a node
-    /// that dials in, where the agent starts (PRD core-host-node-move B14).
+    /// the machine that holds it: `None` for the core's own, else the
+    /// linked device where the agent starts.
     repo: String,
     machine: Option<String>,
     /// The agent the new-agent button starts.
@@ -246,7 +246,7 @@ impl Runtime {
     }
 
     /// Follows every open promotion to its pull request (B31, B32), the
-    /// Projects of this machine and of each node that dials in, each by its
+    /// Projects of this machine and of each registered device, each by its
     /// own machine's PR catalog: the store's open rows are read on a worker,
     /// the PR catalog and the coordination ledger are consulted under the
     /// lock, and the moves are written on the worker again. One check runs at
@@ -338,7 +338,7 @@ impl Runtime {
     }
 
     /// The machines whose Projects' promotions are followed: this one and
-    /// each node that dials in, linked or not, since a row stays open while
+    /// each registered device, linked or not, since a row stays open while
     /// its node is away.
     fn promotion_nodes(&self) -> Vec<NodeId> {
         let mut nodes = vec![self.node.clone()];
@@ -347,14 +347,13 @@ impl Runtime {
                 .ui_state
                 .device_registrations
                 .iter()
-                .filter(|registration| registration.origin == crate::model::LinkOrigin::Inbound)
                 .filter_map(|registration| NodeId::parse(&registration.id).ok()),
         );
         nodes
     }
 
     /// The PR catalog of the repository at `root` on `node`: this machine's,
-    /// or the one read for a node that dials in.
+    /// or the one read for a linked device.
     fn promotion_catalog(&self, node: &NodeId, root: &str) -> Option<&GithubProjectSnapshot> {
         if *node == self.node {
             self.github.project(root)

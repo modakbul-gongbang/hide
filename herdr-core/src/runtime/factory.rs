@@ -88,6 +88,17 @@ pub(crate) fn factory_herdr_pane<'a>(node: Option<&str>, pane: &'a str) -> Optio
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
+    /// Factory authority is narrower than the shared node file readers:
+    /// only the core's own node and an inbound node may run its work.
+    pub(crate) fn factory_linked_node(
+        &self,
+        device: &str,
+    ) -> Result<super::hosts::LinkedNode, String> {
+        self.factory_node(device)
+            .map_err(|refusal| refusal.reason)?;
+        self.linked_node(device).map_err(str::to_owned)
+    }
+
     /// What a worker start on the machine `node` names holds on to: that
     /// machine's Herdr and node, the core's own or a node linked to it (Q17).
     pub(crate) fn factory_start_control(
@@ -101,7 +112,7 @@ impl Runtime {
         } else {
             "device_unavailable"
         })?;
-        let (_, node) = self.linked_node(device)?;
+        let (_, node) = self.factory_linked_node(device)?;
         Ok(crate::factory::StartControl {
             device: device.to_owned(),
             connector,
@@ -123,7 +134,7 @@ impl Runtime {
                 .delivery_connector(&control.device)
                 .is_some_and(|connector| std::sync::Arc::ptr_eq(&connector, &control.connector))
             && self
-                .linked_node(&control.device)
+                .factory_linked_node(&control.device)
                 .is_ok_and(|(_, node)| std::sync::Arc::ptr_eq(&node, &control.node))
     }
 
@@ -158,7 +169,7 @@ impl Runtime {
         let connector = self
             .delivery_connector(device)
             .ok_or("device_unavailable")?;
-        let (_, node) = self.linked_node(device)?;
+        let (_, node) = self.factory_linked_node(device)?;
         let herdr_pane = match &worker.pane {
             Some(pane) => Some(
                 factory_herdr_pane(worker.node.as_deref(), pane)
@@ -307,7 +318,8 @@ impl Runtime {
         expected: &crate::workspace_control::Context,
         hint: Option<&str>,
     ) -> Result<crate::factory::FactoryCaller, String> {
-        self.linked_node(device).map_err(|_| "factory_local_only")?;
+        self.factory_linked_node(device)
+            .map_err(|_| "factory_local_only")?;
         let context = self
             .workspace_control_query(device, caller, Query::Info)
             .map_err(|refusal| refusal.reason.to_owned())?
@@ -360,7 +372,7 @@ impl Runtime {
         // it (Q17). A pane on a device the core dials cannot be one of
         // them, and must not open an SSH API channel under this short
         // question budget.
-        if self.linked_node(device).is_err() {
+        if self.factory_linked_node(device).is_err() {
             return Err("factory_guard_local_only".into());
         }
         let crate::workspace_control::Caller::Pane(pane) =

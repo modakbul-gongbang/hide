@@ -5,8 +5,8 @@
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
 //! command needs, and the command itself (store reads, the Project's identity,
 //! an `add`'s provider call) runs on hided's blocking task, off the lock.
-//! A connected device's Memory is its own (D-22), so only a caller on this
-//! machine is answered.
+//! A caller on any linked device is answered from the core's one store;
+//! the caller's node reads its Project and session files.
 
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
@@ -526,8 +526,10 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
 /// What the caller can do about a refusal.
 pub fn next_action(code: &str) -> &'static str {
     match code {
-        "memory_device_unsupported" => {
-            "Run hide memory on the machine that runs Hide or on a computer that connects to it; a device Hide connects to has no Project Memory"
+        "link_down" => "Reconnect this device in Hide, then retry",
+        "unregistered" => "Register this device in Hide, then retry",
+        "session_reader_support_unavailable" | "session_reader_memory_unsupported" => {
+            "Update this device's Hide helper to one that supports Project Memory, then reconnect"
         }
         "memory_off" => "Memory is off for this Project; only the operator can turn it on in Hide",
         "memory_ai_off" => "Turn Hide AI on and choose an agent in Hide's Settings",

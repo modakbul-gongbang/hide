@@ -55,7 +55,9 @@ The probe does not need a pane id: the daemon binds a caller inside a Herdr pane
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
 The hook starts nothing and installs nothing; when the CLI does not answer within its two-second bound the session starts without Workspace guidance and the next one tries again (B26).
-A session on a device the core dials gets no Project Memory index: the core answers Memory only for its own machine's panes and those of a node that dials in (PRD core-host-node-move Q20), and the Memory store is never copied to a device, so that device's `UserPromptSubmit` omits Memory context (B25).
+A session on any linked device receives its Project Memory index and prompt context from the core's one store through the same pane-scoped return route as letters.
+The device's node resolves the attested checkout to its own Project identity; the store is never copied to the device.
+An unavailable link or a helper without a Memory reader refuses the read immediately with a diagnostic reason; hooks continue without context within their existing budget.
 A connected device pane can still receive pending letters through its sibling `hide` CLI and the return route within the same two-second caller budget; [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns that intake and confirmation contract.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
 A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
