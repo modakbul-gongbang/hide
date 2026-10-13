@@ -171,9 +171,15 @@ Schema 9 starts every migrated card unverified, after keeping the store as it wa
 Each pass compares up to 200 verified cards' evidence with the node, oldest check first, and unverifies the ones that moved; that needs no model and runs with Hide AI off.
 
 An unverified card is read again in the background, at most four a pass and one question per card per day (`reverify_at_ms`), under the shared daily call cap and the router's usage limit; a deferral leaves it unverified (D-07, D-08).
+An already verified revision awaiting its first document comparison shares that queue and its caps, while remaining indexed, retrievable and eligible for suggestions until a comparison withholds it.
+`memory_revisions.docs_compared` records the first comparison independently of `verified_at_ms`; a new creation check already supplies it.
+The v11 upgrade preserves verified dates and queues current verified revisions once, clearing their old check cooldown rather than withholding them.
+Its table transition and comparison queue commit together, so a failed upgrade retries from v11 without losing the first comparison.
+Schema 13 repairs the destructive v12 upgrade atomically: current unverified revisions with no current comparison recover only the exact verified date stored under their revision id in the adjacent `.v11-backup`, then enter that same queue.
+The backup is opened read-only and retained unchanged; if absent or unreadable, dates remain unchanged and the writer records one `migration.verification_restore_unavailable` diagnostic after committing the migration.
 Schema 11 counts checks separately from total calls in `analysis_calls.checks`, with atomic admission in `MemoryStore::admit_memory_call` and policy in `hide-memory/src/budget.rs`.
 Checks can use at most 500 of the total 1,000 calls per UTC day, including failed calls; analysis reserves the smaller of the currently due, enabled and consented checks and the unspent check share.
-`MemoryStore::due_checks` is the pass and reservation's shared predicate, covering both unverified cards and verified rule or lesson cards whose promotion check is due.
+`MemoryStore::due_checks` is the pass and reservation's shared predicate, covering unverified cards, verified revisions awaiting their first document comparison and verified rule or lesson cards whose promotion check is due.
 With no due cards, nothing is reserved; explicit `add` shares the same analysis admission.
 Migration preserves the earlier total and starts the new check count at zero, since earlier calls had no category, so the migration day can never exceed its remaining total.
 Each accepted card returns to injection as soon as its answer is stored; a later call's failure retains that progress.

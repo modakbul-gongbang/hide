@@ -13,6 +13,12 @@ use std::collections::HashSet;
 /// listing walks at most `hide_session::SESSION_DISCOVERY_LIMIT` files.
 pub(super) const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Writer opens run on Memory workers, never under the runtime lock.
+/// A failed one-time backup restore is retained by the existing log sink.
+pub(crate) fn open_memory_store(path: &Path) -> Result<MemoryStore, hide_memory::MemoryError> {
+    MemoryStore::open_with_diagnostic(path, &mut |record| crate::diagnostic!(record))
+}
+
 /// The checkout in front for Sessions, and the node that reads its files
 /// (`Runtime::linked_node`).
 struct MemoryFocus {

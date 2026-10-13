@@ -169,14 +169,15 @@ impl PreparedMemory {
             "memory_project_unavailable".to_owned()
         })?;
         let root = identity.root.to_string_lossy().into_owned();
-        let mut store = MemoryStore::open(&self.database).map_err(|error| {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "command.store_unavailable",
-                "message": error.to_string(),
-            }));
-            "memory_unavailable".to_owned()
-        })?;
+        let mut store =
+            crate::runtime::memory::open_memory_store(&self.database).map_err(|error| {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "command.store_unavailable",
+                    "message": error.to_string(),
+                }));
+                "memory_unavailable".to_owned()
+            })?;
         let enabled = match store.project_state(&identity.id) {
             Ok(state) => state.enabled,
             Err(hide_memory::MemoryError::ProjectMissing) => false,

@@ -865,7 +865,7 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         outcome.settled = input.closed.clone();
         return outcome;
     }
-    let mut store = match MemoryStore::open(&input.database) {
+    let mut store = match super::memory::open_memory_store(&input.database) {
         Ok(store) => store,
         Err(error) => {
             crate::diagnostic!(json!({
@@ -1648,7 +1648,7 @@ fn record_sighted_receipts(
     if !MemoryStore::exists(database) {
         return;
     }
-    let mut store = match MemoryStore::open(database) {
+    let mut store = match super::memory::open_memory_store(database) {
         Ok(store) => store,
         Err(error) => {
             crate::diagnostic!(json!({

@@ -551,6 +551,7 @@ While any row is selected, per-row promotion and dismissal buttons are hidden; u
 Promotion reasons omit zero counts and use short source-session counts.
 Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision when known.
 This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
+PR numbers are identifiers rendered as plain digits in all four languages, including the row and its accessible name (`In PR 1050`).
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
 A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
@@ -562,14 +563,15 @@ A personal preference carries `Personal`, remains available to agents and never 
 Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
 An Outdated comparison dims its card and names the document and its date, asks nothing and is excluded from injection.
 Document references in card metadata and Compare headers show a single-line filename, truncated when needed, with the full path on hover and the date alongside.
-A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+An unverified card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+An already verified card awaiting its first document comparison stays usable and keeps its suggestions while waiting, even when the checking budget is spent.
 The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
 When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.
 The core supplies the checking budget's next reset timestamp, and its explanation draws that date and time in the viewer's timezone and interface language, with no UTC wording.
 With Memory off, stored cards are retained but the list and its empty slot stay hidden behind the existing off disclosure, and the usable count is zero.
 An older consent shows a short re-consent explanation under the existing off disclosure and points to the switch above; it never enables or injects on its own.
 The core supplies the usable count, current card and reasons, and the shell only draws them; no banner, alert, toast or panel is added.
-The checking mark is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
+The checking mark is one line in the 260px Tools column in all four languages, and the card is still listed and opens in full; an unverified card is not given to agents until the check ends (PRD memory-card-quality D-13, B6, B19).
 When the agent is gone and GitHub cannot say whether its pull request came (gh missing or logged out, or GitHub not answering), the line reads `PR 확인 못 함 · <reason>` with no spinner and nothing to press, since restoring GitHub settles it; it is not asked about in `물어볼 것`.
 A card on its way into the repository is never folded under `그 외 N`, and a card opened from a conversation clears a search that leaves it out.
 A card opens in place: `N분 전에 바뀜 · 이전 내용` when a text replaced another (the earlier text with `되돌리기`), its body, its cited files, its sources with their runtime, time and whether they are the operator's words, and `지우기`.
