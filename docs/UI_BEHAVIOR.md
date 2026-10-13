@@ -696,6 +696,16 @@ No undo or close is added to Resolve.
 
 An empty scope has the quiet existing nothing-to-do line; an unlabelled row keeps its shape without an invented task sentence.
 An unavailable device keeps current connection reasoning and disables actions.
+
+Each Sessions row adds a record button and an open-missed-work flag; the flag opens the same record with its missed work in view.
+The record replaces the list inside Tools, with `Sessions로 돌아가기`, the title, status and child count, then verdict, outputs, missed work, own work by goal chapter and expandable children.
+Task disclosures show the saved original requests and output numbers; child disclosures show that child's own work instead of mixing it into the parent's chapters.
+Open missed items show `이슈로` and `무시`, and closed items are folded under `닫힘 N`, with Undo or Reopen where applicable.
+At narrow Tools widths, Korean missed-work text and the first line of a raw request wrap between words; titles truncate with their full text in a tooltip.
+The folded missed-work group above live Sessions includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the current scope and Copied history period.
+Untitled records use the same agent-name fallback as Sessions, including with summaries Off and after the pane ends; native session ids remain identity keys.
+With summaries Off, records retain native/manual titles, statuses, outputs, children and saved raw requests newest first, and hide every generated judgment and missed-work action.
+A first record read uses a small skeleton; a failed read shows Retry, and a disconnected device retains the last read dimmed until reconnection refreshes it.
 GitHub values that cannot be refreshed stay dimmed with their last-read time in the tooltip; failure is never a false zero.
 While Sessions is visible it shares the existing request-view observation so the core re-reads only projects with running checks, once a minute.
 Unchanged row, scope and PR inputs retain the rendered row tree; the elapsed clock updates only its own text.
@@ -828,6 +838,14 @@ Hover, focus and a half-second rest publish no snapshot and start no Git or disk
 
 The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
 New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project that has a source; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
+
+`이슈로` on a missed-work item opens this same editable New issue form with a title and body drafted from that item's original request, answer and repository templates.
+The note says it will create an issue without starting an agent, and the repository stays fixed to the originating session's device and project.
+Only `이슈 만들기` creates it; Cancel leaves the item unchanged, and a failed create keeps the entered form with Retry.
+An unavailable provider, login or usage allowance leaves the missed text as title and an empty body with the reason.
+When GitHub cannot be read, Retry checks the preview's connection while the same form stays open with the operator's edits; a successful check enables the separate Create action.
+After uncertain creation, Retry looks up the prior attempt first and links the already created issue when found.
+An offline session keeps the last record dimmed and disables `이슈로`, explaining that its device is not connected; reconnect refreshes the record.
 When that list holds projects of more than one machine, as the core's and a node's do after a core move, every row names its machine, this window's own as `이 Mac`, so two projects at the same name read apart from either window; a list from one machine names none.
 The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
@@ -1654,6 +1672,13 @@ On the web, the sidebar's Search row, which shows `Search` and the bound chord, 
 Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
 ### What a query finds
+
+A nonempty query also searches saved session goals, assigned task names and original requests in a separate `세션` group, including ended sessions within Copied history.
+Enter on that group opens the record in Tools; the existing Agents group still opens the live agent.
+With summaries Off it searches saved raw requests only, without generated goal or task matches.
+The core's bounded local record search runs independently of other groups, drops an answer for an older query and makes no GitHub request while typing.
+The session group carries its current loading or failure state; a successful search with no session matches draws no group, preserving the palette's existing no-match state when no other kind matches.
+The creator-session action in an output panel opens the same record.
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
 An agent is found by its title, by the name Herdr knows it by (`hide agent spawn --name`, `herdr agent rename`), by its place and by its state sentence; the core carries the Herdr name on the agent row (`herdr_name`), on this machine and on a device alike, and leaves it out when Herdr has none or has only a name Hide made up from a pane id (a task's `hide-claude-w9j-p52`, a wake's or a fork's), which would print the id the rule below keeps off every row.

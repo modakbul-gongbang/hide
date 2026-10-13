@@ -9,6 +9,254 @@ use crate::model::{PullRequestBadge, PullRequestChecks, PullRequestSnapshot};
 
 const CREATED: u64 = 1_790_000_000_000;
 
+fn record_agent(pane_id: &str, session_id: &str, parent: Option<&str>) -> SidebarAgentSnapshot {
+    let mut agent = project_agents(crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{"id":pane_id,"pane_id":pane_id,"agent_status":"working","state_change_seq":1}]})).unwrap()).agents.remove(0);
+    agent.agent_kind = "claude".into();
+    agent.session_id = Some(session_id.into());
+    agent.lineage_parent_pane_id = parent.map(str::to_owned);
+    agent.herdr_name = Some(format!("Name {pane_id}"));
+    agent
+}
+
+fn record_workspace(device: &str, id: &str, panes: &[&str]) -> WorkspaceSnapshot {
+    let mut checkout = checkout(id, id, "/repo", Some(pane(panes[0], "/repo")));
+    checkout.tabs[0].panes = panes.iter().map(|id| pane(id, "/repo")).collect();
+    let mut workspace = workspace(id, id, "/repo", vec![checkout]);
+    workspace.device_id = device.into();
+    workspace.is_git = true;
+    workspace
+}
+
+#[test]
+fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![record_workspace(
+        crate::node::TEST_NODE,
+        "local-project",
+        &["local-parent", "local-child", "other-agent"],
+    )];
+    runtime.snapshot.navigator.agents = vec![
+        record_agent("local-parent", "shared-parent", None),
+        record_agent("local-child", "shared-child", Some("remote-parent")),
+    ];
+    let mut other = record_agent("other-agent", "shared-parent", None);
+    other.agent_kind = "codex".into();
+    runtime.snapshot.navigator.agents.push(other);
+    runtime.snapshot.status.remote = vec![RemoteStatusSnapshot {
+        target_id: "remote".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        session: Some(RemoteSessionSnapshot {
+            workspaces: vec![record_workspace(
+                "remote",
+                "remote-project",
+                &["remote-parent", "remote-child", "remote-only-child"],
+            )],
+            agents: vec![
+                record_agent("remote-parent", "shared-parent", None),
+                record_agent("remote-child", "shared-child", Some("local-parent")),
+                record_agent("remote-only-child", "only-child", Some("remote-parent")),
+            ],
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: vec![],
+            pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
+        }),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    }];
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    runtime.links_work.client = Some(client.clone());
+    runtime.feed_links();
+    let facts = client.parent_facts_for_test().unwrap();
+    assert_eq!(facts.len(), 3);
+    let expected = [
+        (
+            crate::node::TEST_NODE,
+            "shared-child",
+            "remote",
+            "shared-parent",
+        ),
+        (
+            "remote",
+            "shared-child",
+            crate::node::TEST_NODE,
+            "shared-parent",
+        ),
+        ("remote", "only-child", "remote", "shared-parent"),
+    ];
+    for (device, session, parent_device, parent_session) in expected {
+        assert!(facts.iter().any(|fact| fact.device_id == device
+            && fact.agent == "claude"
+            && fact.session_id == session
+            && fact.parent_device_id == parent_device
+            && fact.parent_agent == "claude"
+            && fact.parent_session_id == parent_session));
+    }
+    let before = runtime.link_parents_print();
+    let remote = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
+    remote.agents[0].session_id = Some("new-parent-session".into());
+    runtime.feed_link_parents();
+    assert_ne!(before, runtime.link_parents_print());
+    assert!(
+        client
+            .parent_facts_for_test()
+            .unwrap()
+            .iter()
+            .any(|fact| fact.session_id == "only-child"
+                && fact.parent_session_id == "new-parent-session")
+    );
+    // The same path on another device must use its own repository facts.
+    let mut local = crate::model::GithubProjectSnapshot {
+        root_path: "/repo".into(),
+        ..Default::default()
+    };
+    local.issues.repository = Some("acme/local".into());
+    runtime.github.projects = vec![local];
+    let mut remote = crate::model::GithubProjectSnapshot {
+        root_path: "/repo".into(),
+        ..Default::default()
+    };
+    remote.issues.repository = Some("acme/remote".into());
+    runtime.device_github.insert(
+        "remote".into(),
+        crate::model::GithubSnapshot {
+            projects: vec![remote],
+        },
+    );
+    let projects = runtime.link_projects();
+    assert_eq!(projects.len(), 2);
+    assert_eq!(
+        projects
+            .iter()
+            .find(|project| project.device_id == "remote")
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("acme/remote")
+    );
+    let panes = runtime.link_panes();
+    assert_eq!(panes.len(), 6);
+    assert_eq!(
+        panes
+            .iter()
+            .filter(|pane| pane.device_id == crate::node::TEST_NODE
+                && pane.session_id == "shared-parent")
+            .count(),
+        2
+    );
+    assert!(
+        panes
+            .iter()
+            .any(|pane| pane.device_id == "remote" && pane.session_id == "new-parent-session")
+    );
+    // The remote project's summary remains independent of the same local path.
+    use crate::links::ledger::{
+        LedgerUpdate, MissedKind, NewMissedWork, RecordedRequest, SessionIdentity, TurnJudgment,
+        WorkAuthor,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) =
+        crate::links::store::LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    for project in &projects {
+        store.apply_project(project, CREATED).unwrap();
+    }
+    let owner = SessionIdentity {
+        device_id: "remote".into(),
+        agent: "claude".into(),
+        session_id: "new-parent-session".into(),
+    };
+    store
+        .apply_ledger_update(&LedgerUpdate::Requests {
+            session: owner.clone(),
+            cwd: "/repo".into(),
+            path: None,
+            requests: vec![RecordedRequest {
+                offset: 1,
+                at_unix_ms: CREATED,
+                text: "Check the remote record".into(),
+                author: WorkAuthor::Operator,
+                task_ids: vec![],
+                chapter_id: None,
+                judged: false,
+            }],
+        })
+        .unwrap();
+    store
+        .apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: owner.clone(),
+            offset: 1,
+            at_unix_ms: CREATED + 1,
+            end: crate::labels::analysis::LabelEnd::Done,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                missed: vec![NewMissedWork {
+                    kind: MissedKind::Problem,
+                    text: "One remote check remains".into(),
+                }],
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let remote_key = &projects
+        .iter()
+        .find(|project| project.device_id == "remote")
+        .unwrap()
+        .key;
+    let local_key = &projects
+        .iter()
+        .find(|project| project.device_id == crate::node::TEST_NODE)
+        .unwrap()
+        .key;
+    let summaries = store.ledger_summaries(remote_key).unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].session, owner);
+    assert_eq!(summaries[0].open_missed, 1);
+    assert!(store.ledger_summaries(local_key).unwrap().is_empty());
+}
+
+#[test]
+fn rejecting_a_child_missed_action_keeps_the_displayed_parent_record_and_retry_target() {
+    use crate::links::ledger::{MissedStatus, SessionIdentity, SessionRecordSnapshot};
+    let mut runtime = runtime();
+    runtime.ai_settings = Some(hide_ai::settings::AiSettings {
+        enabled: true,
+        agent_summary: true,
+        ..Default::default()
+    });
+    let parent = SessionIdentity {
+        device_id: "local".into(),
+        agent: "claude".into(),
+        session_id: "parent".into(),
+    };
+    runtime.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot {
+        session: Some(parent.clone()),
+        ..Default::default()
+    }));
+    runtime.links_work.client = Some(crate::links::worker::LinkClient::full_mailbox_for_test());
+    assert!(
+        runtime.set_missed_status(crate::runtime::links::MissedStatusPayload {
+            session: SessionIdentity {
+                session_id: "child".into(),
+                ..parent.clone()
+            },
+            id: "missed-child".into(),
+            status: MissedStatus::Dismissed
+        })
+    );
+    let answer = runtime.snapshot.session_record.as_ref().unwrap();
+    assert_eq!(answer.session.as_ref(), Some(&parent));
+    assert_eq!(answer.failure.as_deref(), Some("ledger_queue_capacity"));
+    assert!(!answer.loading);
+}
+
 fn pull_request(number: u32, branch: &str, closes: &[u32]) -> PullRequestSnapshot {
     PullRequestSnapshot {
         closing_issues: closes

@@ -452,6 +452,7 @@ pub fn check_reader_features(features: &ReaderFeatures, call: &Call) -> crate::H
 fn reader_requirements(call: &Call) -> Vec<(hide_session::Agent, ReaderFeature)> {
     match call {
         Call::LabelTranscript { request } => vec![(request.agent, ReaderFeature::Labels)],
+        Call::SessionWorkContext { request, .. } => vec![(request.agent, ReaderFeature::Labels)],
         Call::SessionActivity { request } => vec![(request.agent, ReaderFeature::Activity)],
         Call::SessionIndexRead { agent, .. } => vec![(*agent, ReaderFeature::Search)],
         Call::SessionConversation { agent, .. } => vec![(*agent, ReaderFeature::Conversation)],

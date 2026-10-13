@@ -1033,6 +1033,14 @@ impl Runtime {
                         .iter()
                         .filter_map(|checkout| self.issue_candidates.get(&checkout.id))
                         .map(|candidate| candidate.reference.clone())
+                        .chain(
+                            self.snapshot
+                                .link_summaries
+                                .as_ref()
+                                .and_then(|summaries| summaries.projects.get(&workspace.id))
+                                .into_iter()
+                                .flat_map(|summary| summary.record_issues.iter().cloned()),
+                        )
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .take(crate::issues::ISSUE_LIMIT)
@@ -2928,6 +2936,29 @@ impl Runtime {
             .and_then(|status| status.session.as_ref())
             .map(|session| session.issue_links.clone())
             .unwrap_or_default();
+        for workspace in self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device_id)
+            .and_then(|status| status.session.as_ref())
+            .into_iter()
+            .flat_map(|session| session.workspaces.iter())
+        {
+            if let Some(summary) = self
+                .snapshot
+                .link_summaries
+                .as_ref()
+                .and_then(|summaries| summaries.projects.get(&workspace.id))
+            {
+                let held = links.entry(workspace.path.clone()).or_default();
+                held.extend(summary.record_issues.iter().cloned());
+                held.sort();
+                held.dedup();
+                held.truncate(crate::issues::ISSUE_LIMIT);
+            }
+        }
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {

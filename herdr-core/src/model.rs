@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
 
+fn serialize_optional_shared<T: Serialize, S: serde::Serializer>(
+    value: &Option<Arc<T>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value.as_deref().serialize(serializer)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
     pub schema_version: u32,
@@ -135,6 +142,12 @@ pub struct Snapshot {
     /// a shell opens one; its own revisioned section.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_panel: Option<crate::links::LinkPanelSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_optional_shared")]
+    pub session_record: Option<Arc<crate::links::ledger::SessionRecordSnapshot>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_optional_shared")]
+    pub session_work_search: Option<Arc<crate::links::ledger::SessionSearchSnapshot>>,
     /// The Factory screens' summary and their actions' answers (PRD
     /// software-factory-ui), absent until the Factory host first hands one
     /// over. Its own revisioned section, stamped by edit number, so the
@@ -3398,6 +3411,8 @@ impl AgentStartChoice {
 /// by id and ignores one it did not ask for.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct IssueWorkSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<SessionIssueDraftSnapshot>,
     pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
@@ -3405,6 +3420,18 @@ pub struct IssueWorkSnapshot {
     /// The latest `github_search`; absent from the wire until the first one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<GithubSearchSnapshot>,
+}
+
+/// The editable preview of one missed item. No external write precedes Create.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SessionIssueDraftSnapshot {
+    pub source: crate::links::ledger::MissedSource,
+    pub phase: String,
+    pub workspace_id: Option<String>,
+    pub repository: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub message: Option<String>,
 }
 
 /// The latest GitHub search (`github_search`), matched by the web's own
@@ -5122,6 +5149,8 @@ impl Snapshot {
             memory: None,
             link_summaries: None,
             link_panel: None,
+            session_record: None,
+            session_work_search: None,
             factory: None,
             factory_task: None,
         }
@@ -5181,6 +5210,8 @@ pub struct SnapshotDeltaPayload {
     pub memory: Option<Arc<MemorySnapshot>>,
     pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
+    pub session_record: Option<Arc<crate::links::ledger::SessionRecordSnapshot>>,
+    pub session_work_search: Option<Arc<crate::links::ledger::SessionSearchSnapshot>>,
     pub factory: Option<crate::factory::screen::FactorySection>,
     /// `Some(None)`: the open Task page closed since the reader's revision.
     pub factory_task: Option<Option<crate::factory::screen::FactoryTaskSection>>,
@@ -5238,6 +5269,10 @@ pub struct SnapshotDeltaWire<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_panel: Option<&'a crate::links::LinkPanelSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_record: Option<&'a crate::links::ledger::SessionRecordSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_work_search: Option<&'a crate::links::ledger::SessionSearchSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub factory: Option<&'a crate::factory::screen::FactorySection>,
     /// `null` when the page closed since the reader's revision.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5289,6 +5324,8 @@ impl<'a> SnapshotDeltaWire<'a> {
             memory: payload.memory.as_deref(),
             link_summaries: payload.link_summaries.as_deref(),
             link_panel: payload.link_panel.as_deref(),
+            session_record: payload.session_record.as_deref(),
+            session_work_search: payload.session_work_search.as_deref(),
             factory: payload.factory.as_ref(),
             factory_task: payload.factory_task.as_ref().map(Option::as_ref),
             find: &payload.find,

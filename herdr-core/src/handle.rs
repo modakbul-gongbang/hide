@@ -92,6 +92,7 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        lock_recover(&self.runtime).cancel_session_issue_draft();
         // First: the Factory engine sends through delivery and ends the
         // verify runs and judgments it started (rule 14).
         if let Some(mut factory) = self.factory.take() {
@@ -345,7 +346,14 @@ impl Core {
         // history, and before any coordinator, so the first catalog and
         // GitHub answers reach it.
         let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
-            Ok(worker) => Some(worker),
+            Ok(worker) => {
+                if let Some(labels) = labels.as_ref()
+                    && let Ok(mut client) = labels.ledger.lock()
+                {
+                    *client = Some(worker.client());
+                }
+                Some(worker)
+            }
             Err(message) => {
                 crate::diagnostic!(
                     serde_json::json!({"component":"links","kind":"worker.start_failed","message":message})

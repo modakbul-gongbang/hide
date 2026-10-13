@@ -1337,8 +1337,8 @@ export function createActions(send: DispatchFn) {
     },
 
     /** A new issue in the project's source (the project row's Issue source menu); the core answers in `issue_work.create`. */
-    createIssue(workspaceId: string, title: string, body: string) {
-      dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
+    createIssue(workspaceId: string, title: string, body: string, missed?: { session: import("./snapshot").WorkSession; id: string }) {
+      dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body, ...(missed ? { missed } : {}) } });
     },
 
     /** An issue's body, labels, author, assignees and comments for its panel and the Start dialog, answered in `issue_work.detail`. */
@@ -2103,6 +2103,37 @@ export function createActions(send: DispatchFn) {
       ui().setScreen({ kind: "main" });
       ui().setMainView("agents");
       showTool("agent_sessions");
+    },
+
+    openSessionRecord(session: import("./snapshot").WorkSession) {
+      ui().setSessionWorkTarget(session);
+      showTool("agent_sessions");
+      dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
+    },
+    closeSessionRecord() {
+      ui().setSessionWorkTarget(null);
+      dispatch({ schema_version: 2, kind: "session_record_close", payload: {} });
+    },
+    searchSessionWork(query: string) {
+      dispatch({ schema_version: 2, kind: "session_work_search", payload: { query } });
+    },
+    setMissedStatus(session: import("./snapshot").WorkSession, id: string, status: "open" | "dismissed") {
+      dispatch({ schema_version: 2, kind: "session_missed_status", payload: { session, id, status } });
+    },
+    draftMissedIssue(session: import("./snapshot").WorkSession, id: string) {
+      dispatch({ schema_version: 2, kind: "session_issue_draft", payload: { session, id } });
+    },
+    cancelMissedIssueDraft() {
+      dispatch({ schema_version: 2, kind: "session_issue_draft_cancel", payload: {} });
+    },
+    openRecordedIssue(session: import("./snapshot").WorkSession, repository: string, number: number) {
+      const project = catalogWorkspaces(rest()).find((row) => row.device_id === session.device_id && row.tasks?.source?.name?.toLowerCase() === repository.toLowerCase());
+      if (project) this.openOverview(project.device_id, project.id, { issue: `github:${repository.toLowerCase()}#${number}` });
+      else this.openLink(`https://github.com/${repository}/issues/${number}`, true);
+    },
+    openRecordedOutput(output: import("./snapshot").WorkOutput) {
+      if (output.kind === "pr") this.openSessionPullRequest({ workspace_id: null, number: output.number, url: output.url });
+      else this.openRecordedIssue(output.source, output.repository, output.number);
     },
 
     /** Asks the engine for a Task page's detail; it follows the engine in `factory_task` until closed. */

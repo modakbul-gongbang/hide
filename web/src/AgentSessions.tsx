@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -23,6 +23,9 @@ import type { SidebarTreeLine } from "./sidebarTree";
 import type { AgentRow, SessionGroup } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { MissedRow, SessionRecord } from "./SessionRecord";
+import { endedWork, sessionOfAgent, workKey } from "./sessionWork";
+import { summariesEnabled } from "./hideAi";
 
 const GROUP_LABEL: Record<SessionGroup, MessageKey> = {
   needs_you: "agents.group.needs_you", working: "agents.group.working", done: "agents.group.done",
@@ -47,6 +50,7 @@ export function AgentSessions({ actions }: { actions: Actions }) {
   const inWorkspace = useUiStore((state) => state.screen?.kind === "workspace" && !state.overviewOpen);
   const focusedPane = useShellStore((state) => state.focusedPaneId);
   const model = useMemo(() => sessionsModel(rest, agents, onlyCheckout), [rest, agents, onlyCheckout]);
+  const target = useUiStore((state) => state.sessionWorkTarget);
   // Share the existing visible-board demand. No new polling clock or reader.
   useEffect(() => {
     if (!live) return;
@@ -58,7 +62,9 @@ export function AgentSessions({ actions }: { actions: Actions }) {
       actions.observeRequestView(false);
     };
   }, [actions, live]);
-  return <SessionsContent model={model} actions={actions} folds={folds} focusedPane={inWorkspace ? focusedPane : null} onlyCheckout={onlyCheckout} onOnlyCheckout={setOnlyCheckout} />;
+  // Keep the list mounted while a record is open: Back retains its folds,
+  // selection and exact scroll position (B2).
+  return <><div className={target ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}><SessionsContent model={model} actions={actions} folds={folds} focusedPane={inWorkspace ? focusedPane : null} onlyCheckout={onlyCheckout} onOnlyCheckout={setOnlyCheckout} /></div>{target ? <SessionRecord actions={actions} target={target} /> : null}</>;
 }
 
 const SessionsContent = memo(function SessionsContent({ model, actions, folds, focusedPane, onlyCheckout, onOnlyCheckout }: {
@@ -72,6 +78,11 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
   const filtered = model.front !== null && onlyCheckout === model.front.id;
   const opened = useMemo(() => new Set(folds), [folds]);
   const byPane = useMemo(() => new Map(model.agents.map((row) => [row.pane_id, row])), [model.agents]);
+  const rest = useShellStore((state) => state.rest);
+  const links = useShellStore((state) => state.linkSummaries);
+  const work = model.projects.flatMap((project) => links?.projects[project.id]?.work ?? []);
+  const ended = summariesEnabled(rest?.status?.background_ai) ? endedWork(work, model.agents, rest, filtered ? model.front!.path : null) : [];
+  const missed = ended.flatMap((owner) => owner.missed.map((item) => ({ owner, item })));
   // Each shown root's drawn tree, so the selection knows every row the panel draws.
   const sections = useMemo(() => groups.map(({ group, members }) => {
     const shown = group === "resolved" && !resolvedOpen ? [] : members;
@@ -109,6 +120,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
       </header>
       {!model.available ? <p className="px-md py-sm text-caption text-muted-foreground" role="status">{model.reason ?? t("devices.rail.notConnected")}</p> : null}
       <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-sm pb-md" data-session-list="true" onKeyDown={moveFocus}>
+        {missed.length > 0 ? <details data-ended-missed="true" className="border-b border-border py-xs"><summary className="flex cursor-pointer items-center gap-xs rounded-xs px-xs py-xs text-caption text-warning outline-none focus-visible:ring-1 focus-visible:ring-ring" data-session-focus="missed"><FlagIcon className="size-(--size-icon-sm)" />{t("sessionWork.count", { count: missed.length })}</summary><ul className="px-xs">{missed.sort((a, b) => b.item.at_unix_ms - a.item.at_unix_ms).map(({ owner, item }) => <MissedRow key={`${workKey(owner.session)}:${item.id}`} missed={item} record={owner} actions={actions} connected={model.available} />)}</ul></details> : null}
         {groups.length === 0 ? <p className="px-xs py-md text-caption text-muted-foreground" data-sessions-empty="true">{t("requests.nothingToDo")}</p> : null}
         {sections.map(({ group, count, trees }) => {
           const collapsible = group === "resolved";
@@ -188,6 +200,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
         {needsYou || open ? null : <DescendantMark agent={agent} />}
         {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
+        <RecordActions agent={agent} workspace={project.id} actions={actions} expanded={open === true} />
         {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : <ResolveLane />}
       </div>
       <SecondLine agent={agent} />
@@ -207,7 +220,7 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
   const toggle = () => actions.toggleSessionTree(child.pane_id);
   // The sidebar's title rule: a delegated title is quiet unless it asks or is selected.
   const titleTone = child.state.title_emphasized || (selected && child.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  return <li className={cn("flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
+  return <li className={cn("group/session flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
     data-session-child={child.pane_id} data-depth={depth} data-selected={selected ? "true" : undefined} onClick={go}>
     <TreeRails place={place} />
     <TreeChevron name={child.identity_label} open={open} onToggle={toggle} hangs chain={place.chain} disabled={!model.available} data-session-chevron={child.pane_id} />
@@ -225,11 +238,27 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         {open ? null : <DescendantMark agent={child} />}
         <AgentPrMark agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
         <Elapsed since={child.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
+        <RecordActions agent={child} workspace={workspace} actions={actions} expanded={open === true} />
         <ResolveLane />
       </div>
       <SecondLine agent={child} branch />
     </div>
   </li>;
+}
+
+function RecordActions({ agent, workspace, actions, expanded }: { agent: AgentRow; workspace: string; actions: Actions; expanded: boolean }) {
+  const { t } = useInterfaceTranslation();
+  const rest = useShellStore((state) => state.rest);
+  const links = useShellStore((state) => state.linkSummaries);
+  const session = sessionOfAgent(agent, rest);
+  if (!session) return null;
+  const work = links?.projects[workspace]?.work?.find((row) => workKey(row.session) === workKey(session));
+  const count = summariesEnabled(rest?.status?.background_ai) ? expanded ? work?.open_missed ?? 0 : work?.subtree_open_missed ?? 0 : 0;
+  const open = () => actions.openSessionRecord(session);
+  return <>
+    {count > 0 ? <Hint label={t("sessionWork.count", { count })}><button type="button" aria-label={t("sessionWork.count", { count })} data-session-missed={agent.pane_id} className="inline-flex shrink-0 items-center gap-xxs rounded-xs p-xxs text-micro text-warning outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={(event) => { event.stopPropagation(); open(); }}><FlagIcon className="size-(--size-icon-sm)" />{count}</button></Hint> : null}
+    <Hint label={t("sessionWork.record")}><button type="button" aria-label={t("sessionWork.record")} data-session-record-button={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => { event.stopPropagation(); open(); }}><FileTextIcon className="size-(--size-icon-sm)" /></button></Hint>
+  </>;
 }
 
 /**

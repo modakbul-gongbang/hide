@@ -17,6 +17,18 @@ use serde_json::Value;
 
 /// A request is kept to this many characters (D-40).
 pub const REQUEST_CHARS: usize = 500;
+pub const REQUESTS_PER_READ: usize = 2_000;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RequestMark {
+    pub offset: u64,
+    pub at_unix_ms: u64,
+    pub text: String,
+    #[serde(default)]
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub letter_kind: Option<String>,
+}
 
 /// One stretch of records that ran on one branch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -52,6 +64,12 @@ pub struct PrMark {
 /// What one chunk of a session file says about links.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LinkFacts {
+    #[serde(default)]
+    pub requests: Vec<RequestMark>,
+    #[serde(default)]
+    pub requests_capped: usize,
+    #[serde(default)]
+    pub issues: Vec<PrMark>,
     /// The session the records belong to: Claude Code's `sessionId`, which a
     /// subagent file shares with its parent (D-28), or Codex's `session_meta`
     /// id, or for a Codex subagent thread its parent thread.
@@ -90,6 +108,7 @@ impl LinkFacts {
 #[derive(Debug, Default)]
 pub(crate) struct LinkAccumulator {
     facts: LinkFacts,
+    requests: std::collections::VecDeque<RequestMark>,
     /// The branch the chunk's records are on so far.
     current: Option<Option<String>>,
     /// The record being read came from a subagent.
@@ -98,7 +117,8 @@ pub(crate) struct LinkAccumulator {
 }
 
 impl LinkAccumulator {
-    pub(crate) fn finish(self) -> LinkFacts {
+    pub(crate) fn finish(mut self) -> LinkFacts {
+        self.facts.requests = self.requests.into_iter().collect();
         self.facts
     }
 
@@ -135,16 +155,30 @@ impl LinkAccumulator {
 
     /// The parser judged one record an event; an operator request is kept
     /// for the span it was made in.
-    pub(crate) fn event(&mut self, kind: EventKind, at: u64, text: &str) {
+    pub(crate) fn event(&mut self, kind: EventKind, at: u64, text: &str, offset: u64) {
         // A Hide letter is another agent's message, not the operator's.
-        if kind != EventKind::Human
-            || self.sidechain_line
-            || text.trim().is_empty()
-            || crate::envelope_sender(text).is_some()
-        {
+        if kind != EventKind::Human || self.sidechain_line || text.trim().is_empty() {
+            return;
+        }
+        let envelope = crate::envelope_header(text);
+        if envelope.as_ref().is_some_and(|(_, kind)| kind != "request") {
             return;
         }
         let request = cut(text);
+        if self.requests.len() == REQUESTS_PER_READ {
+            self.requests.pop_front();
+            self.facts.requests_capped += 1;
+        }
+        self.requests.push_back(RequestMark {
+            offset,
+            at_unix_ms: at,
+            text: request.clone(),
+            sender: envelope.as_ref().map(|(sender, _)| sender.clone()),
+            letter_kind: envelope.as_ref().map(|(_, kind)| kind.clone()),
+        });
+        if envelope.is_some() {
+            return;
+        }
         if let Some(span) = self.facts.spans.last_mut() {
             span.last_request = Some(request.clone());
         }
@@ -154,6 +188,29 @@ impl LinkAccumulator {
     pub(crate) fn sightings(&mut self, sightings: &[PrSighting]) {
         for sighting in sightings {
             self.pr(&sighting.repository, sighting.number, sighting.at_unix_ms);
+        }
+    }
+
+    pub(crate) fn issue_sightings(&mut self, sightings: &[PrSighting]) {
+        for sighting in sightings {
+            if self.facts.issues.len() >= crate::MAX_SIGHTINGS_PER_OUTPUT {
+                break;
+            }
+            if !self.facts.issues.iter().any(|seen| {
+                seen.number == sighting.number
+                    && seen.repository.eq_ignore_ascii_case(&sighting.repository)
+            }) {
+                self.facts.issues.push(PrMark {
+                    repository: sighting.repository.clone(),
+                    number: sighting.number,
+                    at_unix_ms: sighting.at_unix_ms,
+                    request: self
+                        .facts
+                        .last_request
+                        .as_ref()
+                        .map(|(_, text)| text.clone()),
+                });
+            }
         }
     }
 
@@ -742,12 +799,13 @@ fn read_opencode(home: &std::path::Path, request: &ReadRequest, answer: &mut Rea
             crate::label_transcript::LabelEventKind::Assistant => EventKind::Assistant,
             crate::label_transcript::LabelEventKind::Interrupted => EventKind::Interrupted,
         };
-        links.event(kind, event.at_unix_ms, &event.text);
+        links.event(kind, event.at_unix_ms, &event.text, event.offset);
     }
     for sighting in sightings {
         links.activity(sighting.at_unix_ms);
         links.pr(&sighting.repository, sighting.number, sighting.at_unix_ms);
     }
+    links.issue_sightings(&transcript.issue_sightings);
     answer.rescanned = transcript.rescanned.is_some();
     answer.has_more = transcript.has_more;
     answer.checkpoint = Some(transcript.checkpoint);

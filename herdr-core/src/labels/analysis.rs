@@ -49,6 +49,7 @@ pub(crate) struct Analysis {
     /// operator is to answer or do when it ended on a question.
     pub(crate) line: String,
     pub(crate) end: LabelEnd,
+    pub(crate) work: Option<crate::links::ledger::TurnJudgment>,
 }
 
 /// How the turn stands by the agent's last word (D-08). Only a question, a
@@ -458,7 +459,7 @@ fn strip_code_fences(text: &str) -> String {
         .join("\n")
 }
 
-fn redact(text: &str) -> String {
+pub(crate) fn redact(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
     let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {

@@ -13,11 +13,16 @@ import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
 import { UsageScene } from "./UsageScene";
+import { SessionWorkScene } from "./SessionWorkScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "session-record") {
+      root.render(<StrictMode><SessionWorkScene params={params} /></StrictMode>);
+      return;
+    }
     if (scene === "usage" || scene === "usage-history") {
       if (scene === "usage-history") {
         params.set("surface", "history-year");

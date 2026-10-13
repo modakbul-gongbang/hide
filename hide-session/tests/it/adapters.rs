@@ -4213,3 +4213,80 @@ fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
     assert_eq!(fresh.hits.len(), 1, "{fresh:?}");
     assert!(!fresh.stale);
 }
+
+#[test]
+fn original_issue_turn_is_scoped_and_bound_to_the_end_witness_for_native_adapters() {
+    use hide_session::label_transcript::{WorkTurnRequest, read_work_turn, work_turn};
+    for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {
+        let home = home(agent);
+        let transcript = read_whole(home.path(), agent);
+        let first = transcript
+            .events
+            .iter()
+            .find(|event| event.kind == LabelEventKind::Human)
+            .unwrap();
+        let original = work_turn(&transcript.events, first.offset).unwrap();
+        let request = WorkTurnRequest {
+            agent,
+            session_id: request(agent).reference_value,
+            path: (agent == Agent::OpenCode).then(|| "opencode/catalog-locator".into()),
+            cwd: "/work/app".into(),
+            offset: first.offset,
+            witness: original.witness(),
+        };
+        assert_eq!(
+            read_work_turn(home.path(), &request).unwrap(),
+            original,
+            "{agent:?}"
+        );
+        let mut changed = request;
+        changed.witness = hide_session::label_transcript::WorkTurn {
+            request: "another turn".into(),
+            assistant: original.assistant,
+        }
+        .witness();
+        assert_eq!(
+            read_work_turn(home.path(), &changed).unwrap_err(),
+            "work_turn_changed",
+            "{agent:?}"
+        );
+    }
+}
+
+#[test]
+fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_append() {
+    use hide_session::label_transcript::{WorkTurnRequest, read_work_turn, work_turn};
+    let home = home(Agent::Codex);
+    let transcript = read_whole(home.path(), Agent::Codex);
+    let first = transcript
+        .events
+        .iter()
+        .find(|event| event.kind == LabelEventKind::Human)
+        .unwrap();
+    let original = work_turn(&transcript.events, first.offset).unwrap();
+    let path = home.path().join(".codex/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl");
+    let request = WorkTurnRequest {
+        agent: Agent::Codex,
+        session_id: request(Agent::Codex).reference_value,
+        path: Some(path.to_string_lossy().into_owned()),
+        cwd: "/work/app".into(),
+        offset: first.offset,
+        witness: original.witness(),
+    };
+    use std::io::Write;
+    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"\n{\"type\":\"event_msg\",\"timestamp\":\"2026-10-03T01:01:00Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Later turn\"}}\n").unwrap();
+    assert_eq!(read_work_turn(home.path(), &request).unwrap(), original);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let changed = content.replacen("요청 보기를", "요청 요기를", 1);
+    assert_ne!(
+        changed, content,
+        "fixture must replace the original request at unchanged byte boundaries"
+    );
+    let replacement = path.with_extension("replacement");
+    std::fs::write(&replacement, changed).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    assert_eq!(
+        read_work_turn(home.path(), &request).unwrap_err(),
+        "work_turn_changed"
+    );
+}

@@ -96,6 +96,8 @@ export type Frame = {
     session_search?: import("./snapshot").SessionSearch;
     link_panel?: import("./snapshot").LinkPanel;
     link_summaries?: import("./snapshot").LinkSummaries;
+    session_record?: import("./snapshot").SessionRecordSection | null;
+    session_work_search?: import("./snapshot").SessionWorkSearch | null;
     factory?: import("./factory/model").FactorySection;
     /** Null when the open Task page closed. */
     factory_task?: import("./factory/model").FactoryTaskSection | null;
@@ -178,6 +180,8 @@ type Store = {
   linkPanel: import("./snapshot").LinkPanel | null;
   /** Each Project's link counts and chips (`link_summaries`). */
   linkSummaries: import("./snapshot").LinkSummaries | null;
+  sessionRecord: import("./snapshot").SessionRecordSection | null;
+  sessionWorkSearch: import("./snapshot").SessionWorkSearch | null;
   /**
    * The Factory screens' section (`factory`): the engine's summary and the
    * answers to this screen's requests. The core sends it only when the engine
@@ -325,6 +329,8 @@ export const useShellStore = create<Store>((set, get) => ({
   sessionSearch: null,
   linkPanel: null,
   linkSummaries: null,
+  sessionRecord: null,
+  sessionWorkSearch: null,
   factory: null,
   factoryTask: null,
   agents: [],
@@ -421,6 +427,8 @@ export const useShellStore = create<Store>((set, get) => ({
         sessionSearch: payload.session_search ?? null,
         linkPanel: payload.link_panel ?? null,
         linkSummaries: payload.link_summaries ?? null,
+        sessionRecord: payload.session_record ?? null,
+        sessionWorkSearch: payload.session_work_search ?? null,
         factory: payload.factory ?? null,
         factoryTask: payload.factory_task ?? null,
       });
@@ -430,6 +438,7 @@ export const useShellStore = create<Store>((set, get) => ({
       payload.documents !== undefined ||
       payload.project_sessions !== undefined || payload.session_search !== undefined || payload.memory !== undefined ||
       payload.link_panel !== undefined || payload.link_summaries !== undefined ||
+      payload.session_record !== undefined || payload.session_work_search !== undefined ||
       payload.factory !== undefined || payload.factory_task !== undefined
     ) {
       set({
@@ -441,6 +450,8 @@ export const useShellStore = create<Store>((set, get) => ({
         sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
         linkPanel: payload.link_panel ? share(get().linkPanel, payload.link_panel) : get().linkPanel,
         linkSummaries: payload.link_summaries ? share(get().linkSummaries, payload.link_summaries) : get().linkSummaries,
+        sessionRecord: payload.session_record !== undefined ? payload.session_record && share(get().sessionRecord, payload.session_record) : get().sessionRecord,
+        sessionWorkSearch: payload.session_work_search !== undefined ? payload.session_work_search && share(get().sessionWorkSearch, payload.session_work_search) : get().sessionWorkSearch,
         factory: payload.factory ? share(get().factory, payload.factory) : get().factory,
         factoryTask: payload.factory_task !== undefined ? payload.factory_task && share(get().factoryTask, payload.factory_task) : get().factoryTask,
       });

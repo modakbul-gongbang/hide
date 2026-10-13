@@ -782,7 +782,7 @@ The link record (PRD link-graph) keeps which sessions made or worked on which pu
 Owners: `herdr-core/src/links/` (`store.rs` the SQLite store, `worker.rs` the one writer, `query.rs` the `hide links` answer), `herdr-core/src/runtime/links.rs` (the facts handed in and the panel applied), `hide-session` (the shared line parser the link facts come from), and `hide-host/src/serve.rs` (`link_files`, `link_read`).
 
 It lives in its own file, `links.sqlite3` beside `session-search.sqlite3` (`hide_kit::layout::links_store`), so the two have separate failure, write-lock and size boundaries; it reads the search index's retention policy through a read-only `ATTACH`, and neither Rebuild index nor Copied history Off touches it.
-One worker thread, `hide-links`, spawned in `Core::create` and joined in `Drop for Core`, owns the only write connection; the core hands it owned facts (each GitHub project's pull requests with their issue links and sources, the navigator's worktrees, live panes' session ids and branches, and the coordination ledger's parents) when they change, and it applies them as idempotent upserts.
+One worker thread, `hide-links`, spawned in `Core::create` and joined in `Drop for Core`, owns the only write connection; the core hands it owned facts (each GitHub project's pull requests with their issue links and sources, the navigator's worktrees, live panes' session ids and branches, and the core's resolved parent relationships) when they change, and it applies them as idempotent upserts.
 The schema moves by `PRAGMA user_version`; a newer version than this build knows is refused (`links_store_newer`), and a file that fails `quick_check` is set aside once as `links.sqlite3.corrupt` and rebuilt from the session files still there, with a diagnostic for what could not be rebuilt.
 The file is private, `secure_delete` is on and `max_page_count` caps it at 64 MiB; crossing the cap refuses the write (`links_store_full`) and the panel says so.
 
@@ -795,7 +795,7 @@ A link is closed by an end time, never deleted, and only when its source says it
 Retention follows each Project's Copied history: Off keeps a line only while its file exists, which the own node answers for all of them in one `real_paths` call (a call that fails removes nothing; an OpenCode session, which lives in OpenCode's database, until its read finds it gone), otherwise a line stays while it ended within the period, or within a year while its pull request is still open; the prune runs every 30 minutes on the worker.
 A repository is keyed by GitHub's repository id when `gh repo view` gives it, so a rename keeps its rows.
 
-A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 18); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
+A connected device's sessions come through its helper: `link_files` lists the device's changed session files and `link_read` reads up to 8 of them, each answer only link facts (helper protocol 32 includes bounded request and issue facts); the worker asks each ready device at most once a minute, a device whose call failed is left alone for a minute before it is asked again, and a device that is gone keeps every row it gave.
 The panel's read is one request at a time, the latest only, answered as `link_panel` on its own delta revision beside `rest`; `links_open` names the pull request or issue, a generation fence drops an answer for one no longer shown, and a failure keeps the lines read before.
 A store that cannot open is tried again every 15 s, and while it is closed, or while the worker's writes keep failing, the panel's answer is that failure rather than a record that stopped growing.
 The worker re-reads an open panel after it writes, and publishes the small per-Project summary (`link_summaries`: session counts by pull request and issue, each session's pull request chips, and whether the first fill of this machine or of a device is running; a later listing turns no spinner) at most every 2 s and only when it changed.
@@ -803,6 +803,37 @@ The summary also names, in the core only and never on the wire, the checkouts wh
 The runtime stamps that onto `CheckoutSnapshot.landed` (`runtime/links.rs`, `associate_landed`) when a summary arrives and on every catalog or GitHub change, only while Git also counts the checkout's HEAD in its base; with no summary nothing is landed, so a checkout with no record of its work, which Git ancestry alone reads as merged, is neither drawn merged nor folded as settled.
 `hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]` is read-only and answers the panel's record as one JSON line (the target, the repository, each pull request with its state, issue links and sources, worktrees and whether each was removed, and each session with its ids, device, role, times, request, file path, whether the file is there, and parent).
 It answers through hided's own core without a renderer, scoped by default to the Project of the calling checkout: a target in another Project fails with `other_project` and a hint to pass `--all-projects`, a missing one with `not_found`, an unreadable record with `links_unavailable`, each with a non-zero exit.
+
+### Session work records
+
+The link store's version 2 adds the session work ledger, keyed by device, agent kind and native session id.
+`links/ledger.rs` owns its values and bounds, `links/ledger_store.rs` its transactions, `runtime/session_work.rs` its events, and `web/src/SessionRecord.tsx` its read surface.
+Only `hide-links` writes it; record reads and session search are latest-only mailbox requests, with separate delta revisions and generation fences.
+The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
+
+The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.
+It bounds requests and turns at 2,000 per session, chapters and tasks at 200, missed work at 200, new missed items at three per END and 80 characters each, and continuations at two tasks.
+Oldest entries beyond a retention cap are removed with a diagnostic, and the existing 64 MiB file and Copied history policy govern the whole ledger.
+A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.
+The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
+A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
+
+START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v9`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
+An unassigned session has no goal chapter; an accepted goal creates its first chapter without inventing a title for a greeting.
+Roots count operator requests; a delegated record counts its initial prompt and canonical work requests from its named parent, never reports or other letters.
+Late lineage retracts invalid judgments, restores the last valid END and recomputes output attribution in the same transaction.
+Learned lineage comes from the core's proven parent pane relationship across local and connected-device snapshots, keyed with the owning device's native session identity; retained coordination registrations take precedence and keep ended parents available.
+Project, pane and lineage facts use the same combined snapshot set, and a project's GitHub answers are selected by device as well as path.
+The borrowed lineage fingerprint costs one pass over current local and device panes, agents and registrations; only a change allocates parent facts or posts them to the existing worker mailbox.
+Past requests from summaries Off, failed analysis or a pre-ledger session stay raw and unjudged, without background reclassification when summaries return.
+Completion requires the last assigned END to be Done and every assigned PR to be merged; no assigned PR makes the latter condition true.
+Only a tool-printed address within -2 s to +30 s of GitHub creation makes an output, and descendant outputs are attributed once to the parent's spawn-turn task with their originating session retained.
+
+Missed-work issue previews read the witnessed original turn, repository and bounded regular-file templates through the node, then make one read-only `session_issue_draft` provider request with schema version 1 on a worker.
+Only Create invokes GitHub, in the fixed device/repository where the draft began.
+A durable issue-attempt transaction is acknowledged before the external effect; uncertain completion retries first look up the same title created since that attempt and link it before considering another create.
+Repository or turn changes refuse the action, cancellation leaves missed work unchanged, and provider failure opens an editable title-only form with its reason.
+Templates cannot traverse links or block on special files, and diagnostics keep identity and fixed failure classes rather than private content.
 
 ## Historical usage accounting
 
@@ -1436,7 +1467,7 @@ The core registers the node as an inbound device, by its node id, named by its h
 Each of those answers is a method of the registration's `LinkOrigin` (`Dialed { ssh_alias }` or `Inbound`), which the store keeps in its old spelling (`ssh_alias`, or `inbound: true`); a stored registration with both or neither is dropped with a diagnostic and the rest of the store loads.
 The attach role ends with its channel, with the core's socket, or after 30 s without a byte from its node (three missed heartbeats), so a half-open connection or a stopped core leaves nothing running on C (B20).
 
-What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 31, whose typed hook proof and answer follows 30's credential-free usage fetch and 29's shell integration call).
+What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 32 adds bounded session request and issue facts after 31's typed hook proof and answer, 30's credential-free usage fetch and 29's shell integration call).
 Within 28 a stream's `StreamOpen` may name the caller its node proved (`hide_node_link::panes::StreamCaller`), an optional field: a stream with no proof carries none and its commands are checked with `Call::PaneInspect`. Both ends of a link run one build (a node dials only its core's build, and a core uploads its own build to a device it dials), so the field never meets a peer that lacks it; its serde default only keeps a line without it readable.
 C reaches M's Herdr through link streams (`Call::LinkOpen` naming Herdr as the end, `LinkWrite`, `LinkClose` down, `link_data` and `link_closed` up; the other end a stream names is M's browser relay, below), at most 32 Herdr streams per link with 64 chunks waiting each (a browser relay stream, whose chunks are a relay's CDP, 128), so C's session sync, controls, doorbell, find and phone reply reach M's Herdr with no socket file on C (D-18).
 A stream C gives up (its reader fell 64 chunks behind, or its open went unanswered) keeps its place until its owner drops it, and the node is always told to close it, so the node's 32 slots never leak.
@@ -2295,6 +2326,7 @@ Missing or malformed facts disable the affected reader feature while file and Gi
 The audited protocol-24 transition keeps its frozen Claude/Codex and partial OpenCode label/link capabilities, with no new reader or structured user-turn content inferred from the current build.
 Reader requests and returned bodies are checked against the live link before serialization and decoding; draining, closed or replaced links cannot lend their retired facts to a checkpoint.
 Provider-bearing discovery rows are inspected as bounded raw records before their format enum is decoded, and mixed link batches refuse unsupported members without discarding supported results or advancing the refused member's durable cursor.
+Reader header strings decode JSON escapes before provider and requested-path comparison, so a native Windows path keeps the same identity as the request; strings without escapes remain borrowed.
 Filtered discovery rows still count toward the original page and oldest timestamp, so an unsupported provider cannot hide older supported files by shortening pagination.
 A device normally runs the helper this Hide carries, installed by the digest of its bytes; ordinary payload replacement refreshes the Hello facts on a new connection and remains the recovery for an unaudited mismatch.
 The patch wire does not carry complete old and new documents, so `@codemirror/merge`'s two-document view would require an extra read and is not used.
