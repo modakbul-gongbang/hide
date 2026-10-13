@@ -1275,7 +1275,9 @@ The start panel says `! Not signed in` right after its agent menu whenever that 
 A browser tab shows the agents step alone, with no progress bar, and Continue there ends the wizard; the notifications and project steps are the desktop app's (D-14, B26).
 The desktop app's Help > Set up Hide opens the same steps from the first as this window's own walk: the agents step starts from the agents switched on now and its Continue switches only the agents whose switch changed, the way Settings > Agents does; Escape and the close button end it, and a step not continued changes nothing (B45, B46).
 
-With the switch on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error) or newly finishes, while no Hide window has the keyboard: its title is the task name (the agent's name when there is none) and its body `Needs you · <project>` or `Done · <project>` in the interface language (D-09 to D-11, B31, B39).
+With the switch on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error) or newly finishes, while no Hide window has the keyboard: its title is the root's row title (the provider when no task or proven native title exists), and with a second-line sentence its body is `<translated row status> · <exact sentence> · <project>` (D-09 to D-11, B31, B39, operator-approved update 2026-10-13).
+The sentence stays in its original language; without one the body remains exactly `Needs you · <project>` or `Done · <project>` in the interface language, and an empty project omits its separator.
+See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for the title priorities, native and inferred questions, counts and both notification channels in each mode.
 hided judges the changes with the phone push's rules (status-model.md, Row presentation and phone notifications), so a child's raise arrives on its root, the same state never notifies twice, an agent back within ten minutes is not announced again, and nothing already waiting when the app opened is announced (B32, B33).
 A click brings Hide forward and opens that agent's pane, on a device too; an agent the operator has seen takes its notification back, and a newer one for the same agent replaces it (B34, B35).
 On Windows a click on a notification in Action Center after Hide quit starts Hide and opens what it named once the shell is up, as a click while it runs does.
@@ -1891,7 +1893,9 @@ Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표,
 When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
 A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
 With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
-A notification's title is the task name and its body 내 확인 대기 or 끝 with the project; tapping it opens that agent's detail.
+A notification's title is the root's row title and, with a sentence, its body is `<translated row status> · <exact sentence> · <project>`; without a sentence it keeps 내 확인 대기 or 끝 with the project in Korean, and the corresponding group words in the phone's language.
+The sentence is the core's chosen row detail, untranslated, and may appear in lock-screen previews according to the phone's setting (operator-approved update 2026-10-13); tapping the notice opens that agent's detail.
+See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for native question and plain-text question behavior, and cached-worker compatibility.
 A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
 The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
 

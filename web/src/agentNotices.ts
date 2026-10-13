@@ -9,6 +9,7 @@
 
 import { useEffect } from "react";
 import type { Actions } from "./actions";
+import { statusText } from "./agentStatus";
 import { AGENT_NOTICE_PREFIX } from "./firstRun";
 import type { AgentNotice } from "./generated/hided-ws";
 import { hostBridge } from "./host";
@@ -76,7 +77,8 @@ export function useAgentNotifications(actions: Actions) {
     const listener: Listener = ({ notices, clear }) => {
       if (clear.length > 0) bridge.withdrawNotifications(clear.map((tag) => `${AGENT_NOTICE_PREFIX}${tag}`));
       for (const notice of notices) {
-        const state = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
+        const fallback = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
+        const state = notice.detail ? [notice.status_code ? statusText(t, notice.status_code) : fallback, notice.detail].join(" · ") : fallback;
         const body = notice.place ? t("firstRun.notice.body", { state, project: notice.place }) : state;
         bridge.notify(`${AGENT_NOTICE_PREFIX}${notice.tag}`, cut(notice.title, TITLE_LIMIT), cut(body, BODY_LIMIT), { unlessFocused: true });
       }

@@ -360,6 +360,10 @@ pub mod phone {
         /// elapsed time from it, so time passing sends nothing.
         pub changed_at_unix_ms: Option<u64>,
         pub line: Option<Line>,
+        /// The core's chosen sentence, including a raised root's detail that
+        /// the compact phone row may not draw. Used only by notice transport.
+        #[serde(skip)]
+        pub detail: Option<String>,
         pub status_code: String,
         pub demand: String,
         /// Whether the compact title is emphasized, independent of the detail view.
@@ -653,6 +657,11 @@ pub mod phone {
                 device_label: device_label.map(str::to_owned),
                 changed_at_unix_ms: agent.get("changed_at_unix_ms").and_then(Value::as_u64),
                 line: line(agent),
+                detail: agent
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
                 status_code: str_of(agent, "status_code").to_owned(),
                 demand: agent
                     .get("demand")
