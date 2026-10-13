@@ -1,8 +1,8 @@
 use super::*;
 use Capability::{Available, Unavailable, Unconfirmed};
 use usage::{
-    AbsenceKind, Attribution, AttributionFrom, CostBasis, ModelFrom, TokenSource, LimitDeclaration, LimitSource, Support, UsageDeclaration, absent,
-    not_built,
+    AbsenceKind, Attribution, AttributionFrom, CostBasis, LimitDeclaration, LimitSource, ModelFrom,
+    Support, TokenSource, UsageDeclaration, absent, not_built,
 };
 
 /// The supported order is also the stable Settings order.
