@@ -129,3 +129,15 @@ jobs:
             !agents/runs/rd-*/*/*/helper/**
             !agents/runs/rd-*/*/*/bin/**
           if-no-files-found: ignore
+      - name: Keep core move failure logs
+        # Core-move fixtures use short /tmp paths for Unix sockets, outside
+        # rd-*. Keep only logs, never their SSH keys, state or staged binaries.
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-core-move-logs-${{ inputs.runner }}
+          include-hidden-files: true
+          path: |
+            /tmp/hcm-*/**/*.log
+            /tmp/hcm-*/**/Logs/*.jsonl
+          if-no-files-found: ignore
