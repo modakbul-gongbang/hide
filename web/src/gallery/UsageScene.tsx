@@ -5,10 +5,12 @@ import { AGENT_ADAPTERS } from "../agentAdapters";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { AgentUsage, UsagePreferences } from "../generated/hided-ws";
 import { clientI18n } from "../i18n/translator";
+import { Sidebar } from "../sidebar";
+import { TitleRow } from "../TitleRow";
 import { SettingsGate } from "../SettingsSheet";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
-import { hasLimits } from "../usageLimits";
+import { hasLimits } from "../usage";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 
 export function UsageScene({ params }: { params: URLSearchParams }) {
@@ -43,14 +45,16 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
         value: { windows: [
           { kind: "five_hour", scope: { kind: "all" }, outcome: adapter.id === "codex" && state !== "both-plans" && state !== "full" ? { state: "not_offered" } : state === "not-started" ? { state: "not_started" } : state === "expired" ? { state: "expired", reset_at_s: reset - 1 } : { state: "open", used_percent: 11, resets_at_s: reset + 11520 } },
           { kind: "weekly", scope: { kind: "all" }, outcome: { state: "open", used_percent: adapter.id === "codex" ? 76 : 81, resets_at_s: reset + 450000 } },
+          ...(adapter.id === "claude" ? [{ kind: "weekly" as const, scope: { kind: "model" as const, label: "Fable" }, outcome: { state: "open" as const, used_percent: 42, resets_at_s: reset + 450000 } }] : []),
         ] },
       },
     }));
     const scene = sidebarScene("reference", REFERENCE_FOLDS, now, "one");
     const usage: UsagePreferences = { pinned: [{ agent: "claude", window: "weekly" }, { agent: "codex", window: "weekly" }], hidden: state === "hidden" ? ["claude"] : [] };
-    if (state === "full") usage.pinned.push({ agent: "claude", window: "five_hour" });
-    useShellStore.setState({ connection: "live", rest: { ...scene.rest, navigator: { ...scene.rest.navigator, usage: { nodes: [{ node: "local", agents }] } }, ui_state: { ...scene.rest.ui_state, usage } }, agents: [] });
-    useUiStore.getState().openSettings("usage");
+    if (["full", "not-started", "expired"].includes(state)) usage.pinned.push({ agent: "claude", window: "five_hour" });
+    useShellStore.setState({ connection: "live", rest: { ...scene.rest, navigator: { ...scene.rest.navigator, usage: { nodes: [{ node: "local", agents }] } }, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
+    if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");
+    else useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" } });
     const root = document.documentElement;
     root.classList.toggle("dark", params.get("theme") !== "light");
     root.classList.toggle("light", params.get("theme") === "light");
@@ -59,5 +63,5 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
     root.lang = language;
     void clientI18n.changeLanguage(language);
   }, [params, state]);
-  return <TooltipProvider><div className="h-screen bg-background" data-gallery-scene="usage"><SettingsGate actions={actions} /></div></TooltipProvider>;
+  return <TooltipProvider><div className="flex h-screen flex-col bg-background" data-gallery-scene="usage"><TitleRow actions={actions} /><div className="flex min-h-0 flex-1"><Sidebar actions={actions} /></div><SettingsGate actions={actions} /></div></TooltipProvider>;
 }

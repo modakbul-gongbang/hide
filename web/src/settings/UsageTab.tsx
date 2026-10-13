@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { absenceReason, accountWindows, hasLimits, limitValue, windowLabel } from "../usageLimits";
+import { absenceReason, accountWindows, hasLimits, limitValue, windowLabel } from "../usage";
 
 /** The declaration supplies all seven rows; the core owns every saved edit. */
 export function UsageTab({ actions }: { actions: Actions }) {

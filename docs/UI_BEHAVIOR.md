@@ -1520,22 +1520,34 @@ A start with no answer in 90 seconds, the core's own limit for one, says so insi
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
 Settings > Agents > Starting work has no default agent of its own.
 
-## Weekly usage
+## Usage
 
-Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`.
-The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shell only draws them.
+Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The sidebar footer reads one chip per provider, then Help (`?`) and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
-A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
-A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
-The chips' accessible name lists every provider with its reading.
-Clicking the chips opens the Weekly Usage popover above them, titled `Weekly Usage` with `7 days`: one row per provider with its mark, name, the time left before the reset (`in 5d 4h`, `in 3h 12m`, `in 7m`), the percent and a bar, and each scoped bucket such as Fable indented under its provider with `└`.
-A loading row reads `…` and an unavailable row reads `Unavailable`, each with the core's message in place of the bar; a stale or fallback row keeps its bar and shows its message under it.
-No usage state becomes a banner, toast or alert (design principle 13).
-The countdown advances once a minute while the popover is open, and nothing ticks while it is closed.
+The footer draws up to three pinned account windows, followed by Help and Settings.
+Defaults pin each supported agent's weekly window.
+Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
+A numberless not-started or expired chip always names its window.
+Each chip has its own accessible name with agent, window and value.
+Success is below 70%, warning starts at 70%, danger at 90%.
+Loading or unavailable agents collapse their pins into one dimmed mark; recent stale and fallback readings keep their values until the reset.
+At narrow widths the footer wraps rather than clipping its controls.
 
-The web page tells the core when a read is worth making, through two hints on `ui_state_update`: `usage_window_visible` follows the page's visibility and is sent on every live connection and on each change, and `usage_popover_open` is sent when the popover opens and again when it closes or leaves the screen.
-The core keeps one value of each, so with several pages open the last page to report decides.
+Any chip opens the 320-wide Usage popover above the footer.
+Each visible agent has one card, with 5 hours and 7 days rows, countdown, percent and bar, and model-specific limits indented below their weekly row.
+Not-started windows say `Not started`, never 0%.
+Expired, not-offered and individually unreadable windows have no popover row; a whole malformed response makes the agent unavailable.
+Loading cards show `…`; unavailable cards show `Unavailable`, with a sign-in command only for a signed-out account, or the missing CLI for an uninstalled agent.
+Network and timeout detail stays in diagnostics.
+`Choose chips` opens Settings > Usage.
+No usage state becomes a banner, toast or alert.
+The countdown advances once a minute only while the popover is open.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
+The core keeps one value of each hint, so with several pages open the last page to report decides.
 
 ## Help menu
 

@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import {read, loadCanvas, apply, renamed, unclaimed, retiredNames} from './pen-tokens.mjs';
 import {layout, serialize} from './pen-bands.mjs';
+import {updateUsageMasters} from './pen-usage.mjs';
 import {foldLegacyMasters} from './pen-system.mjs';
 
 export function generate(root) {
@@ -38,6 +39,7 @@ export function generate(root) {
     target.opacity = token.value;
   }
 
+  updateUsageMasters(tokened);
   const legacy = foldLegacyMasters(tokened);
   const {document: laid, unknown} = layout(tokened, tokens, legacy);
   return {map, expected, file, document: tokened, orphans, unknown, before: fs.readFileSync(file, 'utf8'), after: serialize(laid)};

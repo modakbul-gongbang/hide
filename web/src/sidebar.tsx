@@ -32,7 +32,7 @@ import { TreeChevron, TreeRails } from "./components/agent-tree";
 import { sidebarTreeLines } from "./sidebarTree";
 import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
-import { WeeklyUsage } from "./components/weekly-usage";
+import { Usage } from "./components/usage";
 import { agentGroupTitle, agentPlaces, allAgents, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
@@ -161,9 +161,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
           ) : null}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
-            <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
-              <span className="flex-1" />
-              <WeeklyUsage actions={actions} />
+            <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
+              <Usage actions={actions} />
               <HelpMenu actions={actions} />
               <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>

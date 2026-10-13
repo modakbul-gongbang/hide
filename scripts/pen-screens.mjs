@@ -435,7 +435,7 @@ function screenDeviceChip(id, name) {
   ]);
 }
 
-// The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
+// The weekly usage chip at the sidebar's foot (web/src/components/usage.tsx):
 // the master draws Claude Code's mark, so only another provider's mark is named.
 function screenUsageChip(id, {provider, value}) {
   const mark = provider === 'claude' ? {} : {'usage-chip-mark': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}}};
@@ -4921,6 +4921,10 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
+    {name: 'Screen / Usage', build: () => {
+      const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover')];
+      return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: account cards and their windows above the sidebar chips. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
+    }},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
     {name: 'Screen / Menus and Overlays', build: () => buildMenus(tokens)},
