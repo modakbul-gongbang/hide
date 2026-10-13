@@ -71,6 +71,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3);
     await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
     await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+    await expect(record.locator('[data-output-source]')).toHaveText(Array(4).fill('Claude'));
   } finally { daemon?.stop(); herdr.stop(); }
 });
 

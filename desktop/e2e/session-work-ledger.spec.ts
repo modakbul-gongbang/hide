@@ -82,6 +82,7 @@ test("@platform session work records, drafts, ended work and search render in bo
       await expect(record.locator('[data-record-request]')).toHaveCount(3);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
       await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+      await expect(record.locator('[data-output-source]')).toHaveText(Array(4).fill('Claude'));
       await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();

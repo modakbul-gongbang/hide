@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, FlagIcon, GitPullRequestIcon, CircleDotIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { deviceConnected } from "./devices";
@@ -24,6 +24,8 @@ export function SessionRecord({ actions, target }: { actions: Actions; target: W
   const summaries = summariesEnabled(rest?.status?.background_ai);
   const connected = deviceConnected(rest, target.device_id);
   const own = section?.session && workKey(section.session) === workKey(target) ? section : null;
+  const records = useMemo(() => own?.record ? recordTree(own.record) : [], [own?.record]);
+  const sourceNames = useMemo(() => new Map(records.map((record) => [workKey(record.session), recordTitle(record, summaries)])), [records, summaries]);
   const wasConnected = useRef(connected);
   useEffect(() => () => { actions.closeSessionRecord(); }, [actions]);
   useEffect(() => {
@@ -34,13 +36,13 @@ export function SessionRecord({ actions, target }: { actions: Actions; target: W
     <Button size="sm" variant="ghost" className="self-start px-md" onClick={() => actions.closeSessionRecord()}><ArrowLeftIcon />{t("sessionWork.back")}</Button>
     {!own || own.loading ? <div className="space-y-md px-md py-sm" aria-busy="true" data-record-loading="true">{[0, 1, 2].map((key) => <div key={key} className="h-(--size-control-lg) rounded-sm bg-muted" />)}</div> : own.failure ? <div role="status" className="px-md py-sm text-caption"><p>{t("sessionWork.failed")}</p><Button size="sm" variant="ghost" onClick={() => actions.openSessionRecord(target)}>{t("common.retry")}</Button></div> : own.record ? <div className={cn("min-h-0 flex-1 overflow-y-auto px-md pb-md text-caption [word-break:keep-all]", !connected && "opacity-(--opacity-disabled)")} data-record-content="true">
       <h2 className="flex min-w-0 items-center gap-xs py-sm text-subhead font-semibold"><AgentMark kind={target.agent} /><span className="min-w-0 truncate" title={recordTitle(own.record, summaries)}>{recordTitle(own.record, summaries)}</span></h2>
-      <p className="mb-sm text-micro text-muted-foreground">{[own.record.state ? statusText(t, own.record.state as AgentStatusCode) : null, `${t("sessionWork.children")} ${recordTree(own.record).length - 1}`, !summaries ? `${t("sessionWork.requests")} ${own.record.requests.length}` : null].filter(Boolean).join(" · ")}</p>
+      <p className="mb-sm text-micro text-muted-foreground">{[own.record.state ? statusText(t, own.record.state as AgentStatusCode) : null, `${t("sessionWork.children")} ${records.length - 1}`, !summaries ? `${t("sessionWork.requests")} ${own.record.requests.length}` : null].filter(Boolean).join(" · ")}</p>
       {summaries && own.record.tasks.length > 0 ? <Verdict record={own.record} /> : null}
       <h3 className="mt-md mb-xs font-medium text-subtle-foreground">{t("sessionWork.outputs")} <span className="text-micro text-muted-foreground">{`PR ${own.record.outputs.filter((output) => output.kind === "pr").length}`} · {t("issue.label")} {own.record.outputs.filter((output) => output.kind === "issue").length}</span></h3>
-      {orderedOutputs(own.record.outputs).map((output) => <OutputRow key={`${workKey(output.source)}:${output.kind}:${output.repository}:${output.number}`} output={output} actions={actions} />)}
+      {orderedOutputs(own.record.outputs).map((output) => <OutputRow key={`${workKey(output.source)}:${output.kind}:${output.repository}:${output.number}`} output={output} sourceName={sourceNames.get(workKey(output.source)) ?? output.source_name} actions={actions} />)}
       {summaries ? <MissedList record={own.record} actions={actions} connected={connected} /> : null}
       <WorkList record={own.record} summaries={summaries} />
-      {own.record.children.length ? <><h3 className="mt-md mb-xs font-medium text-subtle-foreground">{t("sessionWork.children")} {recordTree(own.record).length - 1}</h3><Children record={own.record} summaries={summaries} /></> : null}
+      {own.record.children.length ? <><h3 className="mt-md mb-xs font-medium text-subtle-foreground">{t("sessionWork.children")} {records.length - 1}</h3><Children record={own.record} summaries={summaries} /></> : null}
     </div> : null}
   </div>;
 }
@@ -58,13 +60,13 @@ function Verdict({ record }: { record: RecordValue }) {
   </div>;
 }
 
-function OutputRow({ output, actions }: { output: WorkOutput; actions: Actions }) {
+function OutputRow({ output, sourceName, actions }: { output: WorkOutput; sourceName: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const state = output.state in TONES ? output.state as keyof typeof TONES : "open";
   const Icon = output.kind === "pr" ? GitPullRequestIcon : CircleDotIcon;
   const stale = output.stale ? output.last_read_at_unix_ms ? new Date(output.last_read_at_unix_ms).toLocaleString() : t("common.unavailable") : null;
   return <button type="button" className={cn(ROW, "flex w-full items-center gap-xs py-xxs hover:bg-accent")} data-record-output={output.kind} onClick={() => actions.openRecordedOutput(output)}>
-    <Hint label={stale ?? t(`sessionWork.${state}`)}><span className={cn("inline-flex shrink-0 items-center gap-xxs text-micro", TONES[state], output.stale && "opacity-(--opacity-disabled)")}><Icon className="size-(--size-icon-sm)" />#{output.number} {t(`sessionWork.${state}`)}</span></Hint><span className="min-w-0 flex-1 truncate" title={output.title}>{output.title}</span><Hint label={output.source_name}><span className="max-w-1/4 truncate text-micro text-muted-foreground">{output.source_name}</span></Hint>
+    <Hint label={stale ?? t(`sessionWork.${state}`)}><span className={cn("inline-flex shrink-0 items-center gap-xxs text-micro", TONES[state], output.stale && "opacity-(--opacity-disabled)")}><Icon className="size-(--size-icon-sm)" />#{output.number} {t(`sessionWork.${state}`)}</span></Hint><span className="min-w-0 flex-1 truncate" title={output.title}>{output.title}</span><Hint label={sourceName}><span data-output-source="true" className="max-w-1/4 truncate text-micro text-muted-foreground">{sourceName}</span></Hint>
   </button>;
 }
 
