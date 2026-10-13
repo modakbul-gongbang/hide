@@ -1337,7 +1337,7 @@ impl Runtime {
         });
         let caller = pane_id
             .map(str::to_owned)
-            .unwrap_or_else(|| crate::workspace_control::checkout_caller_id(&key.0, &key.1));
+            .unwrap_or_else(|| crate::workspace_control::checkout_caller_id("browser", &key.1));
         let action = crate::workspace_control::Action::OpenBrowser {
             url: url.to_owned(),
             reveal,

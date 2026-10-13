@@ -260,7 +260,11 @@ impl Runtime {
             return Ok(None);
         };
         let active = self.workspace_active_tab(key);
-        if self.arranges_agent_areas(&key.0) && self.agent_tab_waiting_in(key, &tab) {
+        let topology_ready = key.0 != self.node.as_str() || self.live.is_some();
+        if topology_ready
+            && self.arranges_agent_areas(&key.0)
+            && self.agent_tab_waiting_in(key, &tab)
+        {
             return Err(crate::workspace_control::Refusal {
                 reason: "view_limit",
                 next_action: "Close an unused Agent tab to admit this tab and retry",
