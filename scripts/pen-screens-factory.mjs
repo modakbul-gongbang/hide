@@ -246,7 +246,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
   function placeRow(id, glyph, label, right, selected) {
-    return frame(id, label, {width: 'fill_container', height: 36, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', ...(selected ? {fill: '$--secondary'} : {})}, [
+    return frame(id, label, {width: 'fill_container', height: 36, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', ...(selected ? {fill: '$--color-selected'} : {})}, [
       icon(`${id}-i`, glyph, {size: 14, fill: selected ? FG : SUB}), text(`${id}-t`, label, {size: '$--text-subhead', weight: '600'}), spacer(`${id}-s`), ...right,
     ]);
   }
@@ -259,7 +259,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
   // A Factory under the sidebar's Factory row: picking it is the same choice as the header's project picker.
   function factoryChild(id, f) {
-    return frame(id, f.project, {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26], cornerRadius: '$--radius-sm', ...(f.selected ? {fill: '$--secondary'} : {})}, [
+    return frame(id, f.project, {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26], cornerRadius: '$--radius-sm', ...(f.selected ? {fill: '$--color-selected'} : {})}, [
       frame(`${id}-m`, f.paused ? 'Paused' : 'No mark', {width: 12, height: 12, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, f.paused ? [icon(`${id}-pg`, 'pause', {size: 10, fill: MUT})] : []),
       icon(`${id}-i`, 'folder-git-2', {size: 12, fill: MUT}),
       text(`${id}-t`, f.project, {size: '$--text-body', fill: f.selected ? FG : SUB}),

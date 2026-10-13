@@ -21,6 +21,8 @@ Three files each own one kind of truth, and none of them restates another's valu
 - **Code authority** is `web/src/components/ui` for shadcn parts (one file per part, matching the gallery and the Pen `System /` sheets) and `web/src/components` for hide composites such as `entry-menu.tsx` and `settings-rows.tsx`, matching `Component /` sheets.
 
 Screen designs are committed separately from the library, in [design/hide-screens.pen](../design/hide-screens.pen), as `Screen / <Area>` sheets (each with Light and Dark frames), importing the library rather than redrawing its masters.
+Selected sidebar and Sessions tool rows use the library-authored `--color-selected`, the default `--primary` at `--opacity-selected-fill` in each theme, registered in `scripts/pen-token-map.json` and copied locally into the screens file.
+Pen cannot derive an alpha tint from a color variable or follow the operator's runtime accent choice; this variable draws the default lime accent, while the shared neutral `--color-selected-wash` and selection on other surfaces retain their existing values.
 
 ## Dev gallery
 
