@@ -294,10 +294,16 @@ impl Runtime {
                     .tabs
                     .iter()
                     .any(|tab| tab.id.as_deref() == Some(tab_id) && !tab.delegated)
-                    && self
-                        .agent_layout_of(&(self.node.as_str().to_owned(), checkout.path.clone()))
-                        .is_some_and(|layout| layout.tree.display(tab_id).is_none())
+                    && self.agent_tab_waiting_in(
+                        &(self.node.as_str().to_owned(), checkout.path.clone()),
+                        tab_id,
+                    )
             })
+    }
+
+    pub(super) fn agent_tab_waiting_in(&self, key: &WorkspaceKey, tab_id: &str) -> bool {
+        self.agent_layout_of(key)
+            .is_some_and(|layout| layout.tree.display(tab_id).is_none())
     }
 
     pub(super) fn finish_agent_admission(&mut self, path: &str, id: u64) {
@@ -548,7 +554,6 @@ impl Runtime {
             .workspaces
             .iter()
             .flat_map(|workspace| &workspace.checkouts)
-            .filter(|checkout| !checkout.tabs.is_empty())
             .map(|checkout| {
                 (
                     (device.to_owned(), checkout.path.clone()),

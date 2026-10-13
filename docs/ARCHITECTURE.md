@@ -2045,6 +2045,9 @@ Revealing selects the actual caller tab; pane-less checkout callers and GUI even
 Reconcile, preview retirement, close guards, restart hydration and browser inventory inspect all live presentations, so hidden content neither appears in the operator's strip nor loses its shared buffer or browser authority.
 Admission counts the checkout's aggregate 64 displays and six occupied areas, including a temporarily reserved operator layout; an empty presentation owns no View area.
 Each layout retains depth three, and authoritative Agent topology keeps the existing 64-tab admission and prunes closed records.
+The same admission check covers a caller on an inbound node; an unanswered session preserves saved state, while an authoritative empty checkout prunes its final tab's resources.
+Pruning retires clean documents with no remaining presentation references and retains unsaved buffers without inserting them into another tab's strip.
+Reconciliation in a tab-owned presentation adds an unshown document only when an explicit editor action requests it.
 Every tab-valued owner and tab-keyed map participates in `node_migration::KEYS` with `Moves::Tab` for core moves and returns.
 Changes use the existing coalesced off-lock save and notification path; identical state creates no additional save or publication, and there is no new polling, subprocess or blocking work under Runtime.
 Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.

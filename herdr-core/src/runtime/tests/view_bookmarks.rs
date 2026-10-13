@@ -710,7 +710,7 @@ fn hidden_references_protect_dirty_document_when_bs_copy_closes() {
     assert!(strip(&runtime, &directory).is_empty());
     assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
-    assert_eq!(published_front_ids(&runtime), [a.clone()]);
+    assert_eq!(published_front_ids(&runtime), std::slice::from_ref(&a));
     let expected = runtime
         .workspace_control_query(crate::node::TEST_NODE, "w-order:t1:p", Query::Info)
         .unwrap()
@@ -879,6 +879,54 @@ fn authoritative_close_prunes_only_the_closed_tabs_resources() {
 }
 
 #[test]
+fn closing_a_hidden_owner_does_not_adopt_its_documents_into_b() {
+    for dirty in [false, true] {
+        let (mut runtime, checkout, directory) = setup(&format!("owner-close-{dirty}"));
+        open(&mut runtime, &checkout, &directory, "a.md");
+        focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+        control_file(
+            &mut runtime,
+            "w-order:t1:p",
+            &directory,
+            "c.md",
+            false,
+            "hidden-c",
+        );
+        if dirty {
+            focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
+            runtime.dispatch_json(&explorer_event(
+                "file_draft",
+                serde_json::json!({"contents_utf8": "kept unsaved content\n"}),
+            ));
+            focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+        }
+        let before = columns(&runtime);
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &TABS[1..],
+            &TABS[1..],
+            TABS[1],
+        )));
+        runtime.sync_workspace_view();
+        assert_eq!(
+            columns(&runtime),
+            before,
+            "A's closed presentation does not enter B"
+        );
+        assert_eq!(
+            runtime
+                .snapshot
+                .editor
+                .tabs
+                .iter()
+                .any(|tab| tab.label == "c.md"),
+            dirty,
+            "Clean unreferenced documents retire; dirty content remains recoverable"
+        );
+    }
+}
+
+#[test]
 fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
     let (mut runtime, checkout, directory) = setup("presentation-budget");
     open(&mut runtime, &checkout, &directory, "a.md");
@@ -891,6 +939,7 @@ fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
     };
     control(&mut runtime, "w-order:t1:p", action.clone(), "select-first");
     runtime.sync_workspace_view();
+    open(&mut runtime, &checkout, &directory, "b.md");
     let generation = runtime.workspace_views.as_ref().unwrap().generation;
     control(&mut runtime, "w-order:t1:p", action, "select-repeat");
     runtime.sync_workspace_view();
@@ -901,7 +950,7 @@ fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
     );
     let before = runtime.snapshot.workspace_view.clone();
     let caller = "w-order:t1:p";
-    for index in 0..62 {
+    for index in 0..61 {
         let action = open_page(&format!("https://example.test/{index}"), false);
         control(&mut runtime, caller, action, &format!("fill-{index}"));
     }

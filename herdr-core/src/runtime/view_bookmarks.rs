@@ -260,7 +260,7 @@ impl Runtime {
             return Ok(None);
         };
         let active = self.workspace_active_tab(key);
-        if self.live.is_some() && self.agent_tab_waiting(&tab) {
+        if self.arranges_agent_areas(&key.0) && self.agent_tab_waiting_in(key, &tab) {
             return Err(crate::workspace_control::Refusal {
                 reason: "view_limit",
                 next_action: "Close an unused Agent tab to admit this tab and retry",
@@ -442,13 +442,21 @@ impl Runtime {
     }
 
     fn retire_refused_view_documents(&mut self, key: &WorkspaceKey, before: &HashSet<String>) {
+        self.retire_unreferenced_view_documents(key, |id| !before.contains(id));
+    }
+
+    fn retire_unreferenced_view_documents(
+        &mut self,
+        key: &WorkspaceKey,
+        eligible: impl Fn(&str) -> bool,
+    ) {
         let created: Vec<_> = self
             .snapshot
             .editor
             .tabs
             .iter()
             .filter(|tab| {
-                !before.contains(&tab.id)
+                eligible(&tab.id)
                     && self
                         .workspace_key(&tab.workspace_id, &tab.checkout_id)
                         .as_ref()
@@ -481,6 +489,11 @@ impl Runtime {
         let Some(entry) = store.views.get_mut(&key.0, &key.1) else {
             return false;
         };
+        let documents: HashSet<String> = entry
+            .layouts()
+            .flat_map(|layout| layout.displays())
+            .filter_map(|display| display.tab_id.clone())
+            .collect();
         entry.view_next_id = entry.next_view_identity();
         let before = entry.view_visibility.len() + entry.view_presentations.len();
         entry
@@ -517,6 +530,7 @@ impl Runtime {
             || owner_gone;
         if changed {
             store.generation += 1;
+            self.retire_unreferenced_view_documents(key, |id| documents.contains(id));
         }
         changed
     }

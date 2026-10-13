@@ -244,6 +244,12 @@ impl From<LayoutError> for LayoutRefusal {
     }
 }
 
+struct ReconcileAdmission<'a> {
+    owned: &'a HashSet<String>,
+    available: usize,
+    append_unrequested: bool,
+}
+
 /// Brings one Workspace's displays in line with the editor's tabs. Returns
 /// whether anything the file stores changed, and the documents the display
 /// cap kept off screen.
@@ -251,8 +257,7 @@ fn reconcile_layout<'t>(
     layout: &mut Layout,
     key: &WorkspaceKey,
     live: bool,
-    owned: &HashSet<String>,
-    available: usize,
+    admission: ReconcileAdmission<'_>,
     tabs: &'t [TabFacts],
     requested: Option<&str>,
     now: u64,
@@ -307,17 +312,18 @@ fn reconcile_layout<'t>(
     // that make one are refused at the cap; one that landed after the tree
     // filled waits off screen until a view is closed.
     if live {
-        for tab in tabs
-            .iter()
-            .filter(|tab| tab.key.as_ref() == Some(key) && !owned.contains(&tab.id))
-        {
+        for tab in tabs.iter().filter(|tab| {
+            tab.key.as_ref() == Some(key)
+                && !admission.owned.contains(&tab.id)
+                && (admission.append_unrequested || requested == Some(tab.id.as_str()))
+        }) {
             if layout
                 .displays()
                 .any(|display| display.tab_id.as_deref() == Some(tab.id.as_str()))
             {
                 continue;
             }
-            if layout.display_count() >= available {
+            if layout.display_count() >= admission.available {
                 unshown.push(tab);
                 continue;
             }
@@ -460,6 +466,9 @@ impl Runtime {
                 return Err(error);
             }
         };
+        if !changed {
+            entry.layout = before.clone();
+        }
         let displays =
             entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_counts.0;
         let areas = entry
@@ -1925,6 +1934,7 @@ impl Runtime {
             });
             let owned: HashSet<String> = tabs
                 .iter()
+                .filter(|tab| tab.key.as_ref() == Some(&key))
                 .filter(|tab| {
                     view.view_presentations
                         .values()
@@ -1951,8 +1961,11 @@ impl Runtime {
                 &mut view.layout,
                 &key,
                 store.live.contains(&key),
-                &owned,
-                MAX_VIEW_DISPLAYS.saturating_sub(hidden_count),
+                ReconcileAdmission {
+                    owned: &owned,
+                    available: MAX_VIEW_DISPLAYS.saturating_sub(hidden_count),
+                    append_unrequested: view.view_owner.is_none(),
+                },
                 &tabs,
                 requested,
                 now,
@@ -1962,8 +1975,11 @@ impl Runtime {
                     &mut presentation.layout,
                     &key,
                     false,
-                    &owned,
-                    0,
+                    ReconcileAdmission {
+                        owned: &owned,
+                        available: 0,
+                        append_unrequested: false,
+                    },
                     &tabs,
                     None,
                     now,

@@ -11,6 +11,111 @@ use crate::device_catalog;
 
 const NODE: &str = "macbook-node";
 
+#[test]
+fn inbound_waiting_caller_cannot_allocate_a_private_view() {
+    let t = tree();
+    let (mut runtime, _requests, _views) =
+        device_in_front(crate::model::LinkOrigin::Inbound, &t.main);
+    let names = (1..=65).map(|n| format!("t{n}")).collect::<Vec<_>>();
+    let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+    runtime.ingest_remote_session(NODE, Ok(focused_on(&t.main, &names, "t1")));
+    runtime.sync_workspace_view();
+    let caller = format!("remote:{NODE}:pane:t65");
+    let context = runtime
+        .workspace_control_query(NODE, &caller, crate::workspace_control::Query::Info)
+        .unwrap()
+        .context;
+    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
+    let generation = runtime.workspace_views.as_ref().unwrap().generation;
+    let refused = runtime
+        .workspace_control_action(
+            NODE,
+            &caller,
+            &context,
+            &format!("{}-waiting-browser", unix_milliseconds()),
+            crate::workspace_control::Action::OpenBrowser {
+                url: "https://example.test/waiting".to_owned(),
+                reveal: false,
+                area_id: None,
+                new_target: false,
+            },
+            Ok(None),
+        )
+        .unwrap_err();
+    assert_eq!(refused.reason, "view_limit");
+    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, before);
+    assert_eq!(
+        runtime.workspace_views.as_ref().unwrap().generation,
+        generation
+    );
+    assert!(runtime.snapshot.browser_views.is_empty());
+}
+
+#[test]
+fn authoritative_final_node_tab_close_retires_its_private_page() {
+    let t = tree();
+    let (mut runtime, _requests, _views) =
+        device_in_front(crate::model::LinkOrigin::Inbound, &t.main);
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: "registered-node".to_owned(),
+            label: "Node".to_owned(),
+            path: t.main.clone(),
+            device_id: NODE.to_owned(),
+            pinned: false,
+            home: false,
+        });
+    let caller = format!("remote:{NODE}:pane:t1");
+    let context = runtime
+        .workspace_control_query(NODE, &caller, crate::workspace_control::Query::Info)
+        .unwrap()
+        .context;
+    runtime
+        .workspace_control_action(
+            NODE,
+            &caller,
+            &context,
+            &format!("{}-owned-page", unix_milliseconds()),
+            crate::workspace_control::Action::OpenBrowser {
+                url: "https://example.test/owned".to_owned(),
+                reveal: false,
+                area_id: None,
+                new_target: false,
+            },
+            Ok(None),
+        )
+        .unwrap();
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.browser_views.len(), 1);
+    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
+    let saved_session = runtime.snapshot.status.remote[0].session.take().unwrap();
+    runtime.prune_device_view_bookmarks(NODE);
+    assert_eq!(
+        runtime.workspace_views.as_ref().unwrap().views,
+        before,
+        "an unanswered session preserves the saved presentation"
+    );
+    runtime.snapshot.status.remote[0].session = Some(saved_session);
+    runtime.ingest_remote_session(NODE, Ok(focused_on(&t.main, &[], "t1")));
+    runtime.sync_workspace_view();
+    let entry = runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views
+        .get(NODE, &t.main)
+        .unwrap();
+    assert!(entry.view_owner.is_none());
+    assert!(entry.view_presentations.is_empty());
+    assert_eq!(entry.layout.display_count(), 0);
+    assert_eq!(entry.agent_layout.tree.display_count(), 0);
+    assert!(runtime.snapshot.browser_views.is_empty());
+}
+
 /// `origin`'s device with one Workspace of tabs `t1` and `t2` in front, its
 /// Herdr's keyboard on `t1`, and its requests recorded.
 fn device_in_front(

@@ -201,9 +201,9 @@ impl Runtime {
     }
 
     /// A device tab Herdr no longer lists loses its View bookmark (D-11).
-    /// A checkout the device lists with no tab at all is left alone, like an
-    /// answer that has not arrived.
-    fn prune_device_view_bookmarks(&mut self, target: &str) {
+    /// A received session with no tabs retires their presentations; no
+    /// session yet leaves the saved state untouched.
+    pub(super) fn prune_device_view_bookmarks(&mut self, target: &str) {
         let Some(session) = self
             .snapshot
             .status
@@ -229,7 +229,6 @@ impl Runtime {
                     )
                 })
             })
-            .filter(|(_, tabs)| !tabs.is_empty())
             .collect();
         let mut pruned = false;
         for (key, tabs) in &listed {
