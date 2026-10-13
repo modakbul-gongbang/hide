@@ -800,6 +800,8 @@ The same store retains the public price cache and the last network-attempt time;
 Daily totals hold four fixed token-only context bands, not another table of call identities, preserving tier-aware repricing across event expiry within the existing row and database caps.
 The separately owned price-fetch thread asks the own node for `Call::UsagePriceFetch`, refused for devices.
 The node owns the bounded public HTTP read; the core parses the returned body and the ledger's sole writer persists the table before publishing it.
+Shutdown closes the own-node link before joining the ledger and price threads, so those joins do not wait for an in-flight HTTP answer.
+The node's unfinished HTTP work retains its capacity slot and five-second deadline until it ends.
 
 `usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
 Only the core's own native-node rows enter these calendars.
@@ -1331,6 +1333,9 @@ The core decides and keeps state; it never touches a machine (PRD core-host-node
 Every file, process, socket and session-file read is a node's, asked through one contract, `NodeLink` (`hide-node-link`), addressed by node id (`Runtime::node_link`): the core's own node answers today, and a device's helper answers for its machine.
 The contract crate sits below both sides, so the core holds only the trait and the wire types, and the machine side (`hide-node`, over `hide-host`) never depends on the core.
 The core's own node is `hide_node::Local`, which answers in hided's process through `hide_host::serve`; the core gets it in `Core::create`, with the Herdr connector the same node opens.
+Closing it refuses new calls and wakes pending callers with `Unknown` through their existing one-answer channels; it neither polls nor starts a cancellation thread.
+There are at most 64 admitted machine calls, and a timed-out or closed caller does not free its slot until the actual work ends.
+The weak answer-sender list is pruned on admission and bounded by those same slots; closing one node affects its clones, never another node.
 
 | The core's | The node's |
 | --- | --- |

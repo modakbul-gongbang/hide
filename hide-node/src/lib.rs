@@ -6,9 +6,9 @@
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use cap_std::fs::Dir;
@@ -36,6 +36,18 @@ pub const MAX_IN_FLIGHT: usize = 64;
 pub struct Local {
     env: Env,
     in_flight: Arc<AtomicUsize>,
+    pending: Arc<Mutex<PendingCalls>>,
+}
+
+type AnswerSender = mpsc::SyncSender<Result<LinkAnswer, LinkError>>;
+
+/// At most one weak sender per admitted machine call (MAX_IN_FLIGHT).
+/// Closing sends through each call's existing bounded answer channel, so
+/// callers wake without polling or waiting for the machine work to finish.
+#[derive(Debug, Default)]
+struct PendingCalls {
+    closed: Option<String>,
+    answers: Vec<Weak<AnswerSender>>,
 }
 
 /// One plain call's place among [`MAX_IN_FLIGHT`], given back however its
@@ -57,6 +69,7 @@ impl Local {
         Self {
             env: Env::standalone(home),
             in_flight: Arc::default(),
+            pending: Arc::default(),
         }
     }
 
@@ -84,6 +97,7 @@ impl Local {
         Self {
             env,
             in_flight: Arc::default(),
+            pending: Arc::default(),
         }
     }
 }
@@ -130,6 +144,9 @@ impl NodeLink for Local {
     /// runs on a thread of its own, and a caller that stops waiting reads
     /// the effect as unknown.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        if let Some(reason) = self.closed_reason() {
+            return Err(LinkError::NotConnected(reason));
+        }
         hide_node_link::link::check_reader_call(self, &call)?;
         let op = op_name(&call);
         if self.in_flight.fetch_add(1, Ordering::AcqRel) >= MAX_IN_FLIGHT {
@@ -145,17 +162,40 @@ impl NodeLink for Local {
         let admitted = Admitted(Arc::clone(&self.in_flight));
         let env = self.env.clone();
         let (answered, answer) = mpsc::sync_channel(1);
+        let answered = Arc::new(answered);
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some(reason) = &pending.closed {
+                return Err(LinkError::NotConnected(reason.clone()));
+            }
+            pending.answers.retain(|sender| sender.strong_count() > 0);
+            pending.answers.push(Arc::downgrade(&answered));
+        }
         std::thread::Builder::new()
             .name("hide-node-call".to_owned())
             .spawn(move || {
                 let _admitted = admitted;
-                let _ = answered.send(hide_host::serve::handle_in(call, &env));
+                let result = if env.stop.load(Ordering::Acquire) {
+                    Err(LinkError::Unknown(
+                        "This machine's node closed before its work started".to_owned(),
+                    ))
+                } else {
+                    hide_host::serve::handle_in(call, &env)
+                        .map(LinkAnswer::Parsed)
+                        .map_err(LinkError::Refused)
+                };
+                // Close may already have answered this caller. A late host
+                // result cannot block its thread or replace that outcome.
+                let _ = answered.try_send(result);
             })
             .map_err(|error| {
                 LinkError::NotConnected(format!("This machine's node could not start: {error}"))
             })?;
         match answer.recv_timeout(timeout) {
-            Ok(result) => result.map(LinkAnswer::Parsed).map_err(LinkError::Refused),
+            Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Its thread keeps a place until the work ends; these records
                 // name what holds the places when the node turns busy.
@@ -185,10 +225,16 @@ impl NodeLink for Local {
         timeout: Duration,
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
+        if let Some(reason) = self.closed_reason() {
+            return Err(LinkError::NotConnected(reason));
+        }
         hide_node_link::link::check_reader_call(self, &call)?;
         let deadline = Instant::now().checked_add(timeout);
-        let mut within =
-            |report| deadline.is_none_or(|end| Instant::now() < end) && progress(report);
+        let mut within = |report| {
+            !self.env.stop.load(Ordering::Acquire)
+                && deadline.is_none_or(|end| Instant::now() < end)
+                && progress(report)
+        };
         hide_host::serve::handle_with_progress(call, &self.env, &mut within)
             .map(LinkAnswer::Parsed)
             .map_err(LinkError::Refused)
@@ -198,10 +244,34 @@ impl NodeLink for Local {
         true
     }
 
-    /// The core is going away: a kit step still running ends the child it
-    /// waits on rather than keep the process alive after the core.
-    fn close(&self, _reason: &str) {
-        self.env.stop.store(true, Ordering::Relaxed);
+    fn closed_reason(&self) -> Option<String> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .closed
+            .clone()
+    }
+
+    /// Stop admission and wake waiting callers before workers are joined.
+    /// Work already running retains its capacity slot until its own bound
+    /// ends it; a kit step also reads the stop flag and ends its child.
+    fn close(&self, reason: &str) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if pending.closed.is_some() {
+            return;
+        }
+        pending.closed = Some(reason.to_owned());
+        self.env.stop.store(true, Ordering::Release);
+        for answered in pending
+            .answers
+            .drain(..)
+            .filter_map(|sender| sender.upgrade())
+        {
+            let _ = answered.try_send(Err(LinkError::Unknown(reason.to_owned())));
+        }
     }
 }
 
@@ -285,6 +355,65 @@ mod tests {
             "{late:?}"
         );
         assert!(node.call(Call::Hello, Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    fn closing_the_node_releases_a_caller_before_its_machine_work_finishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let node = Local::new(Some(directory.path().to_path_buf()));
+        let caller = node.clone();
+        let cwd = directory.path().to_string_lossy().into_owned();
+        let (finished, outcome) = mpsc::channel();
+        let pending = std::thread::spawn(move || {
+            let text = if cfg!(windows) {
+                "powershell -NoProfile -Command \"Set-Content started ready; while (!(Test-Path release)) { Start-Sleep -Milliseconds 20 }\""
+            } else {
+                "printf ready > started; while [ ! -f release ]; do sleep 0.02; done"
+            };
+            let result = caller.call(
+                Call::Factory {
+                    call: hide_node_link::factory::FactoryCall::Check {
+                        cwd,
+                        text: text.to_owned(),
+                    },
+                },
+                Duration::from_secs(20),
+            );
+            let _ = finished.send(result);
+        });
+        let started = directory.path().join("started");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !started.exists() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        let admitted = started.exists();
+        node.close("core stopping");
+        let closed = outcome.recv_timeout(Duration::from_secs(1));
+        let in_flight = node.in_flight.load(Ordering::Acquire);
+        // Always release the real host command before asserting, including
+        // the old implementation which waits for this command to finish.
+        std::fs::write(directory.path().join("release"), "done").unwrap();
+        pending.join().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while node.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(admitted, "the private host command never started");
+        assert!(
+            matches!(closed, Ok(Err(LinkError::Unknown(_)))),
+            "{closed:?}"
+        );
+        assert_eq!(in_flight, 1, "unfinished host work keeps its capacity slot");
+        assert_eq!(node.in_flight.load(Ordering::Acquire), 0);
+        assert!(matches!(
+            node.call(Call::Hello, Duration::from_secs(1)),
+            Err(LinkError::NotConnected(_))
+        ));
+        assert!(
+            Local::new(None)
+                .call(Call::Hello, Duration::from_secs(5))
+                .is_ok()
+        );
     }
 
     /// A daemon started with a private home must never answer from the
