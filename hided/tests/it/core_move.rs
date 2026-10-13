@@ -2869,6 +2869,19 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
                 .join(forward["intent"].as_str().context("intent")?),
             SOURCE_NODE,
         )?;
+        ensure!(
+            kept_before["source"]["workspace_views"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|view| view["owner"].is_string()
+                    && view["presentations"]
+                        .as_object()
+                        .is_some_and(|presentations| presentations
+                            .values()
+                            .any(|parked| parked["views"] != view["views"]))),
+            "the move fixture must compare distinct current and parked tab presentations: {kept_before:#}"
+        );
         let shown_after = wait_for("the window as it was, through the new core", || {
             let shown = window_shows(&fixture, TARGET_NODE)?;
             Ok(shown.filter(|shown| *shown == shown_before))
