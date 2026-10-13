@@ -167,6 +167,8 @@ When the behavior depends on the order of two events, the test fixes that order;
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path and the copy of the built no-op opener used by both fixtures.
+Its Windows `launcher.c` reads paths and arguments through the wide-character APIs and decodes the script's UTF-8 interpreter line explicitly, so a fixture never substitutes the account's ANSI code page for the caller's title or body.
+`web/e2e/platform-program.unit.ts` runs the real fixture program from a Unicode path and checks arguments, quoting and the child's exit status on every system; the lost-create-response journey also checks the title the fixture created before reconciling it.
 Put new operating-system differences in that shared boundary rather than repeating them in a spec.
 The Windows fixture boundaries also preserve these requirements:
 

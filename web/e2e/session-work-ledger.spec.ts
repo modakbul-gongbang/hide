@@ -103,6 +103,8 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     await missed.locator('[data-missed-issue]').click();
     await form.locator('[data-new-issue-create]').click();
     await expect(form.locator('[data-new-issue-error]')).toBeVisible({ timeout: 30_000 });
+    const created = JSON.parse(fs.readFileSync(github.issue, "utf8")) as { title: string };
+    expect(created.title).toBe("한국어 요청 줄바꿈 확인");
     await form.locator('[data-new-issue-create]').click();
     await expect(form).toHaveCount(0, { timeout: 30_000 });
     await page.getByText("Closed 1", { exact: true }).click();
