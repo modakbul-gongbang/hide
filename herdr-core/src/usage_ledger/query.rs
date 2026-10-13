@@ -59,6 +59,10 @@ pub struct Peak {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Range {
+    /// Inclusive civil-date bounds. Empty dates are drawn by the shell.
+    pub calendar_start: String,
+    pub calendar_end: String,
+    /// Only dates with recorded calls, including calls with zero new tokens.
     pub days: Vec<Day>,
     pub amount: Amount,
     pub since: Option<String>,
@@ -305,6 +309,8 @@ fn range(
         .collect();
     let reading = progress.iter().any(|p| p.reading);
     let mut range = Range {
+        calendar_start: start.to_string(),
+        calendar_end: today.to_string(),
         days: Vec::new(),
         amount: Amount::default(),
         since: None,
@@ -320,6 +326,7 @@ fn range(
     };
     let mut total = Sum::default();
     let mut date = start;
+    let mut day_index = 0;
     let mut streak = 0;
     let mut closed = Vec::new();
     while date <= today {
@@ -369,20 +376,23 @@ fn range(
             .map(|(agent, n)| contribution(agent, n, amount.new_tokens))
             .collect();
         let top_agents = agents.iter().take(3).cloned().collect();
-        range.days.push(Day {
-            date: date.to_string(),
-            week: (range.days.len() / 7) as u16,
-            weekday: date.weekday().to_sunday_zero_offset() as u8,
-            today: date == today,
-            recent_week: date >= shift(today, -6)?,
-            level: 0,
-            pending: reading && amount.calls == 0,
-            amount,
-            top_agents,
-            agents,
-            other_agents: count.saturating_sub(3),
-        });
+        if amount.calls > 0 {
+            range.days.push(Day {
+                date: date.to_string(),
+                week: day_index / 7,
+                weekday: date.weekday().to_sunday_zero_offset() as u8,
+                today: date == today,
+                recent_week: date >= shift(today, -6)?,
+                level: 0,
+                pending: false,
+                amount,
+                top_agents,
+                agents,
+                other_agents: count.saturating_sub(3),
+            });
+        }
         date = shift(date, 1)?;
+        day_index += 1;
     }
     range.current_streak = streak;
     range.amount = total.amount()?;

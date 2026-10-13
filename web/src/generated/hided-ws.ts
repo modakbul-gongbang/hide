@@ -232,6 +232,16 @@ export interface ConsumptionReading {
 }
 export interface UsageRange {
   /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_start: string;
+  /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_end: string;
+  /**
+   * Sparse recorded days, including calls with zero new tokens. The shell fills omitted dates inside the inclusive calendar bounds.
+   *
    * @maxItems 371
    */
   days: UsageDay[];

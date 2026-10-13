@@ -6,7 +6,7 @@ import { AgentMark } from "../AgentMark";
 import { agentAdapter } from "../agentAdapters";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
-import { compactTokens, dollarAmount, selectedUsage, usageDate } from "../usageHistory";
+import { compactTokens, dollarAmount, selectedUsage, usageDate, usageDays } from "../usageHistory";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Hint } from "./ui/tooltip";
@@ -100,7 +100,8 @@ export function UsageHistory({ node, surface, outline, onHistory }: { node: Node
   const [selected, setSelected] = useState<string | null>(null);
   const [date, setDate] = useState<string | null>(null);
   const [agent, setAgent] = useState<string | null>(null);
-  const range = selectedUsage(node, surface, selected);
+  const sparse = selectedUsage(node, surface, selected);
+  const range = useMemo(() => sparse ? { ...sparse, days: usageDays(sparse) } : null, [sparse]);
   const history = node.history?.[surface];
   // All possible day details occupy one grid area invisibly, so the tallest
   // real localized content sets its height before any pointer enters a cell.

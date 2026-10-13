@@ -84,9 +84,11 @@ fn first_backfill_is_pending_then_short_history_shrinks_once() {
         .unwrap()
         .popover
         .all;
-    assert_eq!(during.days.first().unwrap().date, "2026-08-23");
+    assert_eq!(during.calendar_start, "2026-08-23");
+    assert_eq!(during.calendar_end, "2026-10-07");
+    assert_eq!(during.days.len(), 2);
     assert_eq!((during.files_done, during.files_total), (412, 1280));
-    assert!(during.reading && during.days.first().unwrap().pending);
+    assert!(during.reading);
     assert!(
         !during
             .days
@@ -96,11 +98,12 @@ fn first_backfill_is_pending_then_short_history_shrinks_once() {
             .pending
     );
     let after = project(&rows, &[], "2026-10-07").unwrap().popover.all;
-    assert_eq!(after.days.first().unwrap().date, "2026-10-04");
-    assert_eq!(after.days.len(), 4);
+    assert_eq!(after.calendar_start, "2026-10-04");
+    assert_eq!(after.calendar_end, "2026-10-07");
+    assert_eq!(after.days.len(), 2);
     assert_eq!(
         after.days.iter().map(|d| d.level).collect::<Vec<_>>(),
-        [0, 1, 4, 0]
+        [1, 4]
     );
     assert_eq!(after.current_streak, 2); // today may still become active
     assert_eq!(
@@ -113,6 +116,54 @@ fn first_backfill_is_pending_then_short_history_shrinks_once() {
     );
     assert!(after.days.iter().all(|d| !d.pending));
     assert!(project(&[], &[], "2026-10-07").is_none());
+}
+
+#[test]
+fn empty_backfill_sends_bounds_without_cells_and_keeps_zero_token_calls() {
+    let progress = Progress {
+        agent: Agent::Pi,
+        reading: true,
+        files_done: 0,
+        files_total: 0,
+        limited: false,
+        skipped: 0,
+        failure: None,
+    };
+    let empty = project(&[], &[progress], "2026-10-07").unwrap();
+    for surface in [&empty.popover, &empty.year] {
+        for range in std::iter::once(&surface.all).chain(surface.filtered.iter().map(|r| &r.range))
+        {
+            assert_eq!(range.calendar_start, "2026-08-23");
+            assert_eq!(range.calendar_end, "2026-10-07");
+            assert!(range.days.is_empty());
+            assert_eq!(range.amount.calls, 0);
+        }
+    }
+    // Seven selections on two surfaces used to repeat hundreds of empty
+    // amounts on every new connection. Bounds keep this below 16 KiB.
+    assert!(serde_json::to_vec(&empty).unwrap().len() < 16 * 1024);
+
+    let zero = project(&[row("pi", "2026-10-05", 0)], &[], "2026-10-07").unwrap();
+    let range = &zero.popover.all;
+    assert_eq!(
+        (range.calendar_start.as_str(), range.calendar_end.as_str()),
+        ("2026-10-04", "2026-10-07")
+    );
+    assert_eq!(range.days.len(), 1);
+    let day = &range.days[0];
+    assert_eq!(day.date, "2026-10-05");
+    assert_eq!(
+        (
+            day.week,
+            day.weekday,
+            day.amount.calls,
+            day.amount.new_tokens
+        ),
+        (0, 1, 1, 0)
+    );
+    assert_eq!(day.amount.tokens.cache_read, 90_000_000);
+    assert_eq!(day.amount.cost.micro_usd, 125_000);
+    assert!(!day.pending);
 }
 
 // D-04/D-11: filtering changes totals and color only; shares stay present,
@@ -136,10 +187,7 @@ fn agent_filter_keeps_calendar_and_other_shares_with_full_history_cost() {
         .find(|p| p.agent == "pi")
         .unwrap();
     assert_eq!(pi.range.amount.new_tokens, 100);
-    assert_eq!(
-        pi.range.days.first().unwrap().date,
-        view.popover.all.days.first().unwrap().date
-    );
+    assert_eq!(pi.range.calendar_start, view.popover.all.calendar_start);
     assert_eq!(view.popover.all.days.last().unwrap().week, 19);
     let pi = view
         .popover

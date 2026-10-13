@@ -806,6 +806,9 @@ The teardown-only `AiRelease` and `LabelUnlock` requests remain callable after c
 The node's unfinished HTTP work retains its capacity slot and five-second deadline until it ends.
 
 `usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
+Each range sends inclusive `calendar_start` and `calendar_end` civil dates and only days with recorded calls, including calls with zero new tokens.
+The mounted calendar fills omitted dates as level-zero cells, pending while that range is reading; it does not recalculate totals, prices, quartiles, streaks or recorded-day contributions.
+This keeps empty history from repeating hundreds of empty amount records on every attach or reconnect.
 Only the core's own native-node rows enter these calendars.
 New tokens include input, output and cache writes, never cache reads; reasoning is already part of output.
 Nonzero closed days determine nearest-rank quartiles, or quarter-of-maximum thresholds below seven active closed days, so today's unfinished spike cannot recolor history.

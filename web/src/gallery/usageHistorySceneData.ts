@@ -29,7 +29,7 @@ export function ledgerScene(node: NodeUsage, state: string): NodeUsage {
     });
     const total = selected.reduce((sum, day) => sum + day.amount.new_tokens, 0);
     const peak = selected.reduce((a, b) => a.amount.new_tokens > b.amount.new_tokens ? a : b);
-    return { days: selected, amount: amount(total, state), since: selected.find((d) => d.amount.calls)?.date ?? null, active_days: selected.filter((d) => d.amount.calls).length, observed_days: selected.length, peak: { date: peak.date, new_tokens: peak.amount.new_tokens }, current_streak: 3, longest_streak: 5, reading, limited: state === "limited", files_done: 412, files_total: 1280 };
+    return { calendar_start: selected[0]!.date, calendar_end: selected.at(-1)!.date, days: selected.filter((day) => day.amount.calls > 0), amount: amount(total, state), since: selected.find((d) => d.amount.calls)?.date ?? null, active_days: selected.filter((d) => d.amount.calls).length, observed_days: selected.length, peak: { date: peak.date, new_tokens: peak.amount.new_tokens }, current_streak: 3, longest_streak: 5, reading, limited: state === "limited", files_done: 412, files_total: 1280 };
   };
   const shares: UsageShare[] = NAMES.map((agent, i) => ({ contribution: { agent, new_tokens: range(i, "year").amount.new_tokens, share_basis_points: SHARES[i]! }, since: values.find((d) => d.amount.calls)?.date ?? null, lifetime: range(i, "year").amount, providers: agent === "pi" ? ["openai-codex"] : agent === "omp" ? ["anthropic"] : [] }));
   return {
