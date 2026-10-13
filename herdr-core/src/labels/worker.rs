@@ -172,7 +172,7 @@ enum WorkerResult {
         state_change_seq: Option<u64>,
         result: Box<Result<LabelTranscript, ReadFailure>>,
     },
-    Analysis(AnalysisOutcome),
+    Analysis(Box<AnalysisOutcome>),
 }
 
 /// What an analysis was asked under, carried back with its answer.
@@ -686,7 +686,7 @@ impl LabelWorker {
                     *result,
                     (now, now_unix_ms),
                 ),
-                WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
+                WorkerResult::Analysis(outcome) => self.handle_analysis(*outcome, now),
             };
         }
         self.schedule(now);
@@ -1424,7 +1424,10 @@ impl LabelWorker {
             phase,
             request,
             done: Box::new(move |result| {
-                let _ = sender.send(WorkerResult::Analysis(AnalysisOutcome { meta, result }));
+                let _ = sender.send(WorkerResult::Analysis(Box::new(AnalysisOutcome {
+                    meta,
+                    result,
+                })));
                 wake();
             }),
         });

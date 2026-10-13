@@ -147,7 +147,7 @@ impl Runtime {
         });
         let requested = source.clone();
         let spawned = self.spawn_issue_worker("session-issue-preview", move || {
-            read_draft(&client, &requested, &places, &node, &provider, &settings, ai_usable, &cancel)
+            read_draft(&client, &requested, &places, &node, &provider, ai_usable.then_some(&settings), &cancel)
         }, move |runtime, result| {
             if runtime.session_issue_work.generation != generation { return false; }
             runtime.session_issue_work.active = None;
@@ -278,8 +278,7 @@ fn read_draft(
     places: &[Place],
     node: &Arc<dyn NodeLink>,
     provider: &Arc<dyn NodeLink>,
-    settings: &AiSettings,
-    ai_usable: bool,
+    settings: Option<&AiSettings>,
     cancel: &CancelToken,
 ) -> Result<Draft, String> {
     let LedgerAnswer::Record(record) = client.call(LedgerCall::Record(source.session.clone()))?
@@ -338,12 +337,12 @@ fn read_draft(
             .is_err()
             .then(|| "issue_draft_github_unavailable".into()),
     };
-    if !ai_usable {
+    let Some(settings) = settings else {
         draft
             .message
             .get_or_insert_with(|| "issue_draft_ai_unavailable".into());
         return Ok(draft);
-    }
+    };
     let Some(witness) = missed.turn_witness.clone() else {
         draft
             .message

@@ -128,7 +128,6 @@ fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
         "remote".into(),
         crate::model::GithubSnapshot {
             projects: vec![remote],
-            ..Default::default()
         },
     );
     let projects = runtime.link_projects();
