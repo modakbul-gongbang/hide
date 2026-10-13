@@ -577,6 +577,7 @@ fn point_at(
             agent_id: None,
             branch: None,
             pr_number: None,
+            repository: None,
             target_path: Some(document.to_owned()),
             started_at_unix_ms: now,
             updated_at_unix_ms: now,

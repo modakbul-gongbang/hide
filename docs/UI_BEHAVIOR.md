@@ -1769,6 +1769,8 @@ Original-checkout branch protection and main file-write blocking are separate un
 
 Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
 That Retry applies only to enabling or disabling Memory; card actions stay in the Memory tool with their existing confirmations.
+Memory promotion PR rows retain their original repository-qualified link after Connections changes; checks, status and agent identity join only that exact URL.
+A legacy promotion whose original repository cannot be proven shows PR verification unavailable and keeps its PR button disabled.
 Turning it off keeps existing cards.
 While the dialog is open its project owns the daemon's single Memory read slot, and the Tools project is restored when it closes.
 Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout and Memory tool; a delayed remote focus changes Tools only on arrival, and refusal leaves the earlier checkout's Tools unchanged.

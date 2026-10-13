@@ -2619,6 +2619,8 @@ pub struct MemoryPromotionSnapshot {
     /// The agent putting the card in the repository, while it runs.
     pub agent: Option<MemoryPromotionAgentSnapshot>,
     pub pr_number: Option<u64>,
+    /// The durable original target, absent when legacy provenance is unknown.
+    pub pr_url: Option<String>,
     /// The repository-relative file the card went into, once the agent said.
     pub target_path: Option<String>,
     /// Why GitHub could not say whether an `unconfirmed` attempt's pull

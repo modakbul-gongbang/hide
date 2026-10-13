@@ -17,7 +17,7 @@ use crate::{
     RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
@@ -348,6 +348,10 @@ pub struct Promotion {
     /// The branch that agent works on, which its pull request is found by.
     pub branch: Option<String>,
     pub pr_number: Option<u64>,
+    /// The repository named when the attempt was reserved, never rebound to
+    /// a later Project connection. Legacy attempts have no proven identity.
+    #[serde(default)]
+    pub repository: Option<String>,
     /// The repository-relative file the agent said it put the card in.
     pub target_path: Option<String>,
     /// When this attempt started: only a pull request opened after it is
@@ -1869,7 +1873,7 @@ impl MemoryStore {
     /// Every promotion of a Project's cards, by card number.
     pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure \
+            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure,p.repository \
              FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 AND (p.state NOT IN ('merged','closed_unmerged') OR p.revision=i.current_revision) ORDER BY i.number",
         )?;
         let rows = statement
@@ -1888,6 +1892,7 @@ impl MemoryStore {
                         started_at_unix_ms: row.get(8)?,
                         updated_at_unix_ms: row.get(9)?,
                         failure: row.get(10)?,
+                        repository: row.get(11)?,
                     },
                 ))
             })?
@@ -2699,7 +2704,7 @@ impl MemoryStore {
     /// (B10, D-04).
     fn index(&self, project_id: &str, limit: usize) -> Result<Vec<InjectedItem>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.id,i.number,r.revision,r.title,p.target_path,p.pr_number FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+            "SELECT i.id,i.number,r.revision,r.title,p.target_path,p.pr_number,p.repository FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              LEFT JOIN card_promotions p ON p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged' \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson','preference') AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision AND p.item_id IS NULL) AND (r.verified_at_ms IS NOT NULL OR p.item_id IS NOT NULL) ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
         )?;
@@ -2708,6 +2713,7 @@ impl MemoryStore {
                 let title: String = row.get(3)?;
                 let path: Option<String> = row.get(4)?;
                 let pull_request: Option<u64> = row.get(5)?;
+                let repository: Option<String> = row.get(6)?;
                 Ok(InjectedItem {
                     id: row.get(0)?,
                     number: row.get(1)?,
@@ -2715,7 +2721,10 @@ impl MemoryStore {
                     text: match (path, pull_request) {
                         (Some(path), _) => format!("{title} -> {path}"),
                         (None, Some(number)) => {
-                            format!("{title} -> merged in pull request #{number}")
+                            match repository {
+                                Some(repository) => format!("{title} -> merged in pull request {repository}#{number}"),
+                                None => format!("{title} -> merged in pull request #{number} (original repository unknown)"),
+                            }
                         }
                         (None, None) => title,
                     },
@@ -2974,8 +2983,8 @@ fn write_promotion(
         .optional()?
         .ok_or(MemoryError::MemoryMissing)?;
     connection.execute(
-            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
-             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure",
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure,repository=excluded.repository",
             params![
                 item_id,
                 promotion.state.as_str(),
@@ -2987,7 +2996,8 @@ fn write_promotion(
                 promotion.target_path,
                 promotion.started_at_unix_ms,
                 promotion.updated_at_unix_ms,
-                promotion.failure
+                promotion.failure,
+                promotion.repository
             ],
         )?;
     Ok(())
@@ -3122,6 +3132,24 @@ COMMIT;"#,
         }
         version = 13;
     }
+    if version == 13 {
+        let transaction = connection.unchecked_transaction()?;
+        // Unknown old provenance stays unknown: the current remote is not
+        // evidence of where an earlier promotion opened its pull request.
+        let actual: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if actual == 13 {
+            transaction.execute_batch(
+                "ALTER TABLE card_promotions ADD COLUMN repository TEXT; PRAGMA user_version=14;",
+            )?;
+        } else if actual != SCHEMA_VERSION {
+            return Err(MemoryError::WrongSchema {
+                found: actual,
+                expected: SCHEMA_VERSION,
+            });
+        }
+        transaction.commit()?;
+        version = 14;
+    }
     if version != SCHEMA_VERSION {
         return Err(MemoryError::WrongSchema {
             found: version,
@@ -3137,7 +3165,7 @@ fn migrate_version_thirteen(
 ) -> Result<Option<serde_json::Value>, MemoryError> {
     let transaction = connection.unchecked_transaction()?;
     let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == SCHEMA_VERSION {
+    if matches!(version, 13 | 14) {
         transaction.commit()?;
         return Ok(None);
     }
@@ -3794,7 +3822,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL,checks INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT,repository TEXT);
 CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL);
 CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch));
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
@@ -4653,7 +4681,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let path = temp.path().join("memory.sqlite3");
         store
             .connection
-            .execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches;")
+            .execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE card_promotions DROP COLUMN repository;")
             .unwrap();
         let compared: bool = store.connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('memory_revisions') WHERE name='docs_compared')", [], |row| row.get(0)).unwrap();
         if compared {
@@ -5024,6 +5052,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                     agent_id: None,
                     branch: None,
                     pr_number: None,
+                    repository: None,
                     target_path: Some("AGENTS.md".into()),
                     started_at_unix_ms: 100,
                     updated_at_unix_ms: 100,
@@ -5105,6 +5134,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                         agent_id: None,
                         branch: Some("correction-r2".into()),
                         pr_number: None,
+                        repository: None,
                         target_path: None,
                         started_at_unix_ms: 1000,
                         updated_at_unix_ms: 1000,
@@ -5235,6 +5265,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             agent_id: Some("fixture-agent".into()),
             branch: Some("shared".into()),
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 100,
             updated_at_unix_ms: 100,
@@ -5694,6 +5725,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             agent_id: None,
             branch: None,
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
@@ -6090,11 +6122,56 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             agent_id: Some(agent.to_owned()),
             branch: Some("hide-memory-m1-1".to_owned()),
             pr_number: None,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
             failure: None,
         }
+    }
+
+    #[test]
+    fn promotion_repository_survives_restart_and_legacy_upgrade_never_invents_one() {
+        let (temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "one", "one"),
+                &[candidate("Lint before tests", CandidateRelation::New)],
+            )
+            .unwrap();
+        let attempt = Promotion {
+            repository: Some("acme/original".into()),
+            pr_number: Some(7),
+            state: PromotionState::PrOpen,
+            ..running(1, "agent-7")
+        };
+        store.set_promotion(&project, 1, &attempt).unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        drop(store);
+        let restored = MemoryStore::open(&path).unwrap();
+        assert_eq!(restored.promotions(&project).unwrap()[0].1, attempt);
+        restored
+            .connection
+            .execute_batch(
+                "ALTER TABLE card_promotions DROP COLUMN repository; PRAGMA user_version=13;",
+            )
+            .unwrap();
+        drop(restored);
+        let upgraded = MemoryStore::open(&path).unwrap();
+        let legacy = &upgraded.promotions(&project).unwrap()[0].1;
+        assert_eq!(legacy.repository, None);
+        assert_eq!(legacy.pr_number, Some(7));
+        assert_eq!(legacy.state, PromotionState::PrOpen);
+        drop(upgraded);
+        assert_eq!(
+            MemoryStore::open(&path)
+                .unwrap()
+                .promotions(&project)
+                .unwrap()[0]
+                .1
+                .repository,
+            None
+        );
     }
 
     #[test]
@@ -6325,6 +6402,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             agent_id: Some("agent-7".to_owned()),
             branch: Some("hide-memory-m1-1".to_owned()),
             pr_number: Some(924),
+            repository: None,
             target_path: target_path.map(str::to_owned),
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
@@ -6334,7 +6412,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         assert_eq!(given(&store), 0);
         assert_eq!(
             index(&store),
-            ["Lint before tests -> merged in pull request #924"]
+            ["Lint before tests -> merged in pull request #924 (original repository unknown)"]
         );
         store
             .set_promotion(&project, 1, &merged(Some("AGENTS.md")))
@@ -6351,6 +6429,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let read = Promotion {
             state: PromotionState::Running,
             pr_number: None,
+            repository: None,
             ..merged(None)
         };
         store
@@ -6363,6 +6442,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 &Promotion {
                     state: PromotionState::Running,
                     pr_number: None,
+                    repository: None,
                     ..merged(Some("AGENTS.md"))
                 },
             )
@@ -6421,6 +6501,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             state: PromotionState::Running,
             agent_id: None,
             pr_number: None,
+            repository: None,
             target_path: None,
             ..merged(None)
         };
@@ -7773,7 +7854,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     fn check_share_is_counted_separately_and_preserves_the_migrated_total() {
         use crate::{MemoryCallDeferral as Wait, MemoryCallKind as Kind};
         let (temp, store, _project) = store();
-        store.connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
+        store.connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE card_promotions DROP COLUMN repository; ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
         drop(store);
         let store = MemoryStore::open(&temp.path().join("memory.sqlite3")).unwrap();
         assert_eq!(store.analysis_calls(100).unwrap(), 595);
@@ -8123,7 +8204,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection.execute_batch(SCHEMA).unwrap();
         connection
             .execute_batch(
-                "DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
+                "DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE card_promotions DROP COLUMN repository; ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
             )
             .unwrap();
         let scratch = tempfile::tempdir().unwrap();
@@ -8431,6 +8512,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 agent_id: None,
                 branch: None,
                 pr_number: Some(number),
+                repository: None,
                 target_path: None,
                 started_at_unix_ms: 1,
                 updated_at_unix_ms: 1,

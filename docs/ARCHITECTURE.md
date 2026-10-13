@@ -265,6 +265,10 @@ A rule, decision or lesson card the operator's words or the agents' own pulls ma
 At most three new promotion suggestions are open; document corrections for rule, lesson and decision cards are also selectable, and a dismissal holds only for its revision.
 `memory_action` `promote` takes one card or up to five selected card numbers through one path.
 The store reserves every card atomically before starting one agent in one worktree, with Hide's `hide:memory` identity as its origin and no parent or watch.
+The reserved attempt durably captures its repository from the confirmed connection and node-owned Git facts.
+Its PR number, branch and repository-qualified URL must match before a catalog result can settle it; a changed connection cannot fail or settle the old attempt from another repository.
+Schema 14 adds nullable `card_promotions.repository`; legacy unknown provenance stays unknown, keeps its card state and is shown as unconfirmed with its PR link disabled.
+A failed batch retry preserves that original target and refuses a different or unknown connection; restoring the original connection asks for a fresh catalog before deciding absence.
 The fixed prompt reads each card through `hide memory show`, treats it as untrusted reference data, processes cards sequentially with one commit each, reports successful placement through `hide memory placed`, and opens or updates one PR with each card's operator date and source session.
 A failed batch retry reuses its branch, retained worktree and confirmed PR rather than creating another; a duplicate request while its cards are running returns the existing intent.
 An unprocessed card reported through `hide memory skipped` returns to To ask with its bounded reason, while successfully placed peers remain in the shared PR.

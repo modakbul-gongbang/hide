@@ -9,7 +9,7 @@ const row = (number: number): MemoryRow => ({
 });
 
 describe("Memory promotion rows", () => {
-  const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: null, github_failure: null, started_at_unix_ms: 1 };
+  const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, pr_url: "https://github.com/acme/one/pull/72", target_path: null, github_failure: null, started_at_unix_ms: 1 };
   const grouped = () => memoryProgress(project({ rows: [{ ...row(9), promotion }, { ...row(7), promotion }] }))[0]!;
   const pull: PullRequest = { number: 72, title: "Document the rule", url: "https://github.com/acme/one/pull/72", badge: "review", review: "review_required", is_draft: false, state: "pending", checks: "passing" };
   const agentPull: AgentPullRequest = { ...pull, checks: "passing", head_branch: "memory-rule", closing_issues: [], live: true, duty: true, created: false, settled_at_unix_ms: null };
@@ -38,6 +38,18 @@ describe("Memory promotion rows", () => {
     // A batch's first card can be skipped while its successful peers share this PR.
     const skippedStarter = { ...writer, hide_ai: { task: { kind: "memory_promote", target: "m1" } } };
     expect(memoryProgressAgent(grouped(), pull, [skippedStarter])).toBe(skippedStarter);
+  });
+
+  it("groups by original repository identity and keeps unknown legacy PRs separate", () => {
+    const cards = [
+      { ...row(1), promotion },
+      { ...row(2), promotion: { ...promotion, pr_url: "https://github.com/acme/two/pull/72" } },
+      { ...row(3), promotion: { ...promotion, pr_url: null } },
+      { ...row(4), promotion: { ...promotion, pr_url: null } },
+    ];
+    expect(memoryProgress(project({ rows: cards })).map((group) => group.cards.map((card) => card.number))).toEqual([[1], [2], [3], [4]]);
+    const other = { ...pull, url: "https://github.com/acme/two/pull/72" };
+    expect(memoryProgressAgent(grouped(), other, [agent(true, { ...agentPull, url: other.url })])).toBeUndefined();
   });
 
   it("shows only observed problems and leaves quiet review neutral without a conversation link", () => {

@@ -87,6 +87,7 @@ pub(super) struct PromotionStart {
     /// the machine that holds it: `None` for the core's own, else the
     /// linked device where the agent starts.
     repo: String,
+    repository: Option<String>,
     machine: Option<String>,
     /// The agent the new-agent button starts.
     kind: String,
@@ -189,6 +190,7 @@ impl Runtime {
             authority,
             actor,
             repo: repo.to_owned(),
+            repository: self.promotion_repository(node, repo),
             machine: (*node != self.node).then(|| node.as_str().to_owned()),
             kind,
             args,
@@ -237,6 +239,16 @@ impl Runtime {
             started_at_unix_ms: promotion.started_at_unix_ms,
             agent,
             pr_number: promotion.pr_number,
+            pr_url: promotion.pr_number.and_then(|number| {
+                crate::issues::IssueReference::parse(
+                    &format!("{}#{number}", promotion.repository.as_deref()?),
+                    None,
+                )
+                .ok()
+                .map(|reference| {
+                    format!("https://github.com/{}/pull/{number}", reference.repository)
+                })
+            }),
             target_path: promotion.target_path.clone(),
             github_failure: unconfirmed.flatten(),
         })
@@ -375,6 +387,31 @@ impl Runtime {
         }
     }
 
+    /// Resolve the confirmed target from existing node-owned Git facts,
+    /// without I/O under the runtime lock or a later provider response.
+    fn promotion_repository(&self, node: &NodeId, root: &str) -> Option<String> {
+        if let Some(crate::project_settings::RepositoryConnection::Repository { repository }) =
+            crate::project_settings::get(
+                &self.snapshot.ui_state.project_settings,
+                node.as_str(),
+                root,
+            )
+            .and_then(|record| record.repository.as_ref())
+        {
+            return Some(repository.clone());
+        }
+        if *node == self.node {
+            self.worktree_catalog.project(root)?.repository.clone()
+        } else {
+            self.device_worktrees
+                .get(node.as_str())?
+                .projects
+                .get(root)?
+                .repository
+                .clone()
+        }
+    }
+
     fn promotion_pull_request(
         &self,
         node: &NodeId,
@@ -413,7 +450,13 @@ impl Runtime {
         node: &NodeId,
         root: &str,
     ) -> (CatalogVerdict, bool) {
-        let Some(gone) = self.project_memory.promotions.gone.get(key) else {
+        let Some(gone) = self
+            .project_memory
+            .promotions
+            .gone
+            .get(key)
+            .filter(|gone| gone.asked != 0)
+        else {
             let asked = self.ask_promotion_catalog(node, root);
             self.project_memory.promotions.gone.insert(
                 key.clone(),
@@ -463,11 +506,13 @@ fn attempt_pull_request(
     project: &GithubProjectSnapshot,
     promotion: &Promotion,
 ) -> Option<PullRequestFact> {
+    let repository = promotion.repository.as_deref()?;
     let branch = promotion.branch.as_deref()?;
     let started = promotion.started_at_unix_ms.saturating_sub(START_SLACK_MS);
     let mut on_branch = project
         .pull_requests
         .iter()
+        .filter(|pull| pull.url == format!("https://github.com/{repository}/pull/{}", pull.number))
         .filter(|pull| !pull.cross_repository && pull.head_branch == branch)
         .filter(|pull| match promotion.pr_number {
             Some(number) => u64::from(pull.number) == number,
@@ -598,7 +643,23 @@ fn track_promotions(
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
                 let no_pull_request = pull.is_none() && attempt_gone(promotion, ended, now) && {
-                    let (verdict, changed) = guard.promotion_catalog_verdict(&key, node, root);
+                    let original_target = promotion.repository.is_some()
+                        && promotion.repository == guard.promotion_repository(node, root);
+                    let (verdict, changed) = if original_target {
+                        guard.promotion_catalog_verdict(&key, node, root)
+                    } else {
+                        let previous = guard.project_memory.promotions.gone.insert(
+                            key.clone(),
+                            GoneAttempt {
+                                asked: 0,
+                                unconfirmed: Some(None),
+                            },
+                        );
+                        (
+                            CatalogVerdict::Unconfirmed(None),
+                            previous.is_none_or(|gone| gone.unconfirmed != Some(None)),
+                        )
+                    };
                     gone_now.insert(key);
                     if changed {
                         outcome.moved_projects.insert(project_id.clone());
@@ -1132,6 +1193,8 @@ pub(super) fn start_promotion(
     numbers: &[u64],
     mut start: PromotionStart,
 ) -> Result<Option<(u32, PromotionStart)>, String> {
+    let repository = start.repository.as_deref().ok_or("The promotion repository has not been confirmed; check the project connection before starting")?;
+    crate::issues::IssueReference::parse(&format!("{repository}#1"), None)?;
     let mut numbers = numbers.to_vec();
     numbers.sort_unstable();
     numbers.dedup();
@@ -1188,6 +1251,14 @@ pub(super) fn start_promotion(
                 )
         })
         .find_map(|(_, promotion)| promotion.pr_number);
+    if !reused.is_empty()
+        && previous.iter().any(|(_, promotion)| {
+            promotion.branch.as_ref() == Some(&branch)
+                && (promotion.repository.is_none() || promotion.repository != start.repository)
+        })
+    {
+        return Err("The original promotion repository is unavailable; restore its connection before retrying".into());
+    }
     let mut promotions = Vec::new();
     let mut evidence = Vec::new();
     for number in &numbers {
@@ -1245,6 +1316,7 @@ pub(super) fn start_promotion(
                 agent_id: None,
                 branch: Some(branch.clone()),
                 pr_number: existing_pr,
+                repository: start.repository.clone(),
                 target_path: None,
                 started_at_unix_ms: started,
                 updated_at_unix_ms: started,
@@ -1308,6 +1380,7 @@ pub(super) fn dismiss_promotion(
         agent_id: None,
         branch: None,
         pr_number: None,
+        repository: None,
         target_path: None,
         started_at_unix_ms: super::memory::now_ms(),
         updated_at_unix_ms: super::memory::now_ms(),
@@ -1423,6 +1496,7 @@ mod tests {
             agent_id: agent_id.map(str::to_owned),
             branch: Some(branch(7, started_at_unix_ms)),
             pr_number: None,
+            repository: Some("acme/project".into()),
             target_path: None,
             started_at_unix_ms,
             updated_at_unix_ms: started_at_unix_ms,
@@ -1624,6 +1698,44 @@ mod tests {
     }
 
     #[test]
+    fn a_retained_attempt_never_settles_from_another_repositorys_same_number_and_branch() {
+        let started = 1_791_700_000_000;
+        let promotion = Promotion {
+            pr_number: Some(7),
+            ..running(Some("agent-7"), started)
+        };
+        let mut pull = pull_request(7, promotion.branch.as_deref().unwrap(), started + 1);
+        pull.badge = PullRequestBadge::Merged;
+        pull.url = "https://github.com/acme/other/pull/7".into();
+        let mut catalog = GithubProjectSnapshot {
+            pull_requests: vec![pull],
+            ..Default::default()
+        };
+        assert_eq!(
+            next_promotion(
+                &promotion,
+                attempt_pull_request(&catalog, &promotion),
+                false
+            ),
+            None
+        );
+        let legacy = Promotion {
+            repository: None,
+            ..promotion.clone()
+        };
+        catalog.pull_requests[0].url = "https://github.com/acme/project/pull/7".into();
+        assert_eq!(attempt_pull_request(&catalog, &legacy), None);
+        assert_eq!(
+            next_promotion(
+                &promotion,
+                attempt_pull_request(&catalog, &promotion),
+                false
+            ),
+            Some((PromotionState::Merged, Some(7)))
+        );
+    }
+
+    #[test]
     fn an_agent_that_ended_before_its_pull_request_reached_the_catalog_is_not_failed() {
         // R2-1: the catalog restored at launch, or read before the agent
         // ended, has not seen the pull request yet.
@@ -1660,6 +1772,23 @@ mod tests {
             .unwrap();
         {
             let mut runtime = runtime.lock().unwrap();
+            let record = crate::project_settings::ProjectSettings {
+                version: 1,
+                device_id: node.as_str().into(),
+                root: repo.into(),
+                repository: Some(crate::project_settings::RepositoryConnection::Repository {
+                    repository: "acme/project".into(),
+                }),
+                issue_source: None,
+                new_work: None,
+                base_branch: None,
+                link_scopes: Default::default(),
+            };
+            runtime
+                .snapshot
+                .ui_state
+                .project_settings
+                .insert(crate::project_settings::key(node.as_str(), repo), record);
             runtime.github.projects.push(GithubProjectSnapshot {
                 root_path: repo.into(),
                 pull_requests_read: true,
@@ -1722,6 +1851,52 @@ mod tests {
             (open.state, open.pr_number),
             (PromotionState::PrOpen, Some(924))
         );
+        drop(store);
+        let mut store = MemoryStore::open(&database).unwrap();
+        // A restart retains A#924. The newly connected B has the same
+        // branch and number, but its merged answer must never settle A.
+        {
+            let mut runtime = runtime.lock().unwrap();
+            runtime
+                .snapshot
+                .ui_state
+                .project_settings
+                .get_mut(&crate::project_settings::key(node.as_str(), repo))
+                .unwrap()
+                .repository = Some(crate::project_settings::RepositoryConnection::Repository {
+                repository: "acme/other".into(),
+            });
+            let foreign = &mut runtime.github.projects[0].pull_requests[0];
+            foreign.url = "https://github.com/acme/other/pull/924".into();
+            foreign.badge = PullRequestBadge::Merged;
+        }
+        track_promotions(&context, std::slice::from_ref(&node), &database).unwrap();
+        assert_eq!(state(&store, "p"), PromotionState::PrOpen);
+        assert_eq!(
+            runtime
+                .lock()
+                .unwrap()
+                .promotion_snapshot("p", 1, &open)
+                .unwrap()
+                .pr_url
+                .as_deref(),
+            Some("https://github.com/acme/project/pull/924")
+        );
+        {
+            let mut runtime = runtime.lock().unwrap();
+            runtime
+                .snapshot
+                .ui_state
+                .project_settings
+                .get_mut(&crate::project_settings::key(node.as_str(), repo))
+                .unwrap()
+                .repository = Some(crate::project_settings::RepositoryConnection::Repository {
+                repository: "acme/project".into(),
+            });
+            runtime.github.projects[0].pull_requests[0].url =
+                "https://github.com/acme/project/pull/924".into();
+            runtime.github.projects[0].pull_requests[0].badge = PullRequestBadge::Open;
+        }
         assert!(
             outcome.followed,
             "another Project's card of the same number is still followed"
@@ -1851,11 +2026,13 @@ mod tests {
             Worker::spawn(Arc::downgrade(&runtime), ChangeNotifier::noop(), ledger).unwrap();
         runtime.lock().unwrap().install_delivery_client(client);
         let start = || {
-            runtime
+            let mut start = runtime
                 .lock()
                 .unwrap()
                 .promotion_start(&crate::node::test_node(), "/checkouts/fixture")
-                .unwrap()
+                .unwrap();
+            start.repository = Some("acme/project".into());
+            start
         };
         // A node's Project's agent starts on that node, never here (PRD
         // core-host-node-move B14).
@@ -1923,6 +2100,19 @@ mod tests {
         );
         start_promotion(&mut store, "p", &[1, 2], start()).unwrap();
         let failed = promotion(&store).unwrap();
+        let mut wrong_target = start();
+        wrong_target.repository = Some("acme/other".into());
+        assert!(
+            start_promotion(&mut store, "p", &[1, 2], wrong_target)
+                .err()
+                .unwrap()
+                .contains("original promotion repository")
+        );
+        assert_eq!(
+            promotion(&store).unwrap(),
+            failed,
+            "a refused retry keeps the original attempt"
+        );
         let peer = store
             .promotions("p")
             .unwrap()

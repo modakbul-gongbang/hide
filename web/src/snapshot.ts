@@ -1507,6 +1507,8 @@ export type MemoryRow = {
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
+    /** Original repository-qualified target; unknown on legacy attempts. */
+    pr_url?: string | null;
     target_path: string | null;
     /** Why GitHub could not say whether an `unconfirmed` attempt's pull request came, when it said. */
     github_failure: GithubFailureCategory | null;

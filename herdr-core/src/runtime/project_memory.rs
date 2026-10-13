@@ -1452,6 +1452,7 @@ mod tests {
             agent_id: Some("agent-1".to_owned()),
             branch: Some("hide-memory-m1".to_owned()),
             pr_number,
+            repository: None,
             target_path: None,
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
@@ -1562,6 +1563,7 @@ mod tests {
                 .promotion,
             Some(MemoryPromotionSnapshot {
                 state: MemoryPromotionState::PrOpen,
+                pr_url: None,
                 started_at_unix_ms: 1,
                 agent: None,
                 pr_number: Some(924),
