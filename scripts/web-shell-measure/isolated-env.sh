@@ -29,6 +29,9 @@ fi
 
 private="$run_dir/isolated"
 mkdir -p "$private/xdg-config" "$private/xdg-state" "$private/home" "$private/hide-state"
+# The delivery ledger refuses an existing state directory readable by
+# another account. A daemon without its ledger measures failing hooks.
+chmod 700 "$private/hide-state"
 printf "PS1='fixture %%# '\n" > "$private/home/.zshrc"
 config_path="$private/herdr-config.toml"
 printf '[update]\nversion_check = false\nmanifest_check = false\n' > "$config_path"

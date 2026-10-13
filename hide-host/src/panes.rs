@@ -39,7 +39,7 @@ use crate::error::{ErrorCode, HostError, HostResult};
 use crate::pane_peer;
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
-const MAX_CONTROL_LINE: u64 = 4096;
+const MAX_CONTROL_LINE: u64 = hide_node_link::panes::HOOK_REQUEST_LIMIT as u64;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const REFERENCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
@@ -76,6 +76,14 @@ struct Bootstrap {
     nonce: String,
     #[serde(default)]
     one_shot: bool,
+    #[serde(default)]
+    hook: Option<hide_node_link::panes::HookRequest>,
+}
+
+#[derive(Clone)]
+enum BootstrapAnswer {
+    Reference { path: PathBuf, info: Option<Value> },
+    Hook(Value),
 }
 
 struct Started {
@@ -239,10 +247,16 @@ impl Panes {
     /// Hands the core's answer to the request waiting for it; one nobody
     /// waits for any more (its caller left, or it timed out) is dropped.
     pub fn answer_proof(&self, request: u64, answer: ProofAnswer) -> HostResult<Value> {
-        if let Some(waiting) = lock(&self.proofs).remove(&request) {
-            let _ = waiting.try_send(answer);
-        }
-        Ok(Value::Null)
+        let persistent_info = matches!(answer, ProofAnswer::WorkspaceInfo { .. });
+        let accepted = lock(&self.proofs)
+            .remove(&request)
+            .is_some_and(|waiting| waiting.try_send(answer).is_ok());
+        // A late guidance answer must not claim a reference no caller got.
+        Ok(if persistent_info {
+            json!(accepted)
+        } else {
+            Value::Null
+        })
     }
 
     /// `pane_id`'s identity now, from the Herdr this service was started for.
@@ -367,7 +381,7 @@ impl Panes {
         })();
         match first {
             Ok(request) if request.get("stream") == Some(&Value::Bool(true)) => {
-                self.serve_stream(stream, output)
+                self.serve_stream(stream, request.get("token").and_then(Value::as_str), output)
             }
             Ok(request) => self.serve_bootstrap(stream, request, output),
             Err(reason) => {
@@ -392,8 +406,8 @@ impl Panes {
         let mut core_refused = false;
         let mut issued_token = None;
         let mut token_new = false;
-        let mut reference_new = false;
-        let result: Result<PathBuf, String> = (|| {
+        let mut created_reference = None;
+        let result: Result<BootstrapAnswer, String> = (|| {
             let peer = stream
                 .peer_pid()
                 .ok()
@@ -405,6 +419,13 @@ impl Panes {
                 || !request.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
                 return Err("invalid_nonce".to_owned());
+            }
+            if request
+                .hook
+                .as_ref()
+                .is_some_and(|hook| request.one_shot != hook.command.one_shot())
+            {
+                return Err("invalid_request".to_owned());
             }
             let pane =
                 pane_peer::inspect(&started.herdr_socket, &request.pane_id).and_then(|identity| {
@@ -441,12 +462,14 @@ impl Panes {
                     identity: identity.clone(),
                     nonce: request.nonce.clone(),
                     one_shot: request.one_shot,
+                    hook: request.hook.clone(),
                 },
                 Proved::Checkout(path) => NodeEvent::CheckoutProof {
                     request: id,
                     path: path.clone(),
                     nonce: request.nonce.clone(),
                     one_shot: request.one_shot,
+                    hook: request.hook.clone(),
                 },
             };
             let sent = write_event(output, &event);
@@ -454,8 +477,39 @@ impl Panes {
                 .ok()
                 .and_then(|()| answer.recv_timeout(CLIENT_TIMEOUT).ok());
             lock(&self.proofs).remove(&id);
+            let mut info = None;
             let token = match answer.ok_or("bridge_unavailable")? {
-                ProofAnswer::Refused { reason } => {
+                ProofAnswer::Hook { answer }
+                    if request.hook.is_some() && (request.one_shot || answer["ok"] != true) =>
+                {
+                    if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                        return Err("invalid_response".to_owned());
+                    }
+                    return Ok(BootstrapAnswer::Hook(answer));
+                }
+                ProofAnswer::Hook { .. } => return Err("invalid_response".to_owned()),
+                ProofAnswer::WorkspaceInfo {
+                    token,
+                    issued_new,
+                    answer,
+                } => {
+                    token_new = issued_new;
+                    issued_token = Some(token.clone());
+                    if !request
+                        .hook
+                        .as_ref()
+                        .is_some_and(|hook| !hook.command.one_shot())
+                        || answer["ok"] != true
+                        || answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT
+                        || token.len() != 64
+                        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err("invalid_response".to_owned());
+                    }
+                    info = Some(answer);
+                    token
+                }
+                ProofAnswer::Refused { reason, .. } => {
                     core_refused = true;
                     return Err(reason);
                 }
@@ -464,6 +518,10 @@ impl Panes {
                         return Err("invalid_response".to_owned());
                     }
                     token_new = issued_new;
+                    if request.hook.is_some() {
+                        issued_token = Some(token);
+                        return Err("invalid_response".to_owned());
+                    }
                     token
                 }
             };
@@ -474,7 +532,14 @@ impl Panes {
                     reference.token == token && path.is_file() && reference.holder.is_none()
                 })
             {
-                return Ok(path.clone());
+                if info.is_some() && !path.with_extension("claimed").is_file() {
+                    private::create_new_file(&path.with_extension("claimed"))
+                        .map_err(|_| "reference_unavailable")?;
+                }
+                return Ok(BootstrapAnswer::Reference {
+                    path: path.clone(),
+                    info,
+                });
             }
             let path = started.folder.join(format!("{}.json", request.nonce));
             let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
@@ -509,8 +574,12 @@ impl Panes {
                     },
                 },
             );
-            reference_new = true;
-            Ok(path)
+            created_reference = Some(path.clone());
+            if info.is_some() {
+                private::create_new_file(&path.with_extension("claimed"))
+                    .map_err(|_| "reference_unavailable")?;
+            }
+            Ok(BootstrapAnswer::Reference { path, info })
         })();
         let delivered = answer_client(&mut stream, result.clone()).is_ok();
         // The core records the refusals it answered itself.
@@ -520,8 +589,9 @@ impl Panes {
             report_refusal(output, named, reason);
         }
         if !delivered || result.is_err() {
-            if reference_new && let Ok(path) = result {
+            if let Some(path) = created_reference {
                 let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(path.with_extension("claimed"));
                 lock(&self.issued).remove(&path);
             }
             if token_new && let Some(token) = issued_token {
@@ -530,7 +600,7 @@ impl Panes {
         }
     }
 
-    fn serve_stream(&self, stream: LocalStream, output: &Mutex<impl Write>) {
+    fn serve_stream(&self, stream: LocalStream, token: Option<&str>, output: &Mutex<impl Write>) {
         if stream.set_read_timeout(None).is_err() {
             return;
         }
@@ -556,7 +626,7 @@ impl Panes {
                 },
             );
         }
-        let caller = self.stream_caller(&stream);
+        let caller = self.stream_caller(&stream, token);
         let mut reader = stream;
         if write_event(output, &NodeEvent::StreamOpen { stream: id, caller }).is_ok() {
             let mut buffer = vec![0_u8; MAX_CHUNK];
@@ -579,18 +649,28 @@ impl Panes {
     }
 
     /// What the node proves about the process that opened a stream: the
-    /// holder of a one-shot credential issued here for a pane, still
+    /// holder of a credential issued here for a pane, still
     /// descended from that pane's shell as its Herdr answers now, the same
     /// checks a bootstrap makes. `None` when the peer holds no such
     /// credential or the pane no longer answers for it; the core then asks
     /// `Call::PaneInspect` for the stream's command, as it always did.
-    fn stream_caller(&self, stream: &LocalStream) -> Option<StreamCaller> {
+    fn stream_caller(&self, stream: &LocalStream, token: Option<&str>) -> Option<StreamCaller> {
         let started = self.started.get()?;
         let peer = i32::try_from(stream.peer_pid().ok()?).ok()?;
         let holder = (peer, pane_peer::process_start(peer)?);
         let pane_id = lock(&self.issued)
             .values()
-            .find(|reference| reference.holder == Some(holder))?
+            .find(|reference| match token {
+                // The token only selects a reference this node issued. It
+                // never replaces the kernel peer and current pane proof.
+                Some(token) => {
+                    reference.token == token
+                        && reference.holder.is_none_or(|issued| issued == holder)
+                }
+                // Existing clients send no token; their one-shot holder
+                // remains enough to select their own reference.
+                None => reference.holder == Some(holder),
+            })?
             .pane_id
             .clone()?;
         let identity = pane_peer::inspect(&started.herdr_socket, &pane_id).ok()?;
@@ -733,13 +813,24 @@ fn report_refusal(output: &Mutex<impl Write>, pane_id: Option<String>, reason: &
 
 /// A reference with no wire spelling is not answered at all, so its caller
 /// reads the end of the stream and the issuer withdraws the reference.
-fn answer_client(stream: &mut LocalStream, result: Result<PathBuf, String>) -> io::Result<()> {
+fn answer_client(
+    stream: &mut LocalStream,
+    result: Result<BootstrapAnswer, String>,
+) -> io::Result<()> {
     let answer = match result {
-        Ok(reference) => {
-            let reference = hide_platform::path::to_wire(&reference).map_err(io::Error::other)?;
-            json!({"ok":true,"reference":reference})
+        Ok(BootstrapAnswer::Reference { path, info }) => {
+            let reference = hide_platform::path::to_wire(&path).map_err(io::Error::other)?;
+            let mut answer = info.unwrap_or_else(|| json!({"ok":true}));
+            answer["reference"] = json!(reference);
+            if answer.to_string().len() + 1 > hide_node_link::panes::HOOK_RESPONSE_LIMIT {
+                return Err(io::Error::other("hook response too large"));
+            }
+            answer
         }
-        Err(reason) => json!({"ok":false,"reason":reason}),
+        Ok(BootstrapAnswer::Hook(answer)) => answer,
+        Err(reason) => {
+            json!({"ok":false,"reason":reason,"next_action":hide_node_link::panes::refusal_next_action(&reason)})
+        }
     };
     writeln!(stream, "{answer}")
 }
@@ -756,6 +847,32 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_device_bootstrap_refusal_includes_recovery_advice() {
+        use std::io::BufRead;
+        for (reason, advice) in [
+            ("pane_changed", "Reconnect the pane and retry"),
+            ("remote_unavailable", "Reconnect the pane and retry"),
+            ("credential_expired", "Reconnect the pane and retry"),
+            ("invalid_request", "Reconnect the pane and retry"),
+            (
+                "checkout_not_registered",
+                "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry",
+            ),
+        ] {
+            let (mut writer, reader) = LocalStream::pair().unwrap();
+            answer_client(&mut writer, Err(reason.to_owned())).unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(reader)
+                .read_line(&mut line)
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"ok":false,"reason":reason,"next_action":advice})
+            );
+        }
+    }
 
     /// A starting service removes what a killed node or an older Hide's
     /// bridge left, and never a folder whose socket answers or one another

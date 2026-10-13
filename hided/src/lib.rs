@@ -32,6 +32,7 @@ pub mod node_daemon;
 pub mod node_pages;
 pub mod node_uploads;
 
+mod hook_request;
 pub mod node_panes;
 pub mod node_role;
 mod owned_task;
@@ -554,6 +555,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         port,
         shutdown.clone(),
+        Arc::clone(&app.desktop_renderers),
     ));
     tokio::spawn(attach::serve(
         attach_listener,
