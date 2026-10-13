@@ -57,7 +57,8 @@ pub const GUIDANCE_SOURCE_NAME: &str = "hide-guidance";
 /// added the guard and subagent events beside Cursor's session start;
 /// version 3 stopped writing Cursor's `subagentStart`, `subagentStop` and
 /// `stop`, which only fed a count Cursor no longer reports (issue 940).
-pub const GUIDANCE_VERSION: u32 = 3;
+/// Version 4 prepares Cursor's PowerShell input before starting the helper.
+pub const GUIDANCE_VERSION: u32 = 4;
 
 /// The one line every guidance hook adds after the shared instruction, so an
 /// agent that Hide cannot place in a Workspace still learns where the usage
@@ -447,13 +448,16 @@ fn plain_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> Strin
 /// Cursor's command on Windows. The Cursor CLI writes the event to a file and
 /// runs `Get-Content <file> -Raw | & { $input | <command> }` under PowerShell 7
 /// or Windows PowerShell (read from its 2026.10.01 Windows package), so the
-/// command is one pipeline element: a script block that hands its input to
-/// the helper while it is there and, for a permission event, answers allow
-/// itself when it is gone, as the POSIX guard does.
+/// command is one pipeline element. Prepare the native pipeline's text
+/// before starting the helper: PowerShell otherwise starts the process
+/// before initializing Out-String, spending the helper's payload deadline
+/// on a cold formatter rather than reading the event (issue 987).
+/// A missing helper still answers allow for a permission event, as the
+/// POSIX guard does.
 fn cursor_powershell_command(helper: &Path, event: HookEvent) -> String {
     let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
     let run = format!(
-        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ $input | & {quoted} {} }}",
+        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ $payload = $input | Out-String -Stream; $payload | & {quoted} {} }}",
         arguments(GuidanceAgent::Cursor, event)
     );
     if crate::basic::cursor_permission_event(event) {
