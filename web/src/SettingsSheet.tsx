@@ -82,12 +82,12 @@ function SettingsSheet({ actions }: { actions: Actions }) {
         {/* Radix Tabs owns the roving tabindex: Up and Down (plus Home and End)
             move through the list and show each page, Tab enters the page (B3). */}
         <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTab)} orientation="vertical" className="min-h-0 flex-1 flex-row gap-none">
-          <nav className="flex w-(--size-settings-nav-w) shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar px-sm pb-md pt-lg">
+          <nav className="flex w-(--size-settings-nav-w) shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar px-sm pb-md pt-sm">
             <DialogTitle className="px-sm pb-xs text-title font-semibold">{t("common.settings")}</DialogTitle>
             <TabsList aria-label={t("settings.section")} className="w-full flex-1 flex-col items-stretch gap-xxs rounded-none bg-transparent p-none">
               {SETTINGS_GROUPS.map((group) => (
                 <div key={group.id} className="flex flex-col gap-xxs" data-settings-nav-group={group.id}>
-                  <div className="truncate px-sm pb-xs pt-md text-micro font-medium text-muted-foreground">{groupName(group.id)}</div>
+                  <div className="truncate px-sm pb-xs pt-xs text-micro font-medium text-muted-foreground">{groupName(group.id)}</div>
                   {group.tabs.map((row) => (
                     <NavItem key={row} tab={row} label={t(`settings.tabs.${row}`)} />
                   ))}

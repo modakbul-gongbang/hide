@@ -117,8 +117,8 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     ]);
   }
   function nav(p, L, page, machine) {
-    const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-md', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
-    return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-lg', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
+    const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
+    return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       frame(`${p}-nav-h`, 'Title', {width: 'fill_container', padding: [0, '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${p}-nav-ht`, L.settings, {size: 'title', weight: '600'})]),
       ...GROUPS.flatMap(([group, items]) => [
         groupLabel(`${p}-nav-${group}`, group === 'machine' && machine ? machine : L.groups[group]),

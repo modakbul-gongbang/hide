@@ -26,10 +26,10 @@ test("Settings lists its pages in two groups with About apart, and About shows t
 
     // B2: App, then This Mac, each with its pages in order, and About apart at the foot of the list.
     await expect(sheet.locator('[data-settings-nav-group="app"]')).toHaveText(/^App/);
-    await expect(sheet.locator('[data-settings-nav-group="app"] [data-settings-tab]')).toHaveText(["General", "Notifications", "Devices", "Shortcuts"]);
+    await expect(sheet.locator('[data-settings-nav-group="app"] [data-settings-tab]')).toHaveText(["General", "Notifications", "Usage", "Devices", "Shortcuts"]);
     await expect(sheet.locator('[data-settings-nav-group="machine"]')).toHaveText(/^This (Mac|PC|computer)/);
     await expect(sheet.locator('[data-settings-nav-group="machine"] [data-settings-tab]')).toHaveText(["Agents", "Hide AI", "Mobile", "GitHub"]);
-    await expect(sheet.locator("[data-settings-tab]")).toHaveText(["General", "Notifications", "Devices", "Shortcuts", "Agents", "Hide AI", "Mobile", "GitHub", "About"]);
+    await expect(sheet.locator("[data-settings-tab]")).toHaveText(["General", "Notifications", "Usage", "Devices", "Shortcuts", "Agents", "Hide AI", "Mobile", "GitHub", "About"]);
     const tabs = sheet.locator("[data-settings-tab]");
     const githubBox = (await sheet.locator('[data-settings-tab="github"]').boundingBox())!;
     const aboutBox = (await sheet.locator('[data-settings-tab="about"]').boundingBox())!;
@@ -44,7 +44,7 @@ test("Settings lists its pages in two groups with About apart, and About shows t
     await expect(sheet.locator('[data-settings-tab="notifications"]')).toBeFocused();
     await expect(sheet.locator('[data-settings-tab="notifications"]')).toHaveAttribute("data-state", "active");
     await expect(sheet.locator("[data-settings-page-title]")).toHaveText("Notifications");
-    for (const next of ["devices", "shortcuts", "agents"]) {
+    for (const next of ["usage", "devices", "shortcuts", "agents"]) {
       await page.keyboard.press("ArrowDown");
       await expect(sheet.locator(`[data-settings-tab="${next}"]`)).toHaveAttribute("data-state", "active");
     }
