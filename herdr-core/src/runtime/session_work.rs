@@ -359,7 +359,7 @@ fn read_draft(
         offset: missed.turn_offset,
         witness,
     };
-    let context = crate::node_access::call_as::<hide_host::session_work::Context>(
+    let context = crate::node_access::call_as::<hide_node_link::sessions::WorkContext>(
         node.as_ref(),
         Call::SessionWorkContext {
             request,

@@ -13,6 +13,8 @@ pub const CONTINUED_TASK_LIMIT: usize = 2;
 pub const LEDGER_QUEUE_LIMIT: usize = 512;
 pub const SEARCH_LIMIT: usize = 50;
 pub const LEDGER_RPC_LIMIT: usize = 16;
+/// Descendant edges below a root; traversal also includes the root itself.
+pub const LEDGER_DEPTH_LIMIT: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -252,6 +254,7 @@ pub struct WorkOutput {
 pub struct SessionRecord {
     pub session: SessionIdentity,
     pub title: String,
+    pub fallback_title: String,
     pub native_title: Option<String>,
     pub manual_title: Option<String>,
     pub state: Option<String>,
@@ -282,6 +285,7 @@ pub struct SessionRecordSnapshot {
 pub struct SessionWorkSummary {
     pub session: SessionIdentity,
     pub title: String,
+    pub fallback_title: String,
     pub native_title: Option<String>,
     pub manual_title: Option<String>,
     pub cwd: Option<String>,

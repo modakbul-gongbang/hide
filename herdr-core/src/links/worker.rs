@@ -10,8 +10,8 @@
 //! a batch a minute.
 
 use super::ledger::{
-    LEDGER_QUEUE_LIMIT, LEDGER_RPC_LIMIT, LedgerAnswer, LedgerCall, LedgerContext, LedgerUpdate,
-    SessionIdentity, SessionRecord, SessionSearchHit,
+    LEDGER_DEPTH_LIMIT, LEDGER_QUEUE_LIMIT, LEDGER_RPC_LIMIT, LedgerAnswer, LedgerCall,
+    LedgerContext, LedgerUpdate, SessionIdentity, SessionRecord, SessionSearchHit,
 };
 use super::store::{IssueLinks, LinkStore, LocalFiles, Opened, PrLinks};
 use super::{
@@ -128,6 +128,10 @@ struct ContextCache {
 }
 
 impl LinkClient {
+    #[cfg(test)]
+    pub(crate) fn parent_facts_for_test(&self) -> Option<Arc<Vec<ParentFact>>> {
+        self.0.0.lock().unwrap().parents.clone()
+    }
     #[cfg(test)]
     pub(crate) fn prime_context_for_test(&self, session: SessionIdentity, context: LedgerContext) {
         let mut cache = self.1.lock().unwrap();
@@ -1357,7 +1361,7 @@ fn refresh_reader_context(
 fn update_context_ancestors(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {
     let mut current = session.clone();
     let mut seen = std::collections::BTreeSet::new();
-    for _ in 0..32 {
+    for _ in 0..=LEDGER_DEPTH_LIMIT {
         if !seen.insert(current.clone()) {
             break;
         }
@@ -1459,6 +1463,86 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const CREATED: u64 = 1_790_000_000_000;
+
+    #[test]
+    fn a_leaf_change_refreshes_the_cached_root_at_the_supported_depth_limit() {
+        use crate::labels::analysis::LabelEnd;
+        use crate::links::ledger::{RecordedRequest, TaskDecision, TurnJudgment, WorkAuthor};
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let chain = (0..=LEDGER_DEPTH_LIMIT)
+            .map(|depth| SessionIdentity {
+                device_id: "remote".into(),
+                agent: "claude".into(),
+                session_id: format!("session-{depth}"),
+            })
+            .collect::<Vec<_>>();
+        for session in &chain {
+            store
+                .apply_ledger_update(&LedgerUpdate::Requests {
+                    session: session.clone(),
+                    cwd: "/repo".into(),
+                    path: None,
+                    requests: vec![RecordedRequest {
+                        offset: 1,
+                        at_unix_ms: CREATED,
+                        text: "Build the current root task".into(),
+                        author: WorkAuthor::Operator,
+                        task_ids: vec![],
+                        chapter_id: None,
+                        judged: false,
+                    }],
+                })
+                .unwrap();
+        }
+        store
+            .apply_parents(
+                &chain
+                    .windows(2)
+                    .map(|pair| ParentFact {
+                        device_id: pair[1].device_id.clone(),
+                        agent: pair[1].agent.clone(),
+                        session_id: pair[1].session_id.clone(),
+                        parent_device_id: pair[0].device_id.clone(),
+                        parent_agent: pair[0].agent.clone(),
+                        parent_session_id: pair[0].session_id.clone(),
+                        parent_name: "Parent".into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        let client = LinkClient::full_mailbox_for_test();
+        client.prime_context_for_test(chain[0].clone(), store.ledger_context(&chain[0]).unwrap());
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: chain[0].clone(),
+                goal: "Current goal".into(),
+                at_unix_ms: CREATED,
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                session: chain[0].clone(),
+                offset: 1,
+                at_unix_ms: CREATED + 1,
+                end: LabelEnd::Working,
+                work_author: true,
+                turn_witness: None,
+                judgment: TurnJudgment {
+                    task: TaskDecision::New {
+                        name: "Current root task".into(),
+                    },
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        assert!(client.context(&chain[0]).unwrap().open_tasks.is_empty());
+        update_context_ancestors(&client, &store, chain.last().unwrap());
+        assert_eq!(
+            client.context(&chain[0]).unwrap().open_tasks[0].name,
+            "Current root task"
+        );
+    }
 
     /// A connected device whose helper answers the two link calls from its
     /// own home, the way `hided node serve` does.

@@ -710,7 +710,7 @@ Children show three visual indentation levels, five siblings initially and a Mor
 
 Missed items are durable Open, Resolved, Issue or Dismissed records.
 Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
-The Sessions top group includes only open missed work from removed or resolved sessions that have been inactive for 24 hours, within the project's Copied history window (90 days by default).
+The Sessions top group includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the project's Copied history window (90 days by default).
 It is folded by default, scoped with the visible checkout, project or Home, and renewed live activity returns the item to its live session row.
 
 With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request newest first.

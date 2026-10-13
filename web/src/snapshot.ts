@@ -1663,11 +1663,11 @@ export type WorkTask = { id: string; chapter_id: string; name: string; at_unix_m
 export type MissedWork = { id: string; kind: "leftover" | "problem" | "follow_up"; text: string; status: "open" | "resolved" | "issue" | "dismissed"; at_unix_ms: number; turn_offset: number; issue_repository: string | null; issue_number: number | null; creating: boolean };
 export type WorkOutput = { kind: "pr" | "issue"; repository: string; number: number; title: string; url: string; state: string; stale: boolean; last_read_at_unix_ms: number | null; created_at_unix_ms: number; task_id: string | null; source: WorkSession; source_name: string };
 export type SessionRecord = {
-  session: WorkSession; title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
+  session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
   cwd: string | null; path: string | null; started_at_unix_ms: number | null; ended_at_unix_ms: number | null;
   chapters: { id: string; goal: string; at_unix_ms: number }[]; tasks: WorkTask[]; requests: WorkRequest[]; missed: MissedWork[]; outputs: WorkOutput[]; children: SessionRecord[];
 };
-export type SessionWorkSummary = { session: WorkSession; title: string; native_title: string | null; manual_title: string | null; cwd: string | null; ended_at_unix_ms: number | null; open_missed: number; subtree_open_missed: number; missed: MissedWork[] };
+export type SessionWorkSummary = { session: WorkSession; title: string; fallback_title: string; native_title: string | null; manual_title: string | null; cwd: string | null; ended_at_unix_ms: number | null; open_missed: number; subtree_open_missed: number; missed: MissedWork[] };
 export type SessionRecordSection = { session: WorkSession | null; loading: boolean; failure: string | null; record: SessionRecord | null };
 export type SessionWorkSearch = { query: string; loading: boolean; failure: string | null; results: { session: WorkSession; title: string; matched: string; at_unix_ms: number; cwd: string | null }[] };
 

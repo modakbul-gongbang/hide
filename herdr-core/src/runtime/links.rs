@@ -310,7 +310,7 @@ impl Runtime {
     /// What the project facts are built from, without building them.
     fn link_projects_print(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for workspace in &self.snapshot.navigator.workspaces {
+        for workspace in self.link_lineage_workspaces() {
             (&workspace.id, &workspace.path, &workspace.device_id).hash(&mut hasher);
             for checkout in &workspace.checkouts {
                 (
@@ -324,7 +324,7 @@ impl Runtime {
                 )
                     .hash(&mut hasher);
             }
-            if let Some(project) = self.github.project(&workspace.path) {
+            if let Some(project) = self.link_github_project(workspace) {
                 (
                     project.pull_requests_read,
                     project.status.last_success_at_unix_ms,
@@ -340,13 +340,10 @@ impl Runtime {
     }
 
     pub(super) fn link_projects(&self) -> Vec<ProjectFacts> {
-        self.snapshot
-            .navigator
-            .workspaces
-            .iter()
+        self.link_lineage_workspaces()
             .filter(|workspace| workspace.is_git && !workspace.is_home && !workspace.temporary)
             .map(|workspace| {
-                let project = self.github.project(&workspace.path);
+                let project = self.link_github_project(workspace);
                 let prs = project
                     .map(|project| {
                         project
@@ -435,10 +432,7 @@ impl Runtime {
     /// its checkout's branch.
     pub(super) fn link_panes(&self) -> Vec<PaneFact> {
         let agents = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
+            .link_lineage_agents()
             .filter_map(|agent| {
                 let session = agent.session_id.as_deref()?;
                 let kind = session_agent(&agent.agent_kind)?;
@@ -446,7 +440,7 @@ impl Runtime {
             })
             .collect::<HashMap<_, _>>();
         let mut panes = Vec::new();
-        for workspace in &self.snapshot.navigator.workspaces {
+        for workspace in self.link_lineage_workspaces() {
             for checkout in &workspace.checkouts {
                 for pane in checkout.tabs.iter().flat_map(|tab| tab.panes.iter()) {
                     let Some((kind, session)) = agents.get(pane.id.as_str()) else {
@@ -470,10 +464,16 @@ impl Runtime {
             }
         }
         panes.sort_by(|left, right| {
-            (&left.device_id, &left.session_id).cmp(&(&right.device_id, &right.session_id))
+            (&left.device_id, &left.agent, &left.session_id).cmp(&(
+                &right.device_id,
+                &right.agent,
+                &right.session_id,
+            ))
         });
         panes.dedup_by(|left, right| {
-            left.device_id == right.device_id && left.session_id == right.session_id
+            left.device_id == right.device_id
+                && left.agent == right.agent
+                && left.session_id == right.session_id
         });
         panes
     }
@@ -498,9 +498,9 @@ impl Runtime {
 
     /// Hash borrowed authority facts before allocating a lineage projection.
     /// A terminal frame or status-only change does not rebuild its maps.
-    fn link_parents_print(&self) -> u64 {
+    pub(super) fn link_parents_print(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for workspace in &self.snapshot.navigator.workspaces {
+        for workspace in self.link_lineage_workspaces() {
             workspace.device_id.hash(&mut hasher);
             for checkout in &workspace.checkouts {
                 for tab in &checkout.tabs {
@@ -510,7 +510,7 @@ impl Runtime {
                 }
             }
         }
-        for agent in &self.snapshot.navigator.agents {
+        for agent in self.link_lineage_agents() {
             (
                 &agent.pane_id,
                 &agent.agent_kind,
@@ -536,12 +536,44 @@ impl Runtime {
         hasher.finish()
     }
 
-    fn link_parent_facts(&self) -> Vec<ParentFact> {
+    fn link_lineage_workspaces(&self) -> impl Iterator<Item = &WorkspaceSnapshot> {
+        self.snapshot.navigator.workspaces.iter().chain(
+            self.snapshot
+                .status
+                .remote
+                .iter()
+                .filter_map(|remote| remote.session.as_ref())
+                .flat_map(|session| &session.workspaces),
+        )
+    }
+
+    fn link_lineage_agents(&self) -> impl Iterator<Item = &SidebarAgentSnapshot> {
+        self.snapshot.navigator.agents.iter().chain(
+            self.snapshot
+                .status
+                .remote
+                .iter()
+                .filter_map(|remote| remote.session.as_ref())
+                .flat_map(|session| &session.agents),
+        )
+    }
+
+    fn link_github_project(
+        &self,
+        workspace: &WorkspaceSnapshot,
+    ) -> Option<&crate::model::GithubProjectSnapshot> {
+        if workspace.device_id == self.node.as_str() {
+            self.github.project(&workspace.path)
+        } else {
+            self.device_github
+                .get(&workspace.device_id)?
+                .project(&workspace.path)
+        }
+    }
+
+    pub(super) fn link_parent_facts(&self) -> Vec<ParentFact> {
         let devices = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
+            .link_lineage_workspaces()
             .flat_map(|workspace| {
                 workspace.checkouts.iter().flat_map(|checkout| {
                     checkout.tabs.iter().flat_map(|tab| {
@@ -552,13 +584,12 @@ impl Runtime {
                 })
             })
             .collect::<HashMap<_, _>>();
-        let agents = &self.snapshot.navigator.agents;
-        let by_pane = agents
-            .iter()
+        let by_pane = self
+            .link_lineage_agents()
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect::<HashMap<_, _>>();
-        let mut parents = agents
-            .iter()
+        let mut parents = self
+            .link_lineage_agents()
             .filter_map(|agent| {
                 let parent = by_pane.get(agent.lineage_parent_pane_id.as_deref()?)?;
                 Some(ParentFact {

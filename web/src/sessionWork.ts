@@ -4,8 +4,8 @@ export const workKey = (session: WorkSession) => `${session.device_id}\0${sessio
 export function sessionOfAgent(agent: AgentRow, rest: SnapshotRest | null): WorkSession | null {
   return agent.session_id ? { device_id: agent.device_id ?? localDeviceId(rest), agent: agent.agent_kind, session_id: agent.session_id } : null;
 }
-export function recordTitle(record: Pick<SessionRecord, "session" | "title" | "manual_title" | "native_title">, summaries: boolean): string {
-  return record.manual_title ?? (summaries ? record.title : record.native_title ?? record.session.session_id);
+export function recordTitle(record: Pick<SessionRecord, "title" | "manual_title" | "native_title" | "fallback_title">, summaries: boolean): string {
+  return record.manual_title ?? (summaries ? record.title : record.native_title ?? record.fallback_title);
 }
 export function recordTree(record: SessionRecord): SessionRecord[] {
   return [record, ...record.children.flatMap(recordTree)];

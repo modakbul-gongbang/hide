@@ -738,7 +738,7 @@ pub(crate) fn draft_session_issue(
     settings: &AiSettings,
     subject: &str,
     missed: &str,
-    context: &hide_host::session_work::Context,
+    context: &hide_node_link::sessions::WorkContext,
     cancel: &CancelToken,
 ) -> Result<(String, String), String> {
     let redact = crate::labels::analysis::redact;

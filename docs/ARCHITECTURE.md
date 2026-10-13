@@ -780,7 +780,9 @@ A cold label context requests a worker read and postpones END until authority an
 START keeps its v8 prompt and goal lock; END uses `context_label.v9` for new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
 Roots count operator requests; a delegated record counts its initial prompt and canonical work requests from its named parent, never reports or other letters.
 Late lineage retracts invalid judgments, restores the last valid END and recomputes output attribution in the same transaction.
-Learned lineage comes from the core's proven parent pane relationship, keyed with the owning device's native session identity; retained coordination registrations take precedence and keep ended parents available.
+Learned lineage comes from the core's proven parent pane relationship across local and connected-device snapshots, keyed with the owning device's native session identity; retained coordination registrations take precedence and keep ended parents available.
+Project, pane and lineage facts use the same combined snapshot set, and a project's GitHub answers are selected by device as well as path.
+The borrowed lineage fingerprint costs one pass over current local and device panes, agents and registrations; only a change allocates parent facts or posts them to the existing worker mailbox.
 Past requests from summaries Off, failed analysis or a pre-ledger session stay raw and unjudged, without background reclassification when summaries return.
 Completion requires the last assigned END to be Done and every assigned PR to be merged; no assigned PR makes the latter condition true.
 Only a tool-printed address within -2 s to +30 s of GitHub creation makes an output, and descendant outputs are attributed once to the parent's spawn-turn task with their originating session retained.

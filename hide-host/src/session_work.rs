@@ -2,6 +2,7 @@
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::root::Root;
+use hide_node_link::sessions::WorkContext;
 use std::io::Read;
 use std::path::Path;
 
@@ -9,21 +10,15 @@ const TEMPLATE_FILE_LIMIT: usize = 8;
 const TEMPLATE_BYTES: usize = 16 * 1024;
 const TEMPLATE_FILE_BYTES: usize = 8 * 1024;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Context {
-    pub turn: hide_session::label_transcript::WorkTurn,
-    pub templates: String,
-}
-
 pub fn read(
     home: &Path,
     request: &hide_session::label_transcript::WorkTurnRequest,
     checkout: &str,
-) -> HostResult<Context> {
+) -> HostResult<WorkContext> {
     let turn = hide_session::label_transcript::read_work_turn(home, request)
         .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
     let templates = read_templates(Path::new(checkout))?;
-    Ok(Context { turn, templates })
+    Ok(WorkContext { turn, templates })
 }
 
 fn read_templates(checkout: &Path) -> HostResult<String> {

@@ -842,7 +842,7 @@ impl LinkStore {
         request_budget: &mut usize,
         include_requests: bool,
     ) -> Result<SessionRecord, String> {
-        if depth > 32 || visited.len() >= SUMMARY_SESSION_LIMIT {
+        if depth > LEDGER_DEPTH_LIMIT || visited.len() >= SUMMARY_SESSION_LIMIT {
             return Err("ledger_descendant_capacity".to_owned());
         }
         if !visited.insert(session.clone()) {
@@ -854,6 +854,7 @@ impl LinkStore {
         let args = params![session.device_id, session.agent, session.session_id];
         let mut record = SessionRecord {
             session: session.clone(),
+            fallback_title: crate::sidebar::provider_name(Some(&session.agent)),
             cwd: row.cwd,
             path: row.path,
             started_at_unix_ms: row.started_at,
@@ -902,7 +903,7 @@ impl LinkStore {
             .last()
             .map(|chapter| chapter.goal.clone())
             .or_else(|| record.native_title.clone())
-            .unwrap_or_else(|| session.session_id.clone());
+            .unwrap_or_else(|| crate::sidebar::provider_name(Some(&session.agent)));
         if include_requests {
             let mut statement=self.connection.prepare("SELECT offset,at,text,author,task_ids,chapter,judged \
             FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,offset DESC LIMIT ?4").map_err(failed)?;
@@ -1299,9 +1300,10 @@ impl LinkStore {
                 return Err("ledger_summary_capacity".into());
             }
             summaries.push(SessionWorkSummary {
+                fallback_title: crate::sidebar::provider_name(Some(&identity.agent)),
                 title: goal
                     .or_else(|| native.clone())
-                    .unwrap_or_else(|| identity.session_id.clone()),
+                    .unwrap_or_else(|| crate::sidebar::provider_name(Some(&identity.agent))),
                 native_title: native,
                 manual_title: manual,
                 cwd: session.cwd,
@@ -1346,20 +1348,24 @@ impl LinkStore {
         };
         let sql = format!(
             "WITH matched AS (SELECT *,row_number() OVER(PARTITION BY device,agent,id ORDER BY at DESC,text) AS rank FROM ({values}) WHERE text LIKE ?1 ESCAPE '\\') \
-            SELECT s.device,s.agent,s.id,COALESCE(t.manual_title,{goal},t.native_title,s.id),r.text,r.at,s.cwd \
+            SELECT s.device,s.agent,s.id,COALESCE(t.manual_title,{goal},t.native_title),r.text,r.at,s.cwd \
             FROM sessions s JOIN matched r ON s.device=r.device AND s.agent=r.agent AND s.id=r.id \
             LEFT JOIN ledger_titles t ON t.device=s.device AND t.agent=s.agent AND t.id=s.id WHERE r.rank=1 ORDER BY r.at DESC,s.id LIMIT ?2"
         );
         let mut statement = self.connection.prepare(&sql).map_err(failed)?;
         statement
             .query_map(params![pattern, SEARCH_LIMIT as i64], |r| {
+                let agent: String = r.get(1)?;
+                let title = r
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| crate::sidebar::provider_name(Some(&agent)));
                 Ok(SessionSearchHit {
                     session: SessionIdentity {
                         device_id: r.get(0)?,
-                        agent: r.get(1)?,
+                        agent,
                         session_id: r.get(2)?,
                     },
-                    title: r.get(3)?,
+                    title,
                     matched: r.get(4)?,
                     at_unix_ms: r.get(5)?,
                     cwd: r.get(6)?,

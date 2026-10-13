@@ -650,7 +650,8 @@ The record replaces the list inside Tools, with `Sessions로 돌아가기`, the 
 Task disclosures show the saved original requests and output numbers; child disclosures show that child's own work instead of mixing it into the parent's chapters.
 Open missed items show `이슈로` and `무시`, and closed items are folded under `닫힘 N`, with Undo or Reopen where applicable.
 At narrow Tools widths, Korean missed-work text and the first line of a raw request wrap between words; titles truncate with their full text in a tooltip.
-The folded missed-work group above live Sessions includes only resolved or removed sessions inactive for at least 24 hours, within the current scope and Copied history period.
+The folded missed-work group above live Sessions includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the current scope and Copied history period.
+Untitled records use the same agent-name fallback as Sessions, including with summaries Off and after the pane ends; native session ids remain identity keys.
 With summaries Off, records retain native/manual titles, statuses, outputs, children and saved raw requests newest first, and hide every generated judgment and missed-work action.
 A first record read uses a small skeleton; a failed read shows Retry, and a disconnected device retains the last read dimmed until reconnection refreshes it.
 GitHub values that cannot be refreshed stay dimmed with their last-read time in the tooltip; failure is never a false zero.

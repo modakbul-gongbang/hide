@@ -130,6 +130,22 @@ fn questions_stay_requests_and_summary_off_search_excludes_judgments() {
 }
 
 #[test]
+fn an_untitled_ended_record_and_raw_search_keep_the_sessions_provider_title() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    request(&mut store, 1, "A raw request kept after the pane ends");
+    assert_eq!(store.ledger_record(&session()).unwrap().title, "Codex");
+    drop(store);
+    let (store, _) = LinkStore::open(&path).unwrap();
+    assert_eq!(store.ledger_record(&session()).unwrap().title, "Codex");
+    assert_eq!(
+        store.ledger_search("raw request", false).unwrap()[0].title,
+        "Codex"
+    );
+}
+
+#[test]
 fn turn_replay_and_status_undo_survive_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("links.sqlite3");
@@ -176,6 +192,45 @@ fn turn_replay_and_status_undo_survive_restart() {
         store.ledger_context(&session()).unwrap().open_missed.len(),
         1
     );
+}
+
+#[test]
+fn record_fallbacks_use_the_sessions_title_for_every_supported_agent() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    for (agent, expected) in [
+        ("claude", "Claude"),
+        ("codex", "Codex"),
+        ("grok", "grok"),
+        ("opencode", "OpenCode"),
+        ("pi", "pi"),
+        ("omp", "omp"),
+        ("cursor", "cursor"),
+    ] {
+        let owner = SessionIdentity {
+            agent: agent.into(),
+            ..session()
+        };
+        store
+            .apply_ledger_update(&LedgerUpdate::Requests {
+                session: owner.clone(),
+                cwd: "/repo".into(),
+                path: None,
+                requests: vec![RecordedRequest {
+                    offset: 1,
+                    at_unix_ms: 1_000,
+                    text: "An untitled request".into(),
+                    author: WorkAuthor::Operator,
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                }],
+            })
+            .unwrap();
+        let record = store.ledger_record(&owner).unwrap();
+        assert_eq!(record.title, expected);
+        assert_eq!(record.fallback_title, expected);
+    }
 }
 
 #[test]
