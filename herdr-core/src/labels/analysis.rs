@@ -41,8 +41,9 @@ pub(crate) const PROVIDER_RECOVERY_INTERVAL: Duration = Duration::from_secs(600)
 /// One provider verdict, already judged usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Analysis {
-    /// What the session is to have made when it ends (D-38).
-    pub(crate) goal: String,
+    /// What the session is to have made when it ends (D-38), absent until
+    /// the operator has asked for work.
+    pub(crate) goal: Option<String>,
     pub(crate) goal_changed: bool,
     /// This turn's work while it runs, its result once over, or what the
     /// operator is to answer or do when it ended on a question.

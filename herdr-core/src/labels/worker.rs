@@ -1300,17 +1300,16 @@ impl LabelWorker {
             Ok((provider, analysis)) => {
                 let record = self.records.get_mut(pane_id).expect("checked above");
                 let previous_goal = record.goal.clone();
-                // Only the first analysis or the start of a turn the
-                // operator asked for may move the goal (D-09).
-                let may_update_goal = outcome.initial_context
-                    || previous_goal.is_none()
-                    || (outcome.phase == AnalysisPhase::TurnStart
+                // A first goal or the start of a turn the operator asked
+                // for may move the goal (D-09). With goal_changed false,
+                // the provider's goal value is ignored, including null.
+                let may_update_goal = previous_goal.is_none()
+                    || ((outcome.initial_context || outcome.phase == AnalysisPhase::TurnStart)
                         && outcome.operator_turn
                         && analysis.goal_changed);
-                let goal_changed =
-                    may_update_goal && previous_goal.as_deref() != Some(analysis.goal.as_str());
+                let goal_changed = may_update_goal && previous_goal != analysis.goal;
                 if goal_changed {
-                    record.goal = Some(analysis.goal.clone());
+                    record.goal = analysis.goal.clone();
                 }
                 record.line = analysis.line.clone();
                 record.end = Some(analysis.end);
@@ -1335,7 +1334,7 @@ impl LabelWorker {
                     "phase": outcome.phase.label(),
                     "goal_changed": goal_changed,
                     "operator_turn": outcome.operator_turn,
-                    "goal_chars": analysis.goal.chars().count(),
+                    "goal_chars": analysis.goal.as_ref().map_or(0, |goal| goal.chars().count()),
                     "line_chars": analysis.line.chars().count(),
                     "end": analysis.end,
                     "context_chars": outcome.context_chars,
