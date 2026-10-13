@@ -556,7 +556,10 @@ Connection direction adds no worker, timer or store: Memory admission reads the 
 Each pass visits the registered devices once; a missing link or Memory reader leaves its closed sessions queued, and an unsupported reader records a diagnostic only when its reason changes.
 The last refusal is retained at most once per registered device; recovery or removal drops its entry on the next pass, with no additional node call or UI notification.
 All transcript and Project reads still run on the existing worker through the device's own node, and the existing per-core call and queue caps cover both directions.
-The Memory snapshot section adds no work until a Project's Memory is opened or a live session was given a card: opening, expanding a card or searching is one read on a worker, coalesced like the Sessions read, and a card's text, files and sources are read only for the one card shown in full.
+The Memory snapshot section adds no work until a Project's Memory is opened or a live session was given a card: opening, expanding a card or searching is one read on a worker, coalesced like the Sessions read; full card detail, files and sources are sent only for the one card shown in full.
+Active promotion rows additionally send a preview capped at 512 Unicode characters per card (at most 2,048 UTF-8 bytes), cut from the cards that worker already reads, under the existing 10,000-card Project cap.
+Grouping and agent association are render-time lookups over retained rows and agent PR facts, with no new store read, subprocess, pending queue, terminal-input work or notification fan-out.
+Running promotion elapsed labels reuse the window's existing shared clock; only their text changes with time, and the last subscriber releases that clock.
 What each live pane's session was given is read again, one indexed query per live session, after a receipt batch, a pane change or a Memory change, one read in flight and one waiting.
 Crossing a cap is logged, never an enlarged queue; the operator sees only a state they can act on.
 
@@ -635,7 +638,12 @@ A failed or skipped higher-precedence candidate leaves that group unresolved ins
 The native host distinguishes confirmed `ENOENT`/`ENOTDIR` absence from other filesystem failures, which reject the batch and reach the existing count/reason diagnostic without paths.
 Answers retain the existing ten-second TTL and 512-entry cache cap.
 An invocation holds its own bounded answer set while the shared cache is pruned, so a cache eviction during resolution cannot change that invocation's result.
-There is no new input, render, snapshot, notification or remote-filesystem work; URL and OSC 8 routing and native path authority are unchanged.
+The terminal's right-click target lookup reuses this parser, invocation budget and cache over the same bounded rows; it runs once when a menu opens, never per input or render frame.
+An xterm hover retains one resolved target and cell range for that terminal, so an OSC 8 label and a plain-text link share the click and menu routes.
+An HTML menu checks checkout-root ownership through the same path cache to offer Open source only inside a registered checkout; choosing the action rechecks ownership before dispatch.
+The menu holds one target and discards a late result when that menu was dismissed or replaced.
+There is no new input, snapshot, notification or remote-filesystem work; one accepted menu result updates that menu, and a chosen HTML open sends one core event through the existing Browser View boundary.
+Native path authority and the operating-system modifier route are unchanged.
 
 Regression owners are `web/src/terminalLinks.test.ts` (finite grammar, per-token bounds and cell ranges), `web/src/terminalLinkProvider.test.ts` (original precedence, missing/failed/over-budget checks, batching, cache and device boundaries), and `desktop/e2e/terminal-links.spec.ts` (real file opening and native path/link interaction).
 For a matched dense-line comparison, record grid columns, token count and fixture spellings, then measure cold and warm hover-to-pointer latency separately with the same window and input sequence.

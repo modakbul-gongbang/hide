@@ -62,7 +62,9 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     for (const number of [6, 7, 8]) await tab.locator(`[data-memory-select="${number}"]`).click();
     await expect(tab.locator('[data-memory-selection="5"]')).toBeVisible();
     await expect(tab.locator('[data-memory-select="3"]')).toBeDisabled();
-    await tab.locator('[data-memory-pr-group="72"]').click();
+    await tab.locator('[data-memory-pr-group="72"] [data-memory-row-toggle="9"]').click();
+    await expect(tab.locator('[data-memory-progress-detail="9"] [data-memory-preview]')).toHaveCount(2);
+    await tab.locator('[data-memory-progress-detail="9"] [data-memory-open-pr="72"]').click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator('[role="dialog"]')).toHaveCount(0);
