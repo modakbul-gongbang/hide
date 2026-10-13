@@ -178,6 +178,9 @@ impl NodeLink for Local {
             .name("hide-node-call".to_owned())
             .spawn(move || {
                 let _admitted = admitted;
+                // Drop the sender before returning the capacity slot, also
+                // on unwind, so no new call can retain a completed sender.
+                let answered = answered;
                 let result = if env.stop.load(Ordering::Acquire) {
                     Err(LinkError::Unknown(
                         "This machine's node closed before its work started".to_owned(),
