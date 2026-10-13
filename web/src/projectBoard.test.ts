@@ -191,6 +191,22 @@ describe("the Issues board", () => {
     expect(done.every((card) => card.chip === null && card.first === null)).toBe(true);
   });
 
+  it("keeps a working checkout's agents on its own issue and shows only the pull request on another issue it closes (D-07)", () => {
+    // The checkout's agent waits on the operator, so its tree names it and raises its card.
+    const board = buildTasks(
+      one(workspace([checkout("both", { pr: pr("open"), task: key(1040), closes: [key(1041)], panes: ["a"] })], { tasks: [task(1040), task(1041)] }), [
+        agent("a", "needs_you", { demand: "question" }),
+      ]),
+      "project",
+      NOW,
+    );
+    const cards = stageCards(board, "review").map((card) => ({ issue: card.task.id, pr: card.pr?.number, rows: card.rows.length, shown: card.shown.map((row) => row.pane_id), more: card.more, needsYou: card.needsYou, turnKind: card.turnKind }));
+    expect(cards).toEqual([
+      { issue: "#1040", pr: 7, rows: 1, shown: ["a"], more: 0, needsYou: true, turnKind: "question" },
+      { issue: "#1041", pr: 7, rows: 0, shown: [], more: 0, needsYou: false, turnKind: null },
+    ]);
+  });
+
   it("carries the state the core decided onto the card, with the change request word only while the pull request is open", () => {
     const chip = (value: PullRequest) => buildTasks(one(workspace([checkout("a", { pr: value, task: key(1) })], { tasks: [task(1)] })), "project", NOW).cards[0]?.pr;
     expect(chip(pr("open", "passing", false, "mergeable"))).toMatchObject({ state: "mergeable", changesRequested: false });
