@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { childBranch, SESSION_INDENT_LEVELS, sessionTreeLines } from "./sessionTree";
+import { SESSION_INDENT_LEVELS, sessionTreeLines } from "./sessionTree";
 import type { AgentRow } from "./snapshot";
 
 // docs/UI_BEHAVIOR.md, Sessions: an opened row shows its children at any
@@ -44,15 +44,5 @@ describe("sessionTreeLines", () => {
     const map = tree(wide);
     expect(drawn(sessionTreeLines(wide[0]!, map, new Set(["root"]), new Set()))).toEqual(["root@0", "k1@1", "k2@1", "k3@1", "k4@1", "k5@1", "+2@1"]);
     expect(drawn(sessionTreeLines(wide[0]!, map, new Set(["root"]), new Set(["root"])))).toHaveLength(8);
-  });
-});
-
-describe("childBranch", () => {
-  it("drops the part up to the first slash and keeps a branch without one", () => {
-    expect(childBranch(agent("c", [], "fix/e2e-fixture-home"))).toBe("e2e-fixture-home");
-    expect(childBranch(agent("c", [], "feat/a/b"))).toBe("a/b");
-    expect(childBranch(agent("c", [], "main"))).toBe("main");
-    expect(childBranch(agent("c", [], "fix/"))).toBe("fix/");
-    expect(childBranch(agent("c"))).toBeNull();
   });
 });

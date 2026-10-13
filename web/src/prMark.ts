@@ -93,6 +93,57 @@ export function ownPulls(agent: AgentRow): { pull: AgentPullRequest; state: PrSt
   });
 }
 
+/** A distinct PR in a Sessions root's tree, with the sessions that hold it. */
+export type SessionPull = { pull: AgentPullRequest; state: PrState; owners: AgentRow[] };
+
+const PR_RANK = Object.fromEntries(Object.keys(PR_LOOK).map((state, rank) => [state, rank])) as Record<PrState, number>;
+
+/**
+ * The root's and every descendant's core-projected PRs, independent of tree
+ * folds and sibling limits. URL is identity: equal numbers in different
+ * repositories remain separate, and repeated sightings keep all owners.
+ */
+export function sessionPulls(root: AgentRow, byPane: ReadonlyMap<string, AgentRow>): SessionPull[] {
+  const pulls = new Map<string, SessionPull>();
+  const seen = new Set<string>();
+  const pending = [root];
+  while (pending.length > 0) {
+    const agent = pending.pop()!;
+    if (seen.has(agent.pane_id)) continue;
+    seen.add(agent.pane_id);
+    for (const { pull, state } of ownPulls(agent)) {
+      const existing = pulls.get(pull.url);
+      if (!existing) pulls.set(pull.url, { pull, state, owners: [agent] });
+      else {
+        existing.owners.push(agent);
+        if (PR_RANK[state] < PR_RANK[existing.state]) {
+          existing.pull = pull;
+          existing.state = state;
+        }
+      }
+    }
+    for (const pane of [...(agent.lineage_child_pane_ids ?? [])].reverse()) {
+      const child = byPane.get(pane);
+      if (child && !seen.has(pane)) pending.push(child);
+    }
+  }
+  return [...pulls.values()].sort((a, b) => PR_RANK[a.state] - PR_RANK[b.state]);
+}
+
+/** Any stale contributing GitHub read dims the tree's mark, using its oldest failed read. */
+export function sessionStaleness(rest: SnapshotRest | null, pulls: SessionPull[]): PrStaleness | undefined {
+  const urls = new Set(pulls.map(({ pull }) => pull.url));
+  if (urls.size === 0) return undefined;
+  const reads = catalogWorkspaces(rest)
+    .filter((project) => project.pull_requests?.some((pull) => urls.has(pull.url)))
+    .map((project) => staleness(project.checkouts.find((checkout) => checkout.github)?.github))
+    .filter((read): read is PrStaleness => read !== undefined);
+  if (reads.length === 0) return undefined;
+  const stale = reads.filter((read) => read.stale);
+  const contributing = stale.length > 0 ? stale : reads;
+  return { stale: stale.length > 0, lastRead: contributing.some((read) => read.lastRead === null) ? null : Math.min(...contributing.map((read) => read.lastRead!)) };
+}
+
 /** An agent row's mark: the worst PR's state and number and how many others it holds. */
 export function agentMark(agent: AgentRow): { state: PrState; number: number; more: number } | null {
   const summary = agent.state.pr;

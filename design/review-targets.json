@@ -1,6 +1,6 @@
 {
   "session-panel": {
-    "description": "The approved Pen round 2 Sessions panel (agent-hierarchy-screens D-44): Needs You, Working, Done, Idle and Resolved, one tree level, own PR chips and the folded descendant mark.",
+    "description": "The Sessions A selection: separate progress and branch metadata, a parent's complete PR count, own child PR marks, and the existing session groups and tree.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-main",
     "scene": "session-panel",
@@ -9,7 +9,6 @@
     "frames": [
       {
         "node": "sfu-panel-l",
-        "referenceNode": "zepvC",
         "theme": "light",
         "width": 420,
         "scale": 1,
@@ -18,7 +17,6 @@
       },
       {
         "node": "sfu-panel-d",
-        "referenceNode": "xPrJs",
         "theme": "dark",
         "width": 420,
         "scale": 1,
@@ -50,8 +48,9 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is the Pen round 2 Sessions board (Light); Dark must keep its hierarchy with the theme tokens.",
-      "Do the group order, the Needs You verb line, the PR chips, the ◐ unfinished mark and the one-level tree match round 2?",
+      "The A selection separates the title, progress and branch metadata; both themes keep that hierarchy with the existing tokens.",
+      "Does a parent's PR count include folded descendants while child marks still name their own PRs?",
+      "Are the existing group order, Needs You ask, unfinished mark and tree rails preserved?",
       "Are long Korean titles recognizable at the narrow width without hiding the PR chip or the age?"
     ]
   },

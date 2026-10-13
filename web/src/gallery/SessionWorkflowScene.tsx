@@ -18,7 +18,7 @@ const EXAMPLES: Example[] = [
   { title: "자식 검토에서 답이 필요함", group: "needs_you", line: null, ask: { verb: "confirm", what: "입력 경계 검토", more: 1 } },
   { title: "세션 상태 투영 정리", group: "done", line: "투영 정리를 끝냈습니다", pr: "mergeable" },
   { title: "오래된 PR의 검토", group: "working", line: "실패한 검증을 고치는 중", pr: "failed" },
-  { title: "세션 패널 구현", group: "working", line: "프로젝트 범위를 연결하는 중", mark: { kind: "working", count: 2 } },
+  { title: "세션 패널 구현", group: "working", line: "프로젝트 범위를 연결하는 중", mark: { kind: "working", count: 3 } },
   { title: "회귀 테스트", group: "idle", line: "남은 경계 테스트 2개", unfinished: true, pr: "pending" },
   { title: "쉬는 세션", group: "idle", line: null },
   { title: "완료한 검토", group: "resolved", line: null, pr: "merged" },
@@ -86,7 +86,19 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
     base.rest.navigator!.focused_workspace_id = project.id;
     // The panel's tree opens on the row with children, so a child's columns are compared with its root's.
     base.rest.ui_state = { ...base.rest.ui_state!, sessions_expanded_agent_pane_ids: ["s5"] };
-    const children = base.agents.filter((row) => ["a1c1", "a1c2"].includes(row.pane_id));
+    // A has a different-checkout child, a same-checkout child, and a folded
+    // grandchild with a PR. The parent's count includes all three.
+    const children = base.agents.filter((row) => ["a1c1", "a1c2", "a1g1"].includes(row.pane_id)).map((child, index): AgentRow => {
+      const state: PrState = index === 1 ? "failed" : index === 2 ? "mergeable" : "pending";
+      const number = 230 + index;
+      const line = index === 0 ? "브랜치와 진행 설명을 분리하는 중" : index === 2 ? "좁은 화면 검증을 끝냈습니다" : null;
+      return { ...child, lineage_parent_pane_id: index === 2 ? "a1c1" : "s5", lineage_child_pane_ids: index === 0 ? ["a1g1"] : [],
+        state: { ...child.state, session: { group: index === 0 ? "working" : "idle", line, unfinished: false }, pr: { count: 1, worst: state, pulls: [{ index: 0, state }] }, branch_badge: index === 0 ? "feat/session-row-clarity-and-branch-label" : null },
+        request: { verb: index === 0 ? "working" : "idle", verb_since_unix_ms: Date.now(), request: null, later_by: null, reply: null, pull_requests: [{ number, title: child.identity_label, url: `https://example.invalid/pull/${number}`, badge: "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "mergeable" ? "approved" : "review_required", head_branch: "feat/session-row-clarity-and-branch-label", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] } };
+    });
+    const childPanes = children.map((child) => ({ ...pane, id: child.pane_id, identity_label: child.identity_label }));
+    feature.tabs[0]!.panes.push(childPanes[0]!);
+    checkout.tabs[0]!.panes.push(...childPanes.slice(1));
     const headers = Object.fromEntries(BANDS.map(([id, band]) => [id, { working: id === "working", band: band && { ...band, since_unix_ms: ["approval", "answer", "fix", "merge", "raised", "result"].includes(id) ? Date.now() - 180_000 : band.since_unix_ms } }]));
     // The fix and merge panes own one PR each, so their header shows the own PR chip (B21, B22).
     const ownPr = (id: string): Pick<AgentRow, "state" | "request"> => {
