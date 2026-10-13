@@ -517,8 +517,8 @@ mod tests {
                     &locations,
                     |_| {},
                 )
-                    .await
-                    .map(|_| ())
+                .await
+                .map(|_| ())
             } else {
                 raw.init().await.unwrap();
                 preflight(&raw, HOME, OWNER, projects, &locations).await
