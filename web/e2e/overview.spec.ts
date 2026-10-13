@@ -1,4 +1,4 @@
-import { openProjectOverview } from "./overview-entry";
+import { openAllProjectsPage, openProjectOverview, openProjectPage } from "./overview-entry";
 // The Project Overview on an isolated pinned Herdr and hided (PRD
 // overview-lenses-tiles-agents, on top of web-project-overview,
 // task-agents-views and the issue-first rework of 2026-09-28): a Git project
@@ -473,8 +473,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // ⌘⇧H from that Workspace opens the graph with its box selected (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
     await expect(askingBox).toHaveAttribute("data-selected", "true");
     await expect(overview.locator('[data-graph-box][data-selected="true"]')).toHaveCount(1);
@@ -482,8 +481,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await overview.locator(`[data-graph-open="${workingPane}"]`).click();
     await expect(page.locator(`[data-pane-view="${workingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
     await expect(workingBox).toHaveAttribute("data-selected", "true");
     // The keyboard: a head takes focus, ↓ moves to its row, ← to the row drawn beside it, ↵ opens it (B35).
@@ -497,13 +495,11 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("Escape");
     await expect(workspace).toBeVisible();
     // A head's click is its Workspace, main's included (B15).
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
     await mainBox.locator("[data-graph-head-open]").click();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toBeVisible();
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
 
     // `N merged → Clean up` opens the disk cleanup sheet on the finished filter and
@@ -632,8 +628,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await chip("working").click();
     // Continue the existing wide-board content checks on the central page.
     await page.keyboard.press("Escape");
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
 
     // The issue chip opens the Issues tab with that issue's panel beside the
@@ -840,7 +835,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(graph.locator("[data-dependency-edge]")).toHaveCount(1);
     await expect(graph.locator("[data-dependency-edge]")).toHaveAttribute("d", /^M \S+ \S+ C /);
     // The Issues mode is the page's: All projects' Tasks opens on it too (task-agents-views B9, D-10).
-    await page.locator("[data-go-main]").click();
+    await openAllProjectsPage(page);
     const main = page.locator("[data-main-screen]");
     await page.locator('[data-main-tab="tasks"]').click();
     await expect(main.locator("[data-tasks-mode]")).toHaveAttribute("data-tasks-mode", "dependencies");
@@ -864,11 +859,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // All projects keeps its tab row; its Agents view is the same graph, a
     // band per project under its name, the one with the operator's turn first (B30).
-    const allProjects = page.locator("[data-home-destination]");
-    await allProjects.click();
+    await page.getByRole("tab", { name: "All projects", exact: true }).click();
     await expect(main).toBeVisible();
     await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
-    await expect(allProjects).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(main.locator("[data-main-tab]")).toHaveCount(3);
     await expect(main).toHaveAttribute("data-main-view", "agents");
@@ -894,8 +887,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(workspace).toBeVisible();
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "fixture", exact: true }).click();
+    await openProjectPage(page, "fixture");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
@@ -961,12 +953,11 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // A project with no agent: its main box stays, counting none
     // (B13); New agent on a folder opens its Workspace.
-    await page.locator("[data-go-main]").click();
+    await openAllProjectsPage(page);
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(workspace).toBeVisible();
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "quiet", exact: true }).click();
+    await openProjectPage(page, "quiet");
     await toGraph();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(boxes).toHaveCount(1);
@@ -1009,8 +1000,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     expect(started).toBeTruthy();
     await expect.poll(() => agentsIn(herdr, started as string), { timeout: 60_000 }).toContain("claude");
     await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
-    await page.locator("[data-go-main]").click();
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await openProjectPage(page, "repo");
     await toGraph();
     // A fresh agent only rests, so its box is folded away: main's box carries the selection until the fold is opened (B1).
     await expect(box("3-graph-view")).toHaveCount(0);

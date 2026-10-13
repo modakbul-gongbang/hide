@@ -402,3 +402,132 @@ fn the_factory_reads_the_explicit_language_or_none_for_the_systems() {
     runtime.dispatch_json(&language_set(serde_json::Value::Null));
     assert_eq!(runtime.factory_interface_language(), None);
 }
+
+#[test]
+fn usage_pins_are_bounded_shared_and_survive_restart_and_stale_saves() {
+    let (_state, path) = state_path("usage-pins");
+    let mut runtime = runtime_at(&path);
+    let stale = ui_state_update(&runtime, serde_json::json!({ "font_size": 15 }));
+    let event = |kind: &str, payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload,
+        }))
+        .unwrap()
+    };
+    assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+    let pin = event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"claude","window":"five_hour","enabled":true}),
+    );
+    assert!(runtime.dispatch_json(&pin));
+    assert!(
+        !runtime.dispatch_json(&pin),
+        "same desired value is idempotent"
+    );
+    let expected = runtime.snapshot.ui_state.usage.clone();
+    runtime.dispatch_json(&event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"codex","window":"five_hour","enabled":true}),
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "fourth pin refused by core"
+    );
+    runtime.dispatch_json(&event(
+        "usage_pin_set",
+        serde_json::json!({"agent":"pi","window":"weekly","enabled":true}),
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "unsupported agent refused"
+    );
+    runtime.dispatch_json(&event(
+        "usage_hidden_set",
+        serde_json::json!({"agent":"claude","hidden":true}),
+    ));
+    let expected = runtime.snapshot.ui_state.usage.clone();
+    runtime.dispatch_json(&stale);
+    assert_eq!(
+        runtime.snapshot.ui_state.usage, expected,
+        "stale page cannot overwrite usage choices"
+    );
+    drop(runtime);
+    let mut restarted = runtime_at(&path);
+    assert_eq!(restarted.snapshot.ui_state.usage, expected);
+    assert_eq!(restarted.usage_activity().hidden, vec!["claude"]);
+    restarted.dispatch_json(&event(
+        "usage_hidden_set",
+        serde_json::json!({"agent":"claude","hidden":false}),
+    ));
+    assert!(restarted.snapshot.ui_state.usage.hidden.is_empty());
+    assert_eq!(
+        restarted.snapshot.ui_state.usage.pinned, expected.pinned,
+        "Show restores the chosen windows"
+    );
+}
+
+#[test]
+fn an_absent_pin_frees_a_shared_slot_and_stays_removed_after_restart() {
+    use crate::usage::model::{
+        AgentUsage, Cell, Freshness, LimitReading, Scope, WindowKind, WindowOutcome, WindowReading,
+    };
+    for outcome in [
+        WindowOutcome::NotOffered,
+        WindowOutcome::Unreadable {
+            cause: crate::usage::model::Cause::FormatChanged,
+        },
+    ] {
+        let (_state, path) = state_path("usage-absent-pin");
+        let mut runtime = runtime_at(&path);
+        let pin = |agent: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind":"usage_pin_set",
+                "payload":{"agent":agent,"window":"five_hour","enabled":true},
+            }))
+            .unwrap()
+        };
+        assert!(runtime.dispatch_json(&pin("codex")));
+        let mut rows = AgentUsage::initial_rows();
+        let codex = rows.iter_mut().find(|row| row.agent == "codex").unwrap();
+        codex.limits = Cell::Reading {
+            value: LimitReading {
+                windows: vec![WindowReading {
+                    kind: WindowKind::FiveHour,
+                    scope: Scope::All,
+                    outcome,
+                }],
+            },
+            freshness: Freshness::Stale,
+            observed_at_ms: 1000,
+        };
+        runtime.ingest_usage(rows.clone());
+        assert_eq!(
+            runtime.snapshot.ui_state.usage.pinned.len(),
+            3,
+            "retained readings preserve the choice"
+        );
+        if let Cell::Reading { freshness, .. } = &mut rows
+            .iter_mut()
+            .find(|row| row.agent == "codex")
+            .unwrap()
+            .limits
+        {
+            *freshness = Freshness::Fresh;
+        }
+        runtime.ingest_usage(rows);
+        assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+        runtime.dispatch_json(&pin("codex"));
+        assert_eq!(
+            runtime.snapshot.ui_state.usage.pinned.len(),
+            2,
+            "a late event from another window cannot restore an inaccessible pin"
+        );
+        assert!(
+            runtime.dispatch_json(&pin("claude")),
+            "the newly freed slot is selectable"
+        );
+        let expected = runtime.snapshot.ui_state.usage.clone();
+        drop(runtime);
+        assert_eq!(runtime_at(&path).snapshot.ui_state.usage, expected);
+    }
+}

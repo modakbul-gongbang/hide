@@ -18,6 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "./components/ui/input";
 import { Switch } from "./components/ui/switch";
 import { useInterfaceTranslation } from "./i18n/client";
+import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
@@ -79,6 +80,11 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
   const busy = project.pending_action !== null;
   const [deleting, setDeleting] = useState(false);
   const label = useShellStore((state) => catalogWorkspaces(state.rest).find((row) => row.id === id)?.label ?? id);
+  // Every agent is past the usage limit: Hide AI is on but asks nothing until one is under it (D-06).
+  const pastLimit = useShellStore((state) => {
+    const refusal = state.rest?.status?.background_ai?.refusal;
+    return refusal?.reason === "past_limit" && !refusal.using;
+  });
   const unavailable = project.unavailable;
   if (unavailable?.reason === "remote_device") {
     return (
@@ -111,6 +117,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         {project.enabled ? null : (
           <div className="-mt-sm flex flex-col items-start gap-sm">
             <p className="break-keep [overflow-wrap:anywhere] text-caption text-subtle-foreground">{t("memory.disclosure")}</p>
+            {project.consent_required ? <p className="break-keep text-caption text-subtle-foreground" data-memory-consent="required">{t("memory.reconsent")}</p> : null}
             {count > 0 ? (
               <button type="button" className="text-caption text-muted-foreground underline-offset-4 hover:underline" onClick={() => setDeleting(true)} data-memory-delete="link">
                 {t("memory.deleteData")}
@@ -120,7 +127,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
         )}
         {project.enabled && project.analysis === "ai_not_ready" ? (
           <div className="-mt-sm flex flex-col items-start gap-sm" data-memory-ai="not_ready">
-            <p className="break-keep text-caption text-subtle-foreground">{t("memory.aiNotReady")}</p>
+            <p className="break-keep text-caption text-subtle-foreground">{t(pastLimit ? "memory.aiPastLimit" : "memory.aiNotReady")}</p>
             <Button size="sm" variant="outline" onClick={() => actions.openSettings("hideAi")}>
               <SettingsIcon aria-hidden="true" />
               {t("memory.openHideAi")}
@@ -165,7 +172,9 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
 function Header({ project, actions, busy }: { project: ProjectMemory; actions: Actions; busy: boolean }) {
   const { t } = useInterfaceTranslation();
   const ai = useShellStore((state) => state.rest?.status?.background_ai ?? null);
-  const provider = ai?.provider ? ai.providers.find((row) => row.id === ai.provider) ?? null : null;
+  // The chip names the agent answering now: the listed one that stands in while Runs on cannot answer (B4).
+  const answering = ai?.refusal?.using ?? ai?.provider ?? null;
+  const provider = answering ? ai?.providers.find((row) => row.id === answering) ?? null : null;
   const switchId = `memory-switch-${project.workspace_id}`;
   const dim = project.enabled && project.analysis === "ai_not_ready";
   return (
@@ -297,6 +306,9 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
   // Project's one card): the list would be an empty search (design v7, 5).
   if (project.rows.length > 0 && cards.length === 0 && project.search === null) return null;
   const { shown, folded } = visibleCards(cards, project.expanded?.number ?? null, all || project.search !== null);
+  const checking = project.analysis === "checking" || project.analysis === "check_budget_exhausted";
+  const waiting = project.rows.some((row) => row.verifying);
+  const noUsable = project.usable_cards === 0 && project.analysis !== "ai_not_ready" && (project.rows.length === 0 || waiting);
   return (
     <section aria-label={t("memory.cards")} className="flex flex-col gap-sm" data-memory-cards={project.rows.length}>
       <h3 className="flex items-center gap-sm text-caption">
@@ -316,15 +328,8 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
           </DropdownMenuContent>
         </DropdownMenu>
       </h3>
-      {project.rows.length === 0 ? (
-        <div className="flex flex-col gap-xs" data-memory-empty="true">
-          <span className="flex items-center gap-xs text-body text-foreground">
-            <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
-            {t("memory.empty.title")}
-          </span>
-          <span className="break-keep text-caption text-muted-foreground">{t("memory.empty.body")}</span>
-        </div>
-      ) : (
+      {noUsable ? <MemoryEmpty project={project} /> : project.enabled && project.analysis !== "ai_not_ready" && (checking || waiting) ? <MemoryExplanation project={project} /> : null}
+      {project.rows.length === 0 ? null : (
         <>
           <Input value={query} onChange={(event) => { editing.current = true; setQuery(event.target.value); }} placeholder={t("memory.search")} aria-label={t("memory.search")} data-memory-search="true" />
           {project.search && cards.length === 0 ? <p className="text-caption text-muted-foreground">{t("memory.noMatch")}</p> : null}
@@ -343,6 +348,34 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
       )}
     </section>
   );
+}
+
+function MemoryEmpty({ project }: { project: ProjectMemory }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <div className="flex flex-col gap-xs" data-memory-empty="true">
+      <span className="flex items-center gap-xs text-body text-foreground">
+        <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
+        {t(project.rows.length > 0 ? "memory.unusable.title" : "memory.empty.title")}
+      </span>
+      <MemoryExplanation project={project} />
+    </div>
+  );
+}
+
+/** One shared reason above the list; only a running card gets its own mark. */
+function MemoryExplanation({ project }: { project: ProjectMemory }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const state = project.analysis;
+  let message: string;
+  if (state === "check_budget_exhausted") {
+    if (project.check_resume_at_unix_ms === null) throw new Error("memory_check_reset_missing");
+    const time = formatDateTime(requireInterfaceLanguage(i18n.language), project.check_resume_at_unix_ms, { month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+    message = t("memory.budget.body", { time });
+  } else {
+    message = t(state === "checking" ? "memory.checking.body" : project.rows.length > 0 ? "memory.pending.body" : "memory.empty.body");
+  }
+  return <p className="break-keep text-caption text-muted-foreground" data-memory-checks={project.enabled && (state === "checking" || state === "check_budget_exhausted" || project.rows.some((row) => row.verifying)) ? "true" : undefined}>{message}</p>;
 }
 
 /** The chevron that shows a card in full or folds it. */
@@ -371,12 +404,14 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
   const language = requireInterfaceLanguage(i18n.language);
   const open = project.expanded?.number === row.number;
   const merged = row.promotion?.state === "merged";
+  const checking = project.analysis === "checking" && project.checking_card === row.number;
+  const waiting = row.verifying && !checking && !STATUS_STATES.has(row.promotion?.state);
   const self = useRef<HTMLLIElement>(null);
   useEffect(() => {
     if (open) self.current?.scrollIntoView({ block: "nearest" });
   }, [open]);
   return (
-    <li ref={self} className={cn("grid grid-cols-[auto_auto_1fr] gap-x-sm rounded-md px-xs py-sm", open && "bg-card", merged && !open && "opacity-(--opacity-dimmed)")} data-memory-card={row.number} data-memory-promotion={row.promotion?.state}>
+    <li ref={self} className={cn("grid grid-cols-[auto_auto_1fr] gap-x-sm rounded-md px-xs py-sm", open && "bg-card", (merged || waiting) && !open && "opacity-(--opacity-dimmed)")} data-memory-card={row.number} data-memory-promotion={row.promotion?.state}>
       <CardToggle number={row.number} project={project} actions={actions} />
       <span className="font-mono text-caption text-muted-foreground">{cardName(row.number)}</span>
       <div className="flex min-w-0 flex-col gap-xs">
@@ -433,7 +468,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
             ) : null}
           </span>
         ) : null}
-        {row.verifying && !STATUS_STATES.has(row.promotion?.state) ? (
+        {checking && !STATUS_STATES.has(row.promotion?.state) ? (
           // Quiet and alone: the operator has nothing to do (design 13).
           <span className="text-caption text-muted-foreground" data-memory-verifying={row.number}>
             <span className="whitespace-nowrap">{t("memory.verifying")}</span>

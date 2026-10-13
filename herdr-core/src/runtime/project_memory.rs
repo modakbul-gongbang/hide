@@ -428,6 +428,10 @@ impl Runtime {
         project.loading = false;
         project.unavailable = None;
         project.enabled = load.state.as_ref().is_some_and(|state| state.enabled);
+        project.consent_required = load
+            .state
+            .as_ref()
+            .is_some_and(|state| state.consent_required);
         project.capacity_reached = load
             .state
             .as_ref()
@@ -472,6 +476,18 @@ impl Runtime {
         let Some(project) = self.memory_section().project.as_mut() else {
             return false;
         };
+        project.usable_cards = if project.enabled {
+            rows.iter()
+                .filter(|row| {
+                    !row.verifying
+                        && !row.promotion.as_ref().is_some_and(|promotion| {
+                            promotion.state == crate::model::MemoryPromotionState::Merged
+                        })
+                })
+                .count()
+        } else {
+            0
+        };
         if *project.rows != rows {
             project.rows = Arc::new(rows);
         }
@@ -498,7 +514,7 @@ impl Runtime {
             .as_ref()
             .filter(|(workspace_id, _)| self.memory_opened(workspace_id))
             .map(|(_, action)| *action);
-        let ai_ready = self.ai_active() && self.ai_settings.is_some();
+        let ai_ready = self.ai_active() && self.ai_settings.is_some() && !self.usage_paused();
         let Some(project) = self
             .snapshot
             .memory
@@ -514,6 +530,17 @@ impl Runtime {
             (true, false) => MemoryAnalysisState::AiNotReady,
             (true, true) => work.analysis,
         };
+        project.checking_card = if project.analysis == MemoryAnalysisState::Checking {
+            work.checking_card
+        } else {
+            None
+        };
+        project.check_resume_at_unix_ms =
+            if project.analysis == MemoryAnalysisState::CheckBudgetExhausted {
+                work.check_resume_at_unix_ms
+            } else {
+                None
+            };
         project.forgotten = work.forgotten;
         project.pending_action = action;
     }
@@ -1238,5 +1265,35 @@ mod tests {
             ],
             "a fact is never suggested, an open pull request asks nothing"
         );
+        assert_eq!(project.usable_cards, 4);
+        MemoryStore::open(&database)
+            .unwrap()
+            .set_enabled(&identity.id, false, false)
+            .unwrap();
+        let load = load_opened_memory(
+            &crate::node::test_node(),
+            node.as_ref(),
+            &database,
+            &root,
+            None,
+            None,
+        )
+        .unwrap();
+        let generation = runtime.project_memory.reads.begin().unwrap();
+        assert!(runtime.ingest_project_memory(generation, Ok(load)));
+        let project = runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap();
+        assert!(!project.enabled);
+        assert_eq!(
+            project.usable_cards, 0,
+            "disabled cards are saved but never injectable"
+        );
+        assert_eq!(project.rows.len(), 4);
     }
 }

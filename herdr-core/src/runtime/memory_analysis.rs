@@ -53,19 +53,15 @@ const RETRY_LAST_MS: u64 = 60 * 60_000;
 const SIGN_IN_RETRY_MS: u64 = 30 * 60_000;
 /// A usage limit that names no resume time is tried again after this.
 const USAGE_RETRY_MS: u64 = 60 * 60_000;
-/// The analysis provider's weekly usage at which analysis waits (D-10 b).
-const WEEKLY_USAGE_DEFER_PERCENT: f64 = 80.0;
 /// The most receipts waiting for the recording thread; more means it fell
 /// behind, and the oldest go to the log rather than to Memory.
 const RECEIPTS_PENDING_LIMIT: usize = 256;
 /// The most closed sessions waiting for analysis; a burst past it waits for
 /// the quiet rule instead, and the log says so.
 const CLOSED_SESSIONS_LIMIT: usize = 256;
-/// How long background analysis waits for a first read of the provider's
-/// weekly usage before it goes on under the daily cap alone (D-10).
-const USAGE_READ_WAIT_MS: u64 = 10 * 60_000;
-/// How long after a pass last wanted the weekly figure the usage reader keeps
-/// reading with no window attached.
+/// How long after a pass last had work for Hide AI the usage reader keeps
+/// reading with no window attached, so the usage limit has a figure to judge
+/// by.
 const USAGE_WANTED_MS: u64 = 30 * 60_000;
 /// Bytes of existing cards one analysis compares new text against: with an
 /// event group's 36 KiB it keeps a request under the analysis input cap.
@@ -102,11 +98,9 @@ pub(super) struct MemoryWork {
     /// does not drop it into the 30 minute wait.
     pub(super) closed_sessions: BTreeSet<MemorySession>,
     /// Until when the usage reader reads with no window attached, because a
-    /// pass wants the analysis provider's weekly usage (D-10 b).
+    /// pass had analysis to ask for and the usage limit judges each request
+    /// by the agents' weekly figures.
     usage_wanted_until_unix_ms: u64,
-    /// When a pass first found the weekly figure unread; past
-    /// [`USAGE_READ_WAIT_MS`] analysis goes on without it.
-    usage_unread_since_unix_ms: Option<u64>,
     /// Receipts waiting for the receipt thread, each with the device whose
     /// sessions carried it.
     receipts_pending: Vec<(String, SightedMemoryReceipt)>,
@@ -121,6 +115,8 @@ pub(super) struct MemoryWork {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ProjectMemoryWork {
     pub(super) analysis: MemoryAnalysisState,
+    pub(super) checking_card: Option<u64>,
+    pub(super) check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which the Memory tab offers to
     /// bring back (B24).
     pub(super) forgotten: Option<u64>,
@@ -131,6 +127,11 @@ pub(super) struct ProjectMemoryWork {
 
 /// What a pass tells the runtime about one Project while it runs.
 enum PassReport {
+    CheckState {
+        project_id: String,
+        state: MemoryAnalysisState,
+        card: Option<u64>,
+    },
     Analyzing {
         project_id: String,
     },
@@ -155,11 +156,14 @@ enum PassReport {
 /// What a whole pass tells the runtime when it ends.
 #[derive(Debug, Default, PartialEq)]
 struct PassOutcome {
+    /// Only holds confirmed by this pass survive its end, including passes
+    /// with no router while the usage limit pauses every agent.
+    check_budget_exhausted: BTreeSet<String>,
     /// Closed sessions with nothing left to analyze, or no longer in any
     /// Memory-enabled Project.
     settled: BTreeSet<MemorySession>,
-    /// A session was due for background analysis, which needs the
-    /// provider's weekly usage read fresh.
+    /// A session was due for background analysis, which the usage limit
+    /// judges by a fresh weekly figure.
     wants_usage: bool,
     failed_reads: FailedReads,
 }
@@ -202,26 +206,13 @@ impl PassOutcome {
     }
 }
 
-/// The analysis provider's weekly usage as a pass sees it (D-10 b).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum WeeklyUsage {
-    /// The share already spent.
-    Used(f64),
-    /// The provider reports weekly usage and it has not been read yet:
-    /// background analysis waits for it.
-    Unread,
-    /// The provider reports no weekly usage, or reading it failed: only the
-    /// daily cap applies.
-    Unknown,
-}
-
 /// Why one analysis did not finish.
 #[derive(Clone, Debug)]
 pub(crate) enum AnalysisFailure {
     Provider(AiError),
     Local(String),
-    /// The machine's daily cap or the provider's weekly usage holds it back;
-    /// the conversation waits, unread past the cursor (B5).
+    /// The machine's daily cap holds it back; the conversation waits, unread
+    /// past the cursor (B5).
     Deferred(&'static str),
     Cancelled,
     /// The Project's Memory was turned off while the card was being made.
@@ -416,10 +407,11 @@ impl Runtime {
         let database = self.memory_database_path();
         // Memory analysis is a model call: with Hide AI off or no agent chosen
         // the walk still records receipts and the analysis waits (B33).
-        let settings = self.ai_active().then(|| self.ai_settings.clone()).flatten();
-        let weekly = settings.as_ref().map_or(WeeklyUsage::Unknown, |settings| {
-            self.weekly_usage(settings.provider.as_str(), now_unix_ms)
-        });
+        // With every agent of the order past the usage limit nothing is asked
+        // either, and the Memory tab says Hide AI is paused (D-06).
+        let settings = (self.ai_active() && !self.usage_paused())
+            .then(|| self.ai_settings.clone())
+            .flatten();
         let held = self
             .memory_work
             .projects
@@ -429,9 +421,10 @@ impl Runtime {
             .collect::<HashSet<_>>();
         let cancel = CancelToken::new();
         let own_node = self.own_node();
+        let gate = self.usage_gate();
         let router = settings
             .as_ref()
-            .map(|settings| crate::ai::memory_router(&own_node, settings));
+            .map(|settings| crate::ai::memory_router(&own_node, settings, &gate));
         let (nodes, unreached) = self.memory_nodes();
         let delegated = self.delegated_sessions();
         let home = self.home_path.clone().map(|home| (self.node.clone(), home));
@@ -446,7 +439,6 @@ impl Runtime {
             unreached,
             database,
             router,
-            weekly,
             live: work.live_sessions.values().flatten().cloned().collect(),
             closed: work.closed_sessions.clone(),
             held,
@@ -505,14 +497,19 @@ impl Runtime {
             .retain(|session| !outcome.settled.contains(session));
         work.failed_reads = outcome.failed_reads;
         if outcome.wants_usage {
-            let now = now_ms();
-            work.usage_wanted_until_unix_ms = now.saturating_add(USAGE_WANTED_MS);
-            work.usage_unread_since_unix_ms.get_or_insert(now);
+            work.usage_wanted_until_unix_ms = now_ms().saturating_add(USAGE_WANTED_MS);
         }
         let mut changed = false;
-        for project in work.projects.values_mut() {
-            if project.analysis == MemoryAnalysisState::Analyzing {
+        for (project_id, project) in &mut work.projects {
+            if matches!(
+                project.analysis,
+                MemoryAnalysisState::Analyzing | MemoryAnalysisState::Checking
+            ) || (project.analysis == MemoryAnalysisState::CheckBudgetExhausted
+                && !outcome.check_budget_exhausted.contains(project_id))
+            {
                 project.analysis = MemoryAnalysisState::Idle;
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 changed = true;
             }
         }
@@ -522,43 +519,8 @@ impl Runtime {
         changed
     }
 
-    /// The analysis provider's weekly usage as the toolbar's usage read last
-    /// answered it. A provider the reader has not answered for yet is unread
-    /// for at most [`USAGE_READ_WAIT_MS`] after a pass first wanted it.
-    fn weekly_usage(&mut self, provider: &str, now_unix_ms: u64) -> WeeklyUsage {
-        let row = self
-            .snapshot
-            .navigator
-            .provider_usage
-            .iter()
-            .find(|row| row.provider == provider)
-            .filter(|row| row.window_minutes == crate::usage::WEEKLY_WINDOW_MINUTES);
-        let work = &mut self.memory_work;
-        let usage = match row {
-            Some(row) if row.used_percent.is_some() => {
-                WeeklyUsage::Used(row.used_percent.unwrap_or_default())
-            }
-            Some(row) if row.last_checked_at_unix_ms.is_none() => {
-                match work.usage_unread_since_unix_ms {
-                    Some(since) if now_unix_ms.saturating_sub(since) >= USAGE_READ_WAIT_MS => {
-                        crate::diagnostic!(json!({
-                            "component": "memory",
-                            "kind": "analysis.weekly_usage_unread",
-                            "provider": provider,
-                        }));
-                        WeeklyUsage::Unknown
-                    }
-                    _ => return WeeklyUsage::Unread,
-                }
-            }
-            _ => WeeklyUsage::Unknown,
-        };
-        work.usage_unread_since_unix_ms = None;
-        usage
-    }
-
-    /// Whether the usage reader reads with no window attached: a pass wants
-    /// the analysis provider's weekly usage (D-10 b).
+    /// Whether the usage reader reads with no window attached: a pass had
+    /// analysis to ask for, which the usage limit judges by a weekly figure.
     pub(crate) fn memory_reads_usage(&self) -> bool {
         now_ms() < self.memory_work.usage_wanted_until_unix_ms
     }
@@ -606,11 +568,12 @@ impl Runtime {
         }
         let mut changed = false;
         for project in self.memory_work.projects.values_mut() {
-            if project.retry_at_unix_ms != 0 || project.analysis == MemoryAnalysisState::AiNotReady
+            if project.retry_at_unix_ms != 0
+                || matches!(project.analysis, MemoryAnalysisState::AiNotReady)
             {
                 project.retry_at_unix_ms = 0;
                 project.failures = 0;
-                if project.analysis == MemoryAnalysisState::AiNotReady {
+                if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
                     project.analysis = MemoryAnalysisState::Idle;
                 }
                 changed = true;
@@ -632,7 +595,7 @@ impl Runtime {
             .or_default();
         project.retry_at_unix_ms = 0;
         project.failures = 0;
-        if project.analysis == MemoryAnalysisState::AiNotReady {
+        if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
             project.analysis = MemoryAnalysisState::Idle;
         }
         self.memory_work.next_pass_unix_ms = 0;
@@ -673,6 +636,7 @@ impl Runtime {
         let now = now_ms();
         let project_id = match &report {
             PassReport::Analyzing { project_id }
+            | PassReport::CheckState { project_id, .. }
             | PassReport::Analyzed { project_id, .. }
             | PassReport::Checked { project_id, .. } => project_id.clone(),
         };
@@ -684,11 +648,11 @@ impl Runtime {
                 && let Some(project) = self.memory_work.projects.get_mut(&project_id)
                 && (project.failures > 0
                     || project.retry_at_unix_ms != 0
-                    || project.analysis == MemoryAnalysisState::AiNotReady)
+                    || matches!(project.analysis, MemoryAnalysisState::AiNotReady))
             {
                 project.failures = 0;
                 project.retry_at_unix_ms = 0;
-                if project.analysis == MemoryAnalysisState::AiNotReady {
+                if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
                     project.analysis = MemoryAnalysisState::Idle;
                 }
                 recovered = true;
@@ -703,10 +667,42 @@ impl Runtime {
         }
         let before = self.memory_work.projects.get(&project_id).cloned();
         match report {
+            PassReport::CheckState {
+                project_id,
+                state,
+                card,
+            } => {
+                // An empty queue can release an earlier budget hold. It does
+                // not create idle work or erase a provider's failure state.
+                if state == MemoryAnalysisState::Idle
+                    && card.is_none()
+                    && !self
+                        .memory_work
+                        .projects
+                        .get(&project_id)
+                        .is_some_and(|work| {
+                            matches!(
+                                work.analysis,
+                                MemoryAnalysisState::Checking
+                                    | MemoryAnalysisState::CheckBudgetExhausted
+                            )
+                        })
+                {
+                    return false;
+                }
+                let project = self.memory_work.projects.entry(project_id).or_default();
+                project.analysis = state;
+                project.checking_card = card;
+                project.check_resume_at_unix_ms = (state
+                    == MemoryAnalysisState::CheckBudgetExhausted)
+                    .then(|| hide_memory::memory_call_reset_at(now));
+            }
             PassReport::Checked { .. } => return false,
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = MemoryAnalysisState::Analyzing;
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
             }
             PassReport::Analyzed {
                 project_id,
@@ -723,6 +719,8 @@ impl Runtime {
                     }));
                 }
                 let project = self.memory_work.projects.entry(project_id).or_default();
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 match &error {
                     Some(error) => {
                         project.failures = project.failures.saturating_add(1);
@@ -839,7 +837,6 @@ struct PassInput {
     database: PathBuf,
     /// `None` while Hide AI is off: the pass only records receipts.
     router: Option<AiRouter>,
-    weekly: WeeklyUsage,
     live: BTreeSet<MemorySession>,
     closed: BTreeSet<MemorySession>,
     /// Projects whose analysis waits for a retry time.
@@ -943,14 +940,27 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         // would otherwise ask again at once.
         if tally.analyzing || tally.error.is_some() {
             report(PassReport::Analyzed {
-                project_id,
+                project_id: project_id.clone(),
                 learned: tally.learned,
                 error: tally.error,
             });
         } else if tally.checked || tally.answered {
             report(PassReport::Checked {
-                project_id,
+                project_id: project_id.clone(),
                 answered: tally.answered,
+            });
+        }
+        if let Some(state) = tally
+            .waiting
+            .or_else(|| deferred.and_then(visible_deferral))
+        {
+            if state == MemoryAnalysisState::CheckBudgetExhausted {
+                outcome.check_budget_exhausted.insert(project_id.clone());
+            }
+            report(PassReport::CheckState {
+                project_id,
+                state,
+                card: None,
             });
         }
     }
@@ -976,6 +986,7 @@ const ANALYSIS_FAILED: &str = "analysis.session_failed";
 /// What one Project's walk analyzed.
 #[derive(Default)]
 struct ProjectTally {
+    waiting: Option<MemoryAnalysisState>,
     analyzing: bool,
     /// A card was checked against the repository and changed state.
     checked: bool,
@@ -1121,14 +1132,14 @@ fn walk_project(
         outcome.wants_usage = true;
         // A held-back call is logged, never shown: the Project does not turn
         // "analyzing" for a pass that will ask nothing (B5).
-        if let Some(reason) = deferral(store, input.weekly, true)? {
+        if let Some(reason) = deferral(store)? {
             *deferred = Some(reason);
             continue;
         }
         // The Project turns "analyzing" at the session's first provider call,
         // so a session that asks nothing (too short, an agent's) never does.
         let mut admit = |store: &MemoryStore| {
-            admit_call(store, input.weekly, true)?;
+            admit_call(store)?;
             if !tally.analyzing {
                 tally.analyzing = true;
                 report(PassReport::Analyzing {
@@ -1180,13 +1191,14 @@ fn walk_project(
         deferred,
         tally,
         outcome,
+        report,
     );
     Ok(())
 }
 
 /// Re-verifies the Project's unverified cards and checks the ones about to
 /// be suggested (D-07, D-11), after its sessions were analyzed, under the
-/// same call cap, weekly deferral and provider-failure stop. Quiet: the
+/// same call cap, router usage limit and provider-failure stop. Quiet: the
 /// Project never turns "analyzing" for it (D-13).
 #[allow(clippy::too_many_arguments)] // one Project's pass input, store, evidence facts and tallies
 fn maintain_cards(
@@ -1200,39 +1212,56 @@ fn maintain_cards(
     deferred: &mut Option<&'static str>,
     tally: &mut ProjectTally,
     outcome: &mut PassOutcome,
+    report: &mut dyn FnMut(PassReport),
 ) {
     let Some(router) = input.router.as_ref() else {
         return;
     };
-    if deferred.is_some()
+    if deferred.is_some_and(|reason| reason != "reserved_for_checks")
         || input.held.contains(project_id)
         || tally.error.is_some()
         || input.cancel.is_cancelled()
     {
         return;
     }
-    // The provider's weekly usage is read only when there is a card to ask
-    // about, as it is for a session.
-    let due = store
-        .pending_cards(project_id, now_ms(), 1)
-        .map(|cards| !cards.is_empty())
-        .unwrap_or(false)
-        || store
-            .promotion_unchecked(project_id, now_ms(), 1)
-            .map(|cards| !cards.is_empty())
-            .unwrap_or(false);
-    if !due {
+    // The usage reader runs for a pass only when there is a card to ask
+    // about, as it does for a session.
+    let due = store.due_checks(Some(project_id), now_ms(), 1);
+    let due = match due {
+        Ok(due) => due,
+        Err(error) => {
+            crate::diagnostic!(
+                json!({"component":"memory", "kind":"verification.queue_unreadable", "project_id":project_id, "message":error.to_string()})
+            );
+            return;
+        }
+    };
+    if due == 0 {
+        report(PassReport::CheckState {
+            project_id: project_id.to_owned(),
+            state: MemoryAnalysisState::Idle,
+            card: None,
+        });
         return;
     }
     outcome.wants_usage = true;
-    let mut admit = |store: &MemoryStore| {
-        let calls = store
-            .analysis_calls(now_ms())
-            .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-        if calls >= hide_memory::MAINTENANCE_CALL_LIMIT {
-            return Err(AnalysisFailure::Deferred("daily_cap_for_checks"));
+    let mut admit = |store: &MemoryStore| admit_budget(store, hide_memory::MemoryCallKind::Check);
+    let mut progress = |card: Option<u64>| {
+        if card.is_none() {
+            report(PassReport::Checked {
+                project_id: project_id.to_owned(),
+                answered: true,
+            });
         }
-        admit_call(store, input.weekly, true)
+        report(PassReport::CheckState {
+            project_id: project_id.to_owned(),
+            state: if card.is_some() {
+                MemoryAnalysisState::Checking
+            } else {
+                MemoryAnalysisState::Idle
+            },
+            card,
+        });
     };
     let reverified = reverify_pending(
         store,
@@ -1243,6 +1272,7 @@ fn maintain_cards(
         root,
         &input.cancel,
         &mut admit,
+        &mut progress,
     );
     let suggested = match reverified {
         Ok(first) => check_before_suggestion(
@@ -1255,6 +1285,7 @@ fn maintain_cards(
             home,
             &input.cancel,
             &mut admit,
+            &mut progress,
         )
         .map(|second| {
             (
@@ -1272,12 +1303,15 @@ fn maintain_cards(
         Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
         // A check held back never holds the Projects after this one: it is
         // a call analysis would not need, and the next pass asks again.
-        Err(AnalysisFailure::Deferred(reason)) => crate::diagnostic!(json!({
-            "component": "memory",
-            "kind": "verification.deferred",
-            "project_id": project_id,
-            "reason": reason,
-        })),
+        Err(AnalysisFailure::Deferred(reason)) => {
+            tally.waiting = visible_deferral(reason);
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "verification.deferred",
+                "project_id": project_id,
+                "reason": reason,
+            }));
+        }
         Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => {}
         Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
             "component": "memory",
@@ -1288,38 +1322,43 @@ fn maintain_cards(
     }
 }
 
-/// Admits one analysis call against the machine's daily cap and, for
-/// background analysis, the provider's weekly usage (D-10), and counts it.
-pub(crate) fn admit_call(
-    store: &MemoryStore,
-    weekly: WeeklyUsage,
-    background: bool,
-) -> Result<(), AnalysisFailure> {
-    if let Some(reason) = deferral(store, weekly, background).map_err(AnalysisFailure::Local)? {
-        return Err(AnalysisFailure::Deferred(reason));
+fn visible_deferral(reason: &str) -> Option<MemoryAnalysisState> {
+    match reason {
+        "daily_cap" | "daily_cap_for_checks" => Some(MemoryAnalysisState::CheckBudgetExhausted),
+        _ => None,
     }
-    store
-        .count_analysis_call(now_ms())
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    Ok(())
 }
 
-/// Why a call would be held back now, if it would: the provider's weekly
-/// usage for background analysis, or the machine's calls today.
-fn deferral(
+fn admit_budget(
     store: &MemoryStore,
-    weekly: WeeklyUsage,
-    background: bool,
-) -> Result<Option<&'static str>, String> {
-    if background {
-        match weekly {
-            WeeklyUsage::Used(used) if used >= WEEKLY_USAGE_DEFER_PERCENT => {
-                return Ok(Some("weekly_usage"));
-            }
-            WeeklyUsage::Unread => return Ok(Some("weekly_usage_unread")),
-            WeeklyUsage::Used(_) | WeeklyUsage::Unknown => {}
-        }
+    kind: hide_memory::MemoryCallKind,
+) -> Result<(), AnalysisFailure> {
+    use hide_memory::MemoryCallDeferral;
+    match store
+        .admit_memory_call(now_ms(), kind)
+        .map_err(|error| AnalysisFailure::Local(error.to_string()))?
+    {
+        None => Ok(()),
+        Some(reason) => Err(AnalysisFailure::Deferred(match reason {
+            MemoryCallDeferral::DailyCap => "daily_cap",
+            MemoryCallDeferral::CheckShareSpent => "daily_cap_for_checks",
+            MemoryCallDeferral::ReservedForChecks => "reserved_for_checks",
+        })),
     }
+}
+
+/// Admits one analysis call against the machine's daily cap and counts it.
+/// The usage limit is the router's, which moves a request off an agent past it.
+pub(crate) fn admit_call(store: &MemoryStore) -> Result<(), AnalysisFailure> {
+    if let Some(reason) = deferral(store).map_err(AnalysisFailure::Local)? {
+        return Err(AnalysisFailure::Deferred(reason));
+    }
+    admit_budget(store, hide_memory::MemoryCallKind::Analysis)
+}
+
+/// Why a call would be held back now, if it would: the machine's calls
+/// today.
+fn deferral(store: &MemoryStore) -> Result<Option<&'static str>, String> {
     let calls = store
         .analysis_calls(now_ms())
         .map_err(|error| error.to_string())?;
@@ -2230,6 +2269,7 @@ mod tests {
         node: Arc<dyn NodeLink>,
         /// What the last pass remembered, as the runtime keeps it.
         failed_reads: std::cell::RefCell<FailedReads>,
+        check_states: std::cell::RefCell<Vec<(MemoryAnalysisState, Option<u64>)>>,
     }
 
     const SESSION: &str = "claude-memory-pass";
@@ -2324,6 +2364,7 @@ mod tests {
                 }),
                 node,
                 failed_reads: Default::default(),
+                check_states: Default::default(),
             };
             fixture.write(&fixture.lines);
             fixture
@@ -2359,8 +2400,8 @@ mod tests {
             }));
         }
 
-        fn pass(&self, live: bool, closed: bool, weekly: WeeklyUsage) -> Vec<&'static str> {
-            self.pass_for(("claude", SESSION.to_owned()), live, closed, weekly)
+        fn pass(&self, live: bool, closed: bool) -> Vec<&'static str> {
+            self.pass_for(("claude", SESSION.to_owned()), live, closed)
                 .0
         }
 
@@ -2369,9 +2410,8 @@ mod tests {
             key: MemorySession,
             live: bool,
             closed: bool,
-            weekly: WeeklyUsage,
         ) -> (Vec<&'static str>, PassOutcome) {
-            self.run(key, live, closed, weekly, &[], true)
+            self.run(key, live, closed, &[], true)
         }
 
         /// A pass; `delegated` are the session ids another agent started, and
@@ -2381,12 +2421,11 @@ mod tests {
             key: MemorySession,
             live: bool,
             closed: bool,
-            weekly: WeeklyUsage,
             delegated: &[&str],
             ai: bool,
         ) -> (Vec<&'static str>, PassOutcome) {
             let nodes = vec![(crate::node::test_node(), Arc::clone(&self.node))];
-            self.pass_inner(key, live, closed, weekly, nodes, Vec::new(), delegated, ai)
+            self.pass_inner(key, live, closed, nodes, Vec::new(), delegated, ai)
         }
 
         /// A pass over `nodes`, with `unreached` the nodes that dial in
@@ -2396,11 +2435,10 @@ mod tests {
             key: MemorySession,
             live: bool,
             closed: bool,
-            weekly: WeeklyUsage,
             nodes: Vec<super::super::hosts::LinkedNode>,
             unreached: Vec<NodeId>,
         ) -> (Vec<&'static str>, PassOutcome) {
-            self.pass_inner(key, live, closed, weekly, nodes, unreached, &[], true)
+            self.pass_inner(key, live, closed, nodes, unreached, &[], true)
         }
 
         #[allow(clippy::too_many_arguments)] // one fixture pass: its key, signals, nodes and Hide AI
@@ -2409,7 +2447,6 @@ mod tests {
             key: MemorySession,
             live: bool,
             closed: bool,
-            weekly: WeeklyUsage,
             nodes: Vec<super::super::hosts::LinkedNode>,
             unreached: Vec<NodeId>,
             delegated: &[&str],
@@ -2431,7 +2468,6 @@ mod tests {
                         Arc::new(NoopLogSink),
                     )
                 }),
-                weekly,
                 live: live.then(|| key.clone()).into_iter().collect(),
                 closed: closed.then_some(key).into_iter().collect(),
                 held: HashSet::new(),
@@ -2442,13 +2478,23 @@ mod tests {
             };
             let mut reports = Vec::new();
             let outcome = run_pass(&input, &mut |report| {
-                reports.push(match report {
+                // Existing assertions describe session outcomes; check transitions
+                // have their own assertions below, and refreshes may coalesce.
+                if let PassReport::CheckState { state, card, .. } = report {
+                    self.check_states.borrow_mut().push((state, card));
+                    return;
+                }
+                let result = match report {
+                    PassReport::CheckState { .. } => unreachable!(),
                     PassReport::Analyzing { .. } => "analyzing",
                     PassReport::Checked { .. } => "checked",
                     PassReport::Analyzed { error: Some(_), .. } => "failed",
                     PassReport::Analyzed { learned: 1, .. } => "learned one",
                     PassReport::Analyzed { .. } => "analyzed",
-                })
+                };
+                if reports.last() != Some(&result) {
+                    reports.push(result);
+                }
             });
             *self.failed_reads.borrow_mut() = outcome.failed_reads.clone();
             (reports, outcome)
@@ -2479,17 +2525,14 @@ mod tests {
 
         // A live pane's receipts are its label read's, and a session written
         // a moment ago is not quiet: nothing is read, nothing is analyzed.
-        assert!(fixture.pass(true, false, WeeklyUsage::Unknown).is_empty());
+        assert!(fixture.pass(true, false).is_empty());
         assert_eq!(fixture.calls(), 0);
         let seeded = |store: &MemoryStore| store.item_by_number(&fixture.project_id, 1).unwrap();
         assert_eq!(seeded(&fixture.store()).unwrap().provided_session_count, 0);
 
         // Its pane closed: the receipt is recorded and the session analyzed.
         fixture.answer(&["src/lib.rs", "src/missing.rs", "../outside.rs"]);
-        assert_eq!(
-            fixture.pass(false, true, WeeklyUsage::Unknown),
-            ["analyzing", "learned one"]
-        );
+        assert_eq!(fixture.pass(false, true), ["analyzing", "learned one"]);
         assert_eq!(fixture.calls(), 1);
         let store = fixture.store();
         assert_eq!(seeded(&store).unwrap().provided_session_count, 1);
@@ -2505,7 +2548,7 @@ mod tests {
         drop(store);
 
         // Nothing new: the same signal analyzes nothing again.
-        assert!(fixture.pass(false, true, WeeklyUsage::Unknown).is_empty());
+        assert!(fixture.pass(false, true).is_empty());
         assert_eq!(fixture.calls(), 1);
 
         // A new line keeps the session busy for 30 minutes (B1).
@@ -2525,7 +2568,7 @@ mod tests {
         )
         .unwrap();
         drop(file);
-        assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
+        assert!(fixture.pass(false, false).is_empty());
         assert_eq!(fixture.calls(), 1);
     }
 
@@ -2545,7 +2588,6 @@ mod tests {
             key.clone(),
             false,
             true,
-            WeeklyUsage::Unknown,
             vec![(core.clone(), Arc::clone(&core_link))],
             vec![crate::node::test_node()],
         );
@@ -2558,7 +2600,6 @@ mod tests {
             key,
             false,
             true,
-            WeeklyUsage::Unknown,
             vec![
                 (core, core_link),
                 (crate::node::test_node(), Arc::clone(&fixture.node)),
@@ -2579,10 +2620,7 @@ mod tests {
         // P1-2: the Sessions conversation's quiet lines, by card number.
         let fixture = Fixture::new();
         fixture.answer(&[]);
-        assert_eq!(
-            fixture.pass(false, true, WeeklyUsage::Unknown),
-            ["analyzing", "learned one"]
-        );
+        assert_eq!(fixture.pass(false, true), ["analyzing", "learned one"]);
         let row = crate::model::SessionRowSnapshot {
             id: SESSION.to_owned(),
             provider: "claude".to_owned(),
@@ -2638,14 +2676,11 @@ mod tests {
         };
 
         age(29);
-        assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
+        assert!(fixture.pass(false, false).is_empty());
         assert_eq!(fixture.calls(), 0);
 
         age(31);
-        assert_eq!(
-            fixture.pass(false, false, WeeklyUsage::Unknown),
-            ["analyzing", "learned one"]
-        );
+        assert_eq!(fixture.pass(false, false), ["analyzing", "learned one"]);
         assert_eq!(fixture.calls(), 1);
     }
 
@@ -2707,43 +2742,37 @@ mod tests {
 
         // A live pane's label read owns the session: the walk records only
         // the fixture's Claude Code session.
-        fixture.pass_for(key.clone(), true, false, WeeklyUsage::Unknown);
+        fixture.pass_for(key.clone(), true, false);
         assert_eq!(delivered(), 1);
 
-        fixture.pass_for(key.clone(), false, false, WeeklyUsage::Unknown);
+        fixture.pass_for(key.clone(), false, false);
         assert_eq!(delivered(), 2);
-        fixture.pass_for(key, false, false, WeeklyUsage::Unknown);
+        fixture.pass_for(key, false, false);
         assert_eq!(delivered(), 2);
         assert_eq!(fixture.calls(), 0, "an OpenCode session is not analyzed");
     }
 
     #[test]
-    fn the_daily_cap_and_weekly_usage_defer_analysis_without_a_provider_call() {
-        // B5, D-10.
+    fn the_daily_cap_defers_analysis_without_a_provider_call() {
+        // B5. The provider's weekly usage is not a reason to hold analysis
+        // back here (PRD hide-ai-usage-limit D-04, B9): that is the usage
+        // limit, which the router judges and which moves a request to the
+        // next agent.
         let fixture = Fixture::new();
         fixture.answer(&[]);
-
-        assert!(
-            fixture
-                .pass(false, true, WeeklyUsage::Used(80.0))
-                .is_empty(),
-            "a held-back Project never shows analyzing"
-        );
-        assert_eq!(
-            fixture.calls(),
-            0,
-            "weekly usage at 80% holds analysis back"
-        );
-
         let store = fixture.store();
         for _ in 0..hide_memory::DAILY_ANALYSIS_CALL_LIMIT {
-            store.count_analysis_call(now_ms()).unwrap();
+            assert_eq!(
+                store
+                    .admit_memory_call(now_ms(), hide_memory::MemoryCallKind::Analysis)
+                    .unwrap(),
+                None
+            );
         }
         drop(store);
         assert!(
-            fixture
-                .pass(false, true, WeeklyUsage::Used(10.0))
-                .is_empty()
+            fixture.pass(false, true).is_empty(),
+            "a held-back Project never shows analyzing"
         );
         assert_eq!(fixture.calls(), 0, "the day's calls are spent");
         assert!(
@@ -2757,55 +2786,24 @@ mod tests {
     }
 
     #[test]
-    fn unread_weekly_usage_holds_background_analysis_and_asks_for_a_read() {
-        // D-10 b: with no window attached the figure is read for Memory.
+    fn a_pass_with_analysis_to_ask_for_wants_the_usage_figure_with_no_window_attached() {
+        // The usage limit judges every request by the agents' weekly figures,
+        // so a pass that has work asks the usage reader to run headless.
         let fixture = Fixture::new();
         fixture.answer(&[]);
         let key = ("claude", SESSION.to_owned());
-
-        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unread);
-        assert!(reports.is_empty());
-        assert_eq!(fixture.calls(), 0);
-        assert!(outcome.wants_usage);
-        assert!(
-            !outcome.settled.contains(&key),
-            "the closed session waits for the read, not for the quiet rule"
-        );
-
-        let (reports, _) = fixture.pass_for(key, false, true, WeeklyUsage::Used(10.0));
+        let (reports, outcome) = fixture.pass_for(key, false, true);
         assert_eq!(reports, ["analyzing", "learned one"]);
-    }
+        assert!(outcome.wants_usage);
 
-    #[test]
-    fn weekly_usage_is_read_headless_for_a_pass_and_waited_for_ten_minutes_at_most() {
-        // D-10: a provider whose usage cannot be read gets the daily cap alone.
         let mut runtime = crate::runtime::tests::runtime();
-        let now = now_ms();
-        runtime.snapshot.navigator.provider_usage =
-            crate::model::ProviderUsageSnapshot::initial_rows();
         assert!(!runtime.memory_reads_usage());
-        assert_eq!(runtime.weekly_usage("claude", now), WeeklyUsage::Unread);
-        assert_eq!(runtime.weekly_usage("grok", now), WeeklyUsage::Unknown);
-
         runtime.finish_memory_pass(PassOutcome {
             wants_usage: true,
             ..PassOutcome::default()
         });
         assert!(runtime.memory_reads_usage());
         assert!(runtime.usage_activity().window_visible);
-        assert_eq!(runtime.weekly_usage("claude", now), WeeklyUsage::Unread);
-        assert_eq!(
-            runtime.weekly_usage("claude", now_ms() + USAGE_READ_WAIT_MS),
-            WeeklyUsage::Unknown
-        );
-
-        let row = &mut runtime.snapshot.navigator.provider_usage[0];
-        row.used_percent = Some(85.0);
-        let provider = row.provider.clone();
-        assert_eq!(
-            runtime.weekly_usage(&provider, now),
-            WeeklyUsage::Used(85.0)
-        );
     }
 
     #[test]
@@ -2815,25 +2813,25 @@ mod tests {
         let key = ("claude", SESSION.to_owned());
 
         // No scripted answer: the provider call fails.
-        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true);
         assert_eq!(reports, ["analyzing", "failed"]);
         assert!(!outcome.settled.contains(&key));
 
         fixture.answer(&[]);
-        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true);
         assert_eq!(reports, ["analyzing", "learned one"]);
         assert!(
             !outcome.settled.contains(&key),
             "settled by the pass that finds nothing left"
         );
 
-        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true);
         assert!(reports.is_empty());
         assert!(outcome.settled.contains(&key));
 
         // A session no Memory-enabled Project lists is let go after a pass.
         let stray = ("codex", "not-in-any-project".to_owned());
-        let (_, outcome) = fixture.pass_for(stray.clone(), false, true, WeeklyUsage::Unknown);
+        let (_, outcome) = fixture.pass_for(stray.clone(), false, true);
         assert!(outcome.settled.contains(&stray));
     }
 
@@ -2866,8 +2864,7 @@ mod tests {
         fixture.write(&lines);
         fixture.answer(&[]);
 
-        let (reports, records) =
-            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        let (reports, records) = crate::diagnostics::capture(|| fixture.pass(false, true));
         assert_eq!(reports, ["analyzing", "learned one"]);
         assert_eq!(
             memory_kinds(&records),
@@ -2891,8 +2888,7 @@ mod tests {
             .unwrap();
         assert_eq!(seeded.provided_session_count, 1, "the receipt was read");
 
-        let (reports, records) =
-            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        let (reports, records) = crate::diagnostics::capture(|| fixture.pass(false, true));
         assert!(reports.is_empty());
         assert!(memory_kinds(&records).is_empty(), "{records:?}");
         assert_eq!(fixture.calls(), 1);
@@ -2921,8 +2917,7 @@ mod tests {
         }
         drop(store);
         let logged = || {
-            let (_, records) =
-                crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+            let (_, records) = crate::diagnostics::capture(|| fixture.pass(false, true));
             memory_kinds(&records)
         };
         let failed = ["receipts.walk_failed", "analysis.session_failed"];
@@ -2987,8 +2982,7 @@ mod tests {
         });
         fixture.answer(&[]);
 
-        let (reports, records) =
-            crate::diagnostics::capture(|| fixture.pass(false, true, WeeklyUsage::Unknown));
+        let (reports, records) = crate::diagnostics::capture(|| fixture.pass(false, true));
         assert!(reports.is_empty());
         assert!(memory_kinds(&records).is_empty(), "{records:?}");
         assert_eq!(fixture.calls(), 0);
@@ -2998,6 +2992,174 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(seeded.provided_session_count, 0);
+    }
+
+    #[test]
+    fn waiting_checks_report_the_check_budget_without_a_provider_call() {
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let card = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&card.id, 1).unwrap();
+        drop(store);
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,500)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        fixture.pass(true, false);
+        assert_eq!(fixture.calls(), 0);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [(MemoryAnalysisState::CheckBudgetExhausted, None)]
+        );
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        // The last attempt's per-card cooldown outlives a UTC reset. With
+        // no check due, the earlier daily hold must stop saying "today".
+        fixture
+            .store()
+            .begin_verification(&card.id, now_ms())
+            .unwrap();
+        fixture.check_states.borrow_mut().clear();
+        fixture.pass(true, false);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [(MemoryAnalysisState::Idle, None)]
+        );
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    #[test]
+    fn a_utc_reset_during_a_usage_pause_releases_the_previous_check_budget_hold() {
+        let fixture = Fixture::new();
+        let yesterday = now_ms() / 86_400_000 - 1;
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,1000,500)",
+                [yesterday],
+            )
+            .unwrap();
+        assert_eq!(fixture.store().analysis_calls(now_ms()).unwrap(), 0);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.memory_work.projects.insert(
+            fixture.project_id.clone(),
+            ProjectMemoryWork {
+                analysis: MemoryAnalysisState::CheckBudgetExhausted,
+                check_resume_at_unix_ms: Some((yesterday + 1) * 86_400_000),
+                ..ProjectMemoryWork::default()
+            },
+        );
+        // A weekly usage pause makes the pass carry no router, just as
+        // start_memory_pass does while every agent is past the limit.
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], false);
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::Idle
+        );
+        assert_eq!(fixture.calls(), 0);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn a_check_budget_hold_confirmed_by_this_pass_keeps_its_reset_time() {
+        let fixture = Fixture::new();
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        fixture.store().mark_unverified(&card.id, 1).unwrap();
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,500)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.apply_memory_report(PassReport::CheckState {
+            project_id: fixture.project_id.clone(),
+            state: MemoryAnalysisState::CheckBudgetExhausted,
+            card: None,
+        });
+        let resume = runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms;
+        assert_eq!(resume, Some((now_ms() / 86_400_000 + 1) * 86_400_000));
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::CheckBudgetExhausted
+        );
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            resume
+        );
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    #[test]
+    fn analysis_spending_595_calls_does_not_stop_a_check_and_its_card_recovers() {
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let card = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&card.id, 1).unwrap();
+        drop(store);
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,0)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        fixture.pass(true, false);
+        assert_eq!(fixture.calls(), 1);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [
+                (MemoryAnalysisState::Checking, Some(1)),
+                (MemoryAnalysisState::Idle, None)
+            ]
+        );
+        let store = fixture.store();
+        assert_eq!(store.analysis_calls(now_ms()).unwrap(), 596);
+        assert!(
+            !store
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(
+            !store
+                .retrieve(&hide_memory::RetrievalQuery::session_start(
+                    &fixture.project_id
+                ))
+                .unwrap()
+                .items
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3071,14 +3233,7 @@ mod tests {
 
     fn closed_pass(fixture: &Fixture, delegated: &[&str], ai: bool) -> Vec<&'static str> {
         fixture
-            .run(
-                ("claude", SESSION.to_owned()),
-                false,
-                true,
-                WeeklyUsage::Unknown,
-                delegated,
-                ai,
-            )
+            .run(("claude", SESSION.to_owned()), false, true, delegated, ai)
             .0
     }
 
@@ -3144,14 +3299,7 @@ mod tests {
         // Hide AI off: the file changed, the card waits and nothing is asked.
         std::fs::write(fixture.root.join("src/lib.rs"), "fn b() {}").unwrap();
         let calls = fixture.calls();
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            false,
-            true,
-            WeeklyUsage::Unknown,
-            &[],
-            false,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), false, true, &[], false);
         assert_eq!(reports, ["checked"]);
         assert!(card().verifying);
         assert_eq!(fixture.calls(), calls);
@@ -3227,14 +3375,7 @@ mod tests {
         fixture.backend.answers.lock().unwrap().push(json!({
             "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
         }));
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            true,
-            false,
-            WeeklyUsage::Unknown,
-            &[],
-            true,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
         assert_eq!(reports, ["checked"]);
         let inputs = fixture.backend.inputs.lock().unwrap();
         let asked = inputs.last().unwrap();
@@ -3291,14 +3432,7 @@ mod tests {
                 "verdict": "outdated", "text": null, "title": null, "aliases": [], "document": null,
             }));
         }
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            true,
-            false,
-            WeeklyUsage::Unknown,
-            &[],
-            true,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
         assert_eq!(reports, ["checked"]);
         assert_eq!(fixture.calls(), 2);
         let card = |number| {
@@ -3324,14 +3458,7 @@ mod tests {
         store.mark_unverified(&seeded.id, 1).unwrap();
         drop(store);
         // No scripted answer: the provider fails the call.
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            true,
-            false,
-            WeeklyUsage::Unknown,
-            &[],
-            true,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
         assert_eq!(reports, ["failed"]);
         let card = fixture
             .store()
@@ -3360,14 +3487,7 @@ mod tests {
         }));
 
         // The session itself has nothing to analyze (one pass only reads).
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            true,
-            false,
-            WeeklyUsage::Unknown,
-            &[],
-            true,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
         assert_eq!(reports, ["checked"]);
         let item = |fixture: &Fixture| {
             fixture
@@ -3416,14 +3536,7 @@ mod tests {
         fixture.backend.answers.lock().unwrap().push(json!({
             "verdict": "gone", "text": null, "title": null, "aliases": [], "document": null,
         }));
-        let (reports, _) = fixture.run(
-            ("claude", SESSION.to_owned()),
-            true,
-            false,
-            WeeklyUsage::Unknown,
-            &[],
-            true,
-        );
+        let (reports, _) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
         assert_eq!(reports, ["checked"]);
         let gone = fixture
             .store()
@@ -3484,14 +3597,14 @@ mod tests {
         fixture.backend.answers.lock().unwrap().push(json!({
             "verdict": "propose", "text": null, "title": null, "aliases": [], "document": null,
         }));
-        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        let _ = fixture.pass(false, false);
         assert_eq!(fixture.calls(), 1);
         let suggested = fixture
             .store()
             .promotion_suggestions(&fixture.project_id, now_ms(), 10)
             .unwrap();
         assert_eq!(suggested.iter().map(|s| s.number).collect::<Vec<_>>(), [1]);
-        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        let _ = fixture.pass(false, false);
         assert_eq!(fixture.calls(), 1, "checked once for this text");
     }
 
@@ -3544,7 +3657,7 @@ mod tests {
             "document": "~/.claude/CLAUDE.md",
         }));
 
-        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        let _ = fixture.pass(false, false);
 
         let card = fixture
             .store()
@@ -3608,7 +3721,7 @@ mod tests {
             "verdict": "in_docs", "text": null, "title": null, "aliases": [], "document": "AGENTS.md",
         }));
 
-        let _ = fixture.pass(false, false, WeeklyUsage::Unknown);
+        let _ = fixture.pass(false, false);
 
         let promotions = fixture.store().promotions(&fixture.project_id).unwrap();
         assert_eq!(promotions.len(), 1);

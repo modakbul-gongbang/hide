@@ -37,11 +37,11 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     // A tree row is one line (agent-hierarchy-screens B14): the label's title says it landed.
     await expect(page.locator(`nav[data-sidebar] [data-pane="${one}"] [data-agent-title]`)).toHaveText("Agent one", { timeout: 20_000 });
 
-    // The sidebar's Search icon opens the palette with the query focused. The
+    // The sidebar's Search row opens the palette with the query focused. The
     // page shows Main, which has nothing to relate to, so the palette holds
     // Recent alone: the checkout the daemon had in front (PRD cmdk-recent B5).
     const field = page.locator("[data-sidebar-search]");
-    await expect(field).toHaveAccessibleName("Search");
+    await expect(field).toHaveAccessibleName(/^Search\b/);
     await field.click();
     const input = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(input).toBeFocused();

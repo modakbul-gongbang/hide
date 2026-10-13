@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showProjectRow } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -41,7 +41,7 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
 
     // The checkout row opens the Workspace on the child's pane: the strip
     // has no tab for it (B1), and the empty state is not shown.
-    const checkout = page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first();
+    const checkout = await showProjectRow(page, page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first());
     await checkout.click();
     await expect(page.locator("[data-canvas]").first()).toHaveAttribute("data-canvas", beta.result.tab.tab_id, { timeout: 20_000 });
     await expect(page.locator(`[data-pane-view="${child}"]`)).toBeVisible();
@@ -56,7 +56,7 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     await screenshot(page, "delegated-checkout-raised-from");
 
     // Back on the first checkout, the root's chevron opens its child in place (agent-hierarchy-screens B10).
-    await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first())).click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible({ timeout: 20_000 });
     await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-tree-chevron="${parent}"]`).first().click();
     await page.locator(`nav[data-sidebar] [data-pane="${child}"] [data-agent-open="${child}"]`).first().click();

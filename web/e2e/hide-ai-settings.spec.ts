@@ -162,12 +162,13 @@ test("Hide AI reads without sideways scrolling in Korean and English, light and 
   const { herdr, daemon } = await start("hide-ai-narrow", true);
   try {
     const tab = await openHideAi(page, daemon);
-    await page.setViewportSize({ width: 560, height: 1000 });
+    // The smallest window (PRD settings-left-nav B13): the list keeps its width beside the page.
+    await page.setViewportSize({ width: 720, height: 1000 });
     const group = tab.locator('[data-settings-group="hide-ai-fallback"]');
     await group.locator("[data-ai-add-agent]").click();
     await page.locator("[data-ai-add-item='grok']").click();
     await expect(group.locator("[data-ai-fallback='grok']")).toBeVisible();
-    const panel = page.locator('[data-settings="true"] [role="tabpanel"]');
+    const panel = page.locator('[data-settings="true"] [data-settings-page]');
     const overflow = () => panel.evaluate((node) => node.scrollWidth - node.clientWidth);
 
     for (const [language, theme] of [

@@ -125,7 +125,7 @@ pub struct AppState {
     /// the core re-reads the pull requests whose checks are running (PRD
     /// overview-request-view D-32).
     pub request_view_demand: Arc<crate::demand::ObservationDemand>,
-    /// What the Settings General tab reads about this daemon, sent once after
+    /// What Settings > About reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).

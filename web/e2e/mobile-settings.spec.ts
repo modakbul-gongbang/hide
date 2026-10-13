@@ -12,7 +12,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 
 test.describe.configure({ timeout: 120_000 });
 
-test("a ready Mac is one line, the QR waits for Show QR, and the push dropdown describes one mode", async ({ page }) => {
+test("a ready Mac is one line, the QR waits for Show QR, and the push dropdown on Notifications describes one mode", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 });
   const herdr = await startHerdr();
   const tailscale = new FakeTailscale();
@@ -46,7 +46,9 @@ test("a ready Mac is one line, the QR waits for Show QR, and the push dropdown d
     await page.locator('[data-mobile-hide-code="true"]').click();
     await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
 
-    // B59: the push mode is one dropdown, and only the chosen mode's description shows.
+    // B59: the push mode is one dropdown on Notifications, not Mobile (PRD settings-left-nav B6, B7), and only the chosen mode's description shows.
+    await expect(page.locator("[data-push-select]")).toHaveCount(0);
+    await page.locator('[data-settings-tab="notifications"]').click();
     await expect(page.locator("[data-push-select]")).toHaveText("Off");
     await expect(page.locator("[data-push-detail]")).toHaveCount(1);
     await expect(page.locator('[data-push-detail="off"]')).toBeVisible();

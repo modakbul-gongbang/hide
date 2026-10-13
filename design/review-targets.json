@@ -123,7 +123,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rnIl8"
+        "referenceNode": "sb-full-l-side"
       },
       {
         "node": "psb-sidebar-d",
@@ -132,7 +132,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "rPB4Q"
+        "referenceNode": "sb-full-d-side"
       }
     ],
     "conditions": {
@@ -1049,7 +1049,7 @@
     ]
   },
   "first-run-onboarding": {
-    "description": "The first run (PRD first-run-onboarding D-20, D-27): the three-step wizard over the dimmed shell in every state its steps carry, the start panel it closes into, the empty Home with Add project on the Projects label, and Settings > General Notifications on each system.",
+    "description": "The first run (PRD first-run-onboarding D-20, D-27): the three-step wizard over the dimmed shell in every state its steps carry, the start panel it closes into, the empty Home with Add project on the Projects label, and Settings > Notifications on each system.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-onboarding",
     "scene": "onboarding",
@@ -1411,10 +1411,10 @@
       "home-no-project": "Empty Home with no project, and the + on the Projects label (boards 06, 17).",
       "home-no-agent": "Empty Home with a project and no agent (board 06).",
       "home-no-project-windows": "Empty Home on Windows, with its shortcut labels (board 14).",
-      "settings-on": "Settings > General with notifications on and allowed (board 07).",
-      "settings-off": "Settings > General with notifications off (board 07).",
-      "settings-blocked": "Settings > General while macOS blocks Hide (board 07).",
-      "settings-on-windows": "Settings > General on Windows with the Test notification row (board 13)."
+      "settings-on": "Settings > Notifications with notifications on and allowed (board 07).",
+      "settings-off": "Settings > Notifications with notifications off (board 07).",
+      "settings-blocked": "Settings > Notifications while macOS blocks Hide (board 07).",
+      "settings-on-windows": "Settings > Notifications on Windows with the Test notification row (board 13)."
     },
     "rules": {
       "noOverlap": true,

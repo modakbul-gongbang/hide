@@ -7,6 +7,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import type { DispatchFn } from "./ws";
 
 const browserCanvas = vi.hoisted(() => {
@@ -33,7 +34,7 @@ const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => (
 });
 const memory = (overrides: Partial<ProjectMemory> = {}): ProjectMemory => ({
   workspace_id: "p", unavailable: null, loading: false, enabled: true, capacity_reached: false,
-  rows: [row(3), row(7)], questions: [], analysis: "idle", forgotten: null, pending_action: null,
+  rows: [row(3), row(7)], questions: [], analysis: "idle", consent_required: false, usable_cards: 2, checking_card: null, check_resume_at_unix_ms: null, forgotten: null, pending_action: null,
   expanded: null, search: null, ...overrides,
 });
 
@@ -59,9 +60,11 @@ describe("the Memory tab", () => {
   });
 
   async function render(project: ProjectMemory | null, tool: "memory" | "explorer" = "memory") {
-    useShellStore.setState({ connection: "live", rest, memory: { project } });
     const actions = createActions((event) => { events.push(event); return true; });
-    await act(async () => root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>));
+    await act(async () => {
+      useShellStore.setState({ connection: "live", rest, memory: { project } });
+      root.render(<TooltipProvider><Tools tool={tool} actions={actions} /></TooltipProvider>);
+    });
   }
   const sent = (kind: string) => events.filter((event) => event.kind === kind).map((event) => event.payload);
   const click = async (selector: string) => {
@@ -154,7 +157,7 @@ describe("the Memory tab", () => {
     expect(merged?.textContent).toContain("In the file · not injected");
   });
 
-  it("marks a card waiting to be checked in its status slot and nothing else, quietly", async () => {
+  it("explains waiting once above the list and dims the cards waiting for a check", async () => {
     await render(memory({
       rows: [
         row(3, { verifying: true }),
@@ -163,11 +166,56 @@ describe("the Memory tab", () => {
       ],
     }));
     const mark = container.querySelector("[data-memory-card='3'] [data-memory-verifying]");
-    expect(mark?.textContent).toBe("Checking");
+    expect(mark).toBeNull();
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("Unverified cards wait for a check");
+    expect(container.querySelector("[data-memory-card='3']")?.className).toContain("opacity-");
     expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
     // One status line at a time: a promotion that runs draws its own.
     expect(container.querySelector("[data-memory-card='9'] [data-memory-verifying]")).toBeNull();
     expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("Retry");
+  });
+
+  it("does not call cards already in repository documents a pending check", async () => {
+    await render(memory({ usable_cards: 0, rows: [row(3, { promotion: { state: "merged", agent: null, pr_number: 44, target_path: "AGENTS.md", github_failure: null } })] }));
+    expect(container.querySelector("[data-memory-empty]")).toBeNull();
+    expect(container.textContent).toContain("In the file · not injected");
+  });
+
+  it("marks only the running card as checking and explains zero usable cards", async () => {
+    await render(memory({ usable_cards: 0, analysis: "checking", checking_card: 3, rows: [row(3, { verifying: true }), row(7, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-card='3'] [data-memory-verifying]")?.textContent).toBe("Checking");
+    expect(container.querySelector("[data-memory-card='7'] [data-memory-verifying]")).toBeNull();
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("Each card becomes available as it passes");
+  });
+
+  it("names the day's budget and leaves re-consent to the switch", async () => {
+    await render(memory({ usable_cards: 0, analysis: "check_budget_exhausted", check_resume_at_unix_ms: Date.UTC(2026, 9, 14), rows: [row(3, { verifying: true }), row(7, { verifying: true })] }));
+    expect(container.querySelector("[data-memory-empty]")?.textContent).toContain("Checks resume from");
+    expect(container.querySelectorAll("[data-memory-checks]")).toHaveLength(1);
+    expect(container.querySelector("[data-memory-verifying]")).toBeNull();
+    expect(container.textContent).not.toContain("UTC");
+    await render(memory({ enabled: false, consent_required: true, usable_cards: 0 }));
+    expect(container.querySelector("[data-memory-consent]")?.textContent).toContain("agree again");
+    expect(container.querySelector("[data-memory-empty]")).toBeNull();
+    expect(container.querySelector("[data-memory-card]")).toBeNull();
+    expect(container.querySelector("[data-memory-checks]")).toBeNull();
+    expect(sent("memory_action")).toEqual([]);
+  });
+
+  it("draws the budget reset in the viewer's timezone, including a different calendar day", async () => {
+    const budget = memory({ usable_cards: 0, analysis: "check_budget_exhausted", check_resume_at_unix_ms: Date.UTC(2026, 9, 14), rows: [row(3, { verifying: true })] });
+    try {
+      vi.stubEnv("TZ", "Asia/Seoul");
+      await render(budget);
+      expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("October 14 at 9:00 AM");
+      vi.stubEnv("TZ", "America/Los_Angeles");
+      await render(budget);
+      expect(container.querySelector("[data-memory-checks]")?.textContent).toContain("October 13 at 5:00 PM");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("deletes the Project's data only after the confirmation names the count", async () => {
@@ -231,6 +279,49 @@ describe("the Memory tab", () => {
       await act(async () => otherRoot.unmount());
       other.remove();
     }
+  });
+
+  it("says Hide AI is paused when every agent is past the usage limit, and keeps the dimmed chip and the settings button (B5)", async () => {
+    useShellStore.setState({
+      connection: "live",
+      rest: {
+        ...rest,
+        status: {
+          background_ai: {
+            enabled: true, provider: "claude", chosen: true, unavailable_reason: null,
+            providers: [{ id: "claude", label: "Claude Code", agent: "claude-code" }],
+            refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: null, used_percent: 93, limit: 90 },
+          },
+        },
+      } as unknown as SnapshotRest,
+      memory: { project: memory({ analysis: "ai_not_ready" }) },
+    });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    expect(container.querySelector("[data-memory-ai='not_ready']")?.textContent).toContain("every agent is past your usage limit this week");
+    expect(container.querySelector("[data-memory-ai-chip]")?.className).toContain("opacity-(--opacity-dimmed)");
+    await click("[data-memory-ai='not_ready'] button");
+    expect(useUiStore.getState()).toMatchObject({ overlay: "settings", settingsTab: "hideAi" });
+  });
+
+  it("names the agent standing in on the chip while Runs on is past the limit (B4)", async () => {
+    useShellStore.setState({
+      connection: "live",
+      rest: {
+        ...rest,
+        status: {
+          background_ai: {
+            enabled: true, provider: "claude", chosen: true, unavailable_reason: null,
+            providers: [{ id: "claude", label: "Claude Code", agent: "claude-code" }, { id: "codex", label: "Codex", agent: "codex" }],
+            refusal: { provider: "claude", reason: "past_limit", retry_at_ms: null, using: "codex", used_percent: 93, limit: 90 },
+          },
+        },
+      } as unknown as SnapshotRest,
+      memory: { project: memory() },
+    });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>));
+    expect(container.querySelector("[data-memory-ai-chip]")?.textContent).toBe("Hide AI · Codex");
   });
 
   it("says a device's Project keeps no Memory here", async () => {

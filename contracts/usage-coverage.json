@@ -1,0 +1,684 @@
+[
+  {
+    "agent": "claude-code",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "claude_usage_text"
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "claude_usage_text"
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "claude_usage_text"
+        }
+      }
+    }
+  },
+  {
+    "agent": "codex",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "codex_usage"
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 5
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 3
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "supported",
+        "detail": {
+          "type": "limit",
+          "source": "codex_usage"
+        }
+      }
+    }
+  },
+  {
+    "agent": "grok",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 5
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      }
+    }
+  },
+  {
+    "agent": "opencode",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      }
+    }
+  },
+  {
+    "agent": "pi",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      }
+    }
+  },
+  {
+    "agent": "omp",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "not_built",
+            "layer": 4
+          },
+          "reason": "The usage reader is not built yet.",
+          "would_change": "Ship the declared usage layer and its reader."
+        }
+      },
+      "weekly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "The agent has no independent subscription window.",
+          "would_change": "The agent exposes its own subscription limits."
+        }
+      }
+    }
+  },
+  {
+    "agent": "cursor",
+    "cells": {
+      "cost": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "No supported local usage record is available.",
+          "would_change": "The agent provides a documented local usage record."
+        }
+      },
+      "five_hour": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "models": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "No supported local usage record is available.",
+          "would_change": "The agent provides a documented local usage record."
+        }
+      },
+      "monthly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "project": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "No supported local usage record is available.",
+          "would_change": "The agent provides a documented local usage record."
+        }
+      },
+      "scoped": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      },
+      "session": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "No supported local usage record is available.",
+          "would_change": "The agent provides a documented local usage record."
+        }
+      },
+      "tokens": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "no_such_data"
+          },
+          "reason": "No supported local usage record is available.",
+          "would_change": "The agent provides a documented local usage record."
+        }
+      },
+      "weekly": {
+        "support": "unsupported",
+        "detail": {
+          "kind": {
+            "kind": "excluded"
+          },
+          "reason": "Reading limits requires credentials outside the supported usage boundary.",
+          "would_change": "An official delegated usage reader becomes available."
+        }
+      }
+    }
+  }
+]

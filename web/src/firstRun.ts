@@ -133,7 +133,7 @@ export function notSignedIn(kind: ProviderKind | "terminal", providers: readonly
 }
 
 /**
- * What the notification step and Settings > General show (B14-B19, B30):
+ * What the notification step and Settings > Notifications show (B14-B19, B30):
  * `off` before the operator turned it on, `reading` until the first answer
  * about the permission, `asking` while macOS's dialog waits for an answer,
  * `on`, `blocked` when macOS refuses, `unreadable` when Hide could not read

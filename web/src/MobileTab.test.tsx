@@ -108,11 +108,8 @@ it("describes access as Over Tailscale, only inside your tailnet (B59)", async (
   await unmount();
 });
 
-it("picks the push mode in one dropdown that describes only the chosen mode (B59)", async () => {
-  const { q, container, unmount } = await mount(frame({ push_mode: "off" }));
-  expect(container.querySelectorAll('[role="radio"]')).toHaveLength(0);
-  expect(q("[data-push-select]")).not.toBeNull();
-  expect(q("[data-push-detail]")?.getAttribute("data-push-detail")).toBe("off");
-  expect(container.textContent).not.toContain("Send to your phone only while desktop hide isn't connected");
+it("leaves the push mode to Settings > Notifications (PRD settings-left-nav B7)", async () => {
+  const { q, unmount } = await mount(frame({ push_mode: "off" }));
+  expect(q("[data-push-select]")).toBeNull();
   await unmount();
 });

@@ -112,9 +112,11 @@ use crate::error::HostError;
 /// starting. A node on 28 would refuse it as unknown, and a start on that
 /// device could be typed into a startup question, so it is refused at Hello
 /// and reinstalled.
-/// 30: pane proofs may carry one typed hook read and answer it directly.
+/// 30: subscription sources use one credential-free `usage_limit_fetch`
+/// call. Old helpers must not be asked for credentials by a newer core.
+/// 31: pane proofs may carry one typed hook read and answer it directly.
 /// Older peers cannot decode the hook answer and are refused at Hello.
-pub const PROTOCOL_VERSION: u32 = 30;
+pub const PROTOCOL_VERSION: u32 = 31;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -417,21 +419,12 @@ pub enum Call {
     AiRelease {
         instance: u64,
     },
-    /// The Codex login in `<codex_home>/auth.json`
-    /// (`usage::CredentialsAnswer`).
-    CodexCredentials {
-        codex_home: String,
-    },
-    /// The weekly window the newest Codex session under `codex_home`
-    /// recorded (`usage::CodexWeeklyUsage`), or `null`.
-    CodexSessionUsage {
-        codex_home: String,
-    },
-    /// `claude -p /usage` run in `cwd` with the operator's login
-    /// (`usage::UsageText`), reporting at least once a second; a report
-    /// answered with false cancels it.
-    ClaudeUsageText {
-        cwd: String,
+    /// A declared subscription source, fetched on the core's own node.
+    /// `root` is the Claude working directory or Codex home for that source.
+    /// Devices refuse it; credentials never cross the link (`usage::LimitFetch`).
+    UsageLimitFetch {
+        source: crate::usage::LimitSource,
+        root: String,
     },
     /// Reads files the operator picked to attach to a terminal
     /// (`attachments::ReadFile`, in order), reporting before each file; a
@@ -796,9 +789,7 @@ impl Call {
             | Self::AiMeasurement { .. }
             | Self::AiRestart { .. }
             | Self::AiRelease { .. }
-            | Self::CodexCredentials { .. }
-            | Self::CodexSessionUsage { .. }
-            | Self::ClaudeUsageText { .. }
+            | Self::UsageLimitFetch { .. }
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
             | Self::RemoveClipboard { .. }

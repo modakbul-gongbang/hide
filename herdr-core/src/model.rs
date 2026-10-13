@@ -529,6 +529,12 @@ pub struct NavigatorSnapshot {
     /// list. `workspaces` remains the one authoritative row collection so
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
+    /// Each device's projects with no agent row and no sleeping
+    /// conversation, folded after its active projects and before its
+    /// Inactive fold (PRD sidebar-titlebar-refresh D-01). Pinned projects,
+    /// the project in front and Inactive projects are never here; the open
+    /// state is the `no_agents/<device>` key of `session_open_folds`.
+    pub no_agent_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     /// The checkouts Hide AI started an agent in, by device and path. A list
     /// beside the checkouts, not a field on them, because a checkout row is
@@ -537,7 +543,7 @@ pub struct NavigatorSnapshot {
     pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
-    pub provider_usage: Vec<ProviderUsageSnapshot>,
+    pub usage: crate::usage::model::UsageSnapshot,
 }
 
 /// Hide AI started this agent, read from the coordination ledger's record of
@@ -563,77 +569,6 @@ pub struct InactiveProjectGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
     pub project_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageSnapshot {
-    pub provider: String,
-    pub label: String,
-    pub window_minutes: u64,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
-    pub last_success_at_unix_ms: Option<u64>,
-    pub last_error_kind: Option<String>,
-    pub buckets: Vec<ProviderUsageBucketSnapshot>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageBucketSnapshot {
-    pub label: String,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-}
-
-impl ProviderUsageSnapshot {
-    pub fn initial_rows() -> Vec<Self> {
-        hide_agent_adapter::ADAPTERS
-            .iter()
-            .filter(|row| row.usage.is_some())
-            .map(|row| Self::loading(row.herdr.name, row.label))
-            .collect()
-    }
-
-    pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "loading".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some("Checking usage…".to_owned()),
-            last_checked_at_unix_ms: None,
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
-
-    pub fn unavailable(
-        provider: impl Into<String>,
-        label: impl Into<String>,
-        message: impl Into<String>,
-        checked_at_unix_ms: u64,
-    ) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "unavailable".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some(message.into()),
-            last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1019,11 +954,17 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
-    /// Whether this agent is the pane Hide's Fork made from its declared
-    /// parent (`wire::FORK_TOKEN`). Any child has a parent; only a fork is a
-    /// fork of it, and a name cannot tell them apart once the agent is woken.
+    /// What this pane declares about the agent it was forked from: the
+    /// source's pane and the digest of the session it hosted
+    /// (`wire::fork_declaration`). A fork is the operator's root, so this is
+    /// provenance and never enters ownership.
     #[serde(skip_serializing)]
-    pub started_as_fork: bool,
+    pub declared_fork: Option<(String, Option<String>)>,
+    /// Present on a pane Hide's Fork agent made, after its title on every
+    /// row and header that draws the fork mark
+    /// (`agent_state::apply_fork_sources`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -1319,6 +1260,10 @@ pub struct WorkspaceSnapshot {
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
     pub session_folds: SessionCheckoutFolds,
+    /// What the project's agents are doing, which the sidebar row draws as
+    /// its name's weight and its sleeping fold (PRD sidebar-titlebar-refresh
+    /// D-02, D-03, D-20).
+    pub agent_presence: ProjectAgentPresenceSnapshot,
     /// What `Remove project…` would close, counted by the core so the
     /// confirmation names the same panes the close will send to Herdr
     /// (D-10). Both are zero for a project Herdr has no pane in, which is
@@ -1334,6 +1279,28 @@ pub struct WorkspaceSnapshot {
     /// The disk cleanup review or run of this project, while there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
+}
+
+/// What a project's agents are doing, decided by the core so the shell only
+/// draws it (`project_context::agent_presence`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAgentPresenceSnapshot {
+    /// An awake agent here shows ▲ ! ? ● ◐ or ✓; resting, sleeping or no
+    /// agents leave it false.
+    pub working: bool,
+    /// Present while the project has a sleeping agent and no awake one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asleep: Option<ProjectAsleepSnapshot>,
+}
+
+/// A project whose every agent sleeps: it starts folded each time it falls
+/// asleep, and stays open once the operator opens it until an agent wakes
+/// (the `asleep/<project>` key of `session_open_folds`, D-19).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectAsleepSnapshot {
+    /// When the most recent of its agents fell asleep, in Unix milliseconds.
+    pub since_unix_ms: u64,
+    pub expanded: bool,
 }
 
 /// A Git project's allocated disk: every worktree and the shared Git
@@ -2132,6 +2099,18 @@ pub struct ServerEndpointSnapshot {
     pub port: u16,
 }
 
+/// The agent a fork was forked from. Both fields are present only while the
+/// source's pane still hosts the session the fork was made from; a source
+/// that closed or moved on to another conversation leaves both absent, and
+/// the mark then names no pane and opens nothing.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ForkSourceSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// What the pane header needs to know about forking this pane.
 ///
 /// Both facts come from Herdr: whether the pane runs an agent whose own fork
@@ -2145,7 +2124,9 @@ pub struct ServerEndpointSnapshot {
 pub struct PaneForkSnapshot {
     pub available: bool,
     pub reason: Option<String>,
-    pub forked_from_pane_id: Option<String>,
+    /// Present when this pane is a fork, as its row's `forked_from`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkSourceSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2268,6 +2249,11 @@ pub struct TerminalSnapshot {
 pub struct InputRequestSnapshot {
     pub request_id: String,
     pub state: InputRequestState,
+    /// The pane a pending request's keys wait for, once it exists and holds
+    /// the keyboard: a fork's pane until its agent has started. The shell
+    /// keeps sending against the request while that pane has the keyboard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held_for: Option<String>,
 }
 
 /// Where keys sent against a creation request stand: kept until Herdr
@@ -2557,6 +2543,9 @@ pub struct ProjectMemorySnapshot {
     /// The first read of the Project's Memory has not answered yet.
     pub loading: bool,
     pub enabled: bool,
+    pub consent_required: bool,
+    /// Cards currently eligible for injection, excluding merged promotions.
+    pub usable_cards: usize,
     /// Live cards against the store's cap.
     pub capacity_reached: bool,
     /// Live cards, the most recently changed first.
@@ -2566,6 +2555,10 @@ pub struct ProjectMemorySnapshot {
     /// repository file, then promotions that ended without a pull request.
     pub questions: Vec<MemoryQuestionSnapshot>,
     pub analysis: MemoryAnalysisState,
+    /// Only the card admitted by the running check, never the whole backlog.
+    pub checking_card: Option<u64>,
+    /// The UTC-day budget's next reset, drawn in the viewer's timezone.
+    pub check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which Undo brings back (B24).
     pub forgotten: Option<u64>,
     /// The operator's Memory action still running for this Project; another
@@ -2779,6 +2772,8 @@ pub enum MemoryAnalysisState {
     /// Memory is on but Hide AI is off or cannot answer, so no new card is
     /// made; existing cards are still given.
     AiNotReady,
+    Checking,
+    CheckBudgetExhausted,
 }
 
 /// One operator action on a Project's Memory (`memory_action`).
@@ -3094,6 +3089,8 @@ pub struct UiStateSnapshot {
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
     pub interface_language: Option<serde_json::Value>,
+    #[serde(default)]
+    pub usage: crate::usage::prefs::UsagePreferences,
     /// The first-run agent choice (issue 517), a reading of this Mac's kit
     /// record (the one place that knows whether it was asked and answered):
     /// `None` until the kit has answered once, `Pending` while the record
@@ -3110,7 +3107,7 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub first_run: Option<FirstRun>,
     /// Whether the desktop app shows an OS notification when a root agent
-    /// newly needs the operator or finishes (Settings > General, PRD
+    /// newly needs the operator or finishes (Settings > Notifications, PRD
     /// first-run-onboarding D-21). Off until the operator turns it on, so an
     /// existing install starts without it (D-08).
     #[serde(default)]
@@ -3607,6 +3604,7 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
             interface_language: None,
+            usage: Default::default(),
             agent_onboarding: None,
             agent_onboarding_agents: Vec::new(),
             first_run: None,
@@ -4631,6 +4629,10 @@ pub struct BackgroundAiSnapshot {
     /// Why the saved choice could not be read or written. The defaults are in
     /// use while this is set; it is never left empty to stand for success.
     pub unavailable_reason: Option<String>,
+    /// The Usage limit: the share of an agent's week Hide AI may use before a
+    /// background request moves to the next agent of the order. `None` is
+    /// No limit (PRD hide-ai-usage-limit D-01).
+    pub usage_limit: Option<u8>,
 }
 
 impl BackgroundAiSnapshot {
@@ -4645,6 +4647,7 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
+            usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }
     }
@@ -4696,6 +4699,21 @@ pub struct BackgroundAiProviderSnapshot {
     /// `--model` (B36). True for the agents measured against nothing yet.
     pub cli_default: bool,
     pub models_unavailable_reason: Option<String>,
+    /// The agent's weekly usage as the toolbar's usage read last answered it;
+    /// absent when it gave no figure, and then the agent is never held back
+    /// by the usage limit (PRD hide-ai-usage-limit D-07).
+    pub weekly: Option<BackgroundAiWeekly>,
+    /// The weekly figure is at or past the usage limit: this agent cannot
+    /// answer a request Hide AI starts on its own (D-02).
+    pub past_limit: bool,
+}
+
+/// One agent's weekly usage: the share spent and when the window resets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiWeekly {
+    pub used_percent: f64,
+    /// Unix milliseconds, when the agent said.
+    pub resets_at_ms: Option<u64>,
 }
 
 impl BackgroundAiProviderSnapshot {
@@ -4729,12 +4747,17 @@ pub struct BackgroundAiRefusalSnapshot {
     /// The agent that cannot answer: Runs on.
     pub provider: String,
     /// The router's availability class for it: `usage_limited`,
-    /// `needs_login`, `not_installed`, `unavailable` or `unsupported`.
+    /// `past_limit` (at or past the operator's usage limit), `needs_login`,
+    /// `not_installed`, `unavailable` or `unsupported`.
     pub reason: String,
     /// When a usage limit ends, as unix milliseconds, when the agent said.
     pub retry_at_ms: Option<u64>,
     /// The listed agent answering instead; absent when none can (B42).
     pub using: Option<String>,
+    /// For `past_limit`: the agent's weekly share and the limit it is past,
+    /// so the screen says `past your 90% limit` from the core's own numbers.
+    pub used_percent: Option<f64>,
+    pub limit: Option<u8>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
@@ -4947,10 +4970,11 @@ impl Snapshot {
                 )],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
+                no_agent_projects: Vec::new(),
                 agents: Vec::new(),
                 hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
-                provider_usage: ProviderUsageSnapshot::initial_rows(),
+                usage: crate::usage::model::UsageSnapshot::initial(options.node_id.as_str()),
             },
             overlay: OverlaySnapshot {
                 kind: None,
@@ -5889,12 +5913,16 @@ mod wire_enum_tests {
             MemoryAnalysisState::Idle,
             MemoryAnalysisState::Analyzing,
             MemoryAnalysisState::AiNotReady,
+            MemoryAnalysisState::Checking,
+            MemoryAnalysisState::CheckBudgetExhausted,
         ];
         for variant in analysis_states {
             match variant {
                 MemoryAnalysisState::Idle
                 | MemoryAnalysisState::Analyzing
-                | MemoryAnalysisState::AiNotReady => {}
+                | MemoryAnalysisState::AiNotReady
+                | MemoryAnalysisState::Checking
+                | MemoryAnalysisState::CheckBudgetExhausted => {}
             }
         }
         assert_wire(&contract, "memory_analysis_state", &analysis_states);

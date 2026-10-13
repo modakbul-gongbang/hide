@@ -522,6 +522,9 @@ test("⌘K lists a typed URL as unavailable in a browser tab, and opens it as a 
         notificationPermission: async () => "unsupported",
         openNotificationSettings: () => undefined,
         reportBadge: () => undefined,
+        onWindowChrome: () => () => undefined,
+        editorAvailable: async () => false,
+        openInEditor: () => undefined,
         browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: () => () => undefined },
       };
     }, process.platform);

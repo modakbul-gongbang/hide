@@ -12,6 +12,7 @@ Three files each own one kind of truth, and none of them restates another's valu
   Its `System /` sheets are shadcn parts drawn 1:1 with the dev gallery: same name, same variants, one sheet per part with `Light` and `Dark` frames and one node per state.
   Its `Component /` sheets are hide composites built on top of `System /` masters (menus, rows, panels) that do not exist in shadcn.
   `Component / Agent graph box` is the one generated `Component /` sheet besides the two folded legacy masters: `componentSheets` in `scripts/pen-system.mjs` draws its master (a head and three rows a state turns on) and its states (primary, a worktree with an asking row, resting and dimmed, a row with a tucked badge, rows with cross-project chips, selected) as refs of that master, Light and Dark, and a new sheet lands where its `at` says until a person moves it.
+  `Component / Sidebar chrome` is generated the same way by `scripts/pen-sidebar-chrome.mjs`: the Search row and the section header masters, the Help menu, Light and Dark.
   Only `System /` and `Component /` top-level sheets belong in this file; screen proposals, audits, and scratch never do.
 - **Numeric authority** is [design/tokens.json](../design/tokens.json): shadcn-named tokens (`--background`, `--foreground`, `--card`, `--popover`, `--primary`/`--primary-foreground`, `--secondary`, `--muted`/`--muted-foreground`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--sidebar-*`, and the four `--accent-choice-*` picks) each carrying a Dark value and a Light value, plus aliases.
   `node scripts/gen-tokens.mjs` writes `web/src/tokens.css` (Tailwind v4 `@theme`, `:root`/`.light`, `.dark`) and `web/src/generated/accents.ts`.
@@ -33,14 +34,16 @@ Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, see
 `/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
 `/gallery?scene=onboarding` is the shell's real `Sidebar` and Home behind the real first-run wizard, start panel or Settings sheet over a synthetic This Mac with the seven agents and a stand-in desktop host (`web/src/gallery/OnboardingScene.tsx`), with the content `Screen / Onboarding` draws.
-Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`) and `content` (`reference`, or `long` for the Korean copy); the root carries `data-scene-ready` once the presses a state needs have landed.
-`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `lang` (`ko` by default, or `en`, `ja`, `zh-CN`), `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `start_failed`, `forgotten`, `verifying`), the states the Memory screen's design draws, `start_failed` for the `failed` card whose status names the question its new pane's shell stopped at, the same row with other words, and `verifying` for the quiet `확인 중` mark that reuses the status line's existing style.
+Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`), `content` (`reference`, or `long` for the Korean copy), `scale` (the interface text scale) and, for a `settings-*` state, `page` (the Settings page it opens, Notifications by default, any id of `SETTINGS_GROUPS` or `about`); the root carries `data-scene-ready` once the presses a state needs have landed.
+`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `lang` (`ko` by default, or `en`, `ja`, `zh-CN`), `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `start_failed`, `forgotten`, `verifying`, `reconsent`, `checking`, `check_budget_exhausted`), the states the Memory screen's design draws, `start_failed` for the `failed` card whose status names the question its new pane's shell stopped at, the same row with other words, and `verifying` for waiting cards that reuse the dimmed-row treatment and a shared explanation above the list.
+The additional Memory states reuse the existing empty/status slots and put a shared waiting explanation once above the list, with no new token, System part or Component; the gallery is the rendered state reference.
+Waiting cards reuse the existing dimmed-row treatment, while only the running check retains a status mark.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 Onboarding is `Screen / Onboarding`, built by `onboardingBoards` in `scripts/pen-screens-onboarding.mjs`.
-It draws the first run as one board per subject, each in both themes: the wizard as a dialog over the dimmed shell, step 1 with its tiles, What changes and its failed, no-agent and reopened states, step 2 in every answer on macOS, Windows and Linux, step 3, the start panel it closes into, the empty Home, the sidebar's Add project on the Projects label, Settings > General Notifications on each system, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light only).
+It draws the first run as one board per subject, each in both themes: the wizard as a dialog over the dimmed shell, step 1 with its tiles, What changes and its failed, no-agent and reopened states, step 2 in every answer on macOS, Windows and Linux, step 3, the start panel it closes into, the empty Home, the sidebar's Add project on the Projects label, Settings > Notifications on each system (drawn with `Screen / Settings`' sheet), the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light only).
 Each board's themed frame keeps the node id of the approved bundle (`<board>-light`, `<board>-dark`), so a design review exports the same node from the committed file.
-Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.tsx`, `web/src/firstRun.ts`, `web/src/StartPanel.tsx`, `web/src/MainScreen.tsx`, `web/src/sidebar.tsx`, `web/src/settings/GeneralTab.tsx`, `web/src/ScreenIntro.tsx` and `desktop/static/status.css`.
+Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.tsx`, `web/src/firstRun.ts`, `web/src/StartPanel.tsx`, `web/src/MainScreen.tsx`, `web/src/sidebar.tsx`, `web/src/settings/NotificationsTab.tsx`, `web/src/ScreenIntro.tsx` and `desktop/static/status.css`.
 
 ## The flow: scratch to one PR
 
@@ -91,7 +94,7 @@ Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.ts
 
 A design change is judged against the design that was chosen, not against whatever the Pen file says by the time the code lands: a later edit to Pen, or the same wrong change made to Pen and code together, would otherwise hide the drift.
 `scripts/design-review.mjs` keeps that choice and checks the production screen against it.
-The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
+The `workspace-servers` and `session-search` gallery scenes render the production top row's Workspace path and icons and the Sessions screen with invented local history and reachable-address fixtures.
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
 Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus`, `factory`, `core-move-devices`, `core-move-window` and `first-run-onboarding`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
@@ -164,7 +167,7 @@ It draws the single sidebar beside Overview, whose tabs are `Agents · Tasks · 
 Beside those views, the approved v6 Sessions tool is generated by `scripts/pen-screens-sessions.mjs`, with project/checkout scope, real-fact chips, two-line rows and five core groups, and a Working root opened four levels deep: the indent stopping at the third level with the fourth hanging from its parent's rail, a child in another checkout leading its second line with its branch, and the selected row of the focused pane.
 Its Tasks board holds every project's issues in `백로그 · 진행 중 · 리뷰 · 완료`, each card an issue with its project beside its id, `시작` on a backlog card under the pointer, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
-The sidebar there is the one-device window's: the device rail with This Mac alone, and the sidebar's top line and Home row above the single session list.
+The sidebar there is the one-device window's: the device rail with This Mac alone, and the Search row and the Overview row above the single session list.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/AgentSessions.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
@@ -181,33 +184,29 @@ The issue card and panel, the pull request row and its confirmation are drawn on
 Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewTitleRow.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows follow `web/src/agentRow.ts`.
 
 Workspace is `Screen / Workspace`.
-It draws docked Agent Views, File Views and Tools beneath one full-width toolbar, using the Workspace columns, toolbar, toggle and divider masters in the library.
-The toolbar's right edge carries Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
+It draws docked Agent Views, File Views and Tools beneath the window's top row (PRD sidebar-titlebar-refresh D-15, D-16): the traffic lights and This Mac over the rail and the sidebar, and over the center the Workspace toolbar master as the `project / checkout` path and its icons, using the Workspace columns, toolbar, toggle and divider masters in the library; the sidebar beside it opens with the Search row and has no Home row.
+The top row's right edge carries Overview, Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
 The columns start with their own tab strips; File Views carries its document header and Tools carries Sessions, Explorer and History, with Sessions first and the selection saved per Workspace.
 The pane header's ancestor path, fork mark, own PR mark, tree button and ask band follow the approved agent-hierarchy round 2 reference, the pane header board on this sheet, in both themes (the fork mark is the issue 916 addition, chosen by the operator as a small icon after the title and drawn in the board's Forked pane section), and `design/review-targets.json` names it as the `pane-header` target.
 The reference includes the full layout, both narrow-window fallbacks and explicit column calls, Tools without File Views, saved widths, and the divider at rest, under the pointer, focused and being dragged.
 Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
 The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
-The remote Workspace keeps the device-colored toolbar band and agent pane frame; This Mac has neither.
+The remote Workspace keeps the device-colored band at the start of the top row's path and the agent pane frame; This Mac has neither.
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
 It draws the Project Overview on its Conversation history tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
-Settings is `Screen / Settings`.
-It draws the seven tabs the sheet had before the settings cleanup (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
-The shipped Settings has six tabs (General, Agents, Hide AI, Devices, Mobile, Shortcuts), so the sheet is stale in these ways until it is redrawn:
-- its tab strip lists Appearance, Issues and Performance, which no longer exist as tabs, and lacks Hide AI and Mobile;
-- its Appearance frame is now the Appearance group of General;
-- it has no Agents list (seven agents, one machine at a time, Installed and Not installed), no Hide AI tab, and no Add device that lists ssh config Hosts.
-
-The code and `docs/UI_BEHAVIOR.md` own the tab list and what each tab shows; the sheet owns only the Group/Row look.
-The Mobile tab's strip and content are drawn on `Screen / Mobile`.
-Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
+Settings is `Screen / Settings`, built by `settingsBoards` in `scripts/pen-screens-settings.mjs` from the boards the operator approved (PRD settings-left-nav D-11).
+It draws the ⌘, sheet with its list on the left, App (General, Notifications, Devices, Shortcuts) and This Mac (Agents, Hide AI, Mobile, GitHub) with About at the list's foot, and each page under its title alone: General as Appearance, Notifications with This Mac and Phone, Agents with its machine switch, Hide AI, GitHub and About.
+Its States board draws a remote device's chip beside the page title, the smallest window (720×480), and the longest copy, Korean at the largest interface text, Light only.
+The list, the title and the pages are drawn on local tokens and library refs, not as a `Component /` master, because they are one screen's parts; `settingsFrame` in the same file is the sheet around any page, so `Screen / Onboarding`, `Screen / Core move` and `Screen / Mobile` draw Settings with the same list and title.
+Agent marks that ship only as SVG (Pi, Cursor and the others in `web/src/assets/agents/`) draw empty in Pen, which fills an image only from a raster.
+Its web files are `web/src/SettingsSheet.tsx`, `web/src/settings.ts` and the pages under `web/src/settings/`.
 
 Palette is `Screen / Palette`.
-It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
+It draws the sidebar's Search row with its ⌘K chord, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
 `/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
 Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
@@ -224,10 +223,12 @@ Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
 The rail is its full-height left column with This Mac and each registered device as 32 tiles with no name under them (the laptop glyph or the device's monogram), and `+` directly under the last tile; the selected tile is ringed, one mark at a tile's top-right shows the most urgent state (the Needs You count, `9+` from ten, else a dot for unseen Done), Working has no mark, and an unreachable device dims its glyph and wears a cross at the bottom-right with no mark.
-The rest frame is This Mac in front: a header line with the device name, Add project and Search, the shared Overview row with its count and shortcut, then the single sidebar's Needs You and Done groups, the Home row with the project count (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
-The committed sheet still draws Add project in the header line; the code puts it on the Projects title (PRD first-run-onboarding D-27), as `Screen / Onboarding` board 17 draws, until this sheet is redrawn.
-Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill and its Needs You past the cap (five rows and `More 7`), a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
-In the list, pinned and activity-ordered projects contain checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
+The rest frame is This Mac in front under the window's top row, which carries the traffic lights and the device name over the rail and the sidebar (PRD sidebar-titlebar-refresh D-15): the Search row with its ⌘K chord, the shared Overview row with its count and shortcut, then the single sidebar's Needs You and Done groups, `Pinned · 1` led by the pin, `Projects · Recent activity · 5` ending in Add project, the projects, and `No agents 3` and `Inactive projects 3` folded; there is no Home row (D-06).
+A working project's name is 600 and a resting one's 400, and two projects whose agents all sleep are folded behind the moon cell with its age (D-02, D-03); the footer carries the usage chips, Help and the gear.
+Beside it, cuts of the list draw the weight, a sleeping project folded and opened, `+ ⋯` over the badge and over the moon under the pointer (D-04), No agents opened, `Projects` stuck to the list's top with its hairline while rows pass under it (D-05), and the Help menu above the footer with `?` pressed (D-12).
+Four more frames draw a remote device in front with the `9+` pill and its Needs You past the cap (five rows and `More 7`), a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the top row's name with a chevron over the open device menu).
+In the list, pinned and activity-ordered projects contain checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and the checkout folds.
+The project, checkout, folder and agent row menus stand beside it; the checkout and folder menus carry `Open in VS Code` before the reveal (D-13), and the project menu is drawn opened from `⋯`.
 The shared Overview row owns selection on its page or modal; there is no per-project Overview child.
 A project row opens its last focused usable checkout, falling back to primary and then first usable, and unfolds; activation while its target Workspace is already in front and unfolded folds it.
 A checkout row opens and unfolds, then folds on activation while already selected and unfolded.
@@ -235,7 +236,7 @@ Beside each theme's sidebar it draws a pull-request row under the pointer with i
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`, plus the rail component under `web/src/`.
 
 Mobile is `Screen / Mobile`.
-It draws Settings > Mobile, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지, and the three push modes.
+It draws Settings > Mobile as a page of `Screen / Settings`' sheet, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, and the connected phones (2 / 4) with 해지; the push modes are on Settings > Notifications.
 Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).
 The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
 The Settings > Mobile frames are stale against the shipped tab: they draw the QR open with a `새 코드` button as soon as the checks pass, and one row per Tailscale check.

@@ -201,6 +201,8 @@
   --size-project-row: 36px;
   --size-sidebar-line: 20px;
   --size-sidebar-line-detail: 16px;
+  --size-sidebar-section-header: 26px;
+  --size-sidebar-search: 28px;
   --size-overview-group-header: 52px;
   --size-checkout-icon: 14px;
   --size-checkout-metadata-inset: 22px;
@@ -247,7 +249,7 @@
   --size-terminal-min: 540px;
   --size-terminal-ideal: 760px;
   --size-agent-children-popover: 280px;
-  --size-usage-popover: 250px;
+  --size-usage-popover: 320px;
   --size-pr-popover: 360px;
   --size-pr-number: 38px;
   --size-pr-review: 70px;
@@ -260,7 +262,8 @@
   --size-search-sheet-w: 570px;
   --size-search-sheet-h: 430px;
   --size-gallery-scene-h: 880px;
-  --size-settings-sheet-w: 720px;
+  --size-settings-sheet-w: 880px;
+  --size-settings-nav-w: 200px;
   --size-settings-sheet-h: 560px;
   --size-settings-sheet-h-max: 800px;
   --size-settings-sheet-window-inset: 40px;

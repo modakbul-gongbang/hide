@@ -1,3 +1,4 @@
+import { usageCatalogs, usageEnglish } from "./resources/usage";
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { agentSessionsCatalogs, agentSessionsEnglish } from "./resources/agentSessions";
 import { boardCatalogs, boardEnglish } from "./resources/board";
@@ -49,6 +50,7 @@ export const english = {
   ...nativeEnglish,
   ...mobileEnglish,
   ...settingsEnglish,
+  ...usageEnglish,
   ...cleanupEnglish,
   ...devicesEnglish,
   ...mobileSetupEnglish,
@@ -89,6 +91,7 @@ export const catalogs = {
     ...nativeCatalogs.ko,
     ...mobileCatalogs.ko,
     ...settingsCatalogs.ko,
+    ...usageCatalogs.ko,
     ...cleanupCatalogs.ko,
     ...devicesCatalogs.ko,
     ...mobileSetupCatalogs.ko,
@@ -124,6 +127,7 @@ export const catalogs = {
     ...nativeCatalogs["zh-CN"],
     ...mobileCatalogs["zh-CN"],
     ...settingsCatalogs["zh-CN"],
+    ...usageCatalogs["zh-CN"],
     ...cleanupCatalogs["zh-CN"],
     ...devicesCatalogs["zh-CN"],
     ...mobileSetupCatalogs["zh-CN"],
@@ -159,6 +163,7 @@ export const catalogs = {
     ...nativeCatalogs.ja,
     ...mobileCatalogs.ja,
     ...settingsCatalogs.ja,
+    ...usageCatalogs.ja,
     ...cleanupCatalogs.ja,
     ...devicesCatalogs.ja,
     ...mobileSetupCatalogs.ja,

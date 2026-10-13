@@ -7,7 +7,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints } from "./generated/hided-ws";
+import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -51,6 +51,7 @@ import {
   type Checkout,
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
+  type ForkPlacement,
   type IssueSettings,
   type KitComponentId,
   type MemoryAction,
@@ -775,6 +776,13 @@ export function createActions(send: DispatchFn) {
     bridge.revealPath(path);
   };
 
+  /** Opens a folder of this computer as a VS Code window through the desktop host; its outcome is the host's to log (B16). */
+  const openInEditor = (path: string) => {
+    const bridge = hostBridge();
+    if (!bridge) return diagnostic("open in VS Code: this host has no desktop app");
+    bridge.openInEditor(path);
+  };
+
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
     setWorkspaceView({ reveal: path });
@@ -935,9 +943,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_sleep", payload: { pane_id: paneId } });
     },
 
-    /** Fork agent from the pane menu: a new execution of this agent's conversation in its own tab. */
-    forkPane(paneId: string) {
-      dispatch({ schema_version: 2, kind: "fork_pane", payload: { pane_id: paneId } });
+    /**
+     * Fork agent (`tab`) and Fork agent to the side (`side`) from the pane menu: a
+     * new execution of this agent's conversation, the operator's own root, which
+     * takes the keyboard. Keys typed before its agent starts wait for it.
+     */
+    forkPane(paneId: string, placement: ForkPlacement) {
+      const requestId = remoteRequestId();
+      dispatch({ schema_version: 2, kind: "fork_pane", payload: { pane_id: paneId, placement, request_id: requestId } });
+      armKeyTarget(requestId);
     },
 
     /** Wake agent and Retry resume the conversation; Start new session is `fresh` (B12, B14). */
@@ -1018,6 +1032,12 @@ export function createActions(send: DispatchFn) {
      * open, the two hints the core's usage timer reads. They ride the UI-state
      * event, which replaces the whole state, so they go with its echo.
      */
+    setUsagePin(payload: UsagePinSetPayload) {
+      dispatch({ schema_version: 2, kind: "usage_pin_set", payload: { ...payload } });
+    },
+    setUsageHidden(payload: UsageHiddenSetPayload) {
+      dispatch({ schema_version: 2, kind: "usage_hidden_set", payload: { ...payload } });
+    },
     observeUsage(hints: UiStateUsageHints) {
       updateUiState(hints);
     },
@@ -1028,6 +1048,10 @@ export function createActions(send: DispatchFn) {
     /** The `에이전트 요약` switch (PRD overview-request-view D-11): off, agent labels are neither asked for nor shown. */
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
+    },
+    /** The usage limit (PRD hide-ai-usage-limit D-01): a percent, or `"none"`; the core refuses a number outside 1 to 100. */
+    setAiUsageLimit(limit: number | "none") {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { usage_limit: limit } });
     },
     /** Use Hide AI (PRD settings-cleanup D-14): off, no model is asked anything and the other Hide AI values stay stored. */
     setHideAiEnabled(on: boolean) {
@@ -1180,19 +1204,6 @@ export function createActions(send: DispatchFn) {
     /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one dialog (D-11). */
     openAddDevice() {
       ui().openAddDevice();
-    },
-
-    /**
-     * The Home row's `+`: a new terminal tab in the device's Home (D-13). The
-     * request id is kept so the pane it answers with is opened when it lists
-     * (`useHomeStart`); a refusal is read by the same id.
-     */
-    startHomeTab(deviceId: string) {
-      const requestId = remoteRequestId();
-      ui().setHomeStart({ requestId, deviceId, refusal: null });
-      const node = localDeviceId(rest());
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId, node) } });
-      if (deviceId === node) armKeyTarget(requestId);
     },
 
     /**
@@ -1598,6 +1609,7 @@ export function createActions(send: DispatchFn) {
      * tab has no such item.
      */
     revealExternal,
+    openInEditor,
 
     /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
     createWorktree(request: {
@@ -2020,11 +2032,6 @@ export function createActions(send: DispatchFn) {
       ui().setLens({ tab: "agents" });
       ui().setMainView("agents");
       if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
-    },
-
-    openHome(deviceId?: string) {
-      ui().setOverviewProject(null);
-      ui().setScreen({ kind: "main", ...(deviceId ? { deviceId } : {}) });
     },
 
     closeOverview() {

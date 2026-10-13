@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, screenshot, showProjectRow } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -39,6 +39,8 @@ async function deletionFixture(herdr: HerdrFixture) {
 async function featureRow(page: Page) {
   const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
   const emptyFold = project.locator("[data-empty-worktrees]");
+  // A project with no agent waits under No agents (PRD sidebar-titlebar-refresh B1).
+  await showProjectRow(page, project);
   const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
   await expect.poll(async () => await feature.locator("[data-checkout-age]").isVisible() || await emptyFold.isVisible(), { timeout: 30_000 }).toBe(true);
   if (!await feature.isVisible()) {

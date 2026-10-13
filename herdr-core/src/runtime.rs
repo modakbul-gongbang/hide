@@ -54,6 +54,7 @@ mod tab_focus;
 mod terminal;
 mod terminal_input;
 mod tree_close;
+mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
 mod workspace_control;
@@ -1295,6 +1296,12 @@ pub struct Runtime {
     usage_window_visible: bool,
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
+    /// The usage limit and the weekly figures the label and Memory routers
+    /// judge each request by; written from the settings and the usage rows
+    /// (`runtime/usage_limit.rs`).
+    usage_limits: Arc<hide_ai::UsageLimits>,
+    /// Whether the diagnostic log last said the order is paused by the limit.
+    usage_pause_announced: bool,
     recent_visible_tabs: Vec<String>,
     pending_tab_rename: Option<rename::PendingRename>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
@@ -1419,6 +1426,9 @@ pub struct Runtime {
     /// measures idleness from here, so roam and sleep are driven by real
     /// session activity rather than wall-clock uptime.
     pet_active_at_unix_ms: u64,
+    /// When an agent last worked or waited on the operator; 0 until one has
+    /// (the pet's own clock starts at launch, this one must not).
+    agent_worked_at_unix_ms: u64,
     pet_waking_until_unix_ms: u64,
     pet_dragging: bool,
     /// The pane the operator chose to look at, and the only pane whose read
@@ -1596,10 +1606,12 @@ pub struct Runtime {
     /// second, so the diagnostic is emitted when the set changes rather than
     /// on every tick.
     unresolved_active_tabs: BTreeSet<String>,
-    /// Panes whose fork has been started and not yet answered. `herdr agent
-    /// new` blocks until the agent has started, so without this a second
-    /// activation during that wait would bill a second session.
-    forks_in_flight: HashSet<String>,
+    /// Panes whose fork has been started and not yet answered, by source
+    /// pane. `agent.start` blocks until the agent has started, so without this
+    /// a second activation during that wait would bill a second session.
+    forks_in_flight: HashMap<String, agents::PendingFork>,
+    /// The last keyboard move made for a fork (`agents::ForkFocus`).
+    fork_focus: Option<agents::ForkFocus>,
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
@@ -2010,6 +2022,8 @@ impl Runtime {
             usage_window_visible: false,
             usage_popover_open: false,
             usage_popover_open_generation: 0,
+            usage_limits: Arc::new(hide_ai::UsageLimits::new()),
+            usage_pause_announced: false,
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
             panes_closing: HashSet::new(),
@@ -2071,6 +2085,7 @@ impl Runtime {
             state_save_active: false,
             state_save_worker: None,
             pet_active_at_unix_ms: unix_milliseconds(),
+            agent_worked_at_unix_ms: 0,
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
@@ -2128,7 +2143,8 @@ impl Runtime {
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
-            forks_in_flight: HashSet::new(),
+            forks_in_flight: HashMap::new(),
+            fork_focus: None,
             agent_sleep_next_decision_unix_ms: 0,
             node_sleep_next_decision_unix_ms: HashMap::new(),
             node_sleep_shown_tabs: HashMap::new(),
@@ -2648,12 +2664,7 @@ pub fn pane_fork_snapshot(agent: Option<&SidebarAgentSnapshot>) -> PaneForkSnaps
         available,
         reason: (!available && ForkableAgent::parse(&agent.agent_kind).is_some())
             .then(|| "This agent has not reported its conversation yet".to_owned()),
-        // Any child a parent declared has a `spawned_from_pane_id`; only one
-        // that was started as a fork is a fork of it.
-        forked_from_pane_id: agent
-            .started_as_fork
-            .then(|| agent.spawned_from_pane_id.clone())
-            .flatten(),
+        forked_from: agent.forked_from.clone(),
     }
 }
 

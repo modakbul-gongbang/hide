@@ -813,14 +813,20 @@ impl Runtime {
         )
     }
 
-    pub fn ingest_provider_usage(
-        &mut self,
-        provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
-    ) -> bool {
-        if self.snapshot.navigator.provider_usage == provider_usage {
+    pub fn ingest_usage(&mut self, usage: Vec<crate::usage::model::AgentUsage>) -> bool {
+        if self.snapshot.navigator.usage.nodes[0].agents == usage {
             return false;
         }
-        self.snapshot.navigator.provider_usage = provider_usage;
+        self.snapshot.navigator.usage.nodes[0].agents = usage;
+        if self
+            .snapshot
+            .ui_state
+            .usage
+            .reconcile(&self.snapshot.navigator.usage)
+        {
+            self.persist_ui_state();
+        }
+        self.refresh_background_ai();
         true
     }
 
@@ -828,8 +834,35 @@ impl Runtime {
         crate::usage::UsageActivity {
             // Background Memory analysis reads the weekly figure with no
             // window attached (D-10 b).
-            window_visible: self.usage_window_visible || self.memory_reads_usage(),
+            window_visible: self.usage_window_visible
+                || self.memory_reads_usage()
+                || self.limit_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
+            hidden: self.snapshot.ui_state.usage.hidden.clone(),
+            required: if !self.factory_recipients.is_empty() {
+                // A Factory may choose any supported worker; its admission
+                // reads every declared limit through the same accessor.
+                hide_agent_adapter::ADAPTERS
+                    .iter()
+                    .filter(|row| row.usage.limit_sources().next().is_some())
+                    .map(|row| row.herdr.name.into())
+                    .collect()
+            } else if self.memory_reads_usage() || self.limit_reads_usage() {
+                self.ai_settings
+                    .as_ref()
+                    .filter(|settings| settings.enabled && settings.chosen)
+                    .map(|settings| {
+                        settings
+                            .router_config()
+                            .priority
+                            .iter()
+                            .map(|provider| provider.as_str().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -843,6 +876,7 @@ impl Runtime {
         let summary = crate::agent_state::summarize(agents, connected);
         if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
+            self.agent_worked_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
@@ -1115,13 +1149,85 @@ impl Runtime {
         )
     }
 
+    /// A sleeping project the operator opened stays open only until one of
+    /// its agents wakes or starts; the next time it falls asleep it starts
+    /// folded again (PRD sidebar-titlebar-refresh D-19). Only an awake agent
+    /// row ends it: a key whose project is not listed, or is listed with no
+    /// agent row at all, is kept, as a reconnect can publish no rows for a
+    /// moment. Returns whether a key left, after asking for the save.
+    fn forget_woken_asleep_folds(&mut self) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .session_open_folds
+            .iter()
+            .any(|key| key.starts_with("asleep/"))
+        {
+            return false;
+        }
+        let by_pane = self.agent_rows_by_pane();
+        let woken: HashSet<String> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .filter(|workspace| {
+                let (presence, has_rows) = crate::project_context::agent_presence(
+                    workspace,
+                    &by_pane,
+                    &self.snapshot.navigator.sleeping_sessions,
+                    &[],
+                );
+                // Rows and none asleep: an agent there is awake.
+                has_rows && presence.asleep.is_none()
+            })
+            .map(|workspace| crate::project_context::asleep_fold_key(&workspace.id))
+            .collect();
+        drop(by_pane);
+        let folds = &mut self.snapshot.ui_state.session_open_folds;
+        let before = folds.len();
+        folds.retain(|key| !woken.contains(key));
+        if folds.len() == before {
+            return false;
+        }
+        self.persist_ui_state();
+        true
+    }
+
+    /// Every agent row the core lists, here and on each device session, by pane.
+    fn agent_rows_by_pane(&self) -> HashMap<&str, &SidebarAgentSnapshot> {
+        self.snapshot
+            .navigator
+            .agents
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.agents),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect()
+    }
+
     /// Recomputes the two inactive folds from current core facts. No row is
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
         // A bootstrap or reconnect can temporarily publish no catalog rows.
         // Like recent checkouts, remembered folds leave only on explicit removal.
-        let mut changed = crate::project_context::refresh_inactive_groups(
+        let mut changed = self.forget_woken_asleep_folds();
+        changed |= crate::project_context::refresh_inactive_groups(
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
@@ -1147,17 +1253,20 @@ impl Runtime {
                     let before = (
                         workspace.session_folds.clone(),
                         workspace.inactive_checkouts.clone(),
+                        workspace.agent_presence.clone(),
                     );
                     crate::project_context::refresh_device_folds(
                         workspace,
                         &agents,
+                        &self.snapshot.navigator.sleeping_sessions,
                         &self.snapshot.ui_state,
                         focused.as_deref(),
                         node,
                         now,
                     );
                     changed |= workspace.session_folds != before.0
-                        || workspace.inactive_checkouts != before.1;
+                        || workspace.inactive_checkouts != before.1
+                        || workspace.agent_presence != before.2;
                 }
             }
         }
@@ -1279,6 +1388,15 @@ impl Runtime {
                 None => {}
             }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
+            // The fork's source is named once the lineage pass has read it.
+            let forked_from = agents
+                .iter()
+                .find(|agent| agent.pane_id == pane.id)
+                .and_then(|agent| agent.forked_from.clone());
+            if pane.fork.forked_from != forked_from {
+                pane.fork.forked_from = forked_from;
+                changed = true;
+            }
             if pane.children != children {
                 pane.children = children;
                 changed = true;
@@ -1482,6 +1600,9 @@ impl Runtime {
         if let Some(on) = payload.agent_summary {
             next.agent_summary = on;
         }
+        if let Some(limit) = payload.usage_limit {
+            next.usage_limit = limit;
+        }
         if let Some(id) = payload.provider.as_deref() {
             let Some(provider) = self.ai_provider_named(id) else {
                 return true;
@@ -1561,6 +1682,10 @@ impl Runtime {
         self.ai_settings
             .as_ref()
             .is_some_and(|settings| settings.agent_summary && self.ai_active())
+            // The pause as the last refresh found it: this runs every
+            // coordinator tick, and the refresh runs on each usage read,
+            // settings change and wake that can move it.
+            && !self.usage_pause_announced
     }
 
     /// Whether the label worker asks a provider now: agent summaries are on
@@ -1803,7 +1928,6 @@ impl Runtime {
                     .unwrap_or_else(|| settings.model(provider).to_owned());
             }
         }
-        let refusal = self.ai_refusal(&settings);
         let snapshot = &mut self.snapshot.status.background_ai;
         snapshot.enabled = settings.enabled;
         snapshot.chosen = settings.chosen;
@@ -1820,7 +1944,10 @@ impl Runtime {
             })
             .collect();
         snapshot.providers = providers;
-        snapshot.refusal = refusal;
+        // The figures and the refusal read the rows just stored.
+        self.refresh_usage_limit();
+        let refusal = self.ai_refusal(&settings);
+        self.snapshot.status.background_ai.refusal = refusal;
     }
 
     /// What the label analyzer last found about Runs on (B41, B42): shown
@@ -1832,17 +1959,37 @@ impl Runtime {
         if !settings.chosen || !settings.enabled {
             return None;
         }
+        // Every agent past the limit is what the screen must say, whatever the
+        // analyzer last recorded: labels are not asked while it holds, so that
+        // record is not refreshed.
+        if self.usage_pause_announced
+            && let Some(refusal) = self.usage_refusal(settings)
+        {
+            return Some(refusal);
+        }
         let standing = self
             .label_services
             .as_ref()
-            .and_then(|services| services.standing.current())?;
-        (standing.selected == settings.provider).then(|| {
-            crate::model::BackgroundAiRefusalSnapshot {
-                provider: standing.selected.as_str().to_owned(),
-                reason: standing.reason.to_owned(),
-                retry_at_ms: standing.retry_at_ms,
-                using: standing.using.map(|using| using.as_str().to_owned()),
-            }
+            .and_then(|services| services.standing.current())
+            .filter(|standing| standing.selected == settings.provider);
+        let Some(standing) = standing else {
+            // Nothing is wrong with Runs on except, maybe, the usage limit.
+            return self.usage_refusal(settings);
+        };
+        // The analyzer's record is as old as its last job: an agent it named
+        // as answering that is past the limit now does not answer.
+        let using = standing.using.filter(|using| {
+            self.usage_gate()
+                .past_limit(*using, unix_milliseconds())
+                .is_none()
+        });
+        Some(crate::model::BackgroundAiRefusalSnapshot {
+            provider: standing.selected.as_str().to_owned(),
+            reason: standing.reason.to_owned(),
+            retry_at_ms: standing.retry_at_ms,
+            using: using.map(|using| using.as_str().to_owned()),
+            used_percent: None,
+            limit: None,
         })
     }
 
@@ -1850,9 +1997,12 @@ impl Runtime {
     /// snapshot last said. One mutex read per coordinator wake, no provider.
     pub(crate) fn refresh_ai_standing(&mut self) -> bool {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        // A window that reset or a figure that crossed the limit moves these
+        // with the clock, not with a usage read.
+        let figures = self.refresh_usage_limit();
         let next = self.ai_refusal(&settings);
         if self.snapshot.status.background_ai.refusal == next {
-            return false;
+            return figures;
         }
         self.snapshot.status.background_ai.refusal = next;
         true
@@ -2042,13 +2192,150 @@ impl Runtime {
                 })
     }
 
+    /// Herdr made the fork's pane, in its own tab (`Fork agent`) or beside
+    /// the source (`Fork agent to the side`). The keyboard goes to it now, as
+    /// to a starting agent tab, unless the operator chose a view after the
+    /// press: that is where they are, and the fork waits where it was put
+    /// (B5, D-10). Keys typed meanwhile wait for the agent's start either way.
+    pub fn ingest_fork_pane(
+        &mut self,
+        source_pane_id: &str,
+        tab_id: Option<&str>,
+        pane_id: &str,
+    ) -> bool {
+        let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) else {
+            return false;
+        };
+        // A pane the replaced Herdr made is not one this connection can place
+        // or focus; the worker's own checks end that fork.
+        if pending.generation != self.live_generation {
+            self.push_diagnostic(
+                "pane.fork.connection_changed",
+                format!("Herdr was replaced while {source_pane_id} was being forked"),
+            );
+            return false;
+        }
+        pending.tab_id = tab_id.map(str::to_owned);
+        let (issued_serial, press) = (pending.issued_serial, pending.press);
+        // Another fork's own focus is not the operator choosing a view: it
+        // supersedes this one only when it was pressed later, or when the
+        // operator chose a view after this press and before that focus.
+        let chosen_since = match self
+            .fork_focus
+            .filter(|focus| focus.intent_serial == self.last_view_intent_serial)
+        {
+            Some(focus) => focus.press > press || focus.prior_intent_serial > issued_serial,
+            None => self.last_view_intent_serial > issued_serial,
+        };
+        let checkout_path = tab_id.and_then(|tab_id| self.place_fork_tab(source_pane_id, tab_id));
+        // A tab the Agent area has no room for waits in the strip, as a new
+        // tab does, and is not where the operator's keys go.
+        let waiting = tab_id
+            .zip(checkout_path.as_deref())
+            .is_some_and(|(tab_id, path)| !self.agent_can_show_created(path, tab_id));
+        let origin = super::terminal_input::InputOrigin::Fork(source_pane_id.to_owned());
+        if chosen_since || waiting {
+            self.push_diagnostic(
+                "pane.fork.focus_superseded",
+                if waiting {
+                    format!("The Agent area has no room to show the fork of {source_pane_id}; it waits in the strip")
+                } else {
+                    format!("A view was chosen after {source_pane_id} was forked; the fork waits where it was put")
+                },
+            );
+            self.discard_input_request(&origin, "not_shown");
+            return true;
+        }
+        let prior_intent_serial = self.last_view_intent_serial;
+        self.focus_pane(pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+        // A focus the core refused (a waiting tab, a closing pane) moved
+        // nothing: the fork does not hold the keys or count as a move.
+        if self.snapshot.focused.pane_id.as_deref() != Some(pane_id) {
+            self.discard_input_request(&origin, "not_shown");
+            return true;
+        }
+        if let Some(pending) = self.forks_in_flight.get_mut(source_pane_id) {
+            pending.focused = Some(pane_id.to_owned());
+        }
+        // The shell keeps typing against the request while the fork's pane
+        // has the keyboard, so nothing reaches its shell first.
+        self.hold_input_request_for(&origin, pane_id);
+        self.fork_focus = Some(ForkFocus {
+            intent_serial: self.last_view_intent_serial,
+            prior_intent_serial,
+            press,
+        });
+        true
+    }
+
+    /// `Fork agent`'s tab goes right of the source's tab in the source's Agent
+    /// area. A source tab that has closed meanwhile leaves the new tab where a
+    /// new tab goes (PRD fork-operator-root B2). Returns the checkout the tab
+    /// belongs to, unknown once the source's tab has closed.
+    fn place_fork_tab(&mut self, source_pane_id: &str, tab_id: &str) -> Option<String> {
+        let (checkout_path, source_tab) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find_map(|checkout| {
+                let tab = checkout
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.panes.iter().any(|pane| pane.id == source_pane_id))?;
+                Some((checkout.path.clone(), tab.id.clone()?))
+            })?;
+        // The pane is born in the source's folder, which can sit below the
+        // checkout; the tab is the checkout's (`record_created_tab_checkout`).
+        self.record_created_tab_checkout(tab_id, &checkout_path);
+        let Some(store) = self.workspace_views.as_mut() else {
+            return Some(checkout_path);
+        };
+        let key = (self.node.as_str().to_owned(), checkout_path.clone());
+        let Some((area, index)) = store.views.get(&key.0, &key.1).and_then(|view| {
+            let area = view.agent_layout.tree.area_of(&source_tab)?;
+            let index = area.displays.iter().position(|tab| tab.id == source_tab)?;
+            Some((area.id.clone(), index + 1))
+        }) else {
+            return Some(checkout_path);
+        };
+        let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
+        // Herdr's session can carry the tab before this answer does; the
+        // reconcile appended it then, and it moves next to its source now.
+        if layout.tree.display(tab_id).is_some() {
+            let stamp = layout.tree.next_stamp(unix_milliseconds());
+            match layout.tree.move_display(tab_id, &area, index, stamp) {
+                Ok(true) => self.persist_workspace_views(),
+                Ok(false) => {}
+                Err(error) => self.push_diagnostic(
+                    "agent_layout.reconcile_refused",
+                    format!("Forked tab {tab_id}: {error:?}"),
+                ),
+            }
+            return Some(checkout_path);
+        }
+        if store.agent_placements.len() >= 64 && !store.agent_placements.contains_key(tab_id) {
+            self.push_diagnostic(
+                "agent_layout.placement_limit",
+                "Too many pending Agent tab placements",
+            );
+            return Some(checkout_path);
+        }
+        store
+            .agent_placements
+            .insert(tab_id.to_owned(), (key, area, Some(index)));
+        Some(checkout_path)
+    }
+
     pub fn ingest_fork_result(
         &mut self,
         parent_pane_id: &str,
         result: Result<String, String>,
         elapsed_ms: u128,
     ) -> bool {
-        self.forks_in_flight.remove(parent_pane_id);
+        let pending = self.forks_in_flight.remove(parent_pane_id);
+        let origin = super::terminal_input::InputOrigin::Fork(parent_pane_id.to_owned());
         // Either outcome leaves the process, because a fork that produced no
         // pane and no message is the report the operator brought: a modal
         // appeared and nothing else happened.
@@ -2065,9 +2352,38 @@ impl Runtime {
                     "forked_pane_id": forked_pane_id,
                     "duration_ms": elapsed_ms,
                 }));
+                // Keys typed since the press reach the fork's agent now that
+                // it has started, never its launch command; a fork that did
+                // not take the keyboard was not where they were going.
+                if pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.focused.is_some())
+                {
+                    self.resolve_input_request(&origin, &forked_pane_id);
+                } else {
+                    self.discard_input_request(&origin, "not_shown");
+                }
                 true
             }
             Err(message) => {
+                self.discard_input_request(&origin, "failed");
+                let (tab_id, focused, generation) = pending
+                    .map(|pending| (pending.tab_id, pending.focused, Some(pending.generation)))
+                    .unwrap_or_default();
+                if let Some(tab_id) = tab_id
+                    && let Some(store) = self.workspace_views.as_mut()
+                {
+                    store.agent_placements.remove(&tab_id);
+                }
+                // The worker closed the pane the keyboard went to; it goes
+                // back to the source the operator forked, unless they have
+                // moved on since.
+                if let Some(pane) = focused
+                    && generation == Some(self.live_generation)
+                    && self.snapshot.focused.pane_id.as_deref() == Some(pane.as_str())
+                {
+                    self.focus_pane(parent_pane_id.to_owned(), PaneFocusOrigin::Operator, None);
+                }
                 self.set_error(
                     "pane.fork_failed",
                     format!("Pane {parent_pane_id} could not be forked: {message}"),
@@ -2661,6 +2977,16 @@ fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
             &|_| None,
         );
         let lineage_path = crate::sidebar::project_lineage_path(agents, &pane.id);
+        // A device's pane offers no fork, but a fork there still names its
+        // source, as its rows do.
+        let forked_from = agents
+            .iter()
+            .find(|agent| agent.pane_id == pane.id)
+            .and_then(|agent| agent.forked_from.clone());
+        if pane.fork.forked_from != forked_from {
+            pane.fork.forked_from = forked_from;
+            changed = true;
+        }
         if pane.children != children {
             pane.children = children;
             changed = true;
@@ -2671,4 +2997,34 @@ fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
         }
     }
     changed
+}
+
+/// The keyboard move the core made for a fork, so a fork still starting can
+/// tell it from a view the operator chose.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ForkFocus {
+    /// `last_view_intent_serial` right after the move.
+    pub(super) intent_serial: u64,
+    /// `last_view_intent_serial` just before it: the operator's last choice.
+    pub(super) prior_intent_serial: u64,
+    /// The press that fork answered (`PendingFork::press`).
+    pub(super) press: u64,
+}
+
+/// A fork the operator asked for, until its worker answers.
+#[derive(Debug)]
+pub(super) struct PendingFork {
+    /// The order of the press among forks, so a later press keeps the
+    /// keyboard from an earlier one that is still starting.
+    pub(super) press: u64,
+    /// The Herdr connection the press was made on.
+    pub(super) generation: u64,
+    /// The control lane's last serial at the press. A view chosen after it is
+    /// the operator's, and the fork does not take the keyboard from it.
+    pub(super) issued_serial: u64,
+    /// The fork's tab once Herdr named it, so a fork that fails leaves no
+    /// placement waiting for a tab that was closed.
+    pub(super) tab_id: Option<String>,
+    /// The fork's pane, once Herdr made it and it took the keyboard.
+    pub(super) focused: Option<String>,
 }

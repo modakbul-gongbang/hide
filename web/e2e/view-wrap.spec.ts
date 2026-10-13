@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { showExplorer, showTool, screenshot } from "./wire";
+import { showExplorer, showProjectRow, showTool, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
@@ -37,7 +37,7 @@ test("file and diff views open wrapped and Wrap turns it off per tab", async ({ 
 
     daemon = await startHided(herdr, "view-wrap");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator("[data-project]", { hasText: "wrap-repo" }).locator("[data-checkout]").first().click();
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "wrap-repo" }).locator("[data-checkout]").first())).click();
 
     await showExplorer(page);
     await page.locator(`[data-explorer-row="${toPage(file)}"]`).click();

@@ -1,8 +1,9 @@
 // This Mac's Home (PRD home-device-rail B16-B18, B21) against a private
-// Herdr and hided: the Home row's `+` makes `~/hide` in the daemon's HOME with
-// a link per registered project and hide's guide files, and opens a tab there;
-// a `~/hide` that is not Hide's is left alone, and the reason shows where Home
-// was opened, under the Home row and inside the start panel.
+// Herdr and hided: the sidebar has no Home row (sidebar-titlebar-refresh B11),
+// so Home is reached from the start panel, whose start aimed at Home makes
+// `~/hide` in the daemon's HOME with a link per registered project and hide's
+// guide files, and runs the agent there; a `~/hide` that is not Hide's is left
+// alone, and the reason shows inside the start panel.
 
 import { expect, test, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
@@ -18,15 +19,22 @@ test.describe.configure({ timeout: 120_000 });
 
 async function pinFixture(page: Page) {
   // The fixture is a plain folder, which the sidebar draws as one row.
-  const row = page.locator("nav[data-sidebar]").getByRole("button", { name: "fixture", exact: true });
+  const row = page.locator("nav[data-sidebar]").getByRole("button", { name: /^fixture(,|$)/ });
   await row.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-  await expect(page.locator("[data-home-count]")).toHaveText("1 project", { timeout: 20_000 });
+  await expect(page.locator('[data-section="pinned"]')).toBeVisible({ timeout: 20_000 });
 }
 
-async function openHomeTab(page: Page) {
-  await page.locator("[data-home-destination]").hover();
-  await page.locator("[data-home-new-tab]").click();
+/** ⌘K's Start an agent… with Home chosen as the target, the start panel left open. */
+async function aimAtHome(page: Page, node: string) {
+  await page.keyboard.press(chord("search"));
+  await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
+  await page.keyboard.type("Start an agent");
+  await page.locator('[data-palette-row="command:start-agent"]').click();
+  const panel = page.locator("[data-start-panel]");
+  await panel.locator("[data-start-target]").click();
+  await page.locator(`[data-start-target-option="home:${node}"]`).click();
+  await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", `home:${node}`);
 }
 
 type SnapshotPane = { pane_id: string; workspace_id: string; tab_id: string; cwd?: string | null; foreground_cwd?: string | null };
@@ -80,10 +88,10 @@ async function recordFailure(page: Page, herdr: HerdrFixture, daemon: Daemon | n
   await test.info().attach("home-diagnostics", { path: file, contentType: "application/json" });
 }
 
-/** Home's `+` pressed on a pinned project: `~/hide` is made and a tab is open in it, Herdr's pane included. */
+/** A start aimed at Home with a pinned project: `~/hide` is made and the agent runs in it, Herdr's pane included. */
 async function inOpenedHome(page: Page, check: (home: string, herdr: HerdrFixture) => Promise<void>): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 800 });
-  const herdr = await startHerdr({ agents: false });
+  const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
     daemon = await startHided(herdr, "home");
@@ -94,8 +102,9 @@ async function inOpenedHome(page: Page, check: (home: string, herdr: HerdrFixtur
     // B18: no Home until it is first used.
     expect(fs.existsSync(home)).toBe(false);
 
-    await openHomeTab(page);
-    // B17: the tab opens in Home once Home's sync answered, so everything the
+    await aimAtHome(page, daemon.node);
+    await page.locator("[data-start-submit]").click();
+    // B17: the agent opens in Home once Home's sync answered, so everything the
     // sync writes is on disk by the time Herdr has a pane there. Herdr spells a
     // pane's folder as the system does, so both sides are read as the wire spells it.
     await expect
@@ -125,16 +134,15 @@ function panesAt(herdr: HerdrFixture, folder: string): boolean {
   return snapshot.result.snapshot.panes.some((pane) => [pane.cwd, pane.foreground_cwd].some((cwd) => onWire(cwd).startsWith(folder)));
 }
 
-test("Home's + makes ~/hide with its guide files and opens a tab there", async ({ page }) => {
+test("a start aimed at Home makes ~/hide with its guide files and runs the agent there", async ({ page }) => {
   await inOpenedHome(page, async (home) => {
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     for (const file of [".hide-home.json", "AGENTS.md", "CLAUDE.md"]) expect(fs.existsSync(path.join(home, file))).toBe(true);
 
-    // The Home is still no project (B16).
-    await expect(page.locator("[data-home-count]")).toHaveText("1 project");
+    // The Home is still no project (B16), and the sidebar draws no row for it (B11).
     await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
-    // The path back names Home and its folder, never Home as a project.
-    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
+    // The top row's path names Home's folder, never Home as a project.
+    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("~/hide");
     await screenshot(page, "home-tab-opened");
   });
 });
@@ -148,7 +156,7 @@ test("Home's ~/hide holds a link to each registered project", { tag: "@platform"
   });
 });
 
-test("a ~/hide that is not Hide's is left alone, and the reason shows under the Home row and in the start panel", async ({ page }) => {
+test("a ~/hide that is not Hide's is left alone, and the reason shows in the start panel", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -160,23 +168,9 @@ test("a ~/hide that is not Hide's is left alone, and the reason shows under the 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
 
-    // B21: the Home row's + is refused where it was pressed, and the folder is untouched.
-    await openHomeTab(page);
-    const refusal = page.locator("[data-home-refusal]");
-    await expect(refusal).toContainText("~/hide", { timeout: 20_000 });
-    expect(fs.readdirSync(home)).toEqual(["mine.txt"]);
-    await screenshot(page, "home-conflict-row");
-    // A click on the Home row clears it.
-    await page.locator("[data-home-destination]").click();
-    await expect(refusal).toHaveCount(0);
-
-    // B21: a start aimed at Home says the same inside the panel and keeps the text.
-    await page.keyboard.press(chord("search"));
-    await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
-    await page.keyboard.type("Start an agent");
-    await page.locator('[data-palette-row="command:start-agent"]').click();
+    // B21: a start aimed at Home is refused inside the panel, keeps the text, and leaves the folder untouched.
+    await aimAtHome(page, daemon.node);
     const panel = page.locator("[data-start-panel]");
-    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", `home:${daemon.node}`);
     await panel.locator("[data-start-text]").fill("홈에서 할 일");
     await panel.locator("[data-start-submit]").click();
     await expect(panel.locator("[data-start-failure]")).toContainText("~/hide", { timeout: 20_000 });

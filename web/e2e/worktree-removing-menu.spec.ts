@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { screenshot, showProjectRow } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -80,6 +80,8 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
 
     const emptyFold = page.locator("[data-empty-worktrees]");
+    // The project runs no agent, so it waits under No agents (PRD sidebar-titlebar-refresh B1).
+    await showProjectRow(page, emptyFold);
     await expect(emptyFold).toHaveAttribute("aria-expanded", "false");
     await emptyFold.click();
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });

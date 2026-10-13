@@ -11,8 +11,9 @@ Interface wording is written here as the shipped Korean copy where that is what 
 The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7, and its body follows PRD three-column-panel (issue 321): three docked columns, every control sitting once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar spans the Workspace's full width and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project.
-Its right end holds three icons and nothing else, in this order: `Open server`, File Views and Tools.
+The Workspace's path and icons sit in the center of the window's top row (see [The window's top row](#the-windows-top-row)); there is no toolbar row under it.
+The path is `project / checkout`, where the project opens its Project Overview, led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `~/hide`, since Home is no project.
+Its right end holds four icons and nothing else, in this order: Overview, `Open server`, File Views and Tools.
 `Open server` (a globe): one known listener opens directly as a page in File Views, and multiple listeners open a compact keyboard picker.
 Its accessible name carries how many listeners are known (`Open server, 2 running`), so a screen reader tells a globe that opens a page at once from one that opens the picker; while the count is unknown (a remote Workspace, no connection, a discovery that is still reading or failed) the name is `Open server`, and the tooltip always says `Open server`.
 A Workspace of the machine the window runs on counts as local when that machine's core runs on another machine: the core reads that machine's listeners through its link, and its server opens in that window.
@@ -22,13 +23,26 @@ Discovery never starts or stops a server, and an opened page retains the Browser
 The File Views and Tools icons are drawn pressed while their column shows, and each keeps one accessible name with its state as pressed or not.
 Hovering or focusing an icon shows its name and chord in a tooltip, `File Views ⌘⇧B` and `Tools ⌘E`, with a rebound chord shown as bound; `Open server` has no chord.
 While File Views is not on screen with views open, its icon carries a badge with their count, also given as its accessible description.
-A right-click or the menu key on the toolbar offers Show or Hide File Views, Show or Hide Tools, and Copy Workspace path.
+A right-click or the menu key on the path offers Show or Hide File Views, Show or Hide Tools, and Copy Workspace path.
 An empty Agent area offers New tab.
 The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
+### The window's top row
+
+Web owner: `web/src/TitleRow.tsx`, `web/src/windowChrome.ts`, `WorkspaceTitle` in `web/src/WorkspaceScreen.tsx`; desktop owner: `desktop/src/main/windowChrome.ts`, `desktop/src/main/host.ts`, `desktop/static/status.html` (PRD sidebar-titlebar-refresh D-15 to D-18).
+
+The macOS desktop app has no system title bar and no `hide` title: the window's first row, 32 high in the sidebar's fill over a hairline, is where macOS's title bar and the Workspace toolbar were, and the traffic lights sit in it, centered on its height.
+Over the rail and the sidebar it names the device in front, `This Mac` or the device's name, as the sidebar's top line did, with the `This Mac ⌄` menu while the rail is hidden; its right edge is the sidebar's edge, so the divider runs from the window's top.
+Over the center it carries the Workspace's path and icons while a Workspace is in front, and nothing on any other screen (Overview, Project Overview, Factory, a device that is not connected), whose own header stays under it as before.
+The name starts a step after the traffic lights' space; with the sidebar hidden the path follows that space, and full screen, where macOS removes the lights, gives the space back so the row starts at its own inset.
+Dragging any empty part of the row moves the window and a double-click does what macOS's "Double-click a window's title bar" setting says; the path, the icons and the device menu take a press instead of a drag.
+The desktop page's connecting and failure states keep a drag strip of the same height, so no screen draws under the traffic lights.
+Window-wide notices (the connection badge, the notice line, the agent close notice, draft recovery and Workspace notices) run the window's width under the row.
+Windows, Linux and a browser tab keep their own window frame and draw the same row with no traffic-light space.
+
 ### The three columns
 
-The Workspace body, under the toolbar, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
+The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
 No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
 File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
 Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the named Sessions, Explorer and History tabs, in that order with the shown one marked.
@@ -39,7 +53,7 @@ Its core-selected groups are the sidebar's own, Needs You, Working, Done, Idle a
 A row carries its mark, provider, title, own PR mark, descendant mark while closed and elapsed time, then its ask or line; there is no counts row.
 Selecting a row opens its Workspace, tab and pane, and its chevron opens its children, whose own chevrons open theirs (see Sessions: the task list).
 Sessions is a separate tool from Memory and does not start Memory's reader.
-No column has a title row, a close button or panel actions; the toolbar's icons and their chords are the only column controls.
+No column has a title row, a close button or panel actions; the top row's icons and their chords are the only column controls.
 The second row of File Views is level with the agents' first pane header: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays.
 With stacked View areas each area keeps its own tab strip.
 
@@ -318,7 +332,9 @@ A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
 The PR mark shows the pane's own PRs only, as Sessions draws them (below); a descendant's PRs stay on its own rows.
-The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>`, or `Forked from another pane` when that pane is no longer in the lineage, and a delegated child that was not forked has none (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from_pane_id`).
+The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
+A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
+A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
 The tree button, a tree icon and the direct child count with `자식 에이전트 N` as its tooltip, opens the tree popover (docs/status-model.md, The descendant mark and the tree popover).
 There is no status sentence, child-chip row or relationship sheet.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
@@ -346,7 +362,10 @@ A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the term
 The core band reads Sleeping, Waking or the resume failure, and typed input to the pane goes nowhere.
 Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
 The pane menu offers Sleep agent on an agent pane that is awake on this machine, or on the machine the window runs on when that machine's core runs on another machine, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported; a device's pane offers none.
-Fork agent follows it in the same group: it is offered on a local agent pane whose conversation Herdr reported (`fork.available`) and sends `fork_pane`, which starts that conversation again as a new session in a pane of its own; on an agent that has a fork command but has not reported its conversation yet it is drawn disabled with the core's reason, and on a shell or an agent with no fork command there is no item.
+Fork agent and Fork agent to the side follow it in the same group (PRD fork-operator-root): both are offered on a local agent pane whose conversation Herdr reported (`fork.available`) and send `fork_pane` with the placement, which starts that conversation again as a new session the operator owns; on an agent that has a fork command but has not reported its conversation yet both are drawn disabled with the core's reason, and on a shell, an agent with no fork command or a device's pane there is neither.
+Fork agent opens the fork in a new tab immediately right of the source's tab in its Agent area, or at the end when the source's tab has closed meanwhile; Fork agent to the side splits the source's tab and puts the fork to the right of the source.
+Either moves the keyboard to the fork as soon as Herdr has made its pane, as a new tab does, unless the operator chose another view after the press or the Agent area has no room to show the tab, where the fork then waits; what is typed before the fork's agent has started reaches that agent, never the shell that starts it, as long as it was typed within the 3 seconds before the start that every held key gets.
+A second press while a fork of the same pane is starting, either item, is refused with `pane.fork_already_running`, and a fork whose agent does not start closes the pane it made and shows the same failure notice for both.
 On such a window's own machine, bringing a tab forward wakes what sleeps there once that machine's Herdr has it in front.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
@@ -359,6 +378,7 @@ Web owners: `web/src/components/sleeping-session-row.tsx`, `web/src/sleeping-ses
 
 The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You and Done raised above it.
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
+What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
 A parent waiting on a working or asking descendant stays Working.
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.
@@ -504,9 +524,9 @@ Under a request whose prompt a hook gave Memory cards there is one quiet line, `
 Web owner: `web/src/MemoryTab.tsx`, `web/src/memoryList.ts`; core owner: `herdr-core/src/runtime/project_memory.rs`, `herdr-core/src/runtime/memory_promotion.rs`.
 Memory is the Tools column's fourth tab, after Sessions, Explorer and History, and shows the Project of the checkout in front (PRD project-memory-v2 D-17, B19-B32).
 The core opens one Project's Memory per daemon; the Tools column, whatever tool it holds, names its Project when it shows, when the front Project changes and when its window comes forward after another window named another Project, so the tab's dot is current, and the tab reads until the core answers for its own.
-Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI runs on with its logo; with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
+Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI asks now with its logo (the listed agent standing in while Runs on is past the usage limit or cannot answer); with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
-While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says existing cards are still used.
+While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says verified cards are still used; when every agent is past the usage limit the same dimmed state reads "Hide AI is paused: every agent is past your usage limit this week. Saved cards are still used." (PRD hide-ai-usage-limit D-06).
 A Project on an SSH device, one Hide connects to, shows one line that Memory is not kept for SSH devices' sessions and names the device; nothing else is drawn.
 A Project on a computer that connects to Hide on its own has Memory as this machine's Projects do (PRD core-host-node-move B14).
 `물어볼 것` appears, and the tab's name carries a dot, only while the Project has a card to suggest for the repository's documents or a promotion that ended without a pull request.
@@ -514,8 +534,14 @@ A suggestion shows its reasons (`사람 말이 세션 3개에 · 14일 동안 �
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
 A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
-A card waiting to be checked against the repository again (its file changed, a path or script it names is gone, or it predates the check) shows only `확인 중` (`Checking`, `確認中`, `确认中`) in the row's status line: no banner, no button and no entry in `물어볼 것`, since the operator has nothing to do, and no mark while a promotion's own line is drawn there.
-The word is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
+A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
+When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.
+The core supplies the checking budget's next reset timestamp, and its explanation draws that date and time in the viewer's timezone and interface language, with no UTC wording.
+With Memory off, stored cards are retained but the list and its empty slot stay hidden behind the existing off disclosure, and the usable count is zero.
+An older consent shows a short re-consent explanation under the existing off disclosure and points to the switch above; it never enables or injects on its own.
+The core supplies the usable count, current card and reasons, and the shell only draws them; no banner, alert, toast or panel is added.
+The checking mark is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
 When the agent is gone and GitHub cannot say whether its pull request came (gh missing or logged out, or GitHub not answering), the line reads `PR 확인 못 함 · <reason>` with no spinner and nothing to press, since restoring GitHub settles it; it is not asked about in `물어볼 것`.
 A card on its way into the repository is never folded under `그 외 N`, and a card opened from a conversation clears a search that leaves it out.
 A card opens in place: `N분 전에 바뀜 · 이전 내용` when a text replaced another (the earlier text with `되돌리기`), its body, its cited files, its sources with their runtime, time and whether they are the operator's words, and `지우기`.
@@ -570,7 +596,7 @@ A value not yet read leaves the number and the bar out, and zero is drawn as zer
 The Agents tab's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
 Every way into a project's Overview starts on the Agents graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter; closing and reopening the shared Overview retains its lens within this window, while ⌘K issue and PR results select their own lens.
-Every way into the Home Overview from another screen, the Home row and the path back included, opens its Agents tab.
+Every way into the Home Overview from another screen, the path back included, opens its Agents tab.
 Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tab, mode, selected box, filter and opened folds; the view lives on the screen, not in stored settings.
 The PRs view opens only from its tab, a PR mark, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's controls: the status chips, search and device choice for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
@@ -587,6 +613,8 @@ Resolved holds work resolved in the last 24 hours, by the operator or automatica
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
 
 A row's first line is its mark, provider, title, descendant mark while its tree is closed, own PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
+A fork's row, here and in the sidebar, wears the fork mark right after its title, before the PR mark: the fork icon whose tooltip reads `Forked from <source>` or `Forked from another pane`, the same words the row's accessible name adds after the title (PRD fork-operator-root B8; `web/src/components/fork-mark.tsx`).
+A fork is a root row of its own, never a child under its source; ⌘K, the Agents graph, the Overview lenses and the phone draw no fork mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
@@ -815,7 +843,7 @@ Started, the agent works in that checkout and the screen goes to its pane; while
 
 ### Scopes
 
-Overview is one page-local surface, entered from the sidebar's Overview row, the Workspace toolbar icon or ⌘⇧O.
+Overview is one page-local surface, entered from the sidebar's Overview row, the top row's Overview icon or ⌘⇧O.
 Its title, scope labels, close control, sidebar navigation and attention tooltip follow the confirmed interface language; project names and shortcut keycaps stay unchanged.
 The project scope's path back and missing-project action both select All projects within the same surface.
 It opens as a centered modal over a mounted Workspace, as large as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side and at most `--size-overview-sheet-w` by `--size-overview-sheet-h`, preserving terminal geometry and output, and otherwise as a central page.
@@ -829,7 +857,7 @@ Navigation from inside Overview closes it as part of that action.
 Native browser displays use the existing dialog still rules without reloading.
 Project rows and ⌘K project results open their most recent usable checkout, not an Overview destination.
 Issue and PR results open the shared Overview in that project's scope with their panel or PR selected.
-The Home row opens its device's All projects page; the shared Overview row carries the selection.
+The shared Overview row opens its device's All projects page and carries the selection.
 The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then, under the header's rule, the tab row, which shows even while the project has no agent.
 The project's name has the title row first: New agent and `새 이슈` carry their word (and `C` on `새 이슈`) only while the whole name fits beside them, and otherwise keep their icon alone, at any window, sidebar, device-badge and label width and in any language, with the name truncated to an ellipsis only after that (issue 618; `web/src/OverviewTitleRow.tsx`, `web/e2e/overview-header.spec.ts`).
 An icon-only action opens a hint with its name, and `새 이슈`'s hint carries the `C` keycap; the hint also opens over a disabled New agent, and no hint opens while the word shows.
@@ -984,8 +1012,9 @@ Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `h
 The project-row entry and Overview child-row requirements in PRD sidebar-row-click-overview-row D-03 and B5-B7 and web-project-overview are superseded by overview-remove.
 Project rows now open checkouts; shared Overview owns the only Overview selection and destination.
 
-The sidebar sets its words on three sizes: a project name 13/600, a checkout name, an agent title and a count 12/400, and a second line and a time 11; a section header is 10/500 in sentence case (`Projects · Recent activity · 5`).
-A project row, the Home row and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
+The sidebar sets its words on three sizes: a project name 13, a checkout name, an agent title and a count 12/400, and a second line and a time 11; a section header is 10/500 in sentence case (`Projects · Recent activity · 5`), 26 high with its words on the baseline.
+A project name is 600 while one of its agents is working, that is wears a mark of `▲ ! ? ● ◐ ✓`, and 400 in the ordinary text color while its agents only rest or sleep or it has none; the core decides which (`agent_presence.working`) and the next snapshot moves it.
+A project row and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
 A checkout name mutes its prefix up to and including the first slash (`prd/`), so the part that tells checkouts apart reads first; a name with no slash, or one that starts or ends with it, has no prefix.
 The checkout whose Workspace is in front turns its name 500 and nothing else about the row.
 The sidebar keeps these sizes at every Appearance font size, because its rows are scanned, not read; the font size scales the rest of the interface.
@@ -1005,11 +1034,16 @@ Remote catalogs still derive home from Git-root facts and do not yet display the
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors; they draw once a window is attached, without any other screen open, and a restart draws the previous run's answer muted as stale until the first read replaces it; stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
 In the web shell every row reads on the left and ends the same way on the right: its time or its status badge, then a fold slot kept at rest, so nothing moves when a control shows and the times and badges of project, checkout and agent rows end on one column while their chevrons stand on another.
 A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
-Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it.
+Under the pointer or keyboard focus a project or folder row shows `+` and `⋯` over its badge slot, which keeps the width of the wider of the two, so the name never shortens and the badge returns when the pointer leaves.
+`+` (`Start agent in <project>`) opens the start panel aimed at the project's main checkout, or the folder itself; where that checkout cannot take an agent the panel picks its target by its own rule and the operator can change it there.
+`⋯` (`More actions for <project>`) opens the row's menu under itself; both are keyboard stops and answer Enter and Space, and the menu keeps them shown while it is open.
+Elsewhere nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it, as it does on project and folder rows too.
 Project, checkout and agent rows each have one (PRD sidebar-context-menus), and every other item runs at once; only `Remove project…`, `Delete worktree…` and `Close tab…` go through their existing confirmations.
 A project row's menu is `New worktree…`, `New tab in main` (a new tab in the checkout the home glyph marks, brought to the front), then the reveal and `Copy path`, then `Pin` or `Unpin` and `Remove project…`, on every project row, registered or not.
-A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and the reveal, then `Delete worktree…` in the destructive color on a linked worktree.
+A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path`, `Open in VS Code` and the reveal, then `Delete worktree…` in the destructive color on a linked worktree.
 An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title`, `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none) and `Copy pane ID`, then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow, including its question about the agents spawned from it; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
+A Git project's menu has no `Open in VS Code`; a plain folder's has it before the reveal, since the folder is the checkout.
+`Open in VS Code` is the desktop app's only and only while VS Code is installed on this machine, which the host checks once per launch: it opens the folder in a VS Code window, on another device's row it is disabled with the reveal's reason, and a failed open (VS Code or the folder gone) shows nothing and leaves its reason, never the path, in the desktop log (D-13, D-14).
 `New tab in main` and `New tab here` show the registry's new-tab chord; the reveal follows [the reveal rule](#explorer-file-management): the desktop app's only, labelled by its OS, showing the folder selected in the OS file manager without opening anything.
 On a device's rows the reveal and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
 `Delete worktree…` is never disabled on a linked worktree, on any device and before its Git state has been read; its confirmation says what would be lost and holds the choices, and reads `Reading the worktree's Git state…` until the row arrives.
@@ -1052,24 +1086,21 @@ A checkout whose root came from another checkout prefixes its purpose line with 
 Folding a project by its row or chevron, or using a checkout chevron changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
 Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project says so in a line with no button of its own.
 In the desktop app the Projects section title (`Projects · Recent activity · N`) ends in a + that opens Add a project, drawn whether or not a project is registered, with the hint `Add project ⇧⌘N` (`Alt+Shift+N` off macOS) on pointer or keyboard focus; it is the sidebar's one Add project (PRD first-run-onboarding D-27, B51, B52).
-The Home row stands for the device's Home (see Home) at every device count (PRD home-device-rail D-13): the house glyph, `Home`, and `N projects`, the device's registered projects with its Home not among them (no count before the first snapshot), in the project row's height, font and focus ring.
-It opens the shared Overview at All projects by click, Enter or Space; the shared Overview row owns selection while that page is in front.
-Home is drawn before the device has a Home folder, since the count comes from the registrations.
-The agents running in the Home are its child rows, drawn and opened as a checkout's tree is, and a `+` shown under the pointer, `New tab in Home`, opens a new tab in the Home and brings its pane forward once it is listed; a refusal, such as a `~/hide` that is not Hide's, shows the core's reason in a caption under that Home row until the next start or a click on the row.
-Every device's sidebar starts with its device title and the shared Overview row, followed by one project/checkout/root list with no mode strip.
+The sidebar has no Home row (PRD sidebar-titlebar-refresh D-06, D-07): a Home agent is found and opened from Needs You and Done, the Sessions tool and ⌘K, the ⌘N start panel can target the Home, and ⌥n numbers the visible rows without it.
+Every device's sidebar starts with the Search row and the shared Overview row, under the device title in the window's top row, followed by one project/checkout/root list with no mode strip.
 Overview shows its glyph, label, Needs You count and current shortcut; zero, an absent snapshot or a disconnected device hides the count.
-The toolbar icon has an accessible Overview name and count description, a Needs You dot above zero and a tooltip with its current shortcut.
-Toolbar order is Overview, Open server, File Views and Tools; the existing File Views badge stays separated from the Overview dot by Open server.
+The top row's Overview icon has an accessible Overview name and count description, a Needs You dot above zero and a tooltip with its current shortcut.
+The top row's icon order is Overview, Open server, File Views and Tools; the existing File Views badge stays separated from the Overview dot by Open server.
 ⌘⇧P shows and focuses the sidebar, closing Overview first; ⌘⇧A opens the Overview Agents graph.
 Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
-A device that is not connected shows the top line and its reconnect view with no tab strip.
-The list shows the device's Needs You and Done, Home and projects with their operator-owned roots.
+A device that is not connected shows the top row and its reconnect view with no tab strip.
+The list shows the device's Needs You and Done and projects with their operator-owned roots.
 Choosing a tile keeps each device's list apart, and ⌥n numbers its visible root rows in physical order.
-Search, the top line's one button, opens the ⌘K palette on this machine or a selected SSH device alike; Add project sits on the Projects title instead (see Adding a project), and there is no Search field row and no bottom new-workspace button.
+The Search row at the sidebar's top, a field-shaped button reading `Search` with the current ⌘K chord (a rebound chord shows as bound), opens the ⌘K palette by a click or Enter on this machine or a selected SSH device alike; Add project sits on the Projects title instead (see Adding a project), and there is no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
 The web Projects list is the scope picker, starting at its first project.
-The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; Home and project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
+The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
 Expanded projects contain checkout rows only, with no Overview child.
 A Workspace selects its focused checkout and visible agent rows.
 A focused delegated child has no row of its own, so the nearest ancestor row the list draws carries its selection.
@@ -1087,14 +1118,14 @@ Workspace disclosure persists across launches and hides only the nested agent ro
 The web shell draws the raised groups at the top of the Projects list as `Needs You · N` and then `Done · N`, each left out while empty: the agents of that group whose pane a listed project's checkout or the Home owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
 A raised group draws at most its five (Needs You) or three (Done) most recent agents; the rest wait behind a `More N` fold row under them, styled as the inactive folds, which opens them below itself, and N in the group's heading stays the whole count.
 The fold is the page's own and starts closed on a fresh load, so the list returns to its short form; an agent folded there keeps its ⌥n number on its checkout row.
-A device's Projects list is its `Needs You · N` group, its `Done · N` group, then the Home row, then Pinned and the projects, and no row there names the device, since the whole list is that device's (with the rail rework of quick device-rail-badges).
+A device's Projects list is its `Needs You · N` group, its `Done · N` group, then Pinned and the projects, then `No agents N` and `Inactive projects N`, and no row there names the device, since the whole list is that device's (with the rail rework of quick device-rail-badges).
 An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
 No agents folds worktrees with no unresolved agent, excluding primary, front, dirty, unpushed and already inactive checkouts; a worktree whose unresolved agents are all delegated children is in no fold and has no line (`session_folds.child_only`, same exclusions), because No agents would be false for it; Cleanup gathers agent worktrees and missing folders at the bottom without assuming they have no live pane.
 
 ### Purpose, pinning, and PR chrome
 
 A checkout's one-line purpose is set from the checkout row's or Overview header's `Set purpose…` context item, with a character count and a warning near the limit; saving an empty purpose clears it, and display falls back through branch description, representative agent title, and pull-request title in that order.
-Any project row can be pinned from its right-click menu: a row Herdr shows without a registration is registered with its device and root by the same Pin, so pinning never needs a separate add; pinned projects are drawn once under a `Pinned N` section between the raised groups and the activity-ordered project list, in the tree's own order (device first, then latest activity), and only while at least one project is pinned.
+Any project row can be pinned from its right-click menu: a row Herdr shows without a registration is registered with its device and root by the same Pin, so pinning never needs a separate add; pinned projects are drawn once under a `Pinned · N` section, its header led by a pin glyph and its rows carrying none, between the raised groups and the activity-ordered project list, in the tree's own order (device first, then latest activity), and only while at least one project is pinned.
 The pin lives on the project's registration and survives a relaunch; removing the registration takes the pin with it.
 A pinned project is exempt from its device's inactive fold whatever its activity; its own stale worktrees still fold behind their own `Inactive N` row.
 PR state colour is a semantic-colour exception to otherwise neutral chrome, one colour per state on every surface, including during hover and selection (docs/status-model.md, Pull request visual states; operator approval, 2026-10-10): failed red, pending amber, mergeable green, draft grey, merged purple with the merge icon, and closed dim.
@@ -1118,13 +1149,19 @@ Activity orders projects inside one device group and never across two.
 A project's secondary checkouts that are merged (as the Overview says) or whose pull request closed, and those inactive for seven days, move behind a trailing `Inactive N` disclosure, while its primary checkout and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
 A project of a node that dials the core lists every worktree that node reports, one with no pane open included, and folds them by these same rules; a device the core dials shows only the checkouts its session opens.
 When every checkout in a project is inactive, the project itself moves behind the device's `Inactive projects N` disclosure.
-Both folds default closed and remember their expansion independently.
+A project with no agent row in any checkout, and that is not pinned, not the front project and not inactive, moves behind `No agents N` after the active projects, where opening it draws the same project rows; an agent started there brings the project back to the active list on the next snapshot (D-01).
+Its fold is the core's per device (`no_agents/<device>`), so it survives a reconnect and a relaunch.
+All three folds default closed and remember their expansion independently.
+A project or folder whose agents all sleep is drawn folded, with one `☾ 4d` cell in its badge slot, the age of its newest sleep (D-03); opening it shows its checkouts and sleeping rows as before, and it stays open until one of its agents wakes or starts, after which it folds again the next time all of them sleep (`asleep/<project>`, pruned by the core on waking, D-19).
+While a folded project hides the checkout in front, its row carries the selection fill.
+
+The `Pinned · N` and `Projects · Recent activity · N` headers stick to the list's top while it scrolls, the next header pushing the one before it off, with a hairline under the stuck one; a row brought into view by the keyboard lands fully under a stuck header, never behind it (D-05).
 Search continues to index the complete project tree; choosing a folded result brings the focused row back into the active list without opening either fold.
 
 ### Tools and Overview
 
 Tools contains Sessions, Explorer, History and Memory; its project task list is described in [Sessions: the task list](#sessions-the-task-list).
-The toolbar's Overview button opens the existing shared modal, with Agents, Issues, PRs and Conversation history for a project.
+The top row's Overview button opens the existing shared modal, with Agents, Issues, PRs and Conversation history for a project.
 The All projects page has Agents, Tasks and Projects.
 Saved Requests entries open Agents, and the previous conversation-history identity stays separate from the new Sessions tool and Memory.
 
@@ -1204,14 +1241,14 @@ A row Herdr shows without a registration offers `Remove project…` too: its con
 
 ## Home
 
-Core owner: `herdr-core/src/runtime/home.rs`, `hide-host/src/home.rs` (see ARCHITECTURE.md, Home). Web owner: the Home row in `web/src/sidebar.tsx`, `web/src/devices.ts`.
+Core owner: `herdr-core/src/runtime/home.rs`, `hide-host/src/home.rs` (see ARCHITECTURE.md, Home). Web owner: `web/src/devices.ts`; the sidebar draws no Home row (see Sidebar hierarchy).
 
 Each device has one Home, `~/hide` in that account's home directory, for work that belongs to no project or to several.
 Nothing is made on a device until its Home is first used: the first agent or tab started there makes `~/hide` with one link per project registered on that device and Hide's `AGENTS.md` with a `CLAUDE.md` link to it, and a device whose Home was never used has no `~/hide`.
 Once a device has a Home, registering a project there adds its link and removing the registration removes only that link, never the project's folder; two projects with one folder name get distinct link names.
 A link whose project folder moved away is dropped at the next sync with nothing on screen, only a diagnostic line.
-A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel or under the Home row for its `+`, with what to do.
-A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its row stays under the Home row.
+A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel, with what to do.
+A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its own row is found in Needs You and Done, Sessions and ⌘K.
 
 ## First run
 
@@ -1229,8 +1266,8 @@ The notifications step's description names the system that shows the notificatio
 Turning them on stores the switch and sends one test notification, `Notifications work`, which is what makes macOS ask; while macOS's dialog waits the step says `Waiting for your answer…` and holds `Turn on notifications`, an allowed answer shows `Notifications are on` with `Send a test`, and a refusal shows `macOS is blocking Hide's notifications` with `Open System Settings`, which opens Hide's page of the system's notification settings; once answered the footer offers Continue, drawn as a secondary button while macOS blocks, and a blocked state is not counted as on (B14, B15).
 The step reads macOS's permission every two seconds while it is open, one read at a time, so a change in System Settings shows within seconds; an already allowed Mac shows `Notifications are on` at once, with Continue, which turns the switch on with the step; nothing is said before the first read; a permission Hide cannot read shows `Hide can't read the notification setting` with `Send a test`, and the reason goes to the host log (B16-B18).
 On Windows and Linux the step has no permission to show: turning on stores the switch and sends the test once (B19).
-A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > General shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
-Settings > General's Notifications group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front; the app icon marks agents that need you.` (B30).
+A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > Notifications shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
+Settings > Notifications' desktop group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front; the app icon marks agents that need you.` (B30).
 `Not now` goes on with the switch off, even after `Turn on notifications` was pressed while macOS still asks, in the same event that leaves the step, and `Also on your phone →` opens Settings > Mobile over the wizard, which returns to the step when it closes (B21).
 The project step is Add a project under `Add your first project`, with its Host select, Browse folder, Clone from URL and Create new project, its refusals and its clone progress, and `Skip for now` (B22, B25); its Host list has no Add device, which would take the wizard's place, and only a project on the chosen host counts as the one added.
 The first project added ends the wizard and opens the start panel once, on that project, with the first agent that is on and signed in (in the order Claude Code, Codex, Grok, Pi), else the first agent that is on, and the keyboard in its text box; with no agent on it opens no panel and the wizard closes to the empty Home, whose Start an agent is the way on; a later project opens nothing (D-15, B23, B24).
@@ -1258,7 +1295,7 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 
 ### The Factory place
 
-The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 결정 필요, with no badge at zero.
+The sidebar has a Factory row of its own under the Overview row, and its badge is the number of items in 결정 필요, with no badge at zero.
 Under it, once a Factory is open, each open Factory has a row with its project name, a pause mark while it is paused, and its own 결정 필요 number in the warning colour when above zero; the row opens the Factory screen filtered to that Factory, and the Factory row opens it for every Factory.
 The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
 With no open Factory the screen offers only '+ Factory 만들기'.
@@ -1432,7 +1469,7 @@ Quick device-rail-slack then narrowed the rail to `--size-rail` (48), ran it the
 
 This Mac is this document's name for the machine the core runs on; the screen names it as its system does, This Mac on macOS, This PC on Windows and This computer on Linux, in the interface language (`common.thisMac`, `common.thisPc`, `common.thisComputer`: `이 Mac`, `내 PC`, `이 컴퓨터` in Korean).
 The core sends no word for it: its device row has no `label`, only its system in `host.platform`, and every surface that names it, the sidebar title, the rail, Home, Settings, the graph, the start panel, ⌘K and the phone's start sheet, words it from that system (`systemMachineKey` and `machineName` in `web/src/screenMachine.ts`), so one screen never shows it in two languages.
-The rail is always shown, even when This Mac is the only device: the sidebar's full-height left column, with the device title and single sidebar list to its right, holding This Mac, each registered device in the core's order, and a `+` (`기기 추가`, a dashed tile) directly under the last device tile.
+The rail is always shown, even when This Mac is the only device: the sidebar's full-height left column, with the single sidebar list to its right and the device title above it in the window's top row, holding This Mac, each registered device in the core's order, and a `+` (`기기 추가`, a dashed tile) directly under the last device tile.
 The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
 Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.
 The selected tile is ringed (a 2px ring 2px off the tile), and one tile is selected at a time.
@@ -1447,11 +1484,11 @@ Every tile is a button reached with Tab and chosen with Enter or Space, named fo
 Removing the device in front moves the front to This Mac; that device's agents and its `~/hide` stay on it, and the rail stays.
 
 A right-click on the rail offers `레일 숨기기`.
-While the rail is hidden the sidebar's top-line device name becomes a `This Mac ⌄` menu that lists the devices (a check on the one in front), `기기 추가…` and `레일 표시`.
+While the rail is hidden the top row's device name becomes a `This Mac ⌄` menu that lists the devices (a check on the one in front), `기기 추가…` and `레일 표시`.
 The View menu of the desktop app carries `Toggle device rail` (`toggle_device_rail`, no default chord, bindable in Settings › Shortcuts like the sidebar switch); a browser tab uses the `This Mac ⌄` menu.
 The hidden state is the core's `ui_state.device_rail_visible`, kept beside `left_sidebar_visible`, so it survives a restart.
 
-A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the Workspace toolbar with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
+A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the top row's Workspace path with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
 
 A machine whose core runs on another machine (ARCHITECTURE.md, A core on another machine) is a device on that core's rail like any other, named by its host name.
 Its `다시 연결` is answered that the machine reconnects by itself, and removing it ends its connection until it attaches again; neither adds a state or a line of its own.
@@ -1489,29 +1526,47 @@ A start with no answer in 90 seconds, the core's own limit for one, says so insi
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
 Settings > Agents > Starting work has no default agent of its own.
 
-## Weekly usage
+## Usage
 
-Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`.
-The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shell only draws them.
+Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The sidebar footer reads one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
-A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
-A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
-The chips' accessible name lists every provider with its reading.
-Clicking the chips opens the Weekly Usage popover above them, titled `Weekly Usage` with `7 days`: one row per provider with its mark, name, the time left before the reset (`in 5d 4h`, `in 3h 12m`, `in 7m`), the percent and a bar, and each scoped bucket such as Fable indented under its provider with `└`.
-A loading row reads `…` and an unavailable row reads `Unavailable`, each with the core's message in place of the bar; a stale or fallback row keeps its bar and shows its message under it.
-No usage state becomes a banner, toast or alert (design principle 13).
-The countdown advances once a minute while the popover is open, and nothing ticks while it is closed.
+The footer draws up to three pinned account windows, followed by Help and Settings.
+Defaults pin each supported agent's weekly window.
+Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
+A numberless not-started or expired chip always names its window.
+Each chip has its own accessible name with agent, window and value.
+Success is below 70%, warning starts at 70%, danger at 90%.
+Loading or unavailable agents collapse their pins into one dimmed mark; recent stale and fallback readings keep their values until the reset.
+At narrow widths the footer wraps rather than clipping its controls.
 
-The web page tells the core when a read is worth making, through two hints on `ui_state_update`: `usage_window_visible` follows the page's visibility and is sent on every live connection and on each change, and `usage_popover_open` is sent when the popover opens and again when it closes or leaves the screen.
-The core keeps one value of each, so with several pages open the last page to report decides.
+Any chip opens the 320-wide Usage popover above the footer.
+Each visible agent has one card, with 5 hours and 7 days rows, countdown, percent and bar, and model-specific limits indented below their weekly row.
+Not-started windows say `Not started`, never 0%.
+Expired, not-offered and individually unreadable windows have no popover row; a whole malformed response makes the agent unavailable.
+Loading cards show `…`; unavailable cards show `Unavailable`, with a sign-in command only for a signed-out account, or the missing CLI for an uninstalled agent.
+Network and timeout detail stays in diagnostics.
+`Choose chips` opens Settings > Usage.
+No usage state becomes a banner, toast or alert.
+The countdown advances once a minute only while the popover is open.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
+The core keeps one value of each hint, so with several pages open the last page to report decides.
+
+## Help menu
+
+Web owner: `web/src/components/help-menu.tsx`, `diagnosticsInputOf` in `web/src/settings.ts` (PRD sidebar-titlebar-refresh D-11, D-12).
+
+The footer's `?` opens the Help menu above it: `Keyboard shortcuts` with its chord, which opens the shortcut sheet; `Copy diagnostics`, which puts About's diagnostics text on the clipboard and says `Copied` in place, or the failure when the clipboard refuses, keeping the menu open either way; `Report an issue`, which opens the repository's new-issue page in the default browser; then, under a separator, the `hide <version>` line in mono, which takes no press.
 
 ## Search keyboard navigation
 
 Web owner: `web/src/SearchPalette.tsx` (⌘K), `web/src/search.ts`, `web/src/relations.ts`, `web/src/searchDetail.ts`, `web/src/searchGithub.ts`, `web/src/Palette.tsx` (⌘P and the diff palette), `web/src/components/sidebar-header.tsx`; core owner for the GitHub search: `herdr-core/src/runtime/issues.rs`.
 
 ⌘K goes to things; it runs no command except `에이전트 시작…` and `브라우저에서 URL 열기`.
-On the web, the Search icon at the end of the sidebar's tab strip or its top line, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
+On the web, the sidebar's Search row, which shows `Search` and the bound chord, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
 Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
 ### What a query finds
@@ -1612,19 +1667,51 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
-Settings has six tabs, in this order: General, Agents, Hide AI, Devices, Mobile and Shortcuts.
-Each tab's description line says what it holds, and the tab names are the same in every language.
-While a remote device is selected, a small device chip beside the tab description says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
+Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
+The list reads, top to bottom: the group name `App` with General, Notifications, Usage, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+Its top inset uses `spacing-sm` and group labels use `spacing-xs` above and below, so the additional Usage page fits at 720×480 with the default Interface text without shrinking row targets.
+Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
+The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
+A page has its title and no description line (B4).
+While a remote device is selected, a small device chip beside the page title says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+Esc and the close button close Settings and leave the screen under it as it was (B14).
+Settings opens on General unless the way in names a page: Explorer's and a device row's Add device open Devices with its Add dialog in front, Memory's and Factory's Hide AI links open Hide AI, and the first-run wizard's phone link opens Mobile (B11).
 
 ### General
 
-General holds three groups, Appearance, Connections and About, and in the desktop app a Notifications group between Appearance and Connections.
-Notifications has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
-Appearance is one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes.
-Connections has the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects.
+General is Appearance alone: one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5).
+
+### Notifications
+
+Notifications holds every notification Hide sends, in two groups (PRD settings-left-nav B6).
+The first, named for this machine and only in the desktop app, has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
+The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile below describes.
+
+### Usage
+
+Usage follows Notifications in the App group, with a gauge mark and the localized Usage title.
+The page walks the shared adapter declaration so all seven agents appear even before a read.
+An agent with limit support has one card: its mark and name with Hide, then a row for each declared account window with its current value and a pin switch.
+A window the account reports as not offered has no row or switch.
+When a fresh reading explicitly marks a window not offered or unreadable, the core removes its saved pin so an invisible row cannot hold a chip slot; loading, failed and retained readings preserve choices.
+The initial choices are the weekly window for Claude and Codex; the core stores the choices for every connected window and retains them across restart.
+At three pins, an unselected switch is disabled with “The sidebar shows at most three chips. Switch one off to pick this one.” beneath that row; removing a pin enables it again.
+Every window switch stays in one right-aligned column beside the first line of its label; a long value wraps below the label, including unavailable and refused-fourth-pin rows.
+Hide folds the card to its header, Hidden and Show, preserves the pins, and removes the agent from chips and the popover.
+The five agents without supported limits appear in No limit reading with a reason from the adapter declaration, without Hide or switches.
+Grok's weekly reader is not built, OpenCode Go would need an API key Hide does not hold, Pi and omp count toward their signed-in account, and Cursor would require its stored sign-in.
+The page reuses the settings group, row and switch parts; loading is an ellipsis and a missing reading is Unavailable, never an invented zero.
+
+### GitHub
+
+GitHub is the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects (PRD settings-left-nav B8).
 The core reads GitHub with its own machine's `gh`, so in a window on another machine a signed-out `gh` is named on the core's machine ("Not signed in to gh on Mac mini") with the command that fixes it there (Run on Mac mini, `gh auth login`, with Copy) in place of `gh`'s own reason; on the core's own machine the row is as it was (PRD core-host-node-move B15, B1).
 Hide has no GitHub sign-in of its own, so there is no connect or reconnect action beyond that read.
-About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics.
+
+### About
+
+About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics (PRD settings-left-nav B9).
 The Protocol row shows one number while the protocol Hide expects and the one Herdr answered are the same, and `<received> (expects <expected>)` when they differ.
 Version and Protocol come from the answer to `session.snapshot` the core last accepted, so a Herdr that is connected never shows a missing version or protocol.
 
@@ -1750,8 +1837,12 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
   `+ Add agent` opens a menu of selectable agents not yet used; installed agents Hide AI cannot use yet are listed under "Hide AI can't use these yet", dimmed, each with its reason (not signed in, can't guarantee it only reads, not supported yet), and an agent that is not installed is not listed.
   With nothing to offer the button is disabled.
   Choosing a listed agent as Runs on takes it off the list.
-- While another agent answers, one line under Runs on reads "Using Codex · Claude Code is out of usage until 3:10 PM" and disappears when Runs on answers again.
-  With the list empty and Runs on unable to answer, the Agent row says why and that Hide AI is paused; nothing else on screen changes, and a failure the operator cannot act on stays in the diagnostic log.
+- **Usage limit** (PRD hide-ai-usage-limit D-01 to D-09) is one select of 80%, 90%, 95% or No limit under the fallback list, 90% by default and for an install that never chose; a stored percent that is none of them is still shown.
+  One value covers every agent: the row says "Up to 90% of each agent's week" and a note says that past it Hide AI moves to the next agent in the list while work the operator starts (worktree names, issue review) still runs.
+  The select shows the core's value, so a choice stays as it was until the core accepts it.
+  The Runs on and fallback rows add the week to the state when the weekly usage read gave a figure ("Signed in · 86% this week"), and an agent at or past the limit reads "Past your limit · 93% this week · resets Mon 9:00"; an agent with no figure shows none and is never held back, and the Add agent menu shows the state alone.
+- While another agent answers, one line under Runs on reads "Using Codex · Claude Code is out of usage until 3:10 PM" (or "is past your 90% limit until Mon 9:00") and disappears when Runs on answers again.
+  With the list empty and Runs on unable to answer, the Agent row says why and that Hide AI is paused; with every listed agent past the limit it reads "Hide AI is paused · every agent is past your 90% limit this week", agent labels show each session's own text and Memory analysis waits, and both resume on their own when the limit is raised or the week turns; nothing else on screen changes, and a failure the operator cannot act on stays in the diagnostic log.
 - With no agent signed in, one line says "Sign in to <first agent that is on> to use Hide AI" (or to turn an agent on in Agents when none is); it appears only after every agent has been probed, and Hide's other features keep working without AI.
 - Hide AI runs the core machine's agents, so in a window on another machine every sign-in state and line above names that machine ("Not signed in on Mac mini", "Claude Code is signed out on Mac mini", "Sign in to Codex on Mac mini to use Hide AI"); the agents have no one sign-in command, so the fix is the machine in words, as the move's Hide AI check says it; on the core's own machine nothing names a machine (PRD core-host-node-move B15, B1).
 - **Features** holds Agent summaries (the `agent_summary` switch of `ai_settings`: off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for) and Worktree names (the same `issue_settings` value the Issues tab held).
@@ -1760,18 +1851,18 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
 
 ### Settings > Mobile
 
-Settings has a Mobile tab after Devices.
+Mobile is a page of Settings' This Mac group, after Hide AI.
 Its switch, 폰에서 hide 열기, is off at first, and its one-line description says it works over Tailscale and only inside the tailnet (PRD settings-cleanup B59).
 While the switch is off hide runs no Tailscale command.
 Turned on, the three Mac checks (Tailscale installed, logged in, MagicDNS and HTTPS on for the tailnet) fold into one line, `Tailscale is ready`, once they all pass (B57); a failing step shows only itself with a warning and its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link) and nothing for the steps that passed or still wait.
 The phone side, Tailscale on the phone with the same account, is guidance hide cannot check and is part of the `폰 연결하기` row's description.
-The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
-Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the tab makes no code and voids none (B58).
+The page rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
+Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the page makes no code and voids none (B58).
 Pressing it shows the QR, 폰 카메라로 찍으세요, the ts.net address and the code's m:ss countdown, and the row's button becomes `QR 숨기기`, which takes the code out again; a pairing phone spends the code and the QR goes, so the next phone needs `QR 보기` again.
 An HTTPS entry hide did not make shows its target in one line and no pairing row; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
 A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
-푸시 알림 is one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
+The push to the phone is on Settings > Notifications, not on this page (PRD settings-left-nav B7): one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
 
 ### The phone app
 

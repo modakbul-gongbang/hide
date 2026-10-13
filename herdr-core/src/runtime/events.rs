@@ -356,6 +356,17 @@ pub(super) struct PaneTargetPayload {
     pub(super) pane_id: String,
 }
 
+/// Fork agent from the pane menu: where the fork goes, chosen at the press,
+/// and the shell's key request, which holds what is typed until the fork's
+/// agent has started.
+#[derive(Debug, Deserialize)]
+pub(super) struct ForkPanePayload {
+    pub(super) pane_id: String,
+    pub(super) placement: crate::fork::ForkPlacement,
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoteControlPayload {
     pub(super) target_id: String,
@@ -1113,6 +1124,10 @@ pub(super) struct AiSettingsPayload {
     /// An agent to take out of that list.
     #[serde(default)]
     pub(super) fallback_remove: Option<String>,
+    /// The Usage limit (PRD hide-ai-usage-limit D-01): a percent from 1 to
+    /// 100, or `"none"`. A value that is neither is refused with the event.
+    #[serde(default)]
+    pub(super) usage_limit: Option<hide_ai::UsageLimit>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its
@@ -1181,6 +1196,18 @@ pub(super) struct DesktopNotificationsSetPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct ScreenIntroSeenPayload {
     pub(super) screen: crate::model::ScreenIntro,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UsagePinSetPayload {
+    pub(super) agent: String,
+    pub(super) window: hide_agent_adapter::usage::WindowKind,
+    pub(super) enabled: bool,
+}
+#[derive(Debug, Deserialize)]
+pub(super) struct UsageHiddenSetPayload {
+    pub(super) agent: String,
+    pub(super) hidden: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1295,7 +1322,7 @@ pub(super) enum Event {
     RetryAgentClose(CheckCloseStatusPayload),
     DismissAgentClose(CheckCloseStatusPayload),
     ReopenClosed,
-    ForkPane(PaneTargetPayload),
+    ForkPane(ForkPanePayload),
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
@@ -1359,6 +1386,8 @@ pub(super) enum Event {
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
+    UsagePinSet(UsagePinSetPayload),
+    UsageHiddenSet(UsageHiddenSetPayload),
     AgentOnboardingApply(AgentOnboardingApplyPayload),
     FirstRunAdvance(FirstRunAdvancePayload),
     DesktopNotificationsSet(DesktopNotificationsSetPayload),
@@ -1514,7 +1543,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
         "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
         "reopen_closed" => Ok(Event::ReopenClosed),
-        "fork_pane" => decode!(PaneTargetPayload, ForkPane),
+        "fork_pane" => decode!(ForkPanePayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
@@ -1583,6 +1612,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "usage_pin_set" => decode!(UsagePinSetPayload, UsagePinSet),
+        "usage_hidden_set" => decode!(UsageHiddenSetPayload, UsageHiddenSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
         "first_run_advance" => decode!(FirstRunAdvancePayload, FirstRunAdvance),
@@ -1655,6 +1686,7 @@ impl Runtime {
             Event::CreateTab(payload) => payload.request_id.clone(),
             Event::CreatePane(payload) => payload.request_id.clone(),
             Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            Event::ForkPane(payload) => payload.request_id.clone(),
             _ => None,
         };
         let mut changed = self.apply_event(event);
@@ -1662,6 +1694,43 @@ impl Runtime {
             changed |= self.settle_creation_request(&request_id);
         }
         changed
+    }
+
+    /// A sleeping project's fold is its own: opening it holds it open until
+    /// an agent wakes, and the project's ordinary fold stays as the operator
+    /// set it (PRD sidebar-titlebar-refresh D-19). `None` when the project is
+    /// not asleep, so the caller folds it the ordinary way; otherwise whether
+    /// the fold moved. `expanded` absent flips it.
+    fn fold_asleep_project(&mut self, workspace_id: &str, expanded: Option<bool>) -> Option<bool> {
+        let asleep = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| workspace.agent_presence.asleep.clone())?;
+        let expanded = expanded.unwrap_or(!asleep.expanded);
+        if expanded == asleep.expanded {
+            return Some(false);
+        }
+        let key = crate::project_context::asleep_fold_key(workspace_id);
+        let keys = &mut self.snapshot.ui_state.session_open_folds;
+        keys.retain(|open| open != &key);
+        if expanded {
+            keys.push(key);
+            keys.sort();
+        }
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        Some(true)
     }
 
     /// Opens or folds one agent's children in the sidebar tree, or in
@@ -2114,7 +2183,11 @@ impl Runtime {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
                 }
-                if let Some(expanded) = payload.project_expanded {
+                if let Some(expanded) = payload.project_expanded
+                    && self
+                        .fold_asleep_project(&payload.workspace_id, Some(expanded))
+                        .is_none()
+                {
                     let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                     ids.retain(|id| id != &payload.workspace_id);
                     if !expanded {
@@ -2299,6 +2372,11 @@ impl Runtime {
                 true
             }
             Event::ProjectCheckoutsFold(payload) => {
+                if let Some(changed) =
+                    self.fold_asleep_project(&payload.workspace_id, payload.expanded)
+                {
+                    return changed;
+                }
                 let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
                 let was_expanded = !ids.contains(&payload.workspace_id);
                 let expanded = payload.expanded.unwrap_or(!was_expanded);
@@ -2561,11 +2639,14 @@ impl Runtime {
                 // project registrations, expanded folders and file tabs. Its
                 // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
-                let cleanup_key = format!("cleanup/{}", payload.device_id);
-                self.snapshot
-                    .ui_state
-                    .session_open_folds
-                    .retain(|key| !key.starts_with(&scope) && key != &cleanup_key);
+                let device_folds = [
+                    format!("cleanup/{}", payload.device_id),
+                    crate::project_context::no_agents_fold_key(&payload.device_id),
+                ];
+                self.snapshot.ui_state.session_open_folds.retain(|key| {
+                    let project = key.strip_prefix("asleep/").unwrap_or(key);
+                    !project.starts_with(&scope) && !device_folds.contains(key)
+                });
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state
@@ -2805,8 +2886,9 @@ impl Runtime {
                 };
                 // A fork blocks until the agent has started, which takes long
                 // enough for a second click to land. Refusing the second one by
-                // name is what keeps one activation from becoming two sessions.
-                if !self.forks_in_flight.insert(pane_id.clone()) {
+                // name is what keeps one activation from becoming two sessions,
+                // whichever placement either asked for.
+                if self.forks_in_flight.contains_key(&pane_id) {
                     self.set_error(
                         "pane.fork_already_running",
                         format!("Pane {pane_id} is already being forked"),
@@ -2814,6 +2896,19 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.fork_sequence += 1;
+                self.forks_in_flight.insert(
+                    pane_id.clone(),
+                    super::agents::PendingFork {
+                        press: self.fork_sequence,
+                        generation: self.live_generation,
+                        // A view the operator chooses after this press is
+                        // where they are now, and the fork does not take it.
+                        issued_serial: self.control_lane.issued_serial(),
+                        tab_id: None,
+                        focused: None,
+                    },
+                );
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.forks_in_flight.remove(&pane_id);
                     self.set_error(
@@ -2823,17 +2918,23 @@ impl Runtime {
                     );
                     return true;
                 };
-                let cwd = self
+                // A fork's tab is named as a new tab is, so the strip calls it
+                // by its agent rather than by the Herdr name it starts under.
+                let (cwd, tab_label) = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
                     .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .flat_map(|tab| tab.panes.iter())
-                    .find(|pane| pane.id == pane_id)
-                    .map(|pane| pane.cwd.clone());
-                self.fork_sequence += 1;
+                    .find_map(|checkout| {
+                        let pane = checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes.iter())
+                            .find(|pane| pane.id == pane_id)?;
+                        Some((pane.cwd.clone(), checkout.next_tab_label.clone()))
+                    })
+                    .unzip();
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -2850,8 +2951,20 @@ impl Runtime {
                         .and_then(|facts| facts.native_reference.clone()),
                     cwd,
                     name,
+                    tab_label,
+                    placement: payload.placement,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
+                // Keys typed between the press and the agent's start wait for
+                // the fork's agent rather than reaching the shell that starts
+                // it (B4); `ingest_fork_result` resolves or discards them.
+                if let Some(request_id) = payload.request_id.as_deref() {
+                    self.input_requests.open(
+                        request_id,
+                        super::terminal_input::InputOrigin::Fork(pane_id.clone()),
+                    );
+                    self.sync_input_requests();
+                }
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {
                     // A worker that never started is a fork that failed, and
@@ -3474,6 +3587,44 @@ impl Runtime {
                 self.set_desktop_notifications(payload.enabled)
             }
             Event::ScreenIntroSeen(payload) => self.mark_screen_intro_seen(payload.screen),
+            Event::UsagePinSet(payload) => {
+                match self.snapshot.ui_state.usage.pin(
+                    crate::usage::prefs::Pin {
+                        agent: payload.agent,
+                        window: payload.window,
+                    },
+                    payload.enabled,
+                    &self.snapshot.navigator.usage,
+                ) {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
+            Event::UsageHiddenSet(payload) => {
+                match self
+                    .snapshot
+                    .ui_state
+                    .usage
+                    .hide(payload.agent, payload.hidden)
+                {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
@@ -3688,6 +3839,7 @@ impl Runtime {
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
                     interface_language: current.interface_language,
+                    usage: current.usage,
                     // `agent_onboarding_*` events own the first-run choice.
                     agent_onboarding: current.agent_onboarding,
                     agent_onboarding_agents: current.agent_onboarding_agents,

@@ -1,7 +1,7 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, readsHere, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
+import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, railShown, readsHere, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Device, SnapshotRest, Workspace } from "./snapshot";
 
@@ -92,12 +92,6 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
     expect(tileHint("build-box", false, { needs_you: 3, done: 0 })).toBe("build-box · Not connected");
     expect(tileHintIn("mini", true, { needs_you: 12, done: 1 }, korean)).toBe("mini · 내 차례 12 · 완료 1");
     expect(tileHint("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
-  });
-
-  it("counts a device's Home row from its registrations, its Home excluded (B16, D-04)", () => {
-    expect(homeProjectCount(rest(), "local")).toBe(2);
-    expect(homeProjectCount(rest(), "mini")).toBe(1);
-    expect(homeProjectCount(rest(), "build-box")).toBe(0);
   });
 
   it("finds a device's Home once it exists, and none before", () => {

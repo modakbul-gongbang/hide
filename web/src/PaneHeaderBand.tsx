@@ -17,6 +17,7 @@ import { useUiStore } from "./ui";
 import { relationState } from "./lineage";
 import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
+import { useRelationProgress } from "./PaneRelations";
 
 const LABELS: Record<string, MessageKey> = {
   sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed",
@@ -30,21 +31,46 @@ const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warnin
 const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-mergeable text-status-foreground" };
 
 /**
- * Marks the pane Fork agent made (issue 916): a quiet icon after the title whose
- * name says which pane it was forked from, or that the source is no longer on
- * screen. Only the core's fork fact draws it, never a name's shape.
+ * Marks the pane Fork agent made (PRD fork-operator-root B8, B9): a quiet icon after
+ * the title whose name says where it was forked from. While the source still runs
+ * that conversation the mark is a button that opens it; once the source closed or
+ * moved on it names no pane and opens nothing. Only the core's fork fact draws it.
  */
-export function PaneForkMark({ pane }: { pane: PaneRow }) {
+export function PaneForkMark({ pane, actions }: { pane: PaneRow; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const source = pane.fork?.forked_from_pane_id;
+  const source = pane.fork?.forked_from;
   if (!source) return null;
-  const name = pane.lineage_path?.find((step) => step.pane_id === source)?.label;
-  const label = name ? t("panes.fork.forkedFrom", { name }) : t("panes.fork.forked");
+  if (source.pane_id && source.label) return <ForkSourceButton paneId={pane.id} source={{ paneId: source.pane_id, name: source.label }} actions={actions} />;
+  const label = t("panes.fork.forked");
   return (
     <Hint label={label}>
-      <span className="flex shrink-0 items-center text-subtle-foreground" role="img" aria-label={label} data-pane-fork={source}>
+      <span className="flex shrink-0 items-center text-subtle-foreground" role="img" aria-label={label} data-pane-fork="">
         <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />
       </span>
+    </Hint>
+  );
+}
+
+/** The mark of a fork whose source still runs its conversation: it opens the source. */
+function ForkSourceButton({ paneId, source, actions }: { paneId: string; source: { paneId: string; name: string }; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const progress = useRelationProgress(paneId, source.paneId);
+  const label = t("panes.fork.forkedFrom", { name: source.name });
+  const pending = progress?.phase === "pending";
+  const failed = progress?.phase === "failed";
+  return (
+    <Hint label={failed ? progress.message : label}>
+      <button
+        type="button"
+        className={cn("flex shrink-0 items-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", failed && "text-destructive")}
+        aria-label={label}
+        aria-busy={pending}
+        data-pane-fork={source.paneId}
+        disabled={pending || (failed && !progress.retryable)}
+        onClick={() => actions.followRelation(paneId, source.paneId, source.name)}
+      >
+        <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />
+      </button>
     </Hint>
   );
 }

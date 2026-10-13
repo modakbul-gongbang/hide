@@ -455,7 +455,7 @@ Playwright dismisses a dialog no listener handles, so that test listens and answ
 
 ## Running Workspace servers
 
-The Workspace toolbar’s globe, `Open server`, left of the File Views and Tools icons, reuses the existing cwd-attributed pane listener projection.
+The top row’s globe, `Open server`, left of the File Views and Tools icons, reuses the existing cwd-attributed pane listener projection.
 The projection retains each bind address as well as its port, mapping wildcard listeners to loopback of the same address family.
 The current device, checkout ID, path and endpoint are checked again when a choice is made; identical paths on a remote Project never authorize a local listener.
 One endpoint uses the existing explicit Workspace `browser_open` route directly, and multiple endpoints use the shared popover picker.

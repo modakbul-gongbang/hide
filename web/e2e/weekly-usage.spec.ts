@@ -6,12 +6,9 @@
 // opens and closes and when the page is hidden.
 
 import { expect, test, type Page } from "@playwright/test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { fixtureProgram, fixtureToolPath } from "./platform-fixture";
+import { usageShim } from "./usage-fixture";
 import { screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
@@ -36,54 +33,6 @@ function sentHints(page: Page): Hints[] {
   return hints;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** A reset the way the CLI prints it: `Oct 1 at 3pm (UTC)`, with the year only when it differs. */
-function printedReset(at: Date, now: Date): string {
-  const year = at.getUTCFullYear() === now.getUTCFullYear() ? "" : `, ${at.getUTCFullYear()}`;
-  const hour = at.getUTCHours();
-  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}${year} at ${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? "am" : "pm"} (UTC)`;
-}
-
-/**
- * A `claude` on its own PATH directory that waits for `release()` and then
- * prints a `/usage` result frame: 62% of the week with a 6% Fable bucket,
- * both resetting on the whole hour five days and five hours from now. The
- * usage child only receives the account's login variables (`hide-platform`'s
- * `LOGIN_CHILD_VARIABLES`), so the script carries its paths itself.
- */
-function usageShim() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-usage-"));
-  const bin = path.join(root, "bin");
-  fs.mkdirSync(bin);
-  const gate = path.join(root, "released");
-  const frame = path.join(root, "frame.json");
-  const now = new Date();
-  const hour = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
-  const reset = printedReset(new Date(hour + (5 * 24 + 5) * 3_600_000), now);
-  const result = [
-    "You are currently using your subscription to power your Claude Code usage",
-    "",
-    "Current session: 4% used",
-    `Current week (all models): 62% used · resets ${reset}`,
-    `Current week (Fable): 6% used · resets ${reset}`,
-  ].join("\n");
-  fs.writeFileSync(frame, JSON.stringify({ type: "result", subtype: "success", is_error: false, result }));
-  fixtureProgram(
-    bin,
-    "claude",
-    `const fs = require("fs");
-while (!fs.existsSync(${JSON.stringify(gate)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-process.stdout.write(fs.readFileSync(${JSON.stringify(frame)}));
-`,
-  );
-  return {
-    path: fixtureToolPath(bin),
-    release: () => fs.writeFileSync(gate, ""),
-    cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
-  };
-}
-
 // @platform: The usage child gets a restricted environment that differs per OS (USERPROFILE and SystemRoot on Windows), and a Node-based `claude` only starts with it.
 test("weekly usage: a loading, an available and an unavailable row, and the hints the page sends", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -96,35 +45,33 @@ test("weekly usage: a loading, an available and an unavailable row, and the hint
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
 
     // Claude's read is held open, so its row is still loading; Codex has no login here.
-    const trigger = page.locator("[data-usage-trigger]");
+    const trigger = page.locator('[data-usage-trigger][data-usage-chip="claude"]');
     const claudeChip = page.locator('[data-usage-chip="claude"]');
     const codexChip = page.locator('[data-usage-chip="codex"]');
     await expect(codexChip).toHaveAttribute("data-usage-state", "unavailable", { timeout: 20_000 });
     await expect(claudeChip).toHaveAttribute("data-usage-state", "loading");
     await expect(claudeChip).toHaveText("");
     await expect(codexChip).toHaveText("");
-    await expect(trigger).toHaveAccessibleName("Weekly usage, Claude Code loading, Codex unavailable");
+    await expect(trigger).toHaveAccessibleName("Claude Code, …");
     await expect.poll(() => hints.some((hint) => hint.usage_window_visible === true)).toBe(true);
 
     await trigger.click();
     const popover = page.locator("[data-usage-popover]");
-    await expect(popover.getByText("Weekly Usage", { exact: true })).toBeVisible();
-    await expect(popover.getByText("7 days", { exact: true })).toBeVisible();
+    await expect(popover.getByText("Usage", { exact: true })).toBeVisible();
     const claudeRow = popover.locator('[data-usage-row="claude"]:not([data-usage-bucket])');
     const codexRow = popover.locator('[data-usage-row="codex"]');
     await expect(claudeRow.locator("[data-usage-value]")).toHaveText("…");
-    await expect(claudeRow).toContainText("Checking usage…");
     await expect(codexRow.locator("[data-usage-value]")).toHaveText("Unavailable");
-    await expect(codexRow).toContainText("Sign in with codex to see usage");
+    await expect(codexRow).toContainText("Signed out · run codex to sign in");
     await expect.poll(() => hints.at(-1)).toEqual({ usage_popover_open: true });
     await screenshot(page, "usage-loading-unavailable");
 
     // Claude answers: the open popover fills in the row, its reset, and the Fable bucket under it.
     usage.release();
-    await expect(claudeRow.locator("[data-usage-value]")).toHaveText("62%", { timeout: 20_000 });
-    await expect(claudeRow).toHaveAttribute("data-usage-state", "available");
-    await expect(claudeRow.locator("[data-usage-reset]")).toHaveText(/^· in 5d [45]h$/);
-    const fable = popover.locator('[data-usage-row="claude"][data-usage-bucket="Fable"]');
+    const week = claudeRow.locator('[data-usage-window-row="weekly"]:not([data-usage-bucket])');
+    await expect(week.locator("[data-usage-value]")).toHaveText("62%", { timeout: 20_000 });
+    await expect(week.locator("[data-usage-reset]")).toHaveText(/^· in 5d [45]h$/);
+    const fable = claudeRow.locator('[data-usage-bucket="Fable"]');
     await expect(fable.locator("[data-usage-value]")).toHaveText("6%");
     await expect(fable.locator("[data-usage-reset]")).toHaveText(/^· in 5d [45]h$/);
     await screenshot(page, "usage-popover-available");
@@ -133,8 +80,22 @@ test("weekly usage: a loading, an available and an unavailable row, and the hint
     await expect(popover).toHaveCount(0);
     await expect.poll(() => hints.at(-1)).toEqual({ usage_popover_open: false });
     await expect(claudeChip).toHaveText("62%");
-    await expect(trigger).toHaveAccessibleName("Weekly usage, Claude Code 62%, Codex unavailable");
+    await expect(trigger).toHaveAccessibleName("Claude Code, 7 days, 62%");
     await screenshot(page, "usage-chips");
+
+    await trigger.click();
+    await popover.getByRole("button", { name: "Choose chips" }).click();
+    const toggle = page.getByRole("switch", { name: "Claude Code 5 hours" });
+    await toggle.click();
+    const second = await page.context().newPage();
+    await second.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(second.locator('[data-usage-chip="claude"]')).toHaveCount(2);
+    await expect(second.locator('[data-usage-chip="claude"][data-usage-window="five_hour"]')).toContainText("4%");
+    await page.getByRole("button", { name: "Hide Claude Code" }).click();
+    await expect(second.locator('[data-usage-chip="claude"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "Show Claude Code" }).click();
+    await expect(second.locator('[data-usage-chip="claude"]')).toHaveCount(2);
+    await second.close();
 
     // A hidden page tells the core it is no longer looking.
     await page.evaluate(() => {

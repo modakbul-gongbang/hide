@@ -181,6 +181,11 @@ pub struct SleepRecord {
     /// wakes, because a declaration with no session cannot be proven.
     #[serde(default)]
     pub parent_session: Option<String>,
+    /// The source a sleeping fork was forked from and the digest of the
+    /// session it hosted (`SidebarAgentSnapshot::declared_fork`), so the row
+    /// keeps its fork mark while Herdr lists no agent there.
+    #[serde(default)]
+    pub fork_source: Option<(String, Option<String>)>,
     pub workspace_label: String,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -223,6 +228,7 @@ impl SleepRecord {
             completed: agent.completed,
             parent_pane_id: agent.spawned_from_pane_id.clone(),
             parent_session: agent.declared_parent_session.clone(),
+            fork_source: agent.declared_fork.clone(),
             workspace_label: agent.workspace_label.clone(),
             cwd,
             since_unix_ms,
@@ -293,7 +299,17 @@ impl SleepRecord {
             declared_parent_session: self.parent_session.clone(),
             lineage_session: crate::wire::session_digest(&self.session_id),
             state_change_seq: self.state_change_seq,
-            tokens: BTreeMap::new(),
+            tokens: self
+                .fork_source
+                .as_ref()
+                .map(|(source, source_session)| {
+                    crate::wire::fork_tokens(
+                        scope.session_id(source),
+                        crate::wire::session_digest(&self.session_id).as_deref(),
+                        source_session.as_deref(),
+                    )
+                })
+                .unwrap_or_default(),
             label,
             changed_at_unix_ms,
             facts: None,
@@ -617,7 +633,8 @@ mod tests {
             descendant_line: None,
             id: pane_id.to_owned(),
             herdr_name: None,
-            started_as_fork: false,
+            declared_fork: None,
+            forked_from: None,
             pane_id: pane_id.to_owned(),
             workspace_label: "Fixture".to_owned(),
             identity_label: "Refactor the parser".to_owned(),

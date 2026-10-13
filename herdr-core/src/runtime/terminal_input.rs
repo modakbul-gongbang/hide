@@ -47,6 +47,9 @@ pub(super) enum InputOrigin {
     /// A task-slot creation, by task operation id; its keys go to the pane
     /// once the task's agent start has resolved.
     Task(u64),
+    /// A fork of the agent in this source pane; its keys go to the fork once
+    /// the fork's agent has started.
+    Fork(String),
     /// Refused before it reached Herdr; nothing answers it.
     Refused,
 }
@@ -67,6 +70,8 @@ struct InputRequest {
     /// pane that leaves the layouts after that is gone, and Herdr can give
     /// its id to another pane, so the request stops routing to it.
     laid_out: bool,
+    /// The pane this pending request's keys wait for (`InputRequestSnapshot`).
+    held_for: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -102,6 +107,7 @@ impl InputRequests {
             origin,
             state: InputRequestState::Pending,
             laid_out: false,
+            held_for: None,
         });
         self.controls.push(TerminalControl::RequestOpen {
             request: request_id.to_owned(),
@@ -157,6 +163,20 @@ impl InputRequests {
         true
     }
 
+    /// The pane a pending request's keys wait for exists and has the
+    /// keyboard, before Herdr's answer makes the request ready. Returns
+    /// whether a row changed.
+    pub(super) fn hold_for(&mut self, origin: &InputOrigin, pane_id: &str) -> bool {
+        let Some(request) = self.requests.iter_mut().find(|request| {
+            &request.origin == origin && request.state == InputRequestState::Pending
+        }) else {
+            return false;
+        };
+        let changed = request.held_for.as_deref() != Some(pane_id);
+        request.held_for = Some(pane_id.to_owned());
+        changed
+    }
+
     /// The node discarded what it held for `request_id` at its own cap: the
     /// row ends, so the shell's mark ends with it. Returns whether it changed.
     pub(super) fn discarded_by_node(&mut self, request_id: &str) -> bool {
@@ -191,6 +211,7 @@ impl InputRequests {
             origin: InputOrigin::Refused,
             state: InputRequestState::Discarded,
             laid_out: false,
+            held_for: None,
         });
         self.controls.push(TerminalControl::RequestDiscard {
             request: request_id.to_owned(),
@@ -281,6 +302,9 @@ impl InputRequests {
                     InputRequestState::Ready(_) => WireState::Ready,
                     InputRequestState::Discarded => WireState::Discarded,
                 },
+                held_for: (request.state == InputRequestState::Pending)
+                    .then(|| request.held_for.clone())
+                    .flatten(),
             })
             .collect()
     }
@@ -326,6 +350,12 @@ impl super::Runtime {
     /// without moving the keyboard.
     pub(super) fn resolve_input_request(&mut self, origin: &InputOrigin, pane_id: &str) {
         if self.input_requests.resolve(origin, pane_id) {
+            self.sync_input_requests();
+        }
+    }
+
+    pub(super) fn hold_input_request_for(&mut self, origin: &InputOrigin, pane_id: &str) {
+        if self.input_requests.hold_for(origin, pane_id) {
             self.sync_input_requests();
         }
     }

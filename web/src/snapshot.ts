@@ -5,7 +5,7 @@ import type { AgentScope } from "./agentScope";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { ProviderUsage } from "./generated/hided-ws";
+import type { UsageSnapshot, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -116,6 +116,8 @@ export type AgentRow = {
   /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
+  /** Present on a fork the operator made with Fork agent: where it came from (PRD fork-operator-root). */
+  forked_from?: ForkSource | null;
   /** The ancestors from the lineage root down to the parent, root first. */
   lineage_path_pane_ids?: string[];
   lineage_child_pane_ids?: string[];
@@ -209,11 +211,21 @@ export type AgentSleep = {
 };
 
 /**
- * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
- * `available` offers Fork agent, `reason` says why a forkable agent cannot fork yet,
- * and `forked_from_pane_id` names the pane this one was forked from.
+ * Where a fork came from (`ForkSourceSnapshot`): the source's pane and title while
+ * the source runs the conversation it was forked from; both absent once it closed
+ * or moved on, and the mark then names no pane and opens nothing.
  */
-export type PaneFork = { available: boolean; reason?: string | null; forked_from_pane_id?: string | null };
+export type ForkSource = { pane_id?: string | null; label?: string | null };
+
+/**
+ * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
+ * `available` offers Fork agent and Fork agent to the side, `reason` says why a
+ * forkable agent cannot fork yet, and `forked_from` is present on a fork.
+ */
+export type PaneFork = { available: boolean; reason?: string | null; forked_from?: ForkSource | null };
+
+/** Where the pane menu's fork puts the fork: its own tab, or beside the source. */
+export type ForkPlacement = "tab" | "side";
 
 /** The pane menu's Sleep agent item (`AgentSleepActionSnapshot`); absent where it does not apply. */
 export type AgentSleepAction = { available: boolean; reason?: string | null };
@@ -660,6 +672,8 @@ export type Workspace = {
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
   session_folds?: { empty: string[]; child_only: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
+  /** What the project's agents are doing, as the core decided it (`ProjectAgentPresenceSnapshot`, PRD sidebar-titlebar-refresh D-20). */
+  agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
@@ -774,6 +788,13 @@ export type ProjectDiskLayers = { build_cache: number; dependencies: number; sou
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
 
+/**
+ * `working` while an awake agent shows ▲ ! ? ● ◐ or ✓ (the row's name is
+ * heavy); `asleep` while every agent sleeps, with the newest sleep's time and
+ * whether the operator opened the fold since (D-02, D-03, D-19).
+ */
+export type ProjectAgentPresence = { working: boolean; asleep?: { since_unix_ms: number; expanded: boolean } };
+
 export type LayoutNode =
   | { type: "pane"; pane_id: string }
   | { type: "split"; direction: "right" | "down"; ratio: number; first: LayoutNode; second: LayoutNode };
@@ -809,6 +830,8 @@ export type TerminalPane = {
 export type InputRequest = {
   request_id: string;
   state: "pending" | "ready" | "discarded";
+  /** The pane a pending request's keys wait for while it has the keyboard: a fork's pane until its agent starts. */
+  held_for?: string | null;
 };
 
 export type AsyncOperation = {
@@ -1291,7 +1314,14 @@ export type AiProvider = {
   cli_default: boolean;
   /** Why the list is empty: a code (`not_asked`, `not_observed`, or the provider's own). */
   models_unavailable_reason: string | null;
+  /** The weekly usage the toolbar read for this agent; null when it gave no figure. Absent from an older daemon. */
+  weekly?: AiWeekly | null;
+  /** The figure is at or past the usage limit, so Hide AI does not ask this agent (the core decides). Absent from an older daemon. */
+  past_limit?: boolean;
 };
+
+/** One agent's weekly usage: a percent and when the week resets (unix ms), when the agent said. */
+export type AiWeekly = { used_percent: number; resets_at_ms: number | null };
 
 /** The agents tried, in this order, when Runs on cannot answer. */
 export type AiFallback = { provider: string; model: string };
@@ -1299,11 +1329,15 @@ export type AiFallback = { provider: string; model: string };
 /** Why Runs on is not answering, and who answers instead; absent while it answers. */
 export type AiRefusal = {
   provider: string;
-  /** `usage_limited`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
+  /** `usage_limited`, `past_limit`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
   reason: string;
+  /** When a usage limit or the week ends (unix ms), when the agent said. */
   retry_at_ms: number | null;
   /** The listed agent answering instead; null when none can. */
   using: string | null;
+  /** With `past_limit`: the agent's weekly percent and the limit it is past. */
+  used_percent?: number | null;
+  limit?: number | null;
 };
 
 /** One concrete Host of `~/.ssh/config`: where `ssh -G` says it leads and the device that already uses it. */
@@ -1332,6 +1366,8 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
+  /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
+  usage_limit?: number | null;
   providers: AiProvider[];
   fallback?: AiFallback[];
   refusal?: AiRefusal | null;
@@ -1503,7 +1539,11 @@ export type ProjectMemory = {
   rows: MemoryRow[];
   questions: MemoryQuestion[];
   /** `memory_analysis_state`. */
-  analysis: "idle" | "analyzing" | "ai_not_ready";
+  analysis: "idle" | "analyzing" | "ai_not_ready" | "checking" | "check_budget_exhausted";
+  consent_required: boolean;
+  usable_cards: number;
+  checking_card: number | null;
+  check_resume_at_unix_ms: number | null;
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;
@@ -1637,13 +1677,15 @@ export type SnapshotRest = {
     changes_root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
+    /** Each device's projects with no agent and no sleeping conversation (D-01); opened by the `no_agents/<device>` fold key. */
+    no_agent_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
     hide_ai_checkouts?: HideAiCheckout[];
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
-    /** Each provider's weekly window, typed by the contract (`providerUsage`). */
-    provider_usage?: ProviderUsage[];
+    /** The core node comes first; each registered agent has typed limit and consumption cells. */
+    usage?: UsageSnapshot;
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
@@ -1693,8 +1735,9 @@ export type SnapshotRest = {
     agent_onboarding_agents?: string[];
     /** The first-run wizard's progress (PRD first-run-onboarding D-07): absent on a Mac that never had one; another flow `version` is not this build's to show. */
     first_run?: FirstRun | null;
-    /** Settings > General's Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
+    /** Settings > Notifications' Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
     desktop_notifications?: boolean;
+    usage?: UsagePreferences;
     /** The screens whose one-line introduction was shown (B43). */
     screen_intros_seen?: ScreenIntro[];
     font_size?: number;

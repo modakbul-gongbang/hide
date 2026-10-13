@@ -4,7 +4,22 @@ import { AgentLogo } from "../components/agent-logo";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { Group, Note, Row, Status } from "../components/settings-rows";
-import { CLI_DEFAULT, firstEnabledAgent, modelChoices, modelToValue, modelsFailed, nobodySignedIn, providerById, runsOnChoices, valueToModel } from "../hideAi";
+import {
+  CLI_DEFAULT,
+  NO_USAGE_LIMIT,
+  firstEnabledAgent,
+  modelChoices,
+  modelToValue,
+  modelsFailed,
+  nobodySignedIn,
+  providerById,
+  runsOnChoices,
+  usageLimitChoices,
+  usageLimitOf,
+  usageLimitToValue,
+  valueToModel,
+  valueToUsageLimit,
+} from "../hideAi";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { HideAiFallback } from "./HideAiFallback";
@@ -37,6 +52,10 @@ export function HideAiTab({ actions }: { actions: Actions }) {
   const refused = ai?.refusal ? providerById(ai, ai.refusal.provider) : null;
   const choices = ai ? runsOnChoices(ai) : [];
   const modelValues = selected ? modelChoices(selected) : [];
+  const usageLimit = usageLimitOf(ai);
+  // Every agent Hide AI would ask is past the limit: the line names the limit, not one agent (B5).
+  const listed = [selected, ...(ai?.fallback ?? []).map((entry) => providerById(ai, entry.provider))];
+  const everyAgentPast = listed.length > 1 && listed.every((provider) => provider?.past_limit === true);
   const agentLines = [
     aiError ? (
       <Note key="error" tone="error" data-ai-error="true">
@@ -45,7 +64,9 @@ export function HideAiTab({ actions }: { actions: Actions }) {
     ) : null,
     ai?.refusal && !ai.refusal.using && refused ? (
       <Note key="paused" tone="warn" data-ai-paused="true">
-        {refusal(refused.label, ai.refusal)} · {t("hideAi.paused", { agent: refused.label })}
+        {ai.refusal.reason === "past_limit" && everyAgentPast
+          ? t("hideAi.pausedAllPast", { limit: ai.refusal.limit ?? "" })
+          : `${refusal(refused.label, ai.refusal)} · ${t("hideAi.paused", { agent: refused.label })}`}
       </Note>
     ) : null,
     ai && !selected && nobodySignedIn(ai) ? (
@@ -142,6 +163,40 @@ export function HideAiTab({ actions }: { actions: Actions }) {
           ) : null}
         </Group>
         {ai ? <HideAiFallback ai={ai} actions={actions} onChange={changed} /> : null}
+        <Group data-settings-group="hide-ai-usage-limit">
+          <Row
+            label={
+              <span className="flex min-w-0 flex-col gap-xxs">
+                <span>{t("hideAi.usageLimit")}</span>
+                <span className="text-body text-muted-foreground" data-ai-usage-limit-summary="true">
+                  {usageLimit === null ? t("hideAi.usageLimitNoneSummary") : t("hideAi.usageLimitSummary", { limit: usageLimit })}
+                </span>
+              </span>
+            }
+            detail={<Note>{t("hideAi.usageLimitNote")}</Note>}
+          >
+            {/* The shown value is the core's: a pick stays as it was until the core accepts it, so a refused change never looks saved. */}
+            <Select
+              value={usageLimitToValue(usageLimit)}
+              disabled={!ai}
+              onValueChange={(value) => {
+                changed();
+                actions.setAiUsageLimit(valueToUsageLimit(value));
+              }}
+            >
+              <SelectTrigger aria-label={t("hideAi.usageLimit")} data-ai-usage-limit={usageLimitToValue(usageLimit)}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {usageLimitChoices(usageLimit).map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value === NO_USAGE_LIMIT ? t("hideAi.usageLimitNone") : `${value}%`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Row>
+        </Group>
         <Group title={t("hideAi.features")} data-settings-group="hide-ai-features">
           <Row label={t("hideAi.agentSummaries")} detail={<Note>{t("hideAi.agentSummariesDescription")}</Note>}>
             <Switch

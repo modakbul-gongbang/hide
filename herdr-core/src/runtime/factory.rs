@@ -825,11 +825,7 @@ impl Runtime {
     /// When `provider`'s usage limit resets, while the usage rows show a
     /// window used up (B58).
     pub(crate) fn factory_usage_limit(&self, provider: &str, now_unix_ms: u64) -> Option<u64> {
-        usage_limit(
-            &self.snapshot.navigator.provider_usage,
-            provider,
-            now_unix_ms,
-        )
+        usage_limit(&self.snapshot.navigator.usage, provider, now_unix_ms)
     }
 
     /// The operator's explicit interface language, `None` when the choice is
@@ -854,23 +850,13 @@ impl Runtime {
 /// The latest reset of a used-up window of `provider` still ahead of now,
 /// in milliseconds: the main row or any bucket at 100 percent.
 fn usage_limit(
-    rows: &[crate::model::ProviderUsageSnapshot],
+    usage: &crate::usage::model::UsageSnapshot,
     provider: &str,
     now_unix_ms: u64,
 ) -> Option<u64> {
-    let row = rows.iter().find(|row| row.provider == provider)?;
-    std::iter::once((row.used_percent, row.resets_at_unix_seconds))
-        .chain(
-            row.buckets
-                .iter()
-                .map(|bucket| (bucket.used_percent, bucket.resets_at_unix_seconds)),
-        )
-        .filter_map(|(used, resets)| match (used, resets) {
-            (Some(used), Some(resets)) if used >= 100.0 => Some(resets.saturating_mul(1_000)),
-            _ => None,
-        })
-        .filter(|resets| *resets > now_unix_ms)
-        .max()
+    usage
+        .exhausted_until(provider, now_unix_ms / 1000)
+        .map(|seconds| seconds.saturating_mul(1000))
 }
 
 #[cfg(test)]
@@ -879,7 +865,7 @@ mod tests {
     use crate::coordination::AgentRecord;
     use crate::delivery::ledger::Ledger;
     use crate::model::SidebarAgentSnapshot;
-    use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
+    use crate::usage::model::*;
     use std::sync::Arc;
 
     fn agent(id: &str, pane: &str, parent: Option<&str>) -> AgentRecord {
@@ -1239,37 +1225,47 @@ mod tests {
         assert!(!other.factory_spawned);
     }
 
-    fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {
-        ProviderUsageSnapshot {
-            provider: provider.into(),
-            label: provider.into(),
-            window_minutes: 10_080,
-            state: "available".into(),
-            used_percent: Some(used),
-            resets_at_unix_seconds: Some(5_000),
-            message: None,
-            last_checked_at_unix_ms: None,
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: bucket
-                .map(|(used, resets)| ProviderUsageBucketSnapshot {
-                    label: "Current session".into(),
-                    state: "available".into(),
-                    used_percent: Some(used),
-                    resets_at_unix_seconds: Some(resets),
-                    message: None,
-                })
-                .into_iter()
-                .collect(),
+    fn row(provider: &str, used: f64, five_hour: Option<(f64, u64)>) -> AgentUsage {
+        let mut windows = vec![WindowReading {
+            kind: WindowKind::Weekly,
+            scope: Scope::All,
+            outcome: WindowOutcome::Open {
+                used_percent: used,
+                resets_at_s: 5000,
+            },
+        }];
+        if let Some((used_percent, resets_at_s)) = five_hour {
+            windows.push(WindowReading {
+                kind: WindowKind::FiveHour,
+                scope: Scope::All,
+                outcome: WindowOutcome::Open {
+                    used_percent,
+                    resets_at_s,
+                },
+            });
+        }
+        AgentUsage {
+            agent: provider.into(),
+            limits: Cell::Reading {
+                value: LimitReading { windows },
+                freshness: Freshness::Fresh,
+                observed_at_ms: 1,
+            },
+            consumption: Cell::Unsupported,
         }
     }
 
     #[test]
     fn a_used_up_window_limits_its_runtime_until_its_reset() {
-        let rows = [
-            row("claude", 40.0, Some((100.0, 2_000))),
-            row("codex", 99.0, None),
-        ];
+        let rows = UsageSnapshot {
+            nodes: vec![NodeUsage {
+                node: crate::node::TEST_NODE.into(),
+                agents: vec![
+                    row("claude", 40.0, Some((100.0, 2_000))),
+                    row("codex", 99.0, None),
+                ],
+            }],
+        };
         assert_eq!(usage_limit(&rows, "claude", 1_000_000), Some(2_000_000));
         assert_eq!(
             usage_limit(&rows, "claude", 2_000_000),
@@ -1281,7 +1277,10 @@ mod tests {
             None,
             "99 percent still runs"
         );
-        assert_eq!(usage_limit(&[], "claude", 0), None);
+        assert_eq!(
+            usage_limit(&UsageSnapshot { nodes: Vec::new() }, "claude", 0),
+            None
+        );
     }
 
     /// A worker row with the status model's axes set directly.

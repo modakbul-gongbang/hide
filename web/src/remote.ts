@@ -157,11 +157,6 @@ export function contextWorkspaces(rest: SnapshotRest | null): Workspace[] {
   return projectsOf(contextAllWorkspaces(rest));
 }
 
-/** The Home of the context on screen; null until the first Home start on that device creates it. */
-export function contextHome(rest: SnapshotRest | null): Workspace | null {
-  return contextAllWorkspaces(rest).find((row) => row.is_home) ?? null;
-}
-
 const NO_AGENTS: AgentRow[] = [];
 const NO_WORKSPACES: Workspace[] = [];
 

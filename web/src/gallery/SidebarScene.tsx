@@ -9,6 +9,7 @@ import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
+import { TitleRow } from "../TitleRow";
 import { useShellStore } from "../store";
 import { entryLens, useUiStore } from "../ui";
 import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
@@ -82,8 +83,12 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
 
   return (
     <TooltipProvider>
-      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front} data-scene-rail={rail}>
-        <Sidebar actions={actions} />
+      <div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front} data-scene-rail={rail}>
+        {/* The device name sits in the window's top row over the sidebar (PRD sidebar-titlebar-refresh B17). */}
+        <TitleRow actions={actions} />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar actions={actions} />
+        </div>
       </div>
     </TooltipProvider>
   );

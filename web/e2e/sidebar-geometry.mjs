@@ -10,7 +10,7 @@ const ROWS = [
   ["agent", "li[data-pane]", "data-pane"],
   ["checkout", "[data-checkout-menu]", "data-checkout-menu"],
   ["project", "[data-project-menu]", "data-project-menu"],
-  ["home-destination", "[data-home-destination]", "data-home-destination"],
+  ["no-agent-projects", "[data-no-agent-projects]", "data-no-agent-projects"],
   ["inactive-checkouts", "[data-inactive-checkouts]", "data-inactive-checkouts"],
   ["inactive-projects", "[data-inactive-projects]", "data-inactive-projects"],
 ];
@@ -121,7 +121,10 @@ export async function rowPartProblems(page) {
           if (row.getClientRects().length === 0) continue;
           const edge = row.getBoundingClientRect().right;
           // A part belongs to the nearest row around it, so a checkout's agents are not its parts.
-          const own = [...row.querySelectorAll(parts)].filter((part) => part.getClientRects().length > 0 && part.closest(rows.map(([, s]) => s).join(", ")) === row);
+          // A part drawn transparent or hidden (the badge under a hovered row's + and ⋯) shows nothing to overlap.
+          const own = [...row.querySelectorAll(parts)].filter(
+            (part) => part.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && part.closest(rows.map(([, s]) => s).join(", ")) === row,
+          );
           const key = `${kind}:${row.getAttribute(attribute)}`;
           for (const [i, a] of own.entries()) {
             const ra = a.getBoundingClientRect();
@@ -208,10 +211,12 @@ export async function sidebarRowsFit(page) {
     const problems = [];
     // Every element in the lists that holds text itself (names, lines, places,
     // times, chips), every icon, and every status and provider mark, so a
-    // line drawn only in marks is measured too.
+    // line drawn only in marks is measured too. One drawn transparent or
+    // hidden shows nothing: a row's + and ⋯ wait at opacity 0 in its badge's
+    // cell until the pointer or the keyboard comes (PRD sidebar-titlebar-refresh D-04).
     const parts = Array.from(document.querySelectorAll("nav[data-sidebar] [data-project-list] *")).filter(
       (part) =>
-        part.getClientRects().length > 0 &&
+        part.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
         (part.matches("svg, [data-mark], [data-agent-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
     );
     const name = (part) => part.textContent?.trim() || part.getAttribute("data-mark") || part.getAttribute("data-agent-mark") || part.getAttribute("class") || part.tagName;
@@ -231,9 +236,17 @@ export async function sidebarRowsFit(page) {
       shown.set(part, rect);
     }
     const boxes = [...shown];
+    // A section header stuck to the list's top covers the rows that scroll
+    // under it by design (D-05), so a header's parts and a row's are not an
+    // overlap. In the flow a header sits above its rows, so a row meets one
+    // only while it is stuck; its `data-stuck` mark follows a scroll event a
+    // frame later, which a measurement straight after a scroll would miss.
+    // A header's own text spilling is the spill check's above.
+    const inHeader = (part) => part.closest("[data-section-sticky]") !== null;
     for (const [i, [a, ra]] of boxes.entries()) {
       for (const [b, rb] of boxes.slice(i + 1)) {
         if (a.contains(b) || b.contains(a)) continue;
+        if (inHeader(a) !== inHeader(b)) continue;
         const across = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
         const down = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
         if (across > 1 && down > 1) problems.push(`${name(a)} overlaps ${name(b)}`);

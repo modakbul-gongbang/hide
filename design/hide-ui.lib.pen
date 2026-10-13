@@ -12979,7 +12979,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar.tsx WorkspaceRows: the project glyph and name read on the left, the name at 13/600, the sidebar’s one semibold, on a 36 row; the status badge and the fold end the row, a step apart, so the badge ends on the column every row’s time ends on. The badge counts the agents of every checkout under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○), and stays while the checkouts are open because it is the project’s own summary; a project with no agent draws none. The row carries no time. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row’s menu, which nothing on the row stands for. All projects is this row with its count at 12 where the badge stands.",
+          "content": "sidebar.tsx WorkspaceRows (PRD sidebar-titlebar-refresh D-02 to D-04): the project glyph and name read on the left on a 36 row, the name 13 at 600 while one of its agents is working (a mark of ▲ ! ? ● ◐ ✓) and at 400 in the foreground ink while its agents only rest or sleep or it has none; the core decides which. The status badge and the fold end the row, a step apart, so the badge ends on the column every row's time ends on. The badge counts the agents of every checkout under the mark each agent's own row draws, worst first, and stays while the checkouts are open; a project with no agent draws none. A project whose agents all sleep is drawn folded with one moon cell in the badge's place, the age of its newest sleep. Under the pointer or keyboard focus, + (start an agent in the project) and ⋯ (the row's menu, opened under it) stand over the badge slot, whose width is kept, so the name never shortens. The row carries no time. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row and while its menu is open.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -13381,6 +13381,79 @@
                 },
                 {
                   "type": "frame",
+                  "id": "project-asleep",
+                  "name": "Asleep",
+                  "enabled": false,
+                  "height": 16,
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "project-asleep-moon",
+                      "name": "Moon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "moon",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "project-asleep-age",
+                      "name": "Age",
+                      "fill": "$--muted-foreground",
+                      "content": "4d",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "project-actions",
+                  "name": "Row actions",
+                  "enabled": false,
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "project-action-add",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "plus",
+                      "width": 24,
+                      "height": 24,
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "plus",
+                          "fill": "$--subtle-foreground",
+                          "width": 12,
+                          "height": 12
+                        }
+                      }
+                    },
+                    {
+                      "id": "project-action-more",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "ellipsis",
+                      "width": 24,
+                      "height": 24,
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "ellipsis",
+                          "fill": "$--subtle-foreground",
+                          "width": 12,
+                          "height": 12
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "wgtfo",
                   "name": "Fold slot",
                   "width": 16,
@@ -13493,6 +13566,130 @@
               "descendants": {
                 "project-status": {
                   "enabled": false
+                },
+                "JkPyX": {
+                  "fontWeight": "400"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-resting",
+          "name": "State / Agents only resting: 400 in the foreground ink",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-resting-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Agents only resting: 400 in the foreground ink",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-resting",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Resting",
+              "descendants": {
+                "JkPyX": {
+                  "content": "team-notes",
+                  "fontWeight": "400"
+                },
+                "project-question": {
+                  "enabled": false
+                },
+                "project-working": {
+                  "enabled": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-asleep",
+          "name": "State / All asleep, folded: the moon cell",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-asleep-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "All asleep, folded: the moon cell",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-asleep",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Asleep",
+              "descendants": {
+                "JkPyX": {
+                  "content": "sticky-notes",
+                  "fontWeight": "400"
+                },
+                "project-status": {
+                  "enabled": false
+                },
+                "project-asleep": {
+                  "enabled": true
+                },
+                "project-asleep-age": {
+                  "content": "14d"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-asleep-hover",
+          "name": "State / All asleep, under the pointer: + ⋯ over the moon cell",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-asleep-hover-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "All asleep, under the pointer: + ⋯ over the moon cell",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-asleep-hover",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Asleep under the pointer",
+              "fill": "$--accent",
+              "descendants": {
+                "JkPyX": {
+                  "content": "sticky-notes",
+                  "fontWeight": "400"
+                },
+                "project-status": {
+                  "enabled": false
+                },
+                "project-actions": {
+                  "enabled": true
                 }
               }
             }
@@ -13526,6 +13723,12 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
+                },
+                "project-status": {
+                  "enabled": false
+                },
+                "project-actions": {
+                  "enabled": true
                 }
               }
             }
@@ -13561,6 +13764,12 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
+                },
+                "project-status": {
+                  "enabled": false
+                },
+                "project-actions": {
+                  "enabled": true
                 }
               }
             }
@@ -13594,6 +13803,15 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
+                },
+                "project-status": {
+                  "enabled": false
+                },
+                "project-actions": {
+                  "enabled": true
+                },
+                "project-action-more": {
+                  "fill": "$--secondary"
                 }
               }
             }
@@ -31815,6 +32033,17 @@
                 },
                 {
                   "type": "text",
+                  "id": "usage-chip-window",
+                  "name": "5h",
+                  "content": "5h",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600",
+                  "enabled": false
+                },
+                {
+                  "type": "text",
                   "id": "usage-chip-percent",
                   "name": "62%",
                   "fill": "$--success",
@@ -31830,7 +32059,7 @@
               "id": "usage-row",
               "name": "Component / Usage row",
               "reusable": true,
-              "width": 218,
+              "width": 262,
               "layout": "vertical",
               "gap": "$--spacing-xs",
               "children": [
@@ -31867,16 +32096,17 @@
                         "url": "../web/src/assets/agent-claude.png",
                         "mode": "contain"
                       },
-                      "cornerRadius": "$--radius-xs"
+                      "cornerRadius": "$--radius-xs",
+                      "enabled": false
                     },
                     {
                       "type": "text",
                       "id": "usage-row-label",
-                      "name": "Claude Code",
+                      "name": "Window",
                       "fill": "$--subtle-foreground",
-                      "content": "Claude Code",
+                      "content": "7 days",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
+                      "fontSize": "$--text-caption",
                       "fontWeight": "500"
                     },
                     {
@@ -32776,6 +33006,19 @@
           "gap": 4,
           "alignItems": "center",
           "children": [
+            {
+              "id": "side-panel-overview-toggle",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "Overview",
+              "fill": [],
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "layout-dashboard",
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            },
             {
               "id": "side-panel-tools-toggle",
               "type": "ref",
@@ -42975,6 +43218,1471 @@
       "width": "fit_content",
       "x": 11200,
       "y": 7264
+    },
+    {
+      "type": "frame",
+      "id": "cmp-sidebar-chrome",
+      "name": "Component / Sidebar chrome",
+      "children": [
+        {
+          "type": "text",
+          "id": "cmp-sidebar-chrome-title",
+          "name": "Sidebar chrome",
+          "content": "Sidebar chrome",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "cmp-sidebar-chrome-spec",
+          "name": "web/src/components/sidebar-h",
+          "content": "web/src/components/sidebar-header.tsx, sidebar.tsx and help-menu.tsx (PRD sidebar-titlebar-refresh D-05, D-08, D-11, D-12): the Search row under the window's top row, a field-shaped button that reads Search and the bound ⌘K chord and opens the palette; the Projects list's section header, 10/500 on its baseline in a 26 row on the sidebar's fill, which sticks to the list's top and wears a hairline while rows pass under it, Pinned led by the pin (its rows carry none) and Projects ending in Add project; and the Help menu the footer's ? opens: Keyboard shortcuts with its chord, Copy diagnostics, Report an issue and, under a separator, the hide version line, which takes no press.",
+          "fill": "$--subtle-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 820
+        },
+        {
+          "type": "frame",
+          "id": "cmp-sidebar-chrome-masters",
+          "name": "Masters",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sbc-search",
+              "name": "Search row",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sbc-search-field",
+                  "name": "Field",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "sbc-search-icon",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "sbc-search-label",
+                      "name": "Search",
+                      "content": "Search",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "400",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "id": "sbc-search-chord",
+                      "type": "ref",
+                      "ref": "kbd-m",
+                      "name": "Chord",
+                      "descendants": {
+                        "kbd-t": {
+                          "content": "⌘K"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 28,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--background",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
+                }
+              ],
+              "reusable": true,
+              "width": 292,
+              "layout": "horizontal",
+              "padding": [
+                "$--spacing-sm",
+                "$--spacing-sm",
+                "$--spacing-xs",
+                "$--spacing-sm"
+              ],
+              "fill": "$--sidebar"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-section",
+              "name": "Section header",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "sbc-section-pin",
+                  "name": "Glyph",
+                  "enabled": false,
+                  "width": 12,
+                  "height": 12,
+                  "icon": "pin",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "sbc-section-label",
+                  "name": "Projects · Recent activity ·",
+                  "content": "Projects · Recent activity · 10",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "500",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "id": "sbc-section-add",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Add project",
+                  "width": 20,
+                  "height": 20,
+                  "enabled": false,
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "plus",
+                      "width": 12,
+                      "height": 12
+                    }
+                  }
+                }
+              ],
+              "reusable": true,
+              "width": 284,
+              "height": 26,
+              "layout": "horizontal",
+              "gap": "$--spacing-xs",
+              "alignItems": "end",
+              "padding": [
+                0,
+                "$--spacing-xs",
+                "$--spacing-xs",
+                "$--spacing-sm"
+              ],
+              "fill": "$--sidebar"
+            }
+          ],
+          "layout": "horizontal",
+          "gap": "$--spacing-xl",
+          "alignItems": "start"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-sidebar-chrome-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sbc-l-search-cell",
+              "name": "Search row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-l-search-cap",
+                  "name": "Search row",
+                  "content": "Search row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-l-search",
+                  "type": "ref",
+                  "ref": "sbc-search",
+                  "name": "Search row"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-l-pinned-cell",
+              "name": "Pinned · N",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-l-pinned-cap",
+                  "name": "Pinned · N",
+                  "content": "Pinned · N",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-l-pinned",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Pinned",
+                  "descendants": {
+                    "sbc-section-pin": {
+                      "enabled": true
+                    },
+                    "sbc-section-label": {
+                      "content": "Pinned · 2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-l-projects-cell",
+              "name": "Projects with Add project",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-l-projects-cap",
+                  "name": "Projects with Add project",
+                  "content": "Projects with Add project",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-l-projects",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Projects",
+                  "descendants": {
+                    "sbc-section-add": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-l-stuck-cell",
+              "name": "Stuck to the top: the hairline",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-l-stuck-cap",
+                  "name": "Stuck to the top: the hairli",
+                  "content": "Stuck to the top: the hairline",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-l-stuck",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Stuck",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "descendants": {
+                    "sbc-section-add": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-help-l-cell",
+              "name": "Help menu",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-help-l-cap",
+                  "name": "Help menu",
+                  "content": "Help menu",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "sbc-help-l",
+                  "name": "Help menu",
+                  "children": [
+                    {
+                      "id": "sbc-help-l-shortcuts",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Keyboard shortcuts",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Keyboard shortcuts"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "content": "⌘/",
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-l-diagnostics",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Copy diagnostics",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Copy diagnostics"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-l-issue",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Report an issue",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Report an issue"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-l-sep",
+                      "type": "ref",
+                      "ref": "mnu-sep-m",
+                      "name": "Separator"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sbc-help-l-version",
+                      "name": "Version",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-help-l-version-t",
+                          "name": "hide 0.4.0",
+                          "content": "hide 0.4.0",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "padding": "$--spacing-xxs",
+                  "width": 220,
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-sidebar-chrome-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sbc-d-search-cell",
+              "name": "Search row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-d-search-cap",
+                  "name": "Search row",
+                  "content": "Search row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-d-search",
+                  "type": "ref",
+                  "ref": "sbc-search",
+                  "name": "Search row"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-d-pinned-cell",
+              "name": "Pinned · N",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-d-pinned-cap",
+                  "name": "Pinned · N",
+                  "content": "Pinned · N",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-d-pinned",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Pinned",
+                  "descendants": {
+                    "sbc-section-pin": {
+                      "enabled": true
+                    },
+                    "sbc-section-label": {
+                      "content": "Pinned · 2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-d-projects-cell",
+              "name": "Projects with Add project",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-d-projects-cap",
+                  "name": "Projects with Add project",
+                  "content": "Projects with Add project",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-d-projects",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Projects",
+                  "descendants": {
+                    "sbc-section-add": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-d-stuck-cell",
+              "name": "Stuck to the top: the hairline",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-d-stuck-cap",
+                  "name": "Stuck to the top: the hairli",
+                  "content": "Stuck to the top: the hairline",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "sbc-d-stuck",
+                  "type": "ref",
+                  "ref": "sbc-section",
+                  "name": "Stuck",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "descendants": {
+                    "sbc-section-add": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-help-d-cell",
+              "name": "Help menu",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-help-d-cap",
+                  "name": "Help menu",
+                  "content": "Help menu",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "sbc-help-d",
+                  "name": "Help menu",
+                  "children": [
+                    {
+                      "id": "sbc-help-d-shortcuts",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Keyboard shortcuts",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Keyboard shortcuts"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "content": "⌘/",
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-d-diagnostics",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Copy diagnostics",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Copy diagnostics"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-d-issue",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Report an issue",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Report an issue"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-help-d-sep",
+                      "type": "ref",
+                      "ref": "mnu-sep-m",
+                      "name": "Separator"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sbc-help-d-version",
+                      "name": "Version",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-help-d-version-t",
+                          "name": "hide 0.4.0",
+                          "content": "hide 0.4.0",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "padding": "$--spacing-xxs",
+                  "width": 220,
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "cornerRadius": "$--radius-lg",
+      "width": "fit_content",
+      "x": 12000,
+      "y": 6421
+    },
+    {
+      "type": "frame",
+      "id": "cmp-usage-windows",
+      "name": "Component / Usage windows",
+      "children": [
+        {
+          "type": "frame",
+          "id": "usage-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "usage-states-light",
+              "name": "Chip states",
+              "children": [
+                {
+                  "id": "usage-default-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-five-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h 11%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "11%",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-week-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "7d 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "7d"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-empty-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                },
+                {
+                  "id": "usage-loading-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-light",
+              "name": "Usage popover",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-header-light",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-title-light",
+                      "name": "Usage",
+                      "content": "Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-spacer-light",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "usage-choose-light",
+                      "type": "ref",
+                      "ref": "btn-m",
+                      "name": "Choose chips",
+                      "height": 24,
+                      "fill": [],
+                      "descendants": {
+                        "btn-lb": {
+                          "content": "Choose chips",
+                          "fill": "$--subtle-foreground"
+                        },
+                        "btn-ic": {
+                          "icon": "settings",
+                          "enabled": true,
+                          "fill": "$--subtle-foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-0-light",
+                  "name": "Claude Code",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-0-light",
+                      "name": "Claude Code",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-0-light",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-0-light",
+                          "name": "Claude Code",
+                          "content": "Claude Code",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-session-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "5 hours",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "5 hours"
+                        },
+                        "usage-row-value": {
+                          "content": "11%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 3h 12m"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--success",
+                          "width": 29
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-weekly-0-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-scoped-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Fable",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": true
+                        },
+                        "usage-row-label": {
+                          "content": "Fable"
+                        },
+                        "usage-row-value": {
+                          "content": "42%"
+                        },
+                        "usage-row-fill": {
+                          "width": 110
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-1-light",
+                  "name": "Codex",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-1-light",
+                      "name": "Codex",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-1-light",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-1-light",
+                          "name": "Codex",
+                          "content": "Codex",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-weekly-1-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "reusable": true,
+              "width": 320,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "cornerRadius": "$--radius-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "vertical",
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background"
+        },
+        {
+          "type": "frame",
+          "id": "usage-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "usage-states-dark",
+              "name": "Chip states",
+              "children": [
+                {
+                  "id": "usage-default-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-five-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h 11%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "11%",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-week-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "7d 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "7d"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-empty-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                },
+                {
+                  "id": "usage-loading-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-dark",
+              "name": "Usage popover",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-header-dark",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-title-dark",
+                      "name": "Usage",
+                      "content": "Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-spacer-dark",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "usage-choose-dark",
+                      "type": "ref",
+                      "ref": "btn-m",
+                      "name": "Choose chips",
+                      "height": 24,
+                      "fill": [],
+                      "descendants": {
+                        "btn-lb": {
+                          "content": "Choose chips",
+                          "fill": "$--subtle-foreground"
+                        },
+                        "btn-ic": {
+                          "icon": "settings",
+                          "enabled": true,
+                          "fill": "$--subtle-foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-0-dark",
+                  "name": "Claude Code",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-0-dark",
+                      "name": "Claude Code",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-0-dark",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-0-dark",
+                          "name": "Claude Code",
+                          "content": "Claude Code",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-session-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "5 hours",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "5 hours"
+                        },
+                        "usage-row-value": {
+                          "content": "11%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 3h 12m"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--success",
+                          "width": 29
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-weekly-0-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-scoped-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Fable",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": true
+                        },
+                        "usage-row-label": {
+                          "content": "Fable"
+                        },
+                        "usage-row-value": {
+                          "content": "42%"
+                        },
+                        "usage-row-fill": {
+                          "width": 110
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-1-dark",
+                  "name": "Codex",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-1-dark",
+                      "name": "Codex",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-1-dark",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-1-dark",
+                          "name": "Codex",
+                          "content": "Codex",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-weekly-1-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "reusable": true,
+              "width": 320,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "cornerRadius": "$--radius-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "vertical",
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "x": 13200,
+      "y": 6421
     }
   ],
   "themes": {
@@ -43600,7 +45308,7 @@
     },
     "--size-settings-sheet-w": {
       "type": "number",
-      "value": 720
+      "value": 880
     },
     "--size-settings-sheet-h": {
       "type": "number",
@@ -44458,7 +46166,7 @@
     },
     "--size-usage-popover": {
       "type": "number",
-      "value": 250
+      "value": 320
     },
     "--size-status-mark": {
       "type": "number",
@@ -44849,6 +46557,18 @@
     "--size-hide-badge-mark": {
       "type": "number",
       "value": 9
+    },
+    "--size-settings-nav-w": {
+      "type": "number",
+      "value": 200
+    },
+    "--size-sidebar-search": {
+      "type": "number",
+      "value": 28
+    },
+    "--size-sidebar-section-header": {
+      "type": "number",
+      "value": 26
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

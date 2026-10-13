@@ -143,20 +143,31 @@ export function EntryDropdown<Id extends string>({
   trigger,
   hint,
   align = "end",
+  onOpenChange,
+  ...data
 }: {
   label: string;
-  items: MenuEntry<Id>[];
+  /** The items, or a reader called each time the menu opens so it offers what the target can do now. */
+  items: MenuEntry<Id>[] | (() => MenuEntry<Id>[]);
   onSelect: (id: Id) => void;
   trigger: ReactNode;
   hint?: string;
   align?: "start" | "center" | "end";
-}) {
+  onOpenChange?: (open: boolean) => void;
+} & Record<`data-${string}`, string>) {
+  const [read, setRead] = useState<MenuEntry<Id>[]>([]);
+  const entries = typeof items === "function" ? read : items;
   const control = <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>;
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (typeof items === "function") setRead(open ? items() : []);
+        onOpenChange?.(open);
+      }}
+    >
       {hint ? <Hint label={hint}>{control}</Hint> : control}
-      <DropdownMenuContent aria-label={label} align={align}>
-        <EntryItems items={items} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
+      <DropdownMenuContent aria-label={label} align={align} {...data}>
+        <EntryItems items={entries} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -2576,6 +2576,65 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     assert_eq!(wait_of(&rows, "parent"), None);
 }
 
+/// A source and its fork as Herdr lists them once the fork's pane names the
+/// source (`lineage::desired`); `fork_session` is the fork's own session.
+fn fork_rows(fork_session: &str) -> Vec<SidebarAgentSnapshot> {
+    let session = crate::sidebar::fixture_lineage_session();
+    project_agents(crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+        {"id":"source-control","pane_id":"source","agent_status":"working","state_change_seq":1,"tokens":{"task":"Source"}},
+        {"id":"fork-control","pane_id":"fork","agent_status":"working","state_change_seq":2,"tokens":{
+            "task":"Fork","fork_pane":"source","fork_session":fork_session,"fork_source_session":session}}
+    ]})).unwrap()).agents
+}
+
+// PRD fork-operator-root B11, B12, B19: the fork names its source and is the
+// operator's own work, with nothing of the source's lineage on either row.
+#[test]
+fn a_fork_names_its_source_and_stays_the_operators_own_work() {
+    let row = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().clone()
+    };
+    let mut rows = fork_rows(&crate::sidebar::fixture_lineage_session());
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let fork = row(&rows, "fork");
+    assert_eq!(
+        fork.forked_from,
+        Some(crate::model::ForkSourceSnapshot {
+            pane_id: Some("source".into()),
+            label: Some("Source".into()),
+        })
+    );
+    assert!(!fork.delegated);
+    assert_eq!(fork.lineage_parent_pane_id, None);
+    assert_eq!(fork.spawn_origin_pane_id, None);
+    let source = row(&rows, "source");
+    assert_eq!(source.forked_from, None);
+    assert_eq!(source, {
+        let mut alone = fork_rows("unrelated");
+        alone.retain(|row| row.pane_id == "source");
+        crate::agent_state::apply_lineage(&mut alone, &[], &[]);
+        alone.remove(0)
+    });
+
+    // A source that runs another conversation now, or has closed, is still
+    // where the fork came from, but no longer a pane to name or go to (B9).
+    rows.iter_mut()
+        .find(|row| row.pane_id == "source")
+        .unwrap()
+        .lineage_session = Some("another".into());
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let unnamed = Some(crate::model::ForkSourceSnapshot::default());
+    assert_eq!(row(&rows, "fork").forked_from, unnamed);
+    rows.retain(|row| row.pane_id != "source");
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(row(&rows, "fork").forked_from, unnamed);
+
+    // A pane that runs a new conversation is no longer the fork (B10).
+    let mut rows = fork_rows("an-earlier-conversation");
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(row(&rows, "fork").forked_from, None);
+}
+
 /// PRD hide-ai-origin-mark B1, B3, B11, B13: the mark and the checkout list
 /// come from the ledger's record of who started the spawn, on this machine
 /// and on a connected device, and only for the session the record holds.

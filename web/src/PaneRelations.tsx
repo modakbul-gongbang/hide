@@ -109,6 +109,7 @@ type PaneMenuId =
   | `open:${string}`
   | "sleep_agent"
   | "fork_agent"
+  | "fork_agent_side"
   | "copy_name"
   | "copy_pane_id"
   | "close_pane"
@@ -142,15 +143,16 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
       unavailable: pane.sleep_action.available ? null : (pane.sleep_action.reason ?? translate("panes.menu.sleepUnavailable")),
     });
   }
-  // Fork agent (issue 916): offered on an agent pane the core can fork, and drawn
-  // disabled with the core's reason on an agent that can fork but has not reported its
-  // conversation yet; an agent with no fork command, and a shell, get no item.
+  // Fork agent and Fork agent to the side (PRD fork-operator-root B2, B3, D-03):
+  // offered on an agent pane the core can fork, and both drawn disabled with the
+  // core's reason on an agent that can fork but has not reported its conversation
+  // yet; an agent with no fork command, a shell and a device pane get neither.
   if (pane.fork?.available || pane.fork?.reason) {
-    agentActions.push({
-      id: "fork_agent",
-      label: translate("panes.menu.fork"),
-      unavailable: pane.fork.available ? null : (pane.fork.reason ?? translate("panes.menu.forkUnavailable")),
-    });
+    const unavailable = pane.fork.available ? null : (pane.fork.reason ?? translate("panes.menu.forkUnavailable"));
+    agentActions.push(
+      { id: "fork_agent", label: translate("panes.menu.fork"), unavailable },
+      { id: "fork_agent_side", label: translate("panes.menu.forkSide"), unavailable },
+    );
   }
   if (agentActions.length > 0) items.push(...agentActions.map((item, index) => (index === 0 ? { ...item, separated: items.length > 0 } : item)));
   items.push({ id: "copy_name", label: translate("panes.menu.copyName"), unavailable: null, separated: items.length > 0 && agentActions.length === 0 });
@@ -213,7 +215,9 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
       case "sleep_agent":
         return actions.sleepAgent(pane.id);
       case "fork_agent":
-        return actions.forkPane(pane.id);
+        return actions.forkPane(pane.id, "tab");
+      case "fork_agent_side":
+        return actions.forkPane(pane.id, "side");
       case "copy":
         void copySelection(pane.id, "pane menu");
         return;
@@ -248,7 +252,7 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   };
 }
 
-function useRelationProgress(sourcePaneId: string, targetPaneId: string | null) {
+export function useRelationProgress(sourcePaneId: string, targetPaneId: string | null) {
   const { t } = useInterfaceTranslation();
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);

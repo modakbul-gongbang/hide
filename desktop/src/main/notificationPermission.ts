@@ -9,7 +9,7 @@
 //
 // One read runs at a time with a hard timeout; a read asked for while one
 // runs shares its answer. The shell asks only while a screen showing the
-// state is open (the wizard's second step, Settings > General).
+// state is open (the wizard's second step, Settings > Notifications).
 
 import fs from "node:fs";
 import path from "node:path";

@@ -6,7 +6,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { allProjectsCount, boardProjects, mainSections } from "./navigation";
 
-import { contextAllWorkspaces, contextHome, contextWorkspaces, projectsOf } from "./remote";
+import { contextAllWorkspaces, contextWorkspaces, projectsOf } from "./remote";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
@@ -58,7 +58,6 @@ describe("the device's Home is no project (PRD home-device-rail D-13, B16)", () 
   it("is left out of the Projects list and kept where it holds panes", () => {
     expect(contextWorkspaces(REST).map((row) => row.id)).toEqual(["a"]);
     expect(contextAllWorkspaces(REST).map((row) => row.id)).toEqual(["home", "a"]);
-    expect(contextHome(REST)?.id).toBe("home");
     // A list with no Home is returned as it is, and a list with one filters once per source.
     const plain = [LOCAL_A];
     expect(projectsOf(plain)).toBe(plain);
@@ -83,10 +82,10 @@ describe("the device's Home is no project (PRD home-device-rail D-13, B16)", () 
 
   it("raises a Home agent's Needs You beside the projects' and names its place Home", () => {
     const listed = allAgents(REST.status!.remote, REST.navigator!.devices, [agent("h1", "needs_you"), agent("p1", "needs_you")]);
-    const rows = projectRows(contextWorkspaces(REST), [], listed, contextHome(REST));
+    const rows = projectRows(contextWorkspaces(REST), {}, listed, contextAllWorkspaces(REST).find((row) => row.is_home) ?? null);
     const raised = rows.find((row) => row.kind === "raised");
     expect(raised && raised.kind === "raised" ? raised.agents.map((row) => row.agent.pane_id) : []).toEqual(["h1", "p1"]);
-    const withoutHome = projectRows(contextWorkspaces(REST), [], listed);
+    const withoutHome = projectRows(contextWorkspaces(REST), {}, listed);
     const plain = withoutHome.find((row) => row.kind === "raised");
     expect(plain && plain.kind === "raised" ? plain.agents.map((row) => row.agent.pane_id) : []).toEqual(["p1"]);
     expect(agentPlaces(REST.navigator!.workspaces, REST.status!.remote, REST.navigator!.devices)(null, "h1")).toBe("Home");

@@ -504,7 +504,7 @@ fn overview_tracks_live_checkout_panes_and_drops_retired_lineage() {
     );
 }
 
-fn ai_event(payload: serde_json::Value) -> Vec<u8> {
+pub(super) fn ai_event(payload: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "schema_version": 2, "kind": "ai_settings", "payload": payload
     }))
@@ -512,7 +512,7 @@ fn ai_event(payload: serde_json::Value) -> Vec<u8> {
 }
 
 /// A read that found each named agent signed in and selectable.
-fn ready_read(ids: &[&str]) -> crate::model::BackgroundAiSnapshot {
+pub(super) fn ready_read(ids: &[&str]) -> crate::model::BackgroundAiSnapshot {
     crate::model::BackgroundAiSnapshot {
         providers: ids
             .iter()
@@ -1043,6 +1043,7 @@ fn usage_activity_hints_are_accepted_without_persisting_ui_state() {
         crate::usage::UsageActivity {
             window_visible: true,
             popover_open_generation: 1,
+            ..Default::default()
         }
     );
     assert!(

@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use hide_ai::{
     AiBackend, AiError, AiLogEvent, AiLogSink, AiRequest as ProviderRequest, AiResponse, AiRouter,
     AiSettings, Availability, CancelToken, ModelCatalog, ProcessMeasurement, ProviderId,
-    ProviderStatus,
+    ProviderStatus, UsageLimits,
 };
 use hide_node_link::ai::{BackendSpec, Logged};
 use hide_node_link::protocol::Call;
@@ -421,8 +421,13 @@ impl Drop for NodeBackend {
 /// Builds the same provider boundary for Project Memory that the Settings
 /// probe describes. The feature owns its prompt and parsing; this retains the
 /// shared provider selection, process, retry, cancellation, and budget caps.
-pub(crate) fn memory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
-    let config = memory_router_config(settings);
+pub(crate) fn memory_router(
+    node: &Arc<dyn NodeLink>,
+    settings: &AiSettings,
+    gate: &Arc<UsageLimits>,
+) -> AiRouter {
+    let mut config = memory_router_config(settings);
+    config.usage_gate = Some(Arc::clone(gate));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
         config,
@@ -445,7 +450,16 @@ pub(crate) fn memory_add_router(node: &Arc<dyn NodeLink>, settings: &AiSettings)
 /// The Software Factory's own router (PRD software-factory D-13, D-44): the
 /// operator's provider choice with one request in flight, separate from the
 /// label and Project Memory routers so its queue never takes their budget.
+/// Like the Start dialog's worktree name it is not judged by the usage limit
+/// (PRD hide-ai-usage-limit D-03): an operator or a Factory is waiting on it.
 pub(crate) fn factory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
+    waited_router(node, settings)
+}
+
+/// A router for work the operator waits on, such as the Start dialog's
+/// worktree name: the provider order with no usage limit, so it answers
+/// however much of the week is spent (PRD hide-ai-usage-limit D-03, B6).
+pub(crate) fn waited_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
         settings.router_config(),
@@ -455,11 +469,17 @@ pub(crate) fn factory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) ->
 
 /// The same provider boundary for agent labels (PRD labels-in-hided D-05):
 /// the operator's provider and model choice, and the router's own retry,
-/// cooldown and budget rules.
-pub(crate) fn labels_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
+/// cooldown and budget rules, judged by the usage limit.
+pub(crate) fn labels_router(
+    node: &Arc<dyn NodeLink>,
+    settings: &AiSettings,
+    gate: &Arc<UsageLimits>,
+) -> AiRouter {
+    let mut config = settings.router_config();
+    config.usage_gate = Some(Arc::clone(gate));
     AiRouter::new(
         backends(node, &settings.models_by_provider(), None),
-        settings.router_config(),
+        config,
         Arc::new(DiagnosticLogSink),
     )
 }
@@ -697,7 +717,7 @@ pub(crate) fn suggest_worktree_name(
         schema_version: "1".into(),
         pick: None,
     };
-    let router = memory_router(node, settings);
+    let router = waited_router(node, settings);
     let answer = router
         .execute(&request, &hide_ai::CancelToken::new())
         .map_err(|error| format!("{error:?}"))?;
@@ -758,7 +778,7 @@ mod tests {
             provider: ProviderId::CLAUDE,
             ..AiSettings::default()
         };
-        let router = memory_router(&node(), &settings);
+        let router = memory_router(&node(), &settings, &Arc::new(UsageLimits::new()));
         assert_eq!(
             router.provider_state().unwrap().selected,
             ProviderId::CLAUDE

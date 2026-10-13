@@ -2408,10 +2408,11 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        let asleep = crate::project_context::asleep_fold_key(workspace_id);
         self.snapshot
             .ui_state
             .session_open_folds
-            .retain(|key| key != workspace_id);
+            .retain(|key| key != workspace_id && key != &asleep);
         // The project's checkouts leave the recent list with it; their ids
         // are read before the catalog drops the rows that name them. A
         // device that is not connected has no rows to read, so the

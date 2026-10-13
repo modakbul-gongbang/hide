@@ -600,6 +600,7 @@ fn inspect_space(node: &NodeId, space: &SessionSpace, paths: &PathIndex) -> Vec<
                     .unwrap_or(&space.label)
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
+                    agent_presence: Default::default(),
                     agent_scope: Default::default(),
                     home_issues: Default::default(),
                     pull_requests: Vec::new(),
@@ -908,6 +909,7 @@ fn inspect(
     };
 
     WorkspaceSnapshot {
+        agent_presence: Default::default(),
         agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),
@@ -1484,6 +1486,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1548,6 +1551,7 @@ mod tests {
         ];
         let checkout = fs::canonicalize(&checkout).expect("the checkout's real path");
         let project = WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),

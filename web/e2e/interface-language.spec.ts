@@ -55,12 +55,13 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       await choose(left, language!);
       for (const page of [left, right]) {
         await expect(page.locator("html")).toHaveAttribute("lang", language!);
-        await expect(page.locator("[data-settings] h2")).toHaveText(heading!);
+        await expect(page.locator("[data-settings] nav h2")).toHaveText(heading!);
         await expect(page.locator('[data-settings-tab="general"]')).toHaveText(general!);
       }
       // The window's own machine is product copy and follows the language
       // (PRD core-host-node-move B2); paths remain byte-for-byte unchanged.
       await expect(left.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE[language!]!);
+      await left.locator('[data-settings-tab="about"]').click();
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
       await expect(left.locator("[data-sidebar-mode]")).toHaveCount(0);
       await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);
@@ -130,7 +131,9 @@ test("unsupported systems use English, and an invalid stored preference is diagn
     });
     await openSettings(page, daemon);
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await page.locator('[data-settings-tab="about"]').click();
     await expect(page.locator("[data-diagnostics]")).toContainText("ui_state.interface_language_invalid");
+    await page.locator('[data-settings-tab="general"]').click();
     await expect(page.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "en");
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).interface_language).toBe("unsupported");
     // Choosing English repairs an invalid value even though English was already drawn.

@@ -1,1524 +1,548 @@
-//! The toolbar's Weekly Usage rows, one per provider.
-//!
-//! Codex is read from its usage endpoint with the token in `auth.json`, and
-//! from the newest session JSONL when that fails. Claude Code is read by
-//! having the core's own node run `claude -p /usage` while a worker thread
-//! waits, and parsing the text the CLI prints; the node also reads
-//! `auth.json` and the session files (`hide_host::usage`): the CLI authenticates against its own keychain item, so Hide
-//! never holds a token and macOS never asks it for one. The earlier direct
-//! read of the keychain was denied on every rebuild, because an ad hoc
-//! signed dev build has a new code identity each time.
+//! Registry-driven limits. All I/O runs on bounded background reads through
+//! the core's own node; the coordinator only polls and publishes transitions.
+mod limits;
+pub mod model;
+pub mod prefs;
+mod retry;
 
-use std::path::{Path, PathBuf};
+use crate::node_access::{NodeLink, call_as_with_progress};
+use crate::reader::BackgroundRead;
+use hide_agent_adapter::usage::LimitSource;
+use hide_ai::CancelToken;
+use hide_node_link::protocol::Call;
+use hide_node_link::usage::{FailureDisposition, LimitFailure, LimitFetch};
+use model::*;
+use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hide_ai::CancelToken;
-use hide_node_link::protocol::Call;
-use hide_node_link::usage::{CodexWeeklyUsage, CredentialsAnswer, UsageError, UsageText};
-use serde_json::{Value, json};
-
-use crate::node_access::{NodeLink, call_as, call_as_with_progress};
-
-use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
-use crate::reader::BackgroundRead;
-use crate::zoneinfo::{Zone, civil_from_days, days_from_civil, days_in_month};
-
-pub use hide_node_link::usage::WEEKLY_WINDOW_MINUTES;
-
-/// How long a node read of a file may take.
-const NODE_READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// The node ends `claude -p /usage` itself well before this.
-const CLAUDE_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-const WEEKLY_WINDOW_SECONDS: u64 = 604_800;
 const INITIAL_DELAY: Duration = Duration::from_secs(1);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const POPOVER_REFRESH_AGE: Duration = Duration::from_secs(60);
-const STALE_LIMIT_MS: u64 = 15 * 60 * 1_000;
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-/// The name the row shows when the CLI is not on `PATH`.
-const CLAUDE_BINARY: &str = hide_agent_adapter::AgentId::ClaudeCode
-    .adapter()
-    .executables[0];
-/// A reset the CLI prints is at most one weekly window away. A wall time
-/// that matched this recently is the reset that just passed (the CLI prints
-/// minutes, and the read takes seconds), not the same date a year ahead, so
-/// the row reads as expired until the next read.
-const RESET_HORIZON_SECONDS: i64 = 8 * 86_400;
-const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const STALE_LIMIT_MS: u64 = 15 * 60 * 1000;
+const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const RETRY_BACKOFF: [Duration; 3] = [
-    Duration::from_secs(5 * 60),
-    Duration::from_secs(10 * 60),
-    Duration::from_secs(15 * 60),
+    Duration::from_secs(300),
+    Duration::from_secs(600),
+    Duration::from_secs(900),
 ];
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UsageActivity {
     pub window_visible: bool,
     pub popover_open_generation: u64,
+    pub hidden: Vec<String>,
+    pub required: Vec<String>,
 }
-
 #[derive(Clone, Debug)]
 pub(crate) struct UsagePaths {
     pub home: Option<PathBuf>,
-    /// Where the `claude` child runs: Hide's own state directory, so no
-    /// project's `CLAUDE.md` or settings are discovered.
     pub claude_cwd: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
 }
-
 #[derive(Clone, Debug)]
-struct UsageValue {
-    label: String,
-    used_percent: f64,
-    resets_at_unix_seconds: u64,
+struct Success {
+    value: LimitReading,
+    observed_at_ms: u64,
 }
-
+struct Answer {
+    checked_at_ms: u64,
+    result: Result<Success, Failure>,
+    fallback: Option<Success>,
+}
 #[derive(Clone, Debug)]
-enum UsageBucket {
-    Available(UsageValue),
-    Unavailable { label: String },
+struct Failure {
+    cause: Cause,
+    kind: String,
+    status: Option<u16>,
+    retry_after: Option<Duration>,
 }
-
-#[derive(Clone, Debug)]
-struct SuccessfulUsage {
-    main: UsageValue,
-    buckets: Vec<UsageBucket>,
-    checked_at_unix_ms: u64,
+impl Failure {
+    fn from_node(f: LimitFailure) -> Self {
+        let cause = match f.disposition {
+            FailureDisposition::Authentication => Cause::SignedOut,
+            FailureDisposition::Schema => Cause::FormatChanged,
+            FailureDisposition::NotInstalled => Cause::NotInstalled,
+            FailureDisposition::Offline => {
+                if f.status == Some(429) {
+                    Cause::RateLimited
+                } else if f.kind == "timeout" {
+                    Cause::TimedOut
+                } else {
+                    Cause::Offline
+                }
+            }
+        };
+        Self {
+            cause,
+            kind: f.kind,
+            status: f.status,
+            retry_after: f.retry_after.as_deref().and_then(retry::parse_retry_after),
+        }
+    }
+    fn parse(cause: Cause) -> Self {
+        Self {
+            cause,
+            kind: "response_format".into(),
+            status: None,
+            retry_after: None,
+        }
+    }
+    fn transient(&self) -> bool {
+        matches!(
+            self.cause,
+            Cause::Offline | Cause::TimedOut | Cause::RateLimited
+        )
+    }
 }
-
-#[derive(Clone, Debug)]
-struct SessionFallback {
-    value: UsageValue,
-    source_at_unix_ms: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FailureDisposition {
-    /// A transient failure: a kept success stays on screen for a while.
-    Offline,
-    Authentication,
-    /// The provider answered something the reader cannot use.
-    Schema,
-    /// The `claude` binary is not on `PATH`; looked up again on the next read.
-    NotInstalled,
-}
-
-#[derive(Clone, Debug)]
-struct ProviderState {
-    provider: &'static str,
-    label: &'static str,
-    last_success: Option<SuccessfulUsage>,
-    last_checked_at_unix_ms: Option<u64>,
+struct SourceRead {
+    agent: &'static str,
+    source: LimitSource,
+    worker: BackgroundRead<u64, Answer>,
+    attempt: u64,
+    pending: bool,
     last_attempt: Option<Instant>,
-    failure: Option<(FailureDisposition, String)>,
+    checked_at_ms: Option<u64>,
+    success: Option<Success>,
+    fallback: Option<Success>,
+    failure: Option<Failure>,
     retry_at: Option<Instant>,
     backoff_index: usize,
 }
-
-impl ProviderState {
-    fn for_dialect(dialect: hide_agent_adapter::UsageDialect) -> Self {
-        let row = dialect.adapter();
-        Self::new(row.herdr.name, row.label)
-    }
-
-    fn new(provider: &'static str, label: &'static str) -> Self {
+impl SourceRead {
+    fn new(
+        agent: &'static str,
+        source: LimitSource,
+        root: Option<PathBuf>,
+        node: Arc<dyn NodeLink>,
+        cancel: CancelToken,
+    ) -> Self {
+        let worker = BackgroundRead::on_change(Duration::ZERO, move |_: &u64| {
+            let checked_at_ms = unix_ms();
+            let fetch = match &root {
+                Some(root) => call_as_with_progress::<LimitFetch, Value>(
+                    node.as_ref(),
+                    Call::UsageLimitFetch {
+                        source,
+                        root: root.to_string_lossy().into_owned(),
+                    },
+                    READ_TIMEOUT,
+                    |_| !cancel.is_cancelled(),
+                )
+                .map_err(|_| Failure {
+                    cause: Cause::Offline,
+                    kind: "usage_node_unavailable".into(),
+                    status: None,
+                    retry_after: None,
+                }),
+                None => Err(Failure::parse(Cause::FormatChanged)),
+            };
+            match fetch {
+                Err(failure) => Answer {
+                    checked_at_ms,
+                    result: Err(failure),
+                    fallback: None,
+                },
+                Ok(fetch) => {
+                    let result = fetch
+                        .result
+                        .map_err(Failure::from_node)
+                        .and_then(|body| {
+                            limits::parse(source, &body, checked_at_ms / 1000)
+                                .map_err(Failure::parse)
+                        })
+                        .map(|value| Success {
+                            value,
+                            observed_at_ms: checked_at_ms,
+                        });
+                    // A schema failure immediately invalidates even an old success.
+                    let fallback = if result
+                        .as_ref()
+                        .is_err_and(|f| f.cause != Cause::FormatChanged && f.cause != Cause::Capped)
+                    {
+                        fetch.fallback.and_then(|read| {
+                            limits::parse(source, &read.body, checked_at_ms / 1000)
+                                .ok()
+                                .map(|value| Success {
+                                    value,
+                                    observed_at_ms: read.source_at_unix_ms,
+                                })
+                        })
+                    } else {
+                        None
+                    };
+                    Answer {
+                        checked_at_ms,
+                        result,
+                        fallback,
+                    }
+                }
+            }
+        });
         Self {
-            provider,
-            label,
-            last_success: None,
-            last_checked_at_unix_ms: None,
+            agent,
+            source,
+            worker,
+            attempt: 0,
+            pending: false,
             last_attempt: None,
+            checked_at_ms: None,
+            success: None,
+            fallback: None,
             failure: None,
             retry_at: None,
             backoff_index: 0,
         }
     }
-
-    fn can_attempt(&self, now: Instant) -> bool {
-        self.retry_at.is_none_or(|retry_at| now >= retry_at)
+    fn due(&self, now: Instant, active: bool, opened: bool) -> bool {
+        !self.pending
+            && self.retry_at.is_none_or(|retry| now >= retry)
+            && self.last_attempt.is_none_or(|last| {
+                (active && now.duration_since(last) >= REFRESH_INTERVAL)
+                    || (opened && now.duration_since(last) > POPOVER_REFRESH_AGE)
+            })
     }
-
-    fn record_success(&mut self, success: SuccessfulUsage, now: Instant) {
-        self.last_checked_at_unix_ms = Some(success.checked_at_unix_ms);
+    fn collect(&mut self, now: Instant) {
+        if self.attempt == 0 {
+            return;
+        }
+        let Some(answer) = self.worker.poll(self.attempt) else {
+            return;
+        };
+        self.pending = false;
+        self.checked_at_ms = Some(answer.checked_at_ms);
         self.last_attempt = Some(now);
-        self.last_success = Some(success);
-        self.failure = None;
-        self.retry_at = None;
-        self.backoff_index = 0;
+        match answer.result {
+            Ok(success) => {
+                self.success = Some(success);
+                self.failure = None;
+                self.fallback = None;
+                self.retry_at = None;
+                self.backoff_index = 0;
+            }
+            Err(failure) => {
+                crate::diagnostic!(
+                    json!({"component":"usage", "agent":self.agent,"source":self.source,"kind":failure.kind,"status":failure.status})
+                );
+                self.retry_at = (failure.status == Some(429)).then(|| {
+                    let delay = failure.retry_after.unwrap_or_else(|| {
+                        let delay = RETRY_BACKOFF[self.backoff_index];
+                        self.backoff_index = (self.backoff_index + 1).min(RETRY_BACKOFF.len() - 1);
+                        delay
+                    });
+                    // A hostile Retry-After cannot overflow Instant.
+                    now.checked_add(delay).unwrap_or(now + RETRY_BACKOFF[2])
+                });
+                self.failure = Some(failure);
+                self.fallback = answer.fallback;
+            }
+        }
     }
-
-    fn record_failure(&mut self, failure: FetchFailure, now: Instant, checked_at: u64) {
-        self.last_checked_at_unix_ms = Some(checked_at);
-        self.last_attempt = Some(now);
-        log_failure(self.provider, failure.status, &failure.kind);
-        self.failure = Some((failure.disposition, failure.kind));
-        if failure.status == Some(429) {
-            let delay = failure.retry_after.unwrap_or_else(|| {
-                let delay = RETRY_BACKOFF[self.backoff_index.min(RETRY_BACKOFF.len() - 1)];
-                self.backoff_index = (self.backoff_index + 1).min(RETRY_BACKOFF.len() - 1);
-                delay
-            });
-            self.retry_at = Some(now + delay);
-        } else {
-            self.retry_at = None;
+    fn poll(&mut self, now: Instant, enabled: bool, active: bool, opened: bool) {
+        if enabled && self.due(now, active, opened) {
+            self.attempt += 1;
+            self.pending = true;
+            self.last_attempt = Some(now);
+        }
+        self.collect(now);
+    }
+    fn project(&self, now_ms: u64) -> Cell<LimitReading> {
+        let reading = |success: &Success, freshness| {
+            let mut value = success.value.clone();
+            value.expire(now_ms / 1000);
+            Cell::Reading {
+                value,
+                freshness,
+                observed_at_ms: success.observed_at_ms,
+            }
+        };
+        match &self.failure {
+            None => self
+                .success
+                .as_ref()
+                .map_or(Cell::Loading, |s| reading(s, Freshness::Fresh)),
+            Some(failure) => {
+                if failure.transient()
+                    && let Some(success) = &self.success
+                    && now_ms.saturating_sub(success.observed_at_ms) <= STALE_LIMIT_MS
+                {
+                    return reading(success, Freshness::Stale);
+                }
+                if let Some(fallback) = &self.fallback {
+                    return reading(fallback, Freshness::Fallback);
+                }
+                Cell::Unavailable {
+                    cause: failure.cause,
+                    last_checked_at_ms: self.checked_at_ms,
+                }
+            }
         }
     }
 }
 
-/// The freshness key of one `claude -p /usage` read: a changed attempt
-/// number is what starts the worker, so the schedule stays in this module
-/// and the worker runs exactly once per attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ClaudeUsageRequest {
-    attempt: u64,
-}
-
-struct ClaudeUsageAnswer {
-    checked_at_unix_ms: u64,
-    outcome: Result<SuccessfulUsage, FetchFailure>,
-}
-
-#[derive(Clone, PartialEq)]
-struct CodexUsageRequest {
-    attempt: u64,
-}
-
-struct CodexUsageAnswer {
-    checked_at_unix_ms: u64,
-    outcome: Result<SuccessfulUsage, FetchFailure>,
-    /// The local session files' reading, taken only when the network read
-    /// failed.
-    fallback: Option<SessionFallback>,
-}
-
-pub struct ProviderUsageReader {
+pub struct UsageDriver {
     started_at: Instant,
     last_seen_popover_generation: u64,
-    claude: ProviderState,
-    codex: ProviderState,
-    codex_fallback: Option<SessionFallback>,
-    published: Vec<ProviderUsageSnapshot>,
-    /// The Codex read (credentials and session files from the node that holds
-    /// the login, then the usage endpoint) runs on this worker, for the same
-    /// reason as the Claude one (PRD instant-pane-topology D-13).
-    codex_read: BackgroundRead<CodexUsageRequest, CodexUsageAnswer>,
-    codex_attempt: u64,
-    /// The Claude read runs on this worker: a `claude` child takes seconds,
-    /// and the coordinator thread that drives this reader is the one that
-    /// applies every Herdr pane event.
-    claude_read: BackgroundRead<ClaudeUsageRequest, ClaudeUsageAnswer>,
-    claude_attempt: u64,
-    /// Cancelled when the reader is dropped, so a child still running at
-    /// shutdown is killed rather than left to finish on its own.
-    claude_cancel: CancelToken,
+    reads: Vec<SourceRead>,
+    published: Vec<AgentUsage>,
+    cancel: CancelToken,
 }
-
-impl ProviderUsageReader {
+impl UsageDriver {
     pub(crate) fn new(paths: UsagePaths, node: Arc<dyn NodeLink>) -> Self {
-        let claude_cancel = CancelToken::new();
-        let claude_read = claude_background_read(
-            paths.claude_cwd.clone(),
-            claude_cancel.clone(),
-            Arc::clone(&node),
-        );
-        let codex_read = codex_background_read(paths.codex_home.clone(), node);
+        let cancel = CancelToken::new();
+        let reads = hide_agent_adapter::ADAPTERS
+            .iter()
+            .flat_map(|row| {
+                row.usage
+                    .limit_sources()
+                    .map(|source| {
+                        let root = match source {
+                            LimitSource::ClaudeUsageText => paths.claude_cwd.clone(),
+                            LimitSource::CodexUsage => paths.codex_home.clone(),
+                        };
+                        SourceRead::new(
+                            row.herdr.name,
+                            source,
+                            root,
+                            Arc::clone(&node),
+                            cancel.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         Self {
             started_at: Instant::now(),
             last_seen_popover_generation: 0,
-            claude: ProviderState::for_dialect(hide_agent_adapter::UsageDialect::Claude),
-            codex: ProviderState::for_dialect(hide_agent_adapter::UsageDialect::Codex),
-            codex_fallback: None,
-            published: ProviderUsageSnapshot::initial_rows(),
-            codex_read,
-            codex_attempt: 0,
-            claude_read,
-            claude_attempt: 0,
-            claude_cancel,
+            reads,
+            published: AgentUsage::initial_rows(),
+            cancel,
         }
     }
-
-    /// Starts the Claude and Codex reads on their workers when due, collects
-    /// their answers on a later wake, and publishes only a changed answer.
-    /// Nothing here blocks the coordinator thread that applies Herdr's events
-    /// (PRD instant-pane-topology D-13).
-    pub(crate) fn read_if_due(
-        &mut self,
-        activity: UsageActivity,
-    ) -> Option<Vec<ProviderUsageSnapshot>> {
+    /// Added work per coordinator tick is bounded by declared sources (two).
+    /// One worker per source, no queued reads; one publish only on a transition.
+    pub(crate) fn read_if_due(&mut self, activity: UsageActivity) -> Option<Vec<AgentUsage>> {
         let now = Instant::now();
-        let popover_opened = activity.popover_open_generation > self.last_seen_popover_generation;
+        let opened = activity.popover_open_generation > self.last_seen_popover_generation;
         self.last_seen_popover_generation = activity.popover_open_generation;
-        let initial_due = self.claude.last_attempt.is_none()
-            && self.codex.last_attempt.is_none()
-            && now.duration_since(self.started_at) >= INITIAL_DELAY;
-        let claude_due = provider_due(&self.claude, now, activity.window_visible, popover_opened);
-        let codex_due = provider_due(&self.codex, now, activity.window_visible, popover_opened);
-
-        if initial_due || claude_due {
-            self.refresh_claude(now);
+        for read in &mut self.reads {
+            let required = activity.required.iter().any(|agent| agent == read.agent);
+            let visible = !activity.hidden.iter().any(|agent| agent == read.agent);
+            let enabled = visible || required;
+            let active = (visible && activity.window_visible) || required;
+            read.poll(
+                now,
+                enabled && now.duration_since(self.started_at) >= INITIAL_DELAY,
+                active,
+                opened && visible,
+            );
         }
-        self.collect_claude(now);
-        if initial_due || codex_due {
-            self.refresh_codex(now);
+        let mut next = AgentUsage::initial_rows();
+        for row in &mut next {
+            for read in self.reads.iter().filter(|read| read.agent == row.agent) {
+                row.limits = merge(row.limits.clone(), read.project(unix_ms()));
+            }
         }
-        self.collect_codex(now);
-
-        let now_unix_ms = unix_milliseconds();
-        let next = vec![
-            project_provider(&self.claude, None, now_unix_ms),
-            project_provider(&self.codex, self.codex_fallback.clone(), now_unix_ms),
-        ];
         if next == self.published {
             return None;
         }
         self.published = next.clone();
         Some(next)
     }
-
-    /// Starts one Claude read. The attempt is recorded now so the schedule
-    /// does not ask again while the child runs; the answer lands through
-    /// [`Self::collect_claude`].
-    fn refresh_claude(&mut self, now: Instant) {
-        if !self.claude.can_attempt(now) {
-            return;
-        }
-        self.claude_attempt += 1;
-        self.claude.last_attempt = Some(now);
-    }
-
-    fn collect_claude(&mut self, now: Instant) {
-        if self.claude_attempt == 0 {
-            return;
-        }
-        let request = ClaudeUsageRequest {
-            attempt: self.claude_attempt,
-        };
-        let Some(answer) = self.claude_read.poll(request) else {
-            return;
-        };
-        match answer.outcome {
-            Ok(success) => self.claude.record_success(success, now),
-            Err(failure) => self
-                .claude
-                .record_failure(failure, now, answer.checked_at_unix_ms),
-        }
-    }
-
-    /// Starts one Codex read; the answer lands through
-    /// [`Self::collect_codex`].
-    fn refresh_codex(&mut self, now: Instant) {
-        if !self.codex.can_attempt(now) {
-            return;
-        }
-        self.codex_attempt += 1;
-        self.codex.last_attempt = Some(now);
-    }
-
-    fn collect_codex(&mut self, now: Instant) {
-        if self.codex_attempt == 0 {
-            return;
-        }
-        let request = CodexUsageRequest {
-            attempt: self.codex_attempt,
-        };
-        let Some(answer) = self.codex_read.poll(request) else {
-            return;
-        };
-        match answer.outcome {
-            Ok(success) => {
-                self.codex.record_success(success, now);
-                self.codex_fallback = None;
-            }
-            Err(failure) => {
-                self.codex
-                    .record_failure(failure, now, answer.checked_at_unix_ms);
-                self.codex_fallback = answer.fallback;
-            }
-        }
-    }
 }
-
-impl Drop for ProviderUsageReader {
+impl Drop for UsageDriver {
     fn drop(&mut self) {
-        self.claude_cancel.cancel();
+        self.cancel.cancel();
+        for read in &mut self.reads {
+            read.worker.join_pending();
+        }
     }
 }
-
-/// The worker that has the node run `claude -p /usage` and parses its text.
-/// It takes owned inputs, because it outlives any one `read_if_due` call;
-/// `cancel` answers the node's reports, so dropping the reader ends the child.
-fn claude_background_read(
-    cwd: Option<PathBuf>,
-    cancel: CancelToken,
-    node: Arc<dyn NodeLink>,
-) -> BackgroundRead<ClaudeUsageRequest, ClaudeUsageAnswer> {
-    BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
-        let checked_at_unix_ms = unix_milliseconds();
-        let outcome = match cwd.as_ref() {
-            Some(cwd) => {
-                let call = Call::ClaudeUsageText {
-                    cwd: cwd.to_string_lossy().into_owned(),
-                };
-                let text = call_as_with_progress::<UsageText, Value>(
-                    node.as_ref(),
-                    call,
-                    CLAUDE_READ_TIMEOUT,
-                    |_| !cancel.is_cancelled(),
-                );
-                match text {
-                    Ok(UsageText::Text { text }) => {
-                        parse_claude_usage_text(&text, unix_seconds(), checked_at_unix_ms)
-                    }
-                    Ok(UsageText::Failed { error }) => Err(FetchFailure::from_usage_error(error)),
-                    Err(_) => Err(FetchFailure::from_usage_error(UsageError::Failed(
-                        "usage_node_unavailable".to_owned(),
-                    ))),
-                }
-            }
-            None => Err(FetchFailure::schema("state_dir")),
-        };
-        ClaudeUsageAnswer {
-            checked_at_unix_ms,
-            outcome,
-        }
-    })
-}
-
-/// The worker that asks the node for the Codex login, asks the usage
-/// endpoint and, when that fails, asks the node for the local session files'
-/// reading instead.
-fn codex_background_read(
-    codex_home: Option<PathBuf>,
-    node: Arc<dyn NodeLink>,
-) -> BackgroundRead<CodexUsageRequest, CodexUsageAnswer> {
-    let http = UreqUsageClient::new();
-    BackgroundRead::on_change(Duration::ZERO, move |_: &CodexUsageRequest| {
-        let checked_at_unix_ms = unix_milliseconds();
-        let outcome = codex_credentials(codex_home.as_deref(), node.as_ref())
-            .map_err(FetchFailure::authentication)
-            .and_then(|credentials| {
-                let authorization = format!("Bearer {}", credentials.access_token);
-                http.get(
-                    CODEX_USAGE_URL,
-                    &[
-                        ("Authorization", authorization.as_str()),
-                        ("User-Agent", "codex-cli"),
-                        ("OpenAI-Beta", "codex-1"),
-                        ("originator", "Codex Desktop"),
-                        ("ChatGPT-Account-Id", credentials.account_id.as_str()),
-                    ],
-                )
-            })
-            .and_then(HttpResponse::success_body)
-            .and_then(|body| parse_codex_usage(&body, checked_at_unix_ms));
-        let fallback = outcome.is_err().then(|| {
-            codex_session_fallback(codex_home.as_deref(), node.as_ref(), checked_at_unix_ms)
-        });
-        CodexUsageAnswer {
-            checked_at_unix_ms,
-            outcome,
-            fallback: fallback.flatten(),
-        }
-    })
-}
-
-/// The Codex login, from the node that holds it.
-fn codex_credentials(
-    codex_home: Option<&Path>,
-    node: &dyn NodeLink,
-) -> Result<hide_node_link::usage::CodexCredentials, &'static str> {
-    let codex_home = codex_home.ok_or("credential_path")?;
-    let call = Call::CodexCredentials {
-        codex_home: codex_home.to_string_lossy().into_owned(),
-    };
-    match call_as(node, call, NODE_READ_TIMEOUT) {
-        Ok(CredentialsAnswer::Found { credentials }) => Ok(credentials),
-        Ok(CredentialsAnswer::Refused { refusal }) => Err(refusal.code()),
-        Err(_) => Err("credentials_unreadable"),
-    }
-}
-
-/// The local session files' weekly reading, from the node that holds them.
-fn codex_session_fallback(
-    codex_home: Option<&Path>,
-    node: &dyn NodeLink,
-    checked_at: u64,
-) -> Option<SessionFallback> {
-    let call = Call::CodexSessionUsage {
-        codex_home: codex_home?.to_string_lossy().into_owned(),
-    };
-    let read: Option<CodexWeeklyUsage> = call_as(node, call, NODE_READ_TIMEOUT).unwrap_or_default();
-    read.map(|usage| SessionFallback {
-        value: UsageValue {
-            label: "Codex".to_owned(),
-            used_percent: usage.used_percent,
-            resets_at_unix_seconds: usage.resets_at_unix_seconds,
-        },
-        source_at_unix_ms: usage.source_at_unix_ms.unwrap_or(checked_at),
-    })
-}
-
-fn provider_due(
-    state: &ProviderState,
-    now: Instant,
-    window_visible: bool,
-    popover_opened: bool,
-) -> bool {
-    let Some(last_attempt) = state.last_attempt else {
-        return false;
-    };
-    (window_visible && now.duration_since(last_attempt) >= REFRESH_INTERVAL)
-        || (popover_opened && now.duration_since(last_attempt) > POPOVER_REFRESH_AGE)
-}
-
-fn project_provider(
-    state: &ProviderState,
-    fallback: Option<SessionFallback>,
-    now_unix_ms: u64,
-) -> ProviderUsageSnapshot {
-    let Some((disposition, kind)) = state.failure.as_ref() else {
-        return state.last_success.as_ref().map_or_else(
-            || ProviderUsageSnapshot::loading(state.provider, state.label),
-            |success| snapshot_from_success(state, success, "available", None, now_unix_ms),
-        );
-    };
-
-    if *disposition == FailureDisposition::Offline
-        && let Some(success) = state.last_success.as_ref()
-        && now_unix_ms.saturating_sub(success.checked_at_unix_ms) <= STALE_LIMIT_MS
-    {
-        let minutes = now_unix_ms
-            .saturating_sub(success.checked_at_unix_ms)
-            .div_ceil(60_000);
-        return snapshot_from_success(
-            state,
-            success,
-            "stale",
-            Some(format!("Last checked {minutes}m ago · offline")),
-            now_unix_ms,
-        );
-    }
-
-    if hide_agent_adapter::adapter(state.provider).and_then(|row| row.usage)
-        == Some(hide_agent_adapter::UsageDialect::Codex)
-        && *disposition != FailureDisposition::Schema
-        && let Some(fallback) = fallback
-    {
-        return snapshot_from_fallback(state, fallback, kind, now_unix_ms);
-    }
-
-    let message = match disposition {
-        FailureDisposition::Authentication => {
-            format!("Sign in with {} to see usage", state.provider)
-        }
-        FailureDisposition::Schema => {
-            format!("{} weekly usage response is unavailable", state.label)
-        }
-        FailureDisposition::NotInstalled => {
-            format!("{CLAUDE_BINARY} is not installed on this Mac")
-        }
-        // A Claude read that timed out or exited is a local child failing,
-        // not the network, so its row does not claim to be offline.
-        FailureDisposition::Offline
-            if hide_agent_adapter::adapter(state.provider).and_then(|row| row.usage)
-                == Some(hide_agent_adapter::UsageDialect::Claude) =>
-        {
-            format!("{} weekly usage response is unavailable", state.label)
-        }
-        FailureDisposition::Offline => {
-            format!("{} weekly usage is unavailable · offline", state.label)
-        }
-    };
-    unavailable_snapshot(state, message, kind)
-}
-
-fn snapshot_from_success(
-    state: &ProviderState,
-    success: &SuccessfulUsage,
-    projection_state: &str,
-    message: Option<String>,
-    now_unix_ms: u64,
-) -> ProviderUsageSnapshot {
-    if success.main.resets_at_unix_seconds <= now_unix_ms / 1_000 {
-        let suffix = if projection_state == "stale" {
-            " · offline"
-        } else {
-            ""
-        };
-        return unavailable_snapshot(
-            state,
-            format!(
-                "{} weekly usage expired at its last reset{suffix}",
-                success.main.label
-            ),
-            state
-                .failure
-                .as_ref()
-                .map_or("expired", |(_, kind)| kind.as_str()),
-        );
-    }
-    let buckets = success
-        .buckets
-        .iter()
-        .map(|bucket| match bucket {
-            UsageBucket::Unavailable { label } => ProviderUsageBucketSnapshot {
-                label: label.clone(),
-                state: "unavailable".to_owned(),
-                used_percent: None,
-                resets_at_unix_seconds: None,
-                message: Some(format!("{label} weekly usage response is unavailable")),
+fn merge(current: Cell<LimitReading>, next: Cell<LimitReading>) -> Cell<LimitReading> {
+    match (current, next) {
+        (
+            Cell::Reading {
+                mut value,
+                freshness,
+                observed_at_ms,
             },
-            UsageBucket::Available(bucket)
-                if bucket.resets_at_unix_seconds <= now_unix_ms / 1_000 =>
-            {
-                ProviderUsageBucketSnapshot {
-                    label: bucket.label.clone(),
-                    state: "unavailable".to_owned(),
-                    used_percent: None,
-                    resets_at_unix_seconds: None,
-                    message: Some(format!(
-                        "{} weekly usage expired at its last reset{}",
-                        bucket.label,
-                        if projection_state == "stale" {
-                            " · offline"
-                        } else {
-                            ""
-                        }
-                    )),
-                }
-            }
-            UsageBucket::Available(bucket) => ProviderUsageBucketSnapshot {
-                label: bucket.label.clone(),
-                state: projection_state.to_owned(),
-                used_percent: Some(bucket.used_percent),
-                resets_at_unix_seconds: Some(bucket.resets_at_unix_seconds),
-                message: message.clone(),
+            Cell::Reading {
+                value: incoming,
+                freshness: incoming_freshness,
+                observed_at_ms: incoming_at,
             },
-        })
-        .collect();
-    ProviderUsageSnapshot {
-        provider: state.provider.to_owned(),
-        label: state.label.to_owned(),
-        window_minutes: WEEKLY_WINDOW_MINUTES,
-        state: projection_state.to_owned(),
-        used_percent: Some(success.main.used_percent),
-        resets_at_unix_seconds: Some(success.main.resets_at_unix_seconds),
-        message,
-        last_checked_at_unix_ms: state.last_checked_at_unix_ms,
-        last_success_at_unix_ms: Some(success.checked_at_unix_ms),
-        last_error_kind: state.failure.as_ref().map(|(_, kind)| kind.clone()),
-        buckets,
-    }
-}
-
-fn snapshot_from_fallback(
-    state: &ProviderState,
-    fallback: SessionFallback,
-    kind: &str,
-    now_unix_ms: u64,
-) -> ProviderUsageSnapshot {
-    if fallback.value.resets_at_unix_seconds <= now_unix_ms / 1_000 {
-        return unavailable_snapshot(
-            state,
-            format!(
-                "{} weekly usage expired at its last reset · offline",
-                fallback.value.label
-            ),
-            kind,
-        );
-    }
-    ProviderUsageSnapshot {
-        provider: state.provider.to_owned(),
-        label: state.label.to_owned(),
-        window_minutes: WEEKLY_WINDOW_MINUTES,
-        state: "fallback".to_owned(),
-        used_percent: Some(fallback.value.used_percent),
-        resets_at_unix_seconds: Some(fallback.value.resets_at_unix_seconds),
-        message: Some("From last Codex session".to_owned()),
-        last_checked_at_unix_ms: state.last_checked_at_unix_ms,
-        last_success_at_unix_ms: Some(fallback.source_at_unix_ms),
-        last_error_kind: Some(kind.to_owned()),
-        buckets: Vec::new(),
-    }
-}
-
-fn unavailable_snapshot(
-    state: &ProviderState,
-    message: String,
-    kind: &str,
-) -> ProviderUsageSnapshot {
-    let mut snapshot = ProviderUsageSnapshot::unavailable(
-        state.provider,
-        state.label,
-        message,
-        state.last_checked_at_unix_ms.unwrap_or_default(),
-    );
-    snapshot.last_error_kind = Some(kind.to_owned());
-    snapshot
-}
-
-#[derive(Clone, Debug)]
-struct FetchFailure {
-    disposition: FailureDisposition,
-    /// A diagnostic token; never output, a token, or an account.
-    kind: String,
-    status: Option<u16>,
-    retry_after: Option<Duration>,
-}
-
-impl FetchFailure {
-    fn of(disposition: FailureDisposition, kind: impl Into<String>) -> Self {
-        Self {
-            disposition,
-            kind: kind.into(),
-            status: None,
-            retry_after: None,
-        }
-    }
-
-    fn authentication(kind: &'static str) -> Self {
-        Self::of(FailureDisposition::Authentication, kind)
-    }
-
-    fn schema(kind: &'static str) -> Self {
-        Self::of(FailureDisposition::Schema, kind)
-    }
-
-    /// Maps a `claude -p /usage` failure to its row. A timeout or a failed
-    /// child is transient: the last success stays for a while. A frame that
-    /// is not a result frame is an answer the reader cannot use. A binary
-    /// that is not there is its own row, and is looked up again next time.
-    fn from_usage_error(error: UsageError) -> Self {
-        match error {
-            UsageError::NotInstalled => Self::of(FailureDisposition::NotInstalled, "not_installed"),
-            UsageError::Timeout => Self::of(FailureDisposition::Offline, "timeout"),
-            UsageError::Cancelled => Self::of(FailureDisposition::Offline, "cancelled"),
-            UsageError::Failed(kind) => Self::of(FailureDisposition::Offline, kind),
-            UsageError::NoResultFrame => Self::schema("no_result_frame"),
-        }
-    }
-
-    fn http(status: u16, retry_after: Option<Duration>) -> Self {
-        Self {
-            disposition: if status == 401 {
-                FailureDisposition::Authentication
-            } else {
-                FailureDisposition::Offline
-            },
-            kind: if status == 429 {
-                "rate_limited".to_owned()
-            } else {
-                "http".to_owned()
-            },
-            status: Some(status),
-            retry_after,
-        }
-    }
-}
-
-struct HttpResponse {
-    status: u16,
-    retry_after: Option<Duration>,
-    body: String,
-}
-
-impl HttpResponse {
-    fn success_body(self) -> Result<String, FetchFailure> {
-        if (200..300).contains(&self.status) {
-            Ok(self.body)
-        } else {
-            Err(FetchFailure::http(self.status, self.retry_after))
-        }
-    }
-}
-
-struct UreqUsageClient {
-    agent: ureq::Agent,
-}
-
-impl UreqUsageClient {
-    fn new() -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .http_status_as_error(false)
-            .build();
-        Self {
-            agent: config.into(),
-        }
-    }
-
-    fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<HttpResponse, FetchFailure> {
-        let mut request = self.agent.get(url);
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        let mut response = request
-            .call()
-            .map_err(|_| FetchFailure::of(FailureDisposition::Offline, "transport"))?;
-        let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(parse_retry_after);
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|_| FetchFailure {
-                disposition: FailureDisposition::Offline,
-                kind: "body_read".to_owned(),
-                status: Some(status),
-                retry_after,
-            })?;
-        Ok(HttpResponse {
-            status,
-            retry_after,
-            body,
-        })
-    }
-}
-
-fn parse_retry_after(value: &str) -> Option<Duration> {
-    parse_retry_after_at(value, unix_seconds())
-}
-
-fn parse_retry_after_at(value: &str, now_unix_seconds: u64) -> Option<Duration> {
-    let value = value.trim();
-    if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
-    }
-    let retry_at = parse_http_date(value)?;
-    Some(Duration::from_secs(
-        retry_at.saturating_sub(now_unix_seconds),
-    ))
-}
-
-/// Reads the `/usage` text the CLI prints. The lines that matter look like
-///
-/// ```text
-/// Current session: 4% used · resets Sep 17 at 9pm (Asia/Seoul)
-/// Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)
-/// Current week (Fable): 0% used · resets Sep 24 at 1pm (Asia/Seoul)
-/// ```
-///
-/// `Current week (all models)` is the row; every other `Current week` line
-/// is a scoped bucket under it; `Current session` is dropped unread beyond
-/// its prefix (the popover shows the weekly window only). A CLI that cannot
-/// read its login prints `/cost` text instead, still with exit 0 and
-/// `is_error: false`, so no `Current` line at all is the logged-out state.
-///
-/// The CLI prints ` · resets …` only when the window has a reset, so a line
-/// without one is a real state: the row cannot be shown without its reset
-/// (`reset_missing`), a bucket becomes unavailable. The wall time carries a
-/// year only when it falls in another year (`Dec 31, 2027 at 11pm`). A line
-/// the reader cannot read is a format it does not know, never a zero.
-fn parse_claude_usage_text(
-    text: &str,
-    now_unix_seconds: u64,
-    checked_at: u64,
-) -> Result<SuccessfulUsage, FetchFailure> {
-    let mut main = None;
-    let mut buckets = Vec::new();
-    let mut saw_line = false;
-    for line in text.lines().map(str::trim) {
-        if !line.starts_with("Current ") {
-            continue;
-        }
-        saw_line = true;
-        if !line.starts_with("Current week") {
-            continue;
-        }
-        let parsed = parse_usage_line(line).ok_or_else(|| FetchFailure::schema("line_format"))?;
-        let resets_at = parsed
-            .reset
-            .as_deref()
-            .ok_or_else(|| FetchFailure::schema("reset_missing"))
-            .and_then(|reset| resolve_reset(reset, now_unix_seconds));
-        if parsed.scope == "all models" {
-            main = Some(UsageValue {
-                label: "Claude Code".to_owned(),
-                used_percent: parsed.used_percent,
-                resets_at_unix_seconds: resets_at?,
-            });
-            continue;
-        }
-        match resets_at {
-            Ok(resets_at_unix_seconds) => buckets.push(UsageBucket::Available(UsageValue {
-                label: parsed.scope,
-                used_percent: parsed.used_percent,
-                resets_at_unix_seconds,
-            })),
-            Err(failure) => {
-                log_scoped_failure(&failure.kind);
-                buckets.push(UsageBucket::Unavailable {
-                    label: parsed.scope,
-                });
+        ) => {
+            value.windows.extend(incoming.windows);
+            Cell::Reading {
+                value,
+                freshness: if freshness == Freshness::Fresh {
+                    incoming_freshness
+                } else {
+                    freshness
+                },
+                observed_at_ms: observed_at_ms.min(incoming_at),
             }
         }
+        (_, next) => next,
     }
-    if !saw_line {
-        return Err(FetchFailure::authentication("login_unreadable"));
-    }
-    let main = main.ok_or_else(|| FetchFailure::schema("weekly_missing"))?;
-    Ok(SuccessfulUsage {
-        main,
-        buckets,
-        checked_at_unix_ms: checked_at,
-    })
 }
-
-/// One `Current week …` line, as printed: `Current week (<scope>): <n>%
-/// (used|left)[ · resets <wall time>]`.
-#[derive(Clone, Debug, PartialEq)]
-struct UsageLine {
-    /// `all models` or a model name.
-    scope: String,
-    used_percent: f64,
-    /// The wall time after ` · resets `, unparsed; absent when the CLI
-    /// printed no reset.
-    reset: Option<String>,
-}
-
-/// A printed wall time: `<Mon> <D>[, <YYYY>] at <h>[:mm](am|pm) (<zone>)`.
-#[derive(Clone, Debug, PartialEq)]
-struct WallTime {
-    year: Option<i64>,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    zone: String,
-}
-
-fn parse_usage_line(line: &str) -> Option<UsageLine> {
-    static LINE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern = LINE.get_or_init(|| {
-        regex::Regex::new(
-            r"^Current week \(([^)]+)\): (\d+(?:\.\d+)?)% (used|left)(?: · resets (.+))?$",
-        )
-        .expect("the usage line pattern compiles")
-    });
-    let captures = pattern.captures(line)?;
-    let percent = captures[2].parse::<f64>().ok()?;
-    if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
-        return None;
-    }
-    let used_percent = if &captures[3] == "used" {
-        percent
-    } else {
-        100.0 - percent
-    };
-    Some(UsageLine {
-        scope: captures[1].to_owned(),
-        used_percent,
-        reset: captures.get(4).map(|reset| reset.as_str().to_owned()),
-    })
-}
-
-fn parse_wall_time(text: &str) -> Option<WallTime> {
-    static WALL_TIME: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let pattern = WALL_TIME.get_or_init(|| {
-        regex::Regex::new(
-            r"^([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))? at (\d{1,2})(?::(\d{2}))?(am|pm) \(([^)]+)\)$",
-        )
-        .expect("the wall time pattern compiles")
-    });
-    let captures = pattern.captures(text)?;
-    let month = parse_http_month(&captures[1])?;
-    let day = captures[2].parse::<i64>().ok()?;
-    let year = captures
-        .get(3)
-        .map(|year| year.as_str().parse::<i64>())
-        .transpose()
-        .ok()?;
-    let clock_hour = captures[4].parse::<i64>().ok()?;
-    if !(1..=12).contains(&clock_hour) {
-        return None;
-    }
-    let minute = captures
-        .get(5)
-        .map_or(Some(0), |minute| minute.as_str().parse::<i64>().ok())?;
-    if !(0..=59).contains(&minute) {
-        return None;
-    }
-    let hour = match (&captures[6], clock_hour) {
-        ("am", 12) => 0,
-        ("am", hour) => hour,
-        ("pm", 12) => 12,
-        (_, hour) => hour + 12,
-    };
-    Some(WallTime {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        zone: captures[7].to_owned(),
-    })
-}
-
-/// The instant a printed wall time names. With a year printed it is that
-/// wall clock in that zone. Without one, it is the first instant at or
-/// after `now` whose wall clock in that zone matches - unless the wall time
-/// matched within the last window, in which case it has just passed and
-/// the reset that passed is meant.
-fn resolve_reset(text: &str, now_unix_seconds: u64) -> Result<u64, FetchFailure> {
-    let line = parse_wall_time(text).ok_or_else(|| FetchFailure::schema("reset_format"))?;
-    let now = i64::try_from(now_unix_seconds).map_err(|_| FetchFailure::schema("reset_time"))?;
-    let zone = Zone::load(&line.zone).map_err(FetchFailure::schema)?;
-    let (year_now, _, _) = civil_from_days(
-        (now + i64::from(zone.offset_at(now).map_err(FetchFailure::schema)?)).div_euclid(86_400),
-    );
-    let years = match line.year {
-        Some(year) => vec![year],
-        None => vec![year_now - 1, year_now, year_now + 1],
-    };
-    let mut candidates = Vec::new();
-    for year in years {
-        if !(1..=days_in_month(year, line.month)).contains(&line.day) {
-            continue;
-        }
-        let local = days_from_civil(year, line.month, line.day) * 86_400
-            + line.hour * 3_600
-            + line.minute * 60;
-        candidates.extend(zone.instants_of(local).map_err(FetchFailure::schema)?);
-    }
-    candidates.sort_unstable();
-    let next = candidates.iter().copied().find(|instant| *instant >= now);
-    let previous = candidates
-        .iter()
-        .copied()
-        .rev()
-        .find(|instant| *instant < now);
-    let chosen = match (next, previous) {
-        (_, Some(previous)) if now - previous <= RESET_HORIZON_SECONDS => previous,
-        (Some(next), _) => next,
-        (None, Some(previous)) => previous,
-        (None, None) => return Err(FetchFailure::schema("reset_time")),
-    };
-    u64::try_from(chosen).map_err(|_| FetchFailure::schema("reset_time"))
-}
-
-fn parse_codex_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, FetchFailure> {
-    let value =
-        serde_json::from_str::<Value>(body).map_err(|_| FetchFailure::schema("response_json"))?;
-    let windows = [
-        value.pointer("/rate_limit/primary_window"),
-        value.pointer("/rate_limit/secondary_window"),
-        value.get("primary_window"),
-        value.get("secondary_window"),
-    ];
-    let weekly = windows
-        .into_iter()
-        .flatten()
-        .find(|window| {
-            window.get("limit_window_seconds").and_then(Value::as_u64)
-                == Some(WEEKLY_WINDOW_SECONDS)
-        })
-        .ok_or_else(|| FetchFailure::schema("weekly_missing"))?;
-    let used_percent = weekly
-        .get("used_percent")
-        .and_then(Value::as_f64)
-        .filter(|percent| percent.is_finite() && (0.0..=100.0).contains(percent))
-        .ok_or_else(|| FetchFailure::schema("utilization"))?;
-    let reset = weekly
-        .get("reset_at")
-        .or_else(|| weekly.get("resets_at"))
-        .and_then(Value::as_u64)
-        .ok_or_else(|| FetchFailure::schema("reset_time"))?;
-    Ok(SuccessfulUsage {
-        main: UsageValue {
-            label: "Codex".to_owned(),
-            used_percent,
-            resets_at_unix_seconds: reset,
-        },
-        buckets: Vec::new(),
-        checked_at_unix_ms: checked_at,
-    })
-}
-
-fn parse_http_date(value: &str) -> Option<u64> {
-    let parts = value.split_whitespace().collect::<Vec<_>>();
-    let (day, month, year, time) = match parts.as_slice() {
-        // IMF-fixdate: Sun, 06 Nov 1994 08:49:37 GMT
-        [weekday, day, month, year, time, "GMT"] if weekday.ends_with(',') => (
-            day.parse::<i64>().ok()?,
-            parse_http_month(month)?,
-            year.parse::<i64>().ok()?,
-            *time,
-        ),
-        // Obsolete RFC 850 form: Sunday, 06-Nov-94 08:49:37 GMT
-        [weekday, date, time, "GMT"] if weekday.ends_with(',') => {
-            let date = date.split('-').collect::<Vec<_>>();
-            let [day, month, year] = date.as_slice() else {
-                return None;
-            };
-            let short_year = year.parse::<i64>().ok()?;
-            let year = if short_year >= 70 {
-                1_900 + short_year
-            } else {
-                2_000 + short_year
-            };
-            (
-                day.parse::<i64>().ok()?,
-                parse_http_month(month)?,
-                year,
-                *time,
-            )
-        }
-        // ANSI C asctime form: Sun Nov  6 08:49:37 1994
-        [_weekday, month, day, time, year] => (
-            day.parse::<i64>().ok()?,
-            parse_http_month(month)?,
-            year.parse::<i64>().ok()?,
-            *time,
-        ),
-        _ => return None,
-    };
-    let time = time.split(':').collect::<Vec<_>>();
-    let [hour, minute, second] = time.as_slice() else {
-        return None;
-    };
-    let hour = hour.parse::<i64>().ok()?;
-    let minute = minute.parse::<i64>().ok()?;
-    let second = second.parse::<i64>().ok()?;
-    if !(1..=days_in_month(year, month)).contains(&day)
-        || !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !(0..=60).contains(&second)
-    {
-        return None;
-    }
-    let timestamp = days_from_civil(year, month, day)
-        .checked_mul(86_400)?
-        .checked_add(hour * 3_600 + minute * 60 + second)?;
-    u64::try_from(timestamp).ok()
-}
-
-fn parse_http_month(value: &str) -> Option<i64> {
-    Some(match value {
-        "Jan" => 1,
-        "Feb" => 2,
-        "Mar" => 3,
-        "Apr" => 4,
-        "May" => 5,
-        "Jun" => 6,
-        "Jul" => 7,
-        "Aug" => 8,
-        "Sep" => 9,
-        "Oct" => 10,
-        "Nov" => 11,
-        "Dec" => 12,
-        _ => return None,
-    })
-}
-
-fn log_failure(provider: &str, status: Option<u16>, kind: &str) {
-    crate::diagnostic!(json!({
-        "component": "provider_usage",
-        "provider": provider,
-        "status": status,
-        "kind": kind,
-    }));
-}
-
-fn log_scoped_failure(kind: &str) {
-    crate::diagnostic!(json!({
-        "component": "provider_usage",
-        "provider": hide_agent_adapter::UsageDialect::Claude.adapter().herdr.name,
-        "scope": "weekly_scoped",
-        "kind": kind,
-    }));
-}
-
-fn unix_milliseconds() -> u64 {
+fn unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
 }
 
-fn unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn codex_fixture_selects_window_by_duration_and_ignores_additional_limits() {
-        let success = parse_codex_usage(
-            r#"{
-              "rate_limit":{"primary_window":{"used_percent":76,"limit_window_seconds":604800,"reset_at":1893456000},"secondary_window":null},
-              "additional_rate_limits":[{"primary_window":{"used_percent":99,"limit_window_seconds":604800,"reset_at":1}}]
-            }"#,
-            1_000,
-        ).unwrap();
-        assert_eq!(success.main.used_percent, 76.0);
-        assert_eq!(success.main.resets_at_unix_seconds, 1_893_456_000);
-        assert!(success.buckets.is_empty());
-    }
-
-    #[test]
-    fn stale_projection_expires_before_the_fifteen_minute_window() {
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.last_success = Some(SuccessfulUsage {
-            main: UsageValue {
-                label: "Claude Code".to_owned(),
-                used_percent: 50.0,
-                resets_at_unix_seconds: 100,
-            },
-            buckets: Vec::new(),
-            checked_at_unix_ms: 90_000,
-        });
-        state.failure = Some((FailureDisposition::Offline, "transport".to_owned()));
-        let projected = project_provider(&state, None, 101_000);
-        assert_eq!(projected.state, "unavailable");
-        assert!(projected.message.unwrap().contains("expired"));
-    }
-
-    #[test]
-    fn refresh_schedule_stops_hidden_ticks_and_observes_popover_age() {
-        let now = Instant::now();
-        let mut state = ProviderState::new("codex", "Codex");
-        state.last_attempt = Some(now - REFRESH_INTERVAL);
-
-        assert!(!provider_due(&state, now, false, false));
-        assert!(provider_due(&state, now, true, false));
-
-        state.last_attempt = Some(now - POPOVER_REFRESH_AGE - Duration::from_millis(1));
-        assert!(provider_due(&state, now, false, true));
-        assert!(!provider_due(&state, now, false, false));
-    }
-
-    #[test]
-    fn rate_limit_retry_after_prevents_an_early_repeat() {
-        let now = Instant::now();
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_failure(
-            FetchFailure::http(429, Some(Duration::from_secs(90))),
-            now,
-            1_000,
-        );
-
-        assert!(!state.can_attempt(now + Duration::from_secs(89)));
-        assert!(state.can_attempt(now + Duration::from_secs(90)));
-    }
-
-    #[test]
-    fn retry_after_accepts_delay_seconds_and_all_http_date_forms() {
-        let now = 784_111_717;
-        assert_eq!(
-            parse_retry_after_at("120", now),
-            Some(Duration::from_secs(120))
-        );
-        for value in [
-            "Sun, 06 Nov 1994 08:49:37 GMT",
-            "Sunday, 06-Nov-94 08:49:37 GMT",
-            "Sun Nov  6 08:49:37 1994",
-        ] {
-            assert_eq!(
-                parse_retry_after_at(value, now),
-                Some(Duration::from_secs(60)),
-                "{value}"
-            );
+    fn source() -> SourceRead {
+        SourceRead {
+            agent: "claude",
+            source: LimitSource::ClaudeUsageText,
+            worker: BackgroundRead::on_change(Duration::ZERO, |_: &u64| unreachable!()),
+            attempt: 0,
+            pending: false,
+            last_attempt: None,
+            checked_at_ms: Some(2000),
+            success: Some(Success {
+                value: LimitReading {
+                    windows: vec![WindowReading {
+                        kind: WindowKind::Weekly,
+                        scope: Scope::All,
+                        outcome: WindowOutcome::Open {
+                            used_percent: 12.0,
+                            resets_at_s: 9999,
+                        },
+                    }],
+                },
+                observed_at_ms: 1000,
+            }),
+            fallback: None,
+            failure: None,
+            retry_at: None,
+            backoff_index: 0,
         }
     }
-
-    /// The captured output of claude 2.1.274, run on 2026-09-17 in Asia/Seoul
-    /// (`herdr-core/tests/fixtures/claude-usage/`). The expected instants
-    /// are the CLI's own `.usage-cache.json` values for the same window
-    /// (`1w_resets_at: 1790222400`), not this parser's.
-    const USAGE_FRAME: &str = include_str!("../tests/fixtures/claude-usage/usage-2.1.274.json");
-    const COST_FRAME: &str = include_str!("../tests/fixtures/claude-usage/cost-2.1.274.json");
-    /// 2026-09-17 17:05 Asia/Seoul, when the fixture was captured.
-    const CAPTURED_AT: u64 = 1_789_632_300;
-
-    fn result_text(frame: &str) -> String {
-        serde_json::from_str::<Value>(frame).unwrap()["result"]
-            .as_str()
-            .unwrap()
-            .to_owned()
-    }
-
     #[test]
-    fn the_captured_usage_text_projects_the_weekly_row_and_one_bucket_per_model() {
-        let success =
-            parse_claude_usage_text(&result_text(USAGE_FRAME), CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.label, "Claude Code");
-        assert_eq!(success.main.used_percent, 1.0);
-        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
-        assert_eq!(success.buckets.len(), 1, "the session line is not a bucket");
-        let UsageBucket::Available(bucket) = &success.buckets[0] else {
-            panic!("Fable should be available");
-        };
-        assert_eq!(bucket.label, "Fable");
-        assert_eq!(bucket.used_percent, 0.0);
-        assert_eq!(bucket.resets_at_unix_seconds, 1_790_222_400);
-
-        let state = ProviderState::new("claude", "Claude Code");
-        let projected = snapshot_from_success(&state, &success, "available", None, 1_000);
-        assert_eq!(projected.used_percent, Some(1.0));
-        assert_eq!(projected.buckets.len(), 1);
-        assert_eq!(projected.buckets[0].label, "Fable");
+    fn schema_failure_drops_retained_values_while_transient_failure_keeps_recent_values() {
+        let mut source = source();
+        source.failure = Some(Failure {
+            cause: Cause::Offline,
+            kind: "transport".into(),
+            status: None,
+            retry_after: None,
+        });
+        assert!(matches!(
+            source.project(2000),
+            Cell::Reading {
+                freshness: Freshness::Stale,
+                ..
+            }
+        ));
+        assert!(matches!(
+            source.project(STALE_LIMIT_MS + 1001),
+            Cell::Unavailable {
+                cause: Cause::Offline,
+                ..
+            }
+        ));
+        source.failure = Some(Failure::parse(Cause::FormatChanged));
+        assert!(matches!(
+            source.project(2000),
+            Cell::Unavailable {
+                cause: Cause::FormatChanged,
+                ..
+            }
+        ));
     }
-
     #[test]
-    fn cost_text_is_the_logged_out_state_and_never_a_zero() {
-        let failure =
-            parse_claude_usage_text(&result_text(COST_FRAME), CAPTURED_AT, 1_000).unwrap_err();
-        assert_eq!(failure.disposition, FailureDisposition::Authentication);
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_failure(failure, Instant::now(), 1_000);
-        let projected = project_provider(&state, None, 2_000);
-        assert_eq!(projected.state, "unavailable");
-        assert_eq!(projected.used_percent, None);
-        assert_eq!(
-            projected.message.as_deref(),
-            Some("Sign in with claude to see usage")
-        );
-    }
-
-    #[test]
-    fn a_current_line_the_reader_does_not_know_is_a_format_failure_not_a_login_failure() {
-        let text = "Current week (all models): 1% used · resets in 6 days\n";
-        let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
-        assert_eq!(failure.disposition, FailureDisposition::Schema);
-        assert_eq!(failure.kind, "reset_format");
-
-        let text = "Current week (all models): 1% used, resets Sep 24 at 1pm (Asia/Seoul)\n";
-        let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
-        assert_eq!(failure.kind, "line_format");
-
-        let session_only = "Current session: 4% used · resets Sep 17 at 9pm (Asia/Seoul)\n";
-        let failure = parse_claude_usage_text(session_only, CAPTURED_AT, 1_000).unwrap_err();
-        assert_eq!(failure.kind, "weekly_missing");
-    }
-
-    /// The CLI prints ` · resets …` only when the window has a reset, and
-    /// the session window has none until a session starts: the first read
-    /// after an idle morning must not fail on the line it drops anyway.
-    #[test]
-    fn a_session_line_without_a_reset_is_dropped_like_any_other() {
-        let text = "Current session: 0% used\n\
-                    Current week (all models): 24% used · resets Sep 24 at 1pm (Asia/Seoul)\n\
-                    Current week (Fable): 21% used · resets Sep 24 at 1pm (Asia/Seoul)\n";
-        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.used_percent, 24.0);
-        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
-        assert_eq!(success.buckets.len(), 1);
-
-        let session_garbage = "Current session: something new the CLI prints\n\
-                    Current week (all models): 24% used · resets Sep 24 at 1pm (Asia/Seoul)\n";
-        let success = parse_claude_usage_text(session_garbage, CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.used_percent, 24.0);
-    }
-
-    #[test]
-    fn a_weekly_line_without_a_reset_is_named_on_the_row_and_unavailable_as_a_bucket() {
-        let text = "Current week (all models): 0% used\n";
-        let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
-        assert_eq!(failure.disposition, FailureDisposition::Schema);
-        assert_eq!(failure.kind, "reset_missing");
-
-        let text = "Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)\n\
-                    Current week (Fable): 0% used\n";
-        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
-        assert!(
-            matches!(&success.buckets[0], UsageBucket::Unavailable { label } if label == "Fable")
-        );
-    }
-
-    /// The CLI prints the year only when the reset falls in another year.
-    #[test]
-    fn a_reset_with_a_year_is_that_year() {
-        let text =
-            "Current week (all models): 1% used · resets Dec 31, 2027 at 11pm (Asia/Seoul)\n";
-        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
-        // Dec 31 2027 23:00 Seoul.
-        assert_eq!(success.main.resets_at_unix_seconds, 1_830_261_600);
-        assert_eq!(
-            resolve_reset("Feb 30, 2027 at 1pm (Asia/Seoul)", CAPTURED_AT)
-                .unwrap_err()
-                .kind,
-            "reset_time"
-        );
-    }
-
-    #[test]
-    fn percent_left_is_read_as_used_and_the_session_line_is_dropped() {
-        let text = "Current session: 96% left · resets Sep 17 at 9pm (Asia/Seoul)\n\
-                    Current week (all models): 63% left · resets Sep 24 at 1:30pm (Asia/Seoul)\n";
-        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.used_percent, 37.0);
-        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400 + 30 * 60);
-        assert!(success.buckets.is_empty());
-    }
-
-    #[test]
-    fn a_scoped_line_in_an_unknown_zone_keeps_the_weekly_row() {
-        let text = "Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)\n\
-                    Current week (Fable): 0% used · resets Sep 24 at 1pm (Mars/Olympus)\n";
-        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
-        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
-        assert!(
-            matches!(&success.buckets[0], UsageBucket::Unavailable { label } if label == "Fable")
-        );
-    }
-
-    /// The CLI prints no year: a reset naming a wall time later this year
-    /// is this year's, one naming an earlier date is next year's, and one
-    /// naming a wall time that passed minutes ago is the reset that passed,
-    /// not the same date a year out.
-    #[test]
-    fn a_reset_without_a_year_is_the_next_match_unless_it_just_passed() {
-        assert_eq!(
-            resolve_reset("Dec 31 at 11pm (Asia/Seoul)", CAPTURED_AT).unwrap(),
-            1_798_725_600
-        );
-        assert_eq!(
-            resolve_reset("Jan 1 at 1am (Asia/Seoul)", CAPTURED_AT).unwrap(),
-            1_798_732_800
-        );
-        // Sep 24 at 1pm Seoul is 1790222400; asked ten minutes later.
-        assert_eq!(
-            resolve_reset("Sep 24 at 1pm (Asia/Seoul)", 1_790_222_400 + 600).unwrap(),
-            1_790_222_400
-        );
-        assert_eq!(
-            resolve_reset("Feb 30 at 1pm (Asia/Seoul)", CAPTURED_AT)
-                .unwrap_err()
-                .kind,
-            "reset_time"
-        );
-    }
-
-    #[test]
-    fn each_cli_failure_lands_on_its_row() {
+    fn hidden_ticks_popover_age_and_backoff_preserve_the_schedule() {
         let now = Instant::now();
-        let kept = SuccessfulUsage {
-            main: UsageValue {
-                label: "Claude Code".to_owned(),
-                used_percent: 12.0,
-                resets_at_unix_seconds: 4_102_444_800,
-            },
-            buckets: Vec::new(),
-            checked_at_unix_ms: 100_000,
-        };
-
-        // A timeout with a recent success keeps it, marked stale.
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_success(kept.clone(), now);
-        state.record_failure(
-            FetchFailure::from_usage_error(UsageError::Timeout),
-            now,
-            200_000,
-        );
-        let projected = project_provider(&state, None, 200_000);
-        assert_eq!(projected.state, "stale");
-        assert_eq!(projected.used_percent, Some(12.0));
-        assert_eq!(
-            projected.message.as_deref(),
-            Some("Last checked 2m ago · offline")
-        );
-
-        // The same timeout with nothing kept is unavailable, and not "offline".
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_failure(
-            FetchFailure::from_usage_error(UsageError::Timeout),
-            now,
-            200_000,
-        );
-        let projected = project_provider(&state, None, 200_000);
-        assert_eq!(projected.state, "unavailable");
-        assert_eq!(
-            projected.message.as_deref(),
-            Some("Claude Code weekly usage response is unavailable")
-        );
-
-        // Text that is not a result frame drops a kept success at once.
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_success(kept, now);
-        state.record_failure(
-            FetchFailure::from_usage_error(UsageError::NoResultFrame),
-            now,
-            200_000,
-        );
-        let projected = project_provider(&state, None, 200_000);
-        assert_eq!(projected.state, "unavailable");
-        assert_eq!(projected.used_percent, None);
-        assert_eq!(
-            projected.last_error_kind.as_deref(),
-            Some("no_result_frame")
-        );
-
-        // No binary names the binary.
-        let mut state = ProviderState::new("claude", "Claude Code");
-        state.record_failure(
-            FetchFailure::from_usage_error(UsageError::NotInstalled),
-            now,
-            200_000,
-        );
-        let projected = project_provider(&state, None, 200_000);
-        assert_eq!(
-            projected.message.as_deref(),
-            Some("claude is not installed on this Mac")
-        );
+        let mut source = source();
+        source.last_attempt = Some(now - REFRESH_INTERVAL);
+        assert!(!source.due(now, false, false));
+        assert!(source.due(now, true, false));
+        source.last_attempt = Some(now - POPOVER_REFRESH_AGE);
+        assert!(!source.due(now, false, true));
+        assert!(source.due(now + Duration::from_secs(1), false, true));
+        source.retry_at = Some(now + Duration::from_secs(90));
+        assert!(!source.due(now + Duration::from_secs(89), true, true));
+        assert!(source.due(now + Duration::from_secs(90), true, true));
     }
-
-    /// The worker runs once per attempt: an answer arrives on a later wake,
-    /// nothing runs between attempts, and a child in flight is not doubled.
     #[test]
-    fn one_claude_read_per_attempt_and_its_answer_lands_on_a_later_wake() {
-        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let counted = Arc::clone(&calls);
-        // The worker says when a call has begun and holds its answer until the
-        // test lets it go, so the order is the test's.
-        let (began, hear_begin) = std::sync::mpsc::channel::<()>();
-        let began = std::sync::Mutex::new(began);
-        let (release, held) = std::sync::mpsc::channel::<()>();
-        let held = std::sync::Mutex::new(held);
-        let mut read = BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
-            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            began.lock().unwrap().send(()).unwrap();
-            held.lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(30))
-                .expect("the test lets the read answer");
-            ClaudeUsageAnswer {
-                checked_at_unix_ms: 1,
-                outcome: Err(FetchFailure::schema("fixture")),
+    fn reopening_during_a_read_cannot_queue_work_after_hide_or_bypass_backoff() {
+        use std::sync::{
+            Barrier,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(2));
+        let mut source = source();
+        let counted = calls.clone();
+        let worker_barrier = barrier.clone();
+        source.worker = BackgroundRead::on_change(Duration::ZERO, move |_: &u64| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                worker_barrier.wait();
+                worker_barrier.wait();
+            }
+            Answer {
+                checked_at_ms: 1000,
+                result: Err(Failure {
+                    cause: Cause::RateLimited,
+                    kind: "rate_limit".into(),
+                    status: Some(429),
+                    retry_after: Some(Duration::from_secs(300)),
+                }),
+                fallback: None,
             }
         });
-        let one = ClaudeUsageRequest { attempt: 1 };
-        assert!(read.poll(one.clone()).is_none());
-        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
-        // A read in flight is not doubled by more wakes.
-        for _ in 0..20 {
-            assert!(read.poll(one.clone()).is_none());
-        }
-        release.send(()).unwrap();
-        // The answer lands on a wake after the worker finished; the limit only
-        // ends a worker that never answers.
-        let hang_limit = Instant::now() + Duration::from_secs(30);
-        while read.poll(one.clone()).is_none() {
-            assert!(Instant::now() < hang_limit, "the first read never answered");
-            std::thread::yield_now();
-        }
-        for _ in 0..20 {
-            assert!(read.poll(one.clone()).is_none());
-        }
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(read.poll(ClaudeUsageRequest { attempt: 2 }).is_none());
-        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-        release.send(()).unwrap();
+        let start = Instant::now();
+        source.poll(start, true, true, false);
+        barrier.wait();
+        let reopened = start + Duration::from_secs(61);
+        source.poll(reopened, true, false, true);
+        barrier.wait();
+        source.worker.join_pending();
+        source.poll(reopened, false, false, false);
+        source.worker.join_pending();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "Hide must not start a queued read"
+        );
+        source.poll(reopened + Duration::from_secs(299), true, true, true);
+        source.worker.join_pending();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "Retry-After still governs a reopened popover"
+        );
+        source.poll(reopened + Duration::from_secs(300), true, true, true);
+        source.worker.join_pending();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+    #[test]
+    fn registry_has_all_agents_but_only_two_distinct_limit_reads() {
+        let rows = AgentUsage::initial_rows();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(
+            rows.iter()
+                .filter(|r| matches!(r.limits, Cell::Loading))
+                .count(),
+            2
+        );
+        assert!(
+            rows.iter()
+                .all(|r| matches!(r.consumption, Cell::Unsupported))
+        );
+        assert_eq!(
+            hide_agent_adapter::ADAPTERS
+                .iter()
+                .map(|r| r.usage.limit_sources().count())
+                .sum::<usize>(),
+            2
+        );
     }
 }

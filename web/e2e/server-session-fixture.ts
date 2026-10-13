@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { openProjectPage } from "./overview-entry";
 
 export function openServerButton(page: Page) {
   // Expanded panels retain the covered agent toolbar in an inert subtree.
@@ -35,9 +36,8 @@ export async function startServer(cwd: string, host = "127.0.0.1", requestedPort
   return { child, port };
 }
 export async function openSessions(page: Page, projectName = "fixture"): Promise<void> {
-  await page.locator("[data-go-main]").click();
-  await page.getByRole("tab", { name: projectName, exact: true }).click();
-  await expect(page.locator("[data-overview-screen]")).toBeVisible();
+  // The Overview page, not the layer the Overview row opens over a Workspace, so the footer stays usable.
+  await openProjectPage(page, projectName);
   await page.locator('[data-lens-tile-button="sessions"]').click();
   await expect(page.locator("[data-sessions-screen]")).toBeVisible();
 }

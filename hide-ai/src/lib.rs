@@ -21,6 +21,7 @@ mod schema;
 pub mod settings;
 mod text_cli;
 mod unproven;
+mod usage_limit;
 
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
 pub use codex::{CodexAppServerBackend, CodexConfig};
@@ -35,6 +36,7 @@ pub use router::{AiRouter, Degraded, ProviderState, ProviderStatus, RouterConfig
 pub use settings::{AiSettings, FallbackEntry, FallbackRefusal};
 pub use text_cli::TextCliConfig;
 pub use unproven::UnprovenReadOnlyBackend;
+pub use usage_limit::{DEFAULT_LIMIT_PERCENT, PastLimit, UsageLimit, UsageLimits, UsageReading};
 
 use std::borrow::Cow;
 use std::fmt;

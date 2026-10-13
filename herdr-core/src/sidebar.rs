@@ -639,12 +639,12 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
             .map(str::to_owned),
-        started_as_fork: non_empty(agent.spawned_from_pane_id.as_deref()).is_some()
-            && agent
-                .tokens
-                .get(crate::wire::FORK_TOKEN)
-                .and_then(Value::as_str)
-                == Some("1"),
+        declared_fork: crate::wire::fork_declaration(
+            &agent.tokens,
+            non_empty(agent.lineage_session.as_deref()),
+        ),
+        // Laid on with the lineage, where the source's row is known.
+        forked_from: None,
         pane_id,
         workspace_label,
         checkout_label: None,
@@ -927,6 +927,7 @@ mod tests {
             ..Default::default()
         };
         let workspace = |checkout| WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1040,6 +1041,7 @@ mod tests {
             ..Default::default()
         };
         let mut workspaces = vec![WorkspaceSnapshot {
+            agent_presence: Default::default(),
             agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1752,40 +1754,107 @@ mod tests {
         use AgentDemand::{None as Quiet, Question};
         let reply = Some("A/B 선택 후 승인");
         let progress = Some("푸시 완료, 승인 대기 중");
+        let native = Some("어디에 배포할까요?");
         let asked = (false, Some("A/B 선택 후 승인".to_owned()));
         let said = (false, Some("푸시 완료, 승인 대기 중".to_owned()));
+        let quoted = (false, Some("어디에 배포할까요?".to_owned()));
         let cases = [
             (
                 AgentGroup::NeedsYou,
                 Question,
                 reply,
+                None,
                 progress,
                 asked.clone(),
             ),
-            (AgentGroup::NeedsYou, Question, None, progress, said.clone()),
-            (AgentGroup::NeedsYou, Question, None, None, (true, None)),
-            (AgentGroup::Done, Quiet, None, progress, said.clone()),
-            (AgentGroup::Working, Quiet, reply, progress, said.clone()),
-            (AgentGroup::Working, Quiet, None, None, (true, None)),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                None,
+                progress,
+                said.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                None,
+                None,
+                (true, None),
+            ),
+            // A native question waiting now is what is asked; the label's
+            // reply, when it has one, is still the shorter thing to do.
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                native,
+                progress,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                None,
+                native,
+                None,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                reply,
+                native,
+                progress,
+                asked.clone(),
+            ),
+            (AgentGroup::Done, Quiet, None, None, progress, said.clone()),
+            (
+                AgentGroup::Working,
+                Quiet,
+                reply,
+                None,
+                progress,
+                said.clone(),
+            ),
+            (AgentGroup::Working, Quiet, None, None, None, (true, None)),
             // A delegated child still running while it asks.
             (
                 AgentGroup::Working,
                 Question,
                 reply,
+                None,
                 progress,
                 asked.clone(),
             ),
-            (AgentGroup::Seen, Quiet, reply, progress, (false, None)),
+            (
+                AgentGroup::Working,
+                Question,
+                None,
+                native,
+                progress,
+                quoted.clone(),
+            ),
+            (
+                AgentGroup::Seen,
+                Quiet,
+                reply,
+                None,
+                progress,
+                (false, None),
+            ),
             // A read question, and a delegated child's question, in Seen.
-            (AgentGroup::Seen, Question, reply, progress, asked),
-            (AgentGroup::Seen, Question, None, progress, said),
-            (AgentGroup::Seen, Question, None, None, (false, None)),
+            (AgentGroup::Seen, Question, reply, None, progress, asked),
+            (AgentGroup::Seen, Question, None, None, progress, said),
+            (AgentGroup::Seen, Question, None, native, progress, quoted),
+            (AgentGroup::Seen, Question, None, None, None, (false, None)),
         ];
-        for (group, demand, reply, progress, expected) in cases {
+        for (group, demand, reply, question, progress, expected) in cases {
             assert_eq!(
-                agent_second_line(group, demand, reply, progress),
+                agent_second_line(group, demand, reply, question, progress),
                 expected,
-                "{group:?} {demand:?} reply={reply:?} progress={progress:?}"
+                "{group:?} {demand:?} reply={reply:?} question={question:?} progress={progress:?}"
             );
         }
     }

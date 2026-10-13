@@ -223,7 +223,14 @@ The CLI's required `origin` field records the spawner in both modes (null for or
 PR and issue panels still find the independent session through its own branch records without a delegated-by line.
 Herdr records no lineage, so hided writes the four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names its machine when the parent is remote, and `child_session` and `parent_session` are the original session digests.
 The value and lifetime contract is unchanged.
-A pane Hide's Fork agent made carries a fifth token, `fork` set to `1`, which the lineage writer writes with the other four from the registration's `forked` fact (`AgentRecord::forked`), so a wake that continues the registration in another pane writes it there too, and which is read only while the row still declares its parent, so a pane that hosts another agent later is not a fork and a delegated child never is (`SidebarAgentSnapshot.started_as_fork`, `PaneForkSnapshot.forked_from_pane_id`).
+A fork made with Fork agent or Fork agent to the side is the operator's own root, not the source's child: its registration has no parent, names the source as its `origin`, and carries the `forked` fact (`AgentRecord::forked`), so `hide agent show` and `hide agent list` print a null `parent` and the source as `origin` (PRD fork-operator-root B1, B19, D-12).
+Only the source's own live registration can register a parentless fork with itself as origin; any other caller is refused `parent_authority_required`.
+Its pane names the source under three keys of its own, never `parent_pane`, which would make it a child again: `fork_pane` is the source's pane id, `fork_session` the fork's own session digest and `fork_source_session` the source's (`lineage::FORK_KEYS`).
+The lineage writer writes them from the registration as it writes the four above, so a wake that continues the fork in another pane names the source there too, and a hided restart finds them on the pane and in the ledger (B17, B18).
+They are read only while the fork's pane still runs `fork_session`, so a pane that hosts another conversation later is not a fork; `wire::fork_declaration` reads them, and `agent_state::apply_fork_sources` names the source while its pane still runs `fork_source_session` and names none once the source closed or moved on (`SidebarAgentSnapshot.forked_from`, `PaneForkSnapshot.forked_from`, B9, B10).
+Because none of these is a parent token, the fork has no depth, so the source gets no child, unread, Working, descendant mark, child count or subtree close from it, and the fork's own demand and completion enter Needs You and Done (B12, B13, B14).
+A fork of a fork names the fork it was made from, and a fork of a delegated child is still a root (B15, B16).
+A fork made before forks were roots keeps its parent and its old `fork` token, which nothing reads any more: it stays a child and wears no mark (D-09).
 The session tokens are lowercase hexadecimal SHA-256 digests of each original `agent_session.value`; this keeps even a path-valued session inside Herdr's 80-character token limit.
 A same-server relationship omits `parent_machine`.
 A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
@@ -234,7 +241,7 @@ A relationship is accepted only when both panes still report the recorded sessio
 A changed parent session cannot adopt the previous session's children, and an absent parent agent retains the existing orphan presentation.
 A missing or unknown remote machine identity leaves the child a root until its matching device connects.
 The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
-`hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship in the core's coordination ledger.
+`hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship, or for a fork its provenance, in the core's coordination ledger.
 A delegated `hide agent spawn --machine <device id>` child is a remote child of a local parent: its tokens are written on the device's pane and `parent_machine` names the spawner's machine, the same resolution as any cross-machine relationship above.
 The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
 `wire.rs` and `agent_state/axes.rs` remain the readers of this contract.
@@ -249,6 +256,8 @@ A parent whose pane no longer lists an agent is a different case: the child stay
 
 An empty token is a cleared declaration, not a parent named by an empty string.
 The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
+
+Fork regression owners: `a_fork_registers_as_a_root_whose_origin_is_its_source` (`coordination/mod.rs`), `a_fork_names_its_source_under_fork_keys_and_never_as_a_parent` and `a_fork_that_is_woken_in_another_pane_names_its_source_there` (`coordination/lineage.rs`), `a_fork_names_its_source_and_stays_the_operators_own_work` (`runtime/tests/lineage.rs`), and `web/e2e/agent-fork.spec.ts`.
 
 Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_whose_pane_now_hosts_another_session_declares_no_parent` and the `lineage_sessions` tests in `herdr-core/src/session_sync/tests.rs`, `a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_child`, `a_sleeping_child_stays_under_its_parent_only_while_its_record_can_prove_it`, and `web/e2e/lineage-session.spec.ts`.
 
@@ -601,7 +610,7 @@ The Herdr workspace label is never a name: it is whatever the workspace was call
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v7`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v8`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 How the turn ended is asked only once the agent has stopped: the call at a turn's start names the goal and the line and leaves the end `working`, and the call at its end picks the word by whose move is next, `question` (the operator's), `blocked` (stopped on a cause the line can state in one sentence: no disk, a failed CI run, a permission or login it cannot get, a tool that will not run), `waiting` (something other than a pull request still running: a background test, build, CI run or another agent), `unfinished` (nobody's, with the work left undone) or `done` (nobody's, with the work reported finished), taking the first in that order that fits.
 There is no "unsure means done": a turn that did not report its work finished is `unfinished`, and a `blocked` answer with no line is read as `unfinished`.
 A turn that started or handed off work that still runs is `waiting`, even when the turn itself only reported progress or answered something, unless it asks the operator; its line says what it waits for.
@@ -693,7 +702,7 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 `agent_state/header.rs` publishes a working-line flag and at most one band per pane.
 Connection or sleep availability wins, then the pane's own demand, then the lead raised descendant, then the ordinary task verb.
 Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
-An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the verb in its colour, what to do, who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, `외 N건` for the other asks, and Open.
+An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the verb in its colour, what to do (for the pane's own Answer, the row's second line, so a native question reads as itself), who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, `외 N건` for the other asks, and Open.
 Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
 PR reason facts carry checks and review separately from label progress.
@@ -708,20 +717,26 @@ Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
 The sentences come from the agent's label line (at most 40 characters): `expected_reply` when the turn ended on a question, the one action the operator is asked for; `progress` otherwise, what the agent is doing, has done or waits for. A row carries one or the other, never both.
+A native question waiting now (`user_turn` of kind `question` with content, from any of the five sources above) is the third source, the `question` below: the first non-empty line of its text, one line, cut on a character boundary to the 40 characters of an `expected_reply` and ending in `…` when cut (`native_question_line` in `herdr-core/src/agent_state/turn.rs`).
+It is the agent's own words, so it is shown untranslated, and it needs no Hide AI.
+It stands in for an `expected_reply` and comes before `progress`, because a question asked in the middle of a turn has no reply sentence yet: the label worker's verdict on a turn's end runs only once the agent has written something after the operator's message, so a Claude `AskUserQuestion` with no text before it leaves the turn start's `progress` on the label for the whole wait, and that line describes the work, not what is asked.
+An `expected_reply` still wins, being the shorter "what to do"; the worker clears it whenever the agent runs again, so one present beside a waiting question was made for this turn.
+A plan waiting for approval gives no sentence: its text is a document whose first line is whatever heading the agent chose, so its row keeps the label's line or the status word.
 
 | Group | Sentence |
 | --- | --- |
-| Needs You | `expected_reply`, else `progress` |
+| Needs You | `expected_reply`, else `question`, else `progress` |
 | Done (unread) | `expected_reply`, else `progress` |
-| Working | `progress`; a row with an unresolved demand, `expected_reply`, else `progress` |
-| Seen with an unresolved demand (a read demand, a delegated child's request) | `expected_reply`, else `progress` |
+| Working | `progress`; a row with an unresolved demand, `expected_reply`, else `question`, else `progress` |
+| Seen with an unresolved demand (a read demand, a delegated child's request) | `expected_reply`, else `question`, else `progress` |
 | Seen (read completions, idle, unknown) | none |
 
 A request outlives reading: a question, approval or error keeps its sentence until it is resolved, whatever group the row sits in, so a view can keep showing what is being asked after the operator has looked.
 
-`status_word_visible` is true only when the group wanted a sentence and the label carried none (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a pane that has no proven label yet reads as title and status word.
+`status_word_visible` is true only when the group wanted a sentence and neither the label nor a native question carried one (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a pane that has no proven label yet reads as title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for an ordinary child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
+Regression owners: `second_line_is_chosen_by_group_and_a_request_outlives_reading` in `herdr-core/src/sidebar.rs`, and `a_native_question_is_the_second_line_until_the_label_says_what_to_reply` and `native_question_snapshot_is_current_without_ai_and_clears_after_answer` in `herdr-core/src/labels/tests.rs`; each source's question text is its reader's, owned by `hide-session/tests/it` (`user_turns` and `adapters`).
 
 Beside `detail` the row carries `message`: the sentence whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`), absent when the label has none.
 It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
