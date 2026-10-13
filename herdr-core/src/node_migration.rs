@@ -63,6 +63,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     LABELS,
     DELIVERY_LEDGER,
     LINKS,
+    hide_kit::layout::USAGE_STORE,
     LOCAL_ISSUES,
     PROJECT_MEMORY,
     FACTORY,
@@ -131,6 +132,12 @@ pub enum Moves {
 /// owner's, a linked node's, a dialed device's), so a store that gains a
 /// machine-bound key must be added here.
 pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
+    (
+        hide_kit::layout::USAGE_STORE,
+        "native node ids in devices, events, daily, cursors and backfills; qualified paths",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         CORE_STATE,
         "/workspace_registrations/*/device_id",
@@ -1092,7 +1099,7 @@ fn convert_memory(
     node: &NodeId,
     backup: &Backup,
 ) -> Result<usize, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(0);
     };
     let pending: bool = store
@@ -1115,7 +1122,7 @@ fn convert_memory(
 /// The roots of the node's Projects in a Memory store; none when the store
 /// does not open, which Project Memory reports on its own.
 fn memory_roots(path: &Path, node: &NodeId) -> Result<Vec<String>, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(Vec::new());
     };
     store

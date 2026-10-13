@@ -1,6 +1,7 @@
 import { formatRelativeTime } from "./i18n/format";
 import type { InterfaceLanguage } from "./i18n/locale";
-import type { MemoryRow, ProjectMemory } from "./snapshot";
+import type { AgentRow, MemoryRow, ProjectMemory, PullRequest } from "./snapshot";
+import type { MessageKey } from "./i18n/catalogs";
 
 /** How many cards the list shows before `그 외 N` (design v7). */
 export const MEMORY_LIST_HEAD = 5;
@@ -21,7 +22,7 @@ export function memoryCards(project: ProjectMemory): MemoryRow[] {
     const byNumber = new Map(project.rows.map((row) => [row.number, row]));
     return project.search.numbers.flatMap((number) => byNumber.get(number) ?? []);
   }
-  return project.rows.filter((row) => !asked.has(row.number));
+  return project.rows.filter((row) => !asked.has(row.number) && !["running", "unconfirmed", "pr_open"].includes(row.promotion?.state ?? ""));
 }
 
 /**
@@ -68,4 +69,52 @@ function startOfDay(date: Date): number {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+export type MemoryProgress = { key: string; pr: number | null; cards: [MemoryRow, ...MemoryRow[]] };
+
+/** A confirmed PR or a single ledger-bound agent attempt, never a guessed branch/name. */
+export function memoryProgress(project: ProjectMemory): MemoryProgress[] {
+  const groups = new Map<string, MemoryProgress>();
+  for (const row of project.rows) {
+    const promotion = row.promotion;
+    if (!promotion || !["running", "unconfirmed", "pr_open"].includes(promotion.state)) continue;
+    const pr = promotion.state === "pr_open" ? promotion.pr_number : null;
+    const key = pr !== null ? `pr:${pr}` : promotion.state === "running" && promotion.agent?.pane_id ? `agent:${promotion.agent.pane_id}:${promotion.started_at_unix_ms ?? row.number}` : `card:${row.number}`;
+    const group = groups.get(key);
+    if (group) group.cards.push(row);
+    else groups.set(key, { key, pr, cards: [row] });
+  }
+  return [...groups.values()].map((group) => ({ ...group, cards: group.cards.sort((a, b) => a.number - b.number) }));
+}
+
+/** After PR creation only a Hide AI promotion origin and its live, repository-qualified PR prove the agent. */
+export function memoryProgressAgent(group: MemoryProgress, pull: PullRequest | undefined, agents: AgentRow[]): AgentRow | undefined {
+  if (group.pr === null) {
+    const pane = group.cards[0].promotion?.agent?.pane_id;
+    return pane ? agents.find((agent) => agent.pane_id === pane) : undefined;
+  }
+  if (!pull?.url) return undefined;
+  return agents.find((agent) => {
+    const task = agent.hide_ai?.task;
+    return task?.kind === "memory_promote"
+      && agent.request?.pull_requests.some((row) => row.number === pull.number && row.url === pull.url && row.live && (row.created || row.duty));
+  });
+}
+
+export function memoryProgressStatus(group: MemoryProgress, pull: PullRequest | undefined, agent: AgentRow | undefined): { key: MessageKey; tone: string; agentLink: boolean } {
+  if (pull?.state === "merged" || pull?.state === "closed") return { key: pull.state === "merged" ? "agentSessions.pr.merged" : "agentSessions.pr.closed", tone: "text-muted-foreground", agentLink: false };
+  if (pull?.checks === "failed") return { key: "agentSessions.pr.failed", tone: "text-destructive", agentLink: true };
+  if (pull?.review === "changes_requested") return { key: "board.review.changes", tone: "text-warning", agentLink: true };
+  if (agent?.state.asking) return { key: "memory.progress.asking", tone: "text-warning", agentLink: true };
+  if (group.cards[0].promotion?.state === "unconfirmed") return { key: "memory.unconfirmed", tone: "text-muted-foreground", agentLink: false };
+  if (group.cards[0].promotion?.state === "running") return { key: "memory.progress.writing", tone: "text-muted-foreground", agentLink: true };
+  if (pull?.checks === "pending") return { key: "card.checkPending", tone: "text-muted-foreground", agentLink: false };
+  if (pull?.is_draft) return { key: "agentSessions.pr.draft", tone: "text-muted-foreground", agentLink: false };
+  if (pull?.review === "approved") return { key: "board.review.approved", tone: "text-muted-foreground", agentLink: false };
+  return { key: pull ? "memory.prOpen" : "memory.progress.inPr", tone: "text-muted-foreground", agentLink: false };
+}
+
+export function selectableMemoryQuestions(project: ProjectMemory): Set<number> {
+  return new Set(project.questions.filter((question) => question.kind !== "docs_disagree" || question.document.authority === "card_newer").map((question) => question.number));
 }

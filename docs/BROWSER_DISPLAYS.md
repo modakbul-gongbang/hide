@@ -37,6 +37,10 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   If discovery fails after placement, the result retains its applied View receipt and carries `browser_control.state: unavailable` with a retry command; discovery does not undo or repeat the open.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
+- Click an HTML path (`.html`, `.htm` or `.xhtml`, case-insensitive) in a local desktop terminal, or choose Open in browser from that path's right-click menu.
+  The shell sends one `browser_open` event with the owning registered checkout and `reveal: true`, so the page and its checkout come forward together; the existing local `file:` boundary checks the address.
+  Open source in the same menu opens the file in the editor at the link's line instead.
+  A path outside registered checkouts follows the desktop host's default-application boundary.
 - A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.
   The shell names the page (`beside_display`), and the core places the new display in the View area next to the page's area in Open to the side's order (right, left, down, up), else, the page's area being the only one, in a new area to its right; with the page gone it opens where any page would.
   An address the Workspace already shows is focused and loaded again there instead.
@@ -255,6 +259,7 @@ The page-side code is chromux's (MIT, `modakbul-gongbang/chromux` `93f770f`), ke
 ## The file boundary
 
 A client names a local file through a `file:` URL, so hided checks it like any path a client sends, on `browser_open`, `browser_state` and the `view_layout` `navigate` action.
+The shell and daemon spell a Windows drive path as `file:///C:/...`, preserving the drive as part of the path rather than a hostname.
 It decodes the path, refuses one that names another host or does not decode (`invalid_path`), runs it through the same checkout boundary the Explorer uses (`outside_checkout` for a file outside every registered checkout), and writes the checked path back as the one spelling the shell and the CLI also produce.
 A refusal is a `path_refused` frame to that client and never reaches the core.
 For a native `browser_state` report, a registered checkout's pinned physical root can be mapped back to its registered spelling before that same boundary checks the file.

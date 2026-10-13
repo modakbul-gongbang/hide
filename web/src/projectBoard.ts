@@ -245,8 +245,18 @@ function firstAction(stage: Stage, canStart: boolean, checkout: Checkout | null,
   return null;
 }
 
-function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, rows: BoardRow[], now: number): TaskCard {
-  const tree = checkout?.agent_scope.tree;
+/**
+ * The agents a card carries: the checkout's rows and the core's tree over
+ * them, which picks the ones the card names. A card with none is a backlog
+ * issue, or another issue the checkout's pull request closes, which shows
+ * the pull request while its agents stay on the issue the checkout works on
+ * (D-07).
+ */
+type CardAgents = { rows: BoardRow[]; tree: AgentTreeScope } | null;
+
+function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, agents: CardAgents, now: number): TaskCard {
+  const rows = agents?.rows ?? [];
+  const tree = agents?.tree ?? null;
   const shown = tree ? scopeRows(tree.shown, rows.map((row) => row.agent)) : [];
   const more = tree?.more ?? 0;
   const branch = checkout?.branch ?? checkout?.label ?? null;
@@ -356,23 +366,24 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
     const git = workspace.is_git === true;
     const worked = new Set<string>();
     for (const checkout of workspace.checkouts) {
-      const rows = rowsByCheckout.get(checkout.id) ?? [];
+      // `rowsByCheckout` reads the same device tree, so the tree's picks are among these rows.
+      const agents = { rows: rowsByCheckout.get(checkout.id) ?? [], tree: checkout.agent_scope.tree };
       const task = checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
       if (task) worked.add(task.key);
       if (!(checkout.is_worktree && git)) {
-        if (task && rows.length > 0) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, "working", rows, now));
+        if (task && agents.rows.length > 0) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, "working", agents, now));
         continue;
       }
       const stage = stageOf(checkout);
-      if (task) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, stage, rows, now));
-      // Another issue the same pull request closes shows that pull request too.
+      if (task) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, stage, agents, now));
+      // Another issue the same pull request closes shows that pull request too, without the checkout's agents.
       let closes = false;
       for (const key of checkout.closes_task_keys ?? []) {
         const closed = tasks.get(key);
         if (!closed || worked.has(key)) continue;
         worked.add(key);
         closes = true;
-        cards.push(card(`closes:${checkout.id}:${key}`, workspace, scope, checkout, closed, stage, [], now));
+        cards.push(card(`closes:${checkout.id}:${key}`, workspace, scope, checkout, closed, stage, null, now));
       }
       if (task || closes) continue;
       const pr = checkout.pull_request;
@@ -383,7 +394,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       if (!task.open) continue;
       openIssues += 1;
       if (worked.has(task.key)) continue;
-      backlog.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", [], now));
+      backlog.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", null, now));
     }
   }
   backlog.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));

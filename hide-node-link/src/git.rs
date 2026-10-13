@@ -154,6 +154,10 @@ pub enum GitCommand {
     },
     /// Every path in the index, each ended by a NUL.
     ListFiles,
+    /// Last commit touching this repository-relative file, Unix seconds.
+    DocumentTime {
+        path: String,
+    },
     /// The branch the worktree has checked out.
     CurrentBranch,
     Checkout {
@@ -200,6 +204,24 @@ impl GitCommand {
                 "--",
             ]),
             Self::ListFiles => owned(&["ls-files", "-z"]),
+            Self::DocumentTime { path } => {
+                if path.is_empty()
+                    || path.starts_with('/')
+                    || path.contains('\\')
+                    || path.split('/').any(|part| part == "..")
+                    || path.contains('\0')
+                {
+                    return Err("invalid_document_path".into());
+                }
+                owned(&[
+                    "--literal-pathspecs",
+                    "log",
+                    "-1",
+                    "--format=%ct",
+                    "--",
+                    path,
+                ])
+            }
             Self::CurrentBranch => owned(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
             // The closing `--` makes git read the name as a branch only; a
             // tracked file of that name is never restored over its edits.

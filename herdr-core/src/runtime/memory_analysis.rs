@@ -2,9 +2,8 @@
 //! D-08, D-10, D-16).
 //!
 //! One pass at a time walks every Memory-enabled Project of this machine
-//! and of each node that dials in, whatever the screen shows, each read
-//! through its own node's link (PRD core-host-node-move B14); a device the
-//! core dials keeps no Memory. For each of its sessions it records the
+//! and of each linked device, whatever the screen shows, each read
+//! through its own node's link. For each of its sessions it records the
 //! receipts a live pane's label read cannot see (a session started outside
 //! Herdr, or whose pane is gone), from a JSONL file or OpenCode's database,
 //! and analyzes a session once its file has
@@ -82,6 +81,10 @@ type FailedReads = HashMap<(&'static str, MemorySession), (u64, Option<u64>)>;
 pub(super) struct MemoryWork {
     pass_in_flight: bool,
     pub(super) next_pass_unix_ms: u64,
+    /// Last refusal for each registered node; refreshed by each pass so a
+    /// recovered or removed device keeps no entry and repeated refusals
+    /// add no diagnostic. At most one entry per registered device.
+    pub(super) node_refusals: HashMap<String, &'static str>,
     /// Cancels the running pass; its AI settings, to tell whether a settings
     /// change moved the provider it asks.
     pass_cancel: Option<CancelToken>,
@@ -223,12 +226,11 @@ impl Runtime {
     /// Takes what the label reads of `device`'s panes found for Memory:
     /// receipts to record off the lock, and the sessions its live panes hold
     /// now. A session that left the set had its pane closed or replaced, and
-    /// the next pass, started at once, analyzes it (B2). A machine with no
-    /// Memory, a device the core dials, hands nothing over; a node that dials
-    /// in keeps its sessions while its link is down, for the pass after it
-    /// is back.
+    /// the next pass, started at once, analyzes it (B2). Every
+    /// registered device keeps its sessions while its link or reader is
+    /// unavailable, for the pass after it is back.
     pub(crate) fn take_memory_handoff(&mut self, device: &str, handoff: MemoryHandoff) {
-        if let Err(reason @ ("dialed_device" | "unregistered")) = self.linked_node(device) {
+        if let Err(reason @ "unregistered") = self.linked_node(device) {
             // Its sessions are the designed absence; receipts there are not.
             if !handoff.receipts.is_empty() {
                 crate::diagnostic!(json!({
@@ -283,7 +285,7 @@ impl Runtime {
         }
         by_device
             .into_iter()
-            .filter_map(|(device, receipts)| match self.linked_node(&device) {
+            .filter_map(|(device, receipts)| match self.memory_node(&device) {
                 Ok((node, link)) => Some((node, link, receipts)),
                 Err(reason) => {
                     crate::diagnostic!(json!({
@@ -830,9 +832,9 @@ pub(crate) fn report_memory_change(
 /// What one pass needs, taken under the lock when it starts.
 struct PassInput {
     /// The machines whose Projects have Memory, each with the link that
-    /// reads its files: this machine's and each node that dials in now.
+    /// reads its files: this machine's and each linked device's.
     nodes: Vec<super::hosts::LinkedNode>,
-    /// Nodes that dial in but whose link is down: their Projects wait.
+    /// Registered nodes currently unavailable for Memory: their Projects wait.
     unreached: Vec<NodeId>,
     database: PathBuf,
     /// `None` while Hide AI is off: the pass only records receipts.
@@ -863,7 +865,7 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         outcome.settled = input.closed.clone();
         return outcome;
     }
-    let mut store = match MemoryStore::open(&input.database) {
+    let mut store = match super::memory::open_memory_store(&input.database) {
         Ok(store) => store,
         Err(error) => {
             crate::diagnostic!(json!({
@@ -1646,7 +1648,7 @@ fn record_sighted_receipts(
     if !MemoryStore::exists(database) {
         return;
     }
-    let mut store = match MemoryStore::open(database) {
+    let mut store = match super::memory::open_memory_store(database) {
         Ok(store) => store,
         Err(error) => {
             crate::diagnostic!(json!({
@@ -1925,6 +1927,152 @@ pub(crate) fn write_cards(
     }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
     let mut facts = CheckoutFacts::new(sessions_node, source.evidence_root);
+    let documents =
+        super::memory_verify::repository_sources(sessions_node, &facts, source.evidence_root);
+    let matches = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.relation == CandidateRelation::New
+                && candidate.kind != hide_memory::CandidateKind::Preference
+        })
+        .filter_map(|(index, candidate)| {
+            let words = hide_memory::query_words(&[
+                &candidate.title,
+                &candidate.text,
+                &candidate.aliases.join(" "),
+            ]);
+            let document = documents
+                .iter()
+                .map(|document| {
+                    let lower = document.text.to_lowercase();
+                    let score = words
+                        .iter()
+                        .filter(|word| lower.contains(word.as_str()))
+                        .count();
+                    (score, document)
+                })
+                .filter(|(score, _)| *score >= 2)
+                .max_by_key(|(score, _)| *score)?
+                .1;
+            Some((
+                index,
+                candidate.text.clone(),
+                hide_memory::relevant_excerpt(
+                    &document.path,
+                    &document.text,
+                    document.truncated,
+                    &words,
+                    hide_memory::COMPARISON_EXCERPT_BYTES,
+                ),
+            ))
+        })
+        .take(hide_memory::NEW_CARDS_PER_SESSION)
+        .collect::<Vec<_>>();
+    let mut document_input = 0;
+    let mut duplicates = 0;
+    let mut document_comparisons = vec![None; candidates.len()];
+    if let Some(check) = hide_memory::creation_docs_request(
+        digest(&["creation-docs", &batch_id]),
+        source.project_id,
+        &matches,
+        request.input.chars().count().min(request.input.len()),
+    ) {
+        admit(store)?;
+        document_input = check.input.chars().count();
+        let answer = router
+            .execute(&check, cancel)
+            .map_err(AnalysisFailure::Provider)?;
+        let results = answer.value["results"].as_array().ok_or_else(|| {
+            AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_results".into()))
+        })?;
+        let sent: Value =
+            serde_json::from_str(&check.input).map_err(|error| local(error.to_string()))?;
+        let expected = sent["candidates"]
+            .as_array()
+            .ok_or_else(|| local("creation_docs_input".into()))?;
+        let mut seen = BTreeSet::new();
+        for result in results {
+            let index = result["candidate"].as_u64().ok_or_else(|| {
+                AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_candidate".into()))
+            })? as usize;
+            if !seen.insert(index)
+                || !expected
+                    .iter()
+                    .any(|entry| entry["candidate"].as_u64() == Some(index as u64))
+            {
+                return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                    "creation_docs_unknown_candidate".into(),
+                )));
+            }
+            let entry = expected
+                .iter()
+                .find(|entry| entry["candidate"].as_u64() == Some(index as u64))
+                .expect("the candidate was validated against the sent input");
+            match result["verdict"].as_str() {
+                Some("same") => {
+                    candidates[index].relation = CandidateRelation::Discard;
+                    duplicates += 1;
+                }
+                Some("unrelated") => {}
+                Some("differs") => {
+                    let quote = result["quote"]
+                        .as_str()
+                        .filter(|quote| {
+                            !quote.trim().is_empty()
+                                && quote.len() <= hide_memory::COMPARISON_EXCERPT_BYTES
+                                && entry["excerpt"]
+                                    .as_str()
+                                    .is_some_and(|text| text.contains(*quote))
+                        })
+                        .ok_or_else(|| {
+                            AnalysisFailure::Provider(AiError::InvalidOutput(
+                                "creation_docs_unseen_quote".into(),
+                            ))
+                        })?;
+                    let candidate = &candidates[index];
+                    let human = candidate.human_offsets.iter().max_by_key(|offset| {
+                        candidate.source_times.get(offset).copied().unwrap_or(0)
+                    });
+                    let at = human.and_then(|offset| candidate.source_times.get(offset).copied());
+                    let words = human
+                        .and_then(|offset| {
+                            group
+                                .iter()
+                                .find(|event| event["offset"].as_u64() == Some(*offset))
+                        })
+                        .and_then(|event| event["text"].as_str())
+                        .unwrap_or_default();
+                    let words = hide_memory::redact(words)
+                        .text
+                        .chars()
+                        .take(hide_memory::COMPARISON_EXCERPT_BYTES / 4)
+                        .collect();
+                    document_comparisons[index] = Some(super::memory_verify::compare_document(
+                        sessions_node,
+                        source.evidence_root,
+                        entry["document"]
+                            .as_str()
+                            .expect("the request carries a document path"),
+                        quote,
+                        at,
+                        words,
+                        human.map(|_| source.session_id.to_owned()),
+                    ));
+                }
+                _ => {
+                    return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                        "creation_docs_verdict".into(),
+                    )));
+                }
+            }
+        }
+        if results.len() != expected.len() {
+            return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                "creation_docs_incomplete".into(),
+            )));
+        }
+    }
     let evidence = candidates
         .iter()
         .map(|candidate| match candidate.relation {
@@ -1953,12 +2101,18 @@ pub(crate) fn write_cards(
             &ApplyOptions {
                 new_card_limit: source.new_card_limit,
                 evidence,
+                document_comparisons,
+                reverify_superseded: !documents.is_empty(),
             },
         )
         .map_err(|error| match error {
             hide_memory::MemoryError::Disabled => AnalysisFailure::Disabled,
             error => local(error.to_string()),
         })?;
+    crate::diagnostic!(
+        json!({"component":"memory", "kind":"analysis.session_cards", "project_id":source.project_id, "session_id":source.session_id, "batch_id":batch_id,
+        "created":summary.created, "superseded":summary.superseded, "duplicates_in_docs":duplicates, "extraction_input_chars":request.input.chars().count(), "document_input_chars":document_input })
+    );
     for backfill in output.backfill {
         if let Err(error) = store.fill_aliases(
             source.project_id,
@@ -2292,7 +2446,7 @@ mod tests {
                 &root.to_string_lossy(),
             )
             .unwrap();
-            let database = temp.path().join("memory.sqlite3");
+            let database = hide_memory::database_path(temp.path());
             let mut store = MemoryStore::open(&database).unwrap();
             store
                 .ensure_project(&identity.id, &identity.root, crate::node::TEST_NODE)
@@ -2519,6 +2673,147 @@ mod tests {
     }
 
     #[test]
+    fn creation_classifies_new_decision_conflicts_with_no_initial_reverification() {
+        for (date, authority) in [
+            (None, hide_memory::DocumentAuthority::Ask),
+            (
+                Some("2026-10-10T00:00:00Z"),
+                hide_memory::DocumentAuthority::CardNewer,
+            ),
+            (
+                Some("2026-10-12T00:00:00Z"),
+                hide_memory::DocumentAuthority::Outdated,
+            ),
+        ] {
+            let mut fixture = Fixture::new();
+            fixture.lines[0]["message"]["content"] = json!(format!(
+                "Always run tests with nextest before a merge. {}",
+                "Extra session context. ".repeat(450)
+            ));
+            fixture.write(&fixture.lines);
+            std::fs::write(
+                fixture.root.join("AGENTS.md"),
+                "Run tests with the ordinary runner before a merge.\n",
+            )
+            .unwrap();
+            if let Some(date) = date {
+                for args in [
+                    vec!["init", "-q"],
+                    vec!["add", "AGENTS.md"],
+                    vec![
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "commit",
+                        "-qm",
+                        "Initial guide",
+                    ],
+                ] {
+                    let status = std::process::Command::new("git")
+                        .args(args)
+                        .current_dir(&fixture.root)
+                        .env("GIT_AUTHOR_DATE", date)
+                        .env("GIT_COMMITTER_DATE", date)
+                        .status()
+                        .unwrap();
+                    assert!(status.success());
+                }
+            }
+            fixture.backend.answers.lock().unwrap().push(json!({"results":[{
+                "candidate":0,"verdict":"differs", "quote":"Run tests with the ordinary runner before a merge."
+            }]}));
+            fixture.answer(&[]);
+            fixture.backend.answers.lock().unwrap().last_mut().unwrap()["candidates"][0]["kind"] =
+                json!("decision");
+            let _ = fixture.pass(false, true);
+            let store = fixture.store();
+            let decision = store
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .unwrap();
+            assert_eq!(decision.kind, CandidateKind::Decision);
+            let comparison = store
+                .document_comparison(&fixture.project_id, 2)
+                .unwrap()
+                .unwrap();
+            assert_eq!(comparison.authority, authority);
+            assert!(
+                comparison
+                    .operator_text
+                    .contains("Always run tests with nextest")
+            );
+            assert!(
+                !store
+                    .retrieve(&hide_memory::RetrievalQuery::session_start(
+                        &fixture.project_id
+                    ))
+                    .unwrap()
+                    .items
+                    .iter()
+                    .any(|card| card.number == 2)
+            );
+            assert_eq!(
+                fixture.calls(),
+                2,
+                "one extraction and one creation comparison, no initial reverify"
+            );
+            let inputs = fixture.backend.inputs.lock().unwrap();
+            assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+            println!(
+                "memory-fixture-inputs extraction={} creation_docs={} authority={authority:?} calls=2",
+                inputs[0].chars().count(),
+                inputs[1].chars().count()
+            );
+            drop(inputs);
+            let _ = fixture.pass(false, false);
+            assert_eq!(
+                fixture.calls(),
+                2,
+                "an unresolved comparison spends no further call"
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicate_document_claim_is_suppressed_within_the_extraction_input_cap() {
+        let mut fixture = Fixture::new();
+        fixture.lines[0]["message"]["content"] = json!(format!(
+            "Always run tests with nextest before a merge. {}",
+            "Extra session context. ".repeat(450)
+        ));
+        fixture.write(&fixture.lines);
+        std::fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Run tests with nextest before a merge.\n",
+        )
+        .unwrap();
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(json!({"results":[{"candidate":0,"verdict":"same","quote":""}]}));
+        fixture.answer(&[]);
+        let _ = fixture.pass(false, true);
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fixture.calls(), 2);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+        println!(
+            "memory-fixture-inputs extraction={} creation_docs={} created=0",
+            inputs[0].chars().count(),
+            inputs[1].chars().count()
+        );
+    }
+
+    #[test]
     fn a_pass_records_receipts_a_live_pane_cannot_and_analyzes_a_closed_session_once() {
         // B1, B2, B3, B27, D-16.
         let fixture = Fixture::new();
@@ -2572,47 +2867,129 @@ mod tests {
         assert_eq!(fixture.calls(), 1);
     }
 
-    /// PRD core-host-node-move B14: the Projects of a node that dials in
-    /// are walked through its link like this machine's, and while its link
-    /// is down a closed session of its stays queued for the next pass.
+    /// Runtime admission and the pass share one store for both directions;
+    /// closed sessions wait for the device's own reader to reconnect.
     #[test]
     fn a_linked_node_s_closed_session_is_analyzed_through_its_link_and_waits_while_it_is_down() {
-        let fixture = Fixture::new();
-        let core = NodeId::parse("core-node").unwrap();
-        let elsewhere = tempfile::tempdir().unwrap();
-        let core_link: Arc<dyn NodeLink> =
-            Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
-        let key = ("claude", SESSION.to_owned());
+        for origin in [
+            crate::model::LinkOrigin::Inbound,
+            crate::model::LinkOrigin::Dialed {
+                ssh_alias: "fixture-host".to_owned(),
+            },
+        ] {
+            let fixture = Fixture::new();
+            let elsewhere = tempfile::tempdir().unwrap();
+            let mut runtime = super::super::tests::runtime();
+            runtime.node = NodeId::parse("core-node").unwrap();
+            runtime.own_node = Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
+            runtime.state_path = fixture._temp.path().join("state.json");
+            runtime
+                .snapshot
+                .ui_state
+                .device_registrations
+                .push(crate::model::DeviceRegistration {
+                    id: crate::node::TEST_NODE.to_owned(),
+                    label: "device".to_owned(),
+                    origin,
+                    herdr_socket_path: None,
+                    host_consent: None,
+                });
+            let context = crate::workspace_control::Context {
+                device_id: crate::node::TEST_NODE.to_owned(),
+                workspace_id: "w".to_owned(),
+                checkout_id: "c".to_owned(),
+                checkout_path: fixture.root.to_string_lossy().into_owned(),
+            };
+            let key = ("claude", SESSION.to_owned());
+            assert_eq!(runtime.memory_scope(&context).err(), Some("link_down"));
+            let (nodes, unreached) = runtime.memory_nodes();
+            let (reports, outcome) = fixture.pass_over(key.clone(), false, true, nodes, unreached);
+            assert!(reports.is_empty());
+            assert_eq!(fixture.calls(), 0);
+            assert!(outcome.settled.is_empty(), "the session waits for its node");
 
-        let (reports, outcome) = fixture.pass_over(
-            key.clone(),
-            false,
-            true,
-            vec![(core.clone(), Arc::clone(&core_link))],
-            vec![crate::node::test_node()],
-        );
-        assert!(reports.is_empty());
-        assert_eq!(fixture.calls(), 0);
-        assert!(outcome.settled.is_empty(), "the session waits for its node");
+            runtime.device_hosts.insert(
+                crate::node::TEST_NODE.to_owned(),
+                super::super::hosts::DeviceHost {
+                    generation: 1,
+                    phase: super::super::hosts::HostPhase::Ready {
+                        host: Arc::clone(&fixture.node),
+                        platform: "linux".to_owned(),
+                        helper_path: None,
+                    },
+                },
+            );
+            let scope = runtime
+                .memory_scope(&context)
+                .expect("a ready device's Memory");
+            assert_eq!(
+                scope.store, fixture.database,
+                "the scope uses the core's single store"
+            );
+            let mut store = fixture.store();
+            let card = store
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap();
+            store
+                .confirm_card(&card.id, card.revision, None, &[], 1)
+                .unwrap();
+            drop(store);
+            let ask = crate::memory_hook::Ask::from_wire(
+                &json!({"runtime":"claude", "event":"SessionStart", "session":"greeting-session"}),
+            )
+            .unwrap();
+            let received = crate::memory_hook::answer(
+                &scope,
+                &ask,
+                std::time::Instant::now() + crate::memory_hook::WITHIN,
+            );
+            assert!(
+                received
+                    .context
+                    .unwrap()
+                    .contains("Keep the hook under 100 ms")
+            );
+            let own = crate::memory_hook::project_identity(
+                runtime.own_node.as_ref(),
+                &runtime.node,
+                &context.checkout_path,
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap();
+            assert_ne!(
+                own.id, fixture.project_id,
+                "equal roots on different devices stay separate"
+            );
+            assert!(matches!(
+                fixture.store().project_state(&own.id),
+                Err(hide_memory::MemoryError::ProjectMissing)
+            ));
+            assert!(
+                !fixture.home.join("project-memory.sqlite3").exists(),
+                "the device receives no store copy"
+            );
 
-        fixture.answer(&[]);
-        let (reports, _) = fixture.pass_over(
-            key,
-            false,
-            true,
-            vec![
-                (core, core_link),
-                (crate::node::test_node(), Arc::clone(&fixture.node)),
-            ],
-            Vec::new(),
-        );
-        assert_eq!(reports, ["analyzing", "learned one"]);
-        let learned = fixture
-            .store()
-            .item_by_number(&fixture.project_id, 2)
-            .unwrap()
-            .expect("the node's session taught a card");
-        assert_eq!(learned.title, "Tests run with nextest");
+            fixture.answer(&[]);
+            let (nodes, unreached) = runtime.memory_nodes();
+            let (reports, _) = fixture.pass_over(key, false, true, nodes, unreached);
+            assert_eq!(reports, ["analyzing", "learned one"]);
+            let store = fixture.store();
+            let learned = store
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .expect("the device's session taught a card");
+            assert_eq!(learned.title, "Tests run with nextest");
+            assert_eq!(
+                store
+                    .item_by_number(&fixture.project_id, 1)
+                    .unwrap()
+                    .unwrap()
+                    .provided_session_count,
+                1,
+                "the signed device receipt reached the same store"
+            );
+        }
     }
 
     #[test]
@@ -2868,9 +3245,17 @@ mod tests {
         assert_eq!(reports, ["analyzing", "learned one"]);
         assert_eq!(
             memory_kinds(&records),
-            ["receipts.records_skipped", "analysis.records_skipped"]
+            [
+                "receipts.records_skipped",
+                "analysis.session_cards",
+                "analysis.records_skipped"
+            ]
         );
-        for record in &records {
+        for record in records.iter().filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("records_skipped"))
+        }) {
             assert_eq!(record["skipped"], json!({"non_conversation_capacity": 1}));
         }
         let inputs = fixture.backend.inputs.lock().unwrap().clone();
@@ -3728,5 +4113,11 @@ mod tests {
         assert_eq!(promotions[0].1.state, hide_memory::PromotionState::Merged);
         assert_eq!(promotions[0].1.target_path.as_deref(), Some("AGENTS.md"));
         assert_eq!(promotions[0].1.pr_number, None);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        println!(
+            "memory-fixture-inputs pre_promotion={} calls=1",
+            inputs[0].chars().count()
+        );
     }
 }

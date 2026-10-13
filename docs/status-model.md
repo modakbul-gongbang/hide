@@ -633,13 +633,19 @@ The Herdr workspace label is never a name: it is whatever the workspace was call
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v8`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v9`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+A session with no goal and no assigned work answers `goal: null`; greetings, identity questions and capability questions create no task and no placeholder title.
+The row uses the existing title priority above, and the next analysis after real work is requested sets its first goal.
+A goal already set cannot become null and changes only on an operator turn with `goal_changed: true`; goals stored by earlier builds are preserved because the record cannot distinguish an invented goal from an actual assignment.
+With `goal_changed: false`, the returned goal value is ignored even when it is null; the turn's `line` and `end` are still applied.
+`line` and `end` still describe the current conversation: an answered greeting or identity question with no required next action has an empty line and a stopped end of `done`, while a specific question retains its requested action.
 How the turn ended is asked only once the agent has stopped: the call at a turn's start names the goal and the line and leaves the end `working`, and the call at its end picks the word by whose move is next, `question` (the operator's), `blocked` (stopped on a cause the line can state in one sentence: no disk, a failed CI run, a permission or login it cannot get, a tool that will not run), `waiting` (something other than a pull request still running: a background test, build, CI run or another agent), `unfinished` (nobody's, with the work left undone) or `done` (nobody's, with the work reported finished), taking the first in that order that fits.
 There is no "unsure means done": a turn that did not report its work finished is `unfinished`, and a `blocked` answer with no line is read as `unfinished`.
 A turn that started or handed off work that still runs is `waiting`, even when the turn itself only reported progress or answered something, unless it asks the operator; its line says what it waits for.
 A turn is the person's message that began it, known by its time and its words, so a request that repeats the last one word for word is a new turn and is asked again.
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise, which for a block is its cause), `question` (a question end on an agent that is not running) and `blocked` (a block end on an agent that is not running), and `sidebar.rs::project_agent` reads those five.
-With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row uses manual title, native automatic title, then provider, and has no sentence and no written question (D-11).
+With Settings › Hide AI › Features › Agent summaries off nothing of the generated label is laid: the row uses manual title, proven native automatic title, then provider, and has no generated sentence or inferred plain-text question (D-11).
+Native questions and plan waits are still read, and a pending native question still supplies its own first line.
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
@@ -649,7 +655,7 @@ A restart restores a label with no read and no request when the pane's reference
 Sleeping rows preserve only labels captured from the proven current projection; older sleep records without provenance fall back to the provider.
 This adds no worker, subprocess or I/O under the runtime lock: the worker's reads and analyses run off it and the projection only copies the bounded label strings, with no new notification beyond an actual projected state transition.
 Regression owners: in `herdr-core/src/labels/tests.rs`, `another_session_shows_nothing_of_the_last_one_until_it_is_proven`, `an_analysis_that_lands_after_the_session_changed_is_dropped`, `a_restart_restores_the_label_with_no_read_and_no_request`, `an_imported_label_shows_only_for_the_session_it_was_proven_for` and `a_turn_that_ran_between_two_looks_ends_the_question`; the device path is `a_device_panes_label_is_read_through_its_helper` and its disconnect and old-helper siblings; `desktop/e2e/session-labels.spec.ts` proves the session boundary against the running app.
-There is no `summary` token and no missing-summary notice: an agent without a task is titled by its provider, and the row says nothing else.
+There is no `summary` token and no missing-summary notice: an agent without a task follows the native-title/provider priority above, and an empty line draws no placeholder sentence.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
 
@@ -757,7 +763,8 @@ Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test
 ### The second line
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
-The sentences come from the agent's label line (at most 40 characters): `expected_reply` when the turn ended on a question, the one action the operator is asked for; `progress` otherwise, what the agent is doing, has done or waits for. A row carries one or the other, never both.
+The sentences come from the agent's label: `expected_reply` (at most 40 characters) when the turn ended on a question, the one action the operator is asked for; `progress` (at most 80 characters) otherwise, what the agent is doing, has done or waits for.
+A row carries one or the other, never both.
 A native question waiting now (`user_turn` of kind `question` with content, from any of the five sources above) is the third source, the `question` below: the first non-empty line of its text, one line, cut on a character boundary to the 40 characters of an `expected_reply` and ending in `…` when cut (`native_question_line` in `herdr-core/src/agent_state/turn.rs`).
 It is the agent's own words, so it is shown untranslated, and it needs no Hide AI.
 It stands in for an `expected_reply` and comes before `progress`, because a question asked in the middle of a turn has no reply sentence yet: the label worker's verdict on a turn's end runs only once the agent has written something after the operator's message, so a Claude `AskUserQuestion` with no text before it leaves the turn start's `progress` on the label for the whole wait, and that line describes the work, not what is asked.
@@ -837,6 +844,45 @@ A read root question clears the server’s effective push state, while the phone
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
 The desktop app's agent notifications run the same transitions on their own ledger (`hided/src/desktop_notices.rs`, PRD first-run-onboarding D-09), so a desktop notification and a phone push agree on what is new without either one's seed or mode moving the other.
+
+### With and without Hide AI
+
+Here “on” means Agent summaries is enabled and the current session has a proven label.
+Before a proven label exists, an unavailable provider or failed analysis adds no generated title or sentence; an existing proven label can remain while an analysis is unavailable.
+“Off” means Agent summaries is disabled, including Hide AI being off; native session facts, Herdr lifecycle, lineage, read state and notification settings still apply.
+The table describes operator-owned roots; delegated rows and the six escalation causes keep their ownership rules above.
+Sentences keep their original language in every mode.
+
+| Surface or condition | Hide AI on | Hide AI off |
+| --- | --- | --- |
+| Row title | Every adapter: manual title, then Hide AI goal, then proven native automatic title, then provider. See [Task identity](#task-identity). | Every adapter: manual title, then proven native automatic title, then provider. No Herdr workspace label or control name becomes a title. See [Task identity](#task-identity). |
+| Pending native question | `?`, Question, Needs You until answered, including after reading. Second line: turn-end `expected_reply`, otherwise the question's first non-empty line (40 characters including a truncation ellipsis), otherwise `progress`. | The same native `?`, Question and Needs You until answered; its first non-empty line supplies the second line without an AI call. With no question text the status word stands in. |
+| Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: `?`, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no `?` and no Needs You. A stopped, unread Herdr `done` is Done with `✓` and no sentence. A Herdr `idle` is Seen, not Done. |
+| Approval / Herdr blocked pane / native plan wait | `!`, Approval, Needs You until answered, including after reading. The second line follows `expected_reply`, native question, then `progress`; a plan document's heading is never extracted as a sentence. | The same `!`, Approval and Needs You; without a native question sentence the word Approval stands in, including for a plan document. |
+| AI-identified error or block with a named cause, without a native wait | `▲`, Blocked, Needs You while unread; the second line is the cause in `progress`. Reading leaves the dimmed mark and cause in Seen unless it is running. | No cause is inferred from plain text and no Blocked mark is invented. Herdr's own lifecycle decides the group: an unread `done` is Done with no sentence, an `idle` is Seen. A native blocked pane still uses Approval above. |
+| Working second line | `progress`; with an unresolved demand, `expected_reply`, native question, then `progress`. A quiet working row's display can hide its sentence until hover or selection. | No generated progress; Working stands in when there is no sentence. A working row with a native question still carries that question. Proven background tasks, children and awaited replies still supply Waiting independently of AI. |
+| Done (unread) second line | `expected_reply`, otherwise `progress`. An unfinished verdict draws Stopped `◐` instead of a check while keeping the lifecycle's group. | No generated sentence; Done stands in for an unread completion. No inferred unfinished verdict; proven waits still prevent a premature Done. |
+| Seen second line | A read unresolved demand keeps its sentence; a read completion, idle or unknown row has none. | A native unresolved question keeps its question; ordinary read completion, idle and unknown rows have no sentence. |
+| Whether a root enters Needs You | Native question/approval/block, an unread AI question or named block, or one of the explicit delegated escalations. Working and Done alone do not enter it. | Native question/approval/block and the same explicit escalations; a plain-text end question alone does not enter it. |
+| App icon count | Number of root Needs You rows across devices while the desktop Needs You switch is on; Done contributes zero. | The same count rule, with fewer inferred demands. macOS uses the Dock, Linux a supported launcher, Windows a taskbar dot with the count in its description. |
+| Desktop notification title | The root's row title, capped by the host at 120 characters. | The root's row title by the off priority above, with the same cap. |
+| Desktop notification body | With `detail`: translated row `status_code` word ` · ` exact `detail` ` · ` project. Examples: `Question · Choose staging? · my-app`, `Approval · Review the plan · my-app`, `Blocked · Login required · my-app`, `Done · Build fixed · my-app`, `Stopped · Three tests remain · my-app`. Without `detail`: exactly the existing `Needs you · my-app` or `Done · my-app`. | The same composition. Native question: `Question · Choose staging? · my-app`. Approval without a sentence: `Needs you · my-app`. Plain-text end question on an unread completed turn: `Done · my-app`. |
+| Phone push title and body | Title is the same root row title. With `detail`, the phone language's row status word, exact sentence and project use the desktop format. Without `detail`, retain the phone's existing translated group word and project (`내 확인 대기 · my-app` or `끝 · my-app` in Korean). | The same composition from native facts only. Native question in Korean: `질문 · Choose staging? · my-app`; approval without text: `내 확인 대기 · my-app`; a plain-text question on an unread completed turn: `끝 · my-app`. |
+
+The status prefix is the row's translated `status_code`, not a new classification: English uses Question, Approval, Blocked, Done and Stopped; Korean uses 질문, 승인 대기, 막힘, 완료 and 멈춤.
+An empty project omits its separator, and the desktop host's existing 400-character body cap still applies.
+Both transports copy the root's published `detail`, even when the phone's compact row hides that detail; neither recomputes a sentence or takes a descendant's text as its root's.
+Each desktop group has its own switch: Needs You enables demands and its icon count, Done enables completions, and either enables the permission/test row; the phone keeps its independent push mode.
+Only a transition into an enabled group announces anything: a sentence changing by itself sends no second notification, and replacement tags, withdrawal, the desktop backlog of 16 and each channel's existing mode and focus rules are unchanged.
+
+This is the operator-approved reversal (2026-10-13) of mobile-companion's “never a sentence” rule: a phone lock-screen preview can now show the agent's or generated sentence, according to the phone's preview setting.
+First-run-onboarding D-11 changes with it: both channels use the same status/sentence/project order, while their existing no-sentence translations remain intact.
+The payload is encrypted, terminal content is still excluded, and neither transport logs the sentence.
+The phone's serialized JSON is limited to 3,993 bytes before encryption; the 86-byte aes128gcm header, one-byte delimiter and 16-byte authentication tag make the largest accepted HTTP body exactly 4,096 bytes.
+An oversized payload, including project, identifiers and the existing `clear` list, fails delivery before any POST with a fixed size-limit diagnostic; the sentence is never silently shortened to fit.
+The status and sentence fields are additive: a cached old worker ignores them and keeps the previous body; a new worker with an older page's cached words falls back to that page's group word, and with no stored words it can show only the sentence and project.
+Human delivery notices keep their existing words and carry no row sentence.
+Regression owners: `hided/src/desktop_notices.rs`, `hided/src/mobile/push.rs`, `web/src/agentNotices.test.tsx`, `web/src/mobile/language.test.tsx` and `web/src/mobile/serviceWorker.test.ts`.
 
 ### Scope projections
 

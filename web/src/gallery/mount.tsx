@@ -23,7 +23,11 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><SessionWorkScene params={params} /></StrictMode>);
       return;
     }
-    if (scene === "usage") {
+    if (scene === "usage" || scene === "usage-history") {
+      if (scene === "usage-history") {
+        params.set("surface", "history-year");
+        params.set("history", params.get("history") ?? (params.get("content") === "long" ? "unpriced" : "reference"));
+      }
       root.render(<StrictMode><UsageScene params={params} /></StrictMode>);
       return;
     }

@@ -1,7 +1,7 @@
 //! Complete usage declarations. Sources are added only with their readers.
 use serde::{Deserialize, Serialize};
 
-pub const SHIPPED_USAGE_LAYER: u8 = 2;
+pub const SHIPPED_USAGE_LAYER: u8 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "support", content = "detail", rename_all = "snake_case")]
@@ -61,16 +61,44 @@ impl LimitSource {
     }
 }
 
-// No consumption reader ships in L1/L2. Uninhabited source types prevent a
-// declaration from claiming support before the owning layer implements it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum TokenSource {}
+#[serde(rename_all = "snake_case")]
+pub enum TokenSource {
+    ClaudeTranscript,
+    CodexRollout,
+    GrokUpdates,
+    OpenCodeParts,
+    PiSession,
+    OmpSession,
+}
+impl TokenSource {
+    pub const fn format(self) -> crate::SessionFormat {
+        match self {
+            Self::ClaudeTranscript => crate::SessionFormat::Claude,
+            Self::CodexRollout => crate::SessionFormat::Codex,
+            Self::GrokUpdates => crate::SessionFormat::Grok,
+            Self::OpenCodeParts => crate::SessionFormat::OpenCode,
+            Self::PiSession => crate::SessionFormat::Pi,
+            Self::OmpSession => crate::SessionFormat::Omp,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum CostBasis {}
+#[serde(rename_all = "snake_case")]
+pub enum CostBasis {
+    Recorded,
+    PublicTable,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum ModelFrom {}
+#[serde(rename_all = "snake_case")]
+pub enum ModelFrom {
+    UsageRecord,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum AttributionFrom {}
+#[serde(rename_all = "snake_case")]
+pub enum AttributionFrom {
+    UsageRecord,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct UsageDeclaration {

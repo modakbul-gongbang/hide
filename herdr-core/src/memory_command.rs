@@ -5,8 +5,8 @@
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
 //! command needs, and the command itself (store reads, the Project's identity,
 //! an `add`'s provider call) runs on hided's blocking task, off the lock.
-//! A connected device's Memory is its own (D-22), so only a caller on this
-//! machine is answered.
+//! A caller on any linked device is answered from the core's one store;
+//! the caller's node reads its Project and session files.
 
 use crate::node::NodeId;
 use crate::node_access::NodeLink;
@@ -80,6 +80,11 @@ pub enum MemoryCommand {
         number: u64,
         reason: String,
     },
+    /// One card was not processed; peers can still reach the shared PR.
+    Skipped {
+        number: u64,
+        reason: String,
+    },
 }
 
 impl MemoryCommand {
@@ -93,7 +98,7 @@ impl MemoryCommand {
             }
             // Never Git's own folder: the path is shown to every agent once
             // the card's pull request merges.
-            Self::Outdated { number, reason } => {
+            Self::Outdated { number, reason } | Self::Skipped { number, reason } => {
                 *number > 0
                     && !reason.trim().is_empty()
                     && reason.chars().count() <= hide_memory::OUTDATED_REASON_LIMIT_CHARS
@@ -164,14 +169,15 @@ impl PreparedMemory {
             "memory_project_unavailable".to_owned()
         })?;
         let root = identity.root.to_string_lossy().into_owned();
-        let mut store = MemoryStore::open(&self.database).map_err(|error| {
-            crate::diagnostic!(json!({
-                "component": "memory",
-                "kind": "command.store_unavailable",
-                "message": error.to_string(),
-            }));
-            "memory_unavailable".to_owned()
-        })?;
+        let mut store =
+            crate::runtime::memory::open_memory_store(&self.database).map_err(|error| {
+                crate::diagnostic!(json!({
+                    "component": "memory",
+                    "kind": "command.store_unavailable",
+                    "message": error.to_string(),
+                }));
+                "memory_unavailable".to_owned()
+            })?;
         let enabled = match store.project_state(&identity.id) {
             Ok(state) => state.enabled,
             Err(hide_memory::MemoryError::ProjectMissing) => false,
@@ -201,6 +207,11 @@ impl PreparedMemory {
                     .evidence;
                 let mut answer = card(&item);
                 answer["evidence"] = json!(evidence);
+                answer["document_comparison"] = json!(
+                    store
+                        .document_comparison(&identity.id, number)
+                        .map_err(|error| store_failure(&identity.id, &error))?
+                );
                 Ok(answer)
             }
             MemoryCommand::Forget { number } => {
@@ -281,7 +292,13 @@ impl PreparedMemory {
                 self.report(&identity.id, MemoryChange::Other);
                 Ok(json!({"card": card_name(number), "path": path}))
             }
-            MemoryCommand::Outdated { number, reason } => {
+            command @ (MemoryCommand::Outdated { .. } | MemoryCommand::Skipped { .. }) => {
+                let skipped = matches!(command, MemoryCommand::Skipped { .. });
+                let (number, reason) = match command {
+                    MemoryCommand::Outdated { number, reason }
+                    | MemoryCommand::Skipped { number, reason } => (number, reason),
+                    _ => unreachable!(),
+                };
                 let promotions = store
                     .promotions(&identity.id)
                     .map_err(|error| store_failure(&identity.id, &error))?;
@@ -307,21 +324,25 @@ impl PreparedMemory {
                     })
                     .ok_or("memory_card_not_promoting")?;
                 // Only while this attempt and agent still hold the card.
-                if !store
-                    .mark_outdated(&identity.id, number, &promotion, &reason, now)
-                    .map_err(|error| store_failure(&identity.id, &error))?
-                {
+                let moved = if skipped {
+                    store.skip_promotion(&identity.id, number, &promotion, &reason, now, None)
+                } else {
+                    store.mark_outdated(&identity.id, number, &promotion, &reason, now)
+                };
+                if !moved.map_err(|error| store_failure(&identity.id, &error))? {
                     return Err("memory_card_not_promoting".into());
                 }
                 crate::diagnostic!(json!({
                     "component": "memory",
-                    "kind": "promotion.outdated",
+                    "kind": if skipped { "promotion.skipped" } else { "promotion.outdated" },
                     "project_id": identity.id,
                     "card": number,
                     "reason_chars": reason.chars().count(),
                 }));
                 self.report(&identity.id, MemoryChange::Other);
-                Ok(json!({"card": card_name(number), "outcome": "outdated"}))
+                Ok(
+                    json!({"card": card_name(number), "outcome": if skipped { "skipped" } else { "outdated" }}),
+                )
             }
             MemoryCommand::Search { words } => {
                 let items = store
@@ -526,8 +547,10 @@ fn add_failure(project_id: &str, failure: AnalysisFailure) -> String {
 /// What the caller can do about a refusal.
 pub fn next_action(code: &str) -> &'static str {
     match code {
-        "memory_device_unsupported" => {
-            "Run hide memory on the machine that runs Hide or on a computer that connects to it; a device Hide connects to has no Project Memory"
+        "link_down" => "Reconnect this device in Hide, then retry",
+        "unregistered" => "Register this device in Hide, then retry",
+        "session_reader_support_unavailable" | "session_reader_memory_unsupported" => {
+            "Update this device's Hide helper to one that supports Project Memory, then reconnect"
         }
         "memory_off" => "Memory is off for this Project; only the operator can turn it on in Hide",
         "memory_ai_off" => "Turn Hide AI on and choose an agent in Hide's Settings",

@@ -21,6 +21,8 @@ Three files each own one kind of truth, and none of them restates another's valu
 - **Code authority** is `web/src/components/ui` for shadcn parts (one file per part, matching the gallery and the Pen `System /` sheets) and `web/src/components` for hide composites such as `entry-menu.tsx` and `settings-rows.tsx`, matching `Component /` sheets.
 
 Screen designs are committed separately from the library, in [design/hide-screens.pen](../design/hide-screens.pen), as `Screen / <Area>` sheets (each with Light and Dark frames), importing the library rather than redrawing its masters.
+Selected sidebar and Sessions tool rows use the library-authored `--color-selected`, the default `--primary` at `--opacity-selected-fill` in each theme, registered in `scripts/pen-token-map.json` and copied locally into the screens file.
+Pen cannot derive an alpha tint from a color variable or follow the operator's runtime accent choice; this variable draws the default lime accent, while the shared neutral `--color-selected-wash` and selection on other surfaces retain their existing values.
 
 ## Dev gallery
 
@@ -34,8 +36,9 @@ Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, see
 `/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
 `/gallery?scene=onboarding` is the shell's real `Sidebar` and Home behind the real first-run wizard, start panel or Settings sheet over a synthetic This Mac with the seven agents and a stand-in desktop host (`web/src/gallery/OnboardingScene.tsx`), with the content `Screen / Onboarding` draws.
-Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`), `content` (`reference`, or `long` for the Korean copy), `scale` (the interface text scale) and, for a `settings-*` state, `page` (the Settings page it opens, Notifications by default, any id of `SETTINGS_GROUPS` or `about`); the root carries `data-scene-ready` once the presses a state needs have landed.
-`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `lang` (`ko` by default, or `en`, `ja`, `zh-CN`), `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `start_failed`, `forgotten`, `verifying`, `reconsent`, `checking`, `check_budget_exhausted`), the states the Memory screen's design draws, `start_failed` for the `failed` card whose status names the question its new pane's shell stopped at, the same row with other words, and `verifying` for waiting cards that reuse the dimmed-row treatment and a shared explanation above the list.
+Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`), `lang` (`en`, `ko`, `ja`, `zh-CN`), `content` (`reference`, or `long` for the Korean copy), `scale` (the interface text scale) and, for a `settings-*` state, `page` (the Settings page it opens, Notifications by default, any id of `SETTINGS_GROUPS` or `about`); the root carries `data-scene-ready` once the presses a state needs have landed.
+The notification states `settings-off`, `settings-on`, `settings-done-only` and `settings-both` draw the four Needs You/Done choices, alongside the permission and system states.
+`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `lang` (`ko` by default, or `en`, `ja`, `zh-CN`), `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `unreadable`, `promote`, `failed`, `start_failed`, `forgotten`, `verifying`, `reconsent`, `checking`, `check_budget_exhausted`), the states the Memory screen's design draws, `start_failed` for the `failed` card whose status names the question its new pane's shell stopped at, the same row with other words, and `verifying` for waiting cards that reuse the dimmed-row treatment and a shared explanation above the list.
 The additional Memory states reuse the existing empty/status slots and put a shared waiting explanation once above the list, with no new token, System part or Component; the gallery is the rendered state reference.
 Waiting cards reuse the existing dimmed-row treatment, while only the running check retains a status mark.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
@@ -234,6 +237,13 @@ A project row opens its last focused usable checkout, falling back to primary an
 A checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`, plus the rail component under `web/src/`.
+
+Usage is `Screen / Usage`, composed from `Component / Usage` account windows and `Component / Usage history`.
+The history component carries light/dark popover rest, day, unpriced, backfill and sparse states, and the Overview year surface.
+Its calendar uses the shared secondary zero level, four primary intensity tokens, 10/3 popover cells and 11/3 year cells; the year column's wide size is 800.
+The screen combines the same limit cards with token-only agents and the history component.
+The `usage-history` review target compares the approved year boards and checks actual narrow/large-text states; `scene=usage-history` opens the production component with the invented reference data.
+Its web owners are `web/src/components/usage-history.tsx` and `web/src/UsageOverview.tsx`.
 
 Mobile is `Screen / Mobile`.
 It draws Settings > Mobile as a page of `Screen / Settings`' sheet, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, and the connected phones (2 / 4) with 해지; the push modes are on Settings > Notifications.

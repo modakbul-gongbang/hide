@@ -81,6 +81,7 @@ pub struct Core {
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
     _links: Option<crate::links::worker::LinkWorker>,
+    _usage_ledger: Option<crate::usage_ledger::worker::Worker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
     factory: Option<crate::factory::FactoryHost>,
     own_node: Arc<dyn crate::node_access::NodeLink>,
@@ -111,6 +112,7 @@ impl Drop for Core {
         // A kit step running on this machine's node ends the child it waits
         // on, so the kit worker below is joined without waiting it out.
         self.own_node.close("core stopping");
+        self._usage_ledger.take();
         self._session_search.take();
         self._links.take();
         self._terminal_reports.take();
@@ -183,6 +185,7 @@ impl Core {
             _session_sync: None,
             _session_search: None,
             _links: None,
+            _usage_ledger: None,
             _delivery: None,
             labels: None,
             factory: None,
@@ -433,6 +436,26 @@ impl Core {
                 None
             }
         };
+        let usage_ledger =
+            match crate::runtime::usage_ledger::spawn_worker(&runtime, notifier.clone()) {
+                Ok(worker) => Some(worker),
+                Err(code) => {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"usage_ledger", "kind":code})
+                    );
+                    let value = crate::usage::consumption::Publication::prepare(
+                        crate::usage_ledger::worker::Report {
+                            projection: None,
+                            progress: Vec::new(),
+                            failure: Some(code),
+                            price_failure: None,
+                        },
+                        crate::links::now_ms(),
+                    );
+                    lock_recover(&runtime).ingest_ledger(value);
+                    None
+                }
+            };
         Some(Box::new(Core {
             _delivery: delivery,
             _terminal_reports: terminal_reports,
@@ -442,6 +465,7 @@ impl Core {
             _session_sync: session_sync,
             _session_search: session_search,
             _links: links,
+            _usage_ledger: usage_ledger,
             labels,
             factory,
             runtime,

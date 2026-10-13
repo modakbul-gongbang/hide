@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
+import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -43,9 +44,13 @@ describe("the Memory tab", () => {
   let root: Root;
   let saved: ReturnType<typeof useShellStore.getState>;
   let events: Parameters<DispatchFn>[0][];
+  let savedLanguage: string;
+  let savedUi: ReturnType<typeof useUiStore.getState>;
 
   beforeEach(() => {
     saved = useShellStore.getState();
+    savedLanguage = clientI18n.language;
+    savedUi = useUiStore.getState();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     events = [];
     container = document.createElement("div");
@@ -56,6 +61,8 @@ describe("the Memory tab", () => {
     await act(async () => root.unmount());
     container.remove();
     useShellStore.setState(saved, true);
+    await clientI18n.changeLanguage(savedLanguage);
+    useUiStore.setState(savedUi, true);
     vi.unstubAllGlobals();
   });
 
@@ -99,7 +106,7 @@ describe("the Memory tab", () => {
         { kind: "failed", number: 7, title: "card 7", start_failure: null },
       ],
     }));
-    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("Operator's words in 3 sessions · pulled in 9 sessions in 14 days");
+    expect(container.querySelector("[data-memory-questions]")?.textContent).toContain("your words 3x · 9 sessions");
     // Both cards are asked about, so no list repeats them.
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
     await click("[data-memory-promote='3']");
@@ -110,6 +117,70 @@ describe("the Memory tab", () => {
       { workspace_id: "p", action: "dismiss", number: 3 },
       { workspace_id: "p", action: "promote", number: 7 },
     ]);
+  });
+
+  it("keeps running and legacy open promotions in To ask until merged or closed", async () => {
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: "AGENTS.md", github_failure: null };
+    await render(memory({ rows: [row(3, { promotion: { ...promotion, state: "running", pr_number: null } }), row(7, { promotion })] }));
+    expect(container.querySelector("[data-memory-questions] [data-memory-running='3']")).not.toBeNull();
+    expect(container.querySelector("[data-memory-questions] [data-memory-pr-group='72']")?.textContent).toContain("m7");
+    expect(container.querySelector("[data-memory-cards]")).toBeNull();
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, review: "changes_requested" }] }] } } as unknown as SnapshotRest }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Changes requested");
+    await render(memory({ rows: [row(3), row(7, { promotion: { ...promotion, state: "merged" } })] }));
+    expect(container.querySelector("[data-memory-questions]")).toBeNull();
+    expect(container.querySelector("[data-memory-card='3']")).not.toBeNull();
+    expect(container.querySelector("[data-memory-card='7']")?.textContent).toContain("AGENTS.md");
+  });
+
+  it.each([
+    ["en", "PR 1050"],
+    ["ko", "PR 1050"],
+    ["ja", "PR 1050"],
+    ["zh-CN", "PR 1050"],
+  ])("renders PR identifiers as plain digits in %s", async (language, expected) => {
+    await act(async () => { await clientI18n.changeLanguage(language); });
+    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 1050, target_path: null, github_failure: null } })] }));
+    const group = container.querySelector("[data-memory-pr-group='1050']");
+    expect(group?.textContent).toContain(expected);
+    expect(group?.textContent).not.toContain("1,050");
+    await click("[data-memory-open-pr='1050']");
+    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 1050, focus: 1050 } });
+  });
+
+  it("selection hides row promotion actions while unknown authority still needs an answer", async () => {
+    await render(memory({ questions: [
+      { kind: "promote", number: 3, title: "card 3", human_session_count: 2, pulled_session_count: 0 },
+      { kind: "docs_disagree", number: 7, title: "card 7", document: { authority: "ask", document: "AGENTS.md", document_at_unix_ms: null, operator_at_unix_ms: 1 } },
+    ] }));
+    expect(container.querySelector("[data-memory-card='3']")?.textContent).toContain("your words 2x");
+    expect(container.querySelector("[data-memory-card='3']")?.textContent).not.toContain("0 sessions");
+    await click("[data-memory-select='3']");
+    expect(container.querySelector("[data-memory-promote='3']")).toBeNull();
+    expect(container.querySelector("[data-memory-dismiss='3']")).toBeNull();
+    expect(container.querySelector("[data-memory-promote='7']")).not.toBeNull();
+    await click("[data-memory-open-batch]");
+    expect(sent("memory_action").at(-1)).toEqual({ workspace_id: "p", action: "promote", number: null, numbers: [3] });
+  });
+
+  it("discloses a whole question or PR row while its checkbox, promotion and PR buttons act independently", async () => {
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: null, github_failure: null };
+    const data = memory({ rows: [row(3), row(7, { promotion, body_preview: "A rule's body" }), row(9, { promotion, body_preview: "Another rule's body" })], questions: [{ kind: "promote", number: 3, title: "card 3", human_session_count: 2, pulled_session_count: 0 }] });
+    await render(data);
+    await click("[data-memory-promote='3']");
+    await click("[data-memory-select='3']");
+    await click("[data-memory-open-pr='72']");
+    expect(sent("memory_expand")).toEqual([]);
+    await click("[data-memory-row-toggle='3']");
+    await click("[data-memory-row-toggle='7']");
+    expect(sent("memory_expand")).toEqual([{ workspace_id: "p", number: 3 }, { workspace_id: "p", number: 7 }]);
+    await render({ ...data, expanded: { number: 7, body: "A rule's body", cited_paths: [], sources: [], previous: null } });
+    expect(container.querySelectorAll("[data-memory-progress-detail] [data-memory-preview]")).toHaveLength(2);
+    expect(container.querySelector("[data-memory-preview='9']")?.textContent).toContain("Another rule's body");
+    expect(container.querySelector("[data-memory-cards]")).toBeNull();
+    expect(container.querySelector("[data-memory-row-toggle='7']")?.getAttribute("aria-expanded")).toBe("true");
+    await click("[data-memory-row-toggle='7']");
+    expect(sent("memory_expand").at(-1)).toEqual({ workspace_id: "p", number: null });
   });
 
   it("says in a failed card's status why its agent never started, with the question its shell stopped at", async () => {
@@ -142,15 +213,15 @@ describe("the Memory tab", () => {
     // GitHub could not say whether the gone agent's pull request came: a quiet
     // line with its reason, no spinner and nothing to press.
     const unconfirmed = container.querySelector("[data-memory-card='5']");
-    expect(unconfirmed?.querySelector("[data-memory-unconfirmed]")?.textContent).toBe("Couldn't check for a PR·gh not logged in");
+    expect(unconfirmed?.querySelector("[data-memory-unconfirmed]")?.textContent).toBe("Couldn't check for a PR · gh not logged in");
     expect(unconfirmed?.querySelector(".animate-spin")).toBeNull();
     expect(unconfirmed?.textContent).not.toContain("Retry");
     // A merged card no file was named for shows the pull request it went in by.
     expect(container.querySelector("[data-memory-card='4'] [data-pr-mark]")?.textContent).toContain("931");
-    expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
+    expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("Writing PRAgent ↗");
     // An agent not seen yet: no name, and nothing it would follow.
-    expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
-    expect(container.querySelector("[data-memory-card='9'] [data-pr-mark]")?.textContent).toContain("924");
+    expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("Writing PR");
+    expect(container.querySelector("[data-memory-pr-group='924']")?.textContent).toContain("924");
     const merged = container.querySelector("[data-memory-card='8']");
     expect(merged?.className).toContain("opacity-");
     expect(merged?.textContent).toContain("AGENTS.md");
@@ -324,9 +395,9 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-ai-chip]")?.textContent).toBe("Hide AI · Codex");
   });
 
-  it("says a device's Project keeps no Memory here", async () => {
-    await render(memory({ unavailable: { reason: "remote_device", device_name: "mini" } }));
-    expect(container.textContent).toContain("This pane runs on mini.");
+  it("says when a Project's Memory could not be read", async () => {
+    await render(memory({ unavailable: { reason: "unreadable" } }));
+    expect(container.querySelector('[data-memory="unreadable"]')).not.toBeNull();
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
   });
 });

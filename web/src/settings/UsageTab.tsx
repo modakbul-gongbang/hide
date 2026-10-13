@@ -13,7 +13,7 @@ import { absenceReason, accountWindows, hasLimits, limitValue, windowLabel } fro
 export function UsageTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const preferences = useShellStore((s) => s.rest?.ui_state?.usage);
-  const agents = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]?.agents);
+  const agents = useShellStore((s) => s.usage?.nodes[0]?.agents);
   const [now] = useState(Date.now);
   return <div data-usage-settings="true">
     {AGENT_ADAPTERS.filter(hasLimits).map((adapter) => {

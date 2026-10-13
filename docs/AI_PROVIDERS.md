@@ -14,7 +14,7 @@ There is no output token ceiling in the request, because no provider contract ho
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
 
-The session label START request retains v8, while the existing END request uses `context_label.v9` with a work judgment: new, continued or no assigned work, at most three short missed items, resolved item ids and one output-task choice.
+The session label requests use `context_label.v9`, retaining nullable goals at both boundaries; the existing END request adds a work judgment: new, continued or no assigned work, at most three short missed items, resolved item ids and one output-task choice.
 There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
 END waits for a known ledger context instead of treating missing parent authority or open work as empty.
 
@@ -32,6 +32,10 @@ It sends locally redacted, normalized human and assistant events after the durab
 The comparison set is bounded by cards and serialized bytes so it and one event group fit the 64 KiB request-input cap, and both pass through the current local redactor again at the final provider egress boundary.
 Background analysis counts against a machine-wide 1,000 calls a UTC day and is asked only of an agent under the operator's usage limit (see [The usage limit](#the-usage-limit)); `hide memory add` counts against the daily cap only, and its provider tries end within 50 s.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
+The `preference` kind records personal choices without proposing repository changes.
+`project_memory_creation_docs` is one comparison batch call for lexically matched new candidates: one repository excerpt per candidate, at most 3 KiB each, with the complete input capped at 15% of extraction input characters and bytes.
+Its same/differs/unrelated verdict suppresses duplicates, withholds differing claims before injection and leaves unrelated claims ordinary, without an extra initial check; conflicting quotes must appear in the exact excerpt sent.
+The call uses the existing analysis admission and router usage limit; `analysis.session_cards` reports Project/session IDs, counts and both input sizes without content.
 Two more features use the same boundary and the same call cap and usage limit (PRD memory-card-quality D-07, D-08, D-11): `project_memory_verify` asks whether a card whose evidence moved still holds, and `project_memory_promote_check` asks whether a rule or lesson about to be suggested for the repository's documents is already said there (`hide-memory/src/verify.rs`).
 Each sends the card, what the repository answers now for its evidence, and bounded excerpts (at most five cited files of 8 KiB for the first; at most five instruction documents of 8 KiB and three of the operator's own global instruction files of 5 KiB for the second), each a whole file when it fits and otherwise the sections (a heading and what follows) that share the most words with the card, read from at most the first 96 KiB of the file, all passed through the local redactor, within the 64 KiB request input (the last excerpts are dropped before a request is refused); a file named for credentials (`.env*`, keys and certificates, names containing `secret` or `credential`) is never read into a request, whatever a card cites; an answer that arrives but cannot be used (not the schema, a correction with no text, a document never shown) spends the card's day and the pass goes on to the next card, while a provider failure spends nothing and holds the Project; the answer is a strict-schema verdict and a corrected card when it is outdated, and a document named by an `in_docs` verdict must be one the request carried.
 A card is asked about at most once a day.
@@ -41,6 +45,9 @@ It may fall through to a provider the operator added under fallback (see [Select
 The disclosure also names active-Memory retransmission, and its stored version disables previously enabled Projects when this material data-egress description changes so that the operator must opt in again.
 Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
 Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
+
+The existing verification and promotion-check answers include `docs_disagree` with a shown repository path and exact conflicting quote; no extra conflict call is made.
+Authority is decided outside the provider from operator-source and file commit times, and an unknown or equal time needs an operator answer.
 
 ## Providers
 
@@ -269,18 +276,18 @@ Because the routers are independent, they share the account's usage and the mach
 Every unsupported cell names its reason and the condition that would change it; `NotBuilt { layer }` is refused by the contract test once that layer ships.
 `UsageDeclaration::cells()` destructures every field exhaustively and is the source of `contracts/usage-coverage.json`; `export_usage_coverage` regenerates that contract, while `export_web_contract` includes the same declaration in the shell's adapter catalog.
 The independent `hide-agent-adapter/tests/fixtures/support.json` matrix pins the expected support for all seven agents.
-Consumption remains unbuilt in layers 1 and 2.
+Layer 4 includes the six historical token and cost readers, with model and source attribution retained from each native usage record; Cursor stays excluded.
 The table is generated by `export_usage_coverage --markdown`; the adapter contract test compares it byte for byte.
 
 <!-- usage-coverage:start -->
 | Agent | 5h | Weekly | Scoped | Monthly | Tokens | Cost | Models | Session | Project |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | Supported | Supported | Supported | No such data | Not built (L3) | Not built (L3) | Not built (L3) | Not built (L3) | Not built (L3) |
-| Codex | Supported | Supported | Not built (L5) | No such data | Not built (L3) | Not built (L3) | Not built (L3) | Not built (L3) | Not built (L3) |
-| Grok | No such data | Not built (L5) | No such data | No such data | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) |
-| OpenCode | Excluded | Excluded | Excluded | Excluded | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) |
-| Pi | No such data | No such data | No such data | No such data | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) |
-| omp | No such data | No such data | No such data | No such data | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) | Not built (L4) |
+| Claude Code | Supported | Supported | Supported | No such data | Supported | Supported | Supported | Supported | Supported |
+| Codex | Supported | Supported | Not built (L5) | No such data | Supported | Supported | Supported | Supported | Supported |
+| Grok | No such data | Not built (L5) | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
+| OpenCode | Excluded | Excluded | Excluded | Excluded | Supported | Supported | Supported | Supported | Supported |
+| Pi | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
+| omp | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
 | Cursor | Excluded | Excluded | Excluded | Excluded | No such data | No such data | No such data | No such data | No such data |
 <!-- usage-coverage:end -->
 
@@ -335,6 +342,49 @@ The web shell reports its page visibility and its popover through the two `ui_st
 The previous Claude `.usage-cache.json` input is not read.
 Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
 
+## Local historical usage readers
+
+`hide-session::usage` reads content-free usage events from the local Claude Code, Codex, OpenCode, Pi, omp and Grok session stores.
+It opens agent files and the OpenCode database read-only, does not invoke an agent, and does not reuse conversation parsing.
+Candidates are confined to the selected agent's native root, including Claude subagent files and Codex archived sessions; Cursor is unsupported.
+Discovery reports its 10,000-candidate cap and unreadable entries.
+One read returns at most 1 MiB of source data, a bounded checkpoint, normalized events and skip counts; a checkpoint never contains a partial JSON line or conversation content.
+JSONL parsing yields after 20 ms and caps the event batch; the read budget includes the prefix and consumed-tail hashes that fence a rewritten checkpoint.
+File identity, truncation, parser version and a same-size rewrite also trigger a rescan, whose events still pass the ledger's first-value deduplication.
+The executable contracts are `hide-session/tests/it/usage.rs` and the scrubbed Grok fixture under `hide-session/tests/fixtures/usage/`.
+
+Input, output, cache read and cache write are disjoint components.
+Reasoning is a subset of output, and one-hour cache writes are retained as a subset of cache writes.
+Native identities are hashed with full SHA-256 digests so copies and repeated notifications keep one identity.
+Claude streaming updates retain their message/request identity, while its subagent files count separately.
+Pi and omp use session/message identities and retain their provider metadata and recorded cost.
+Codex prefers native per-response `TokenUsageRecord` items, excluding inherited records by thread identity, and ignores subsequent duplicate `TokenCount` notifications.
+Older rollouts use the last response's usage, with cumulative counters only as the repeated-notification identity; compaction estimates and context-window-full synthetic totals never count.
+A copied fork prefix without a native boundary is reported as skipped.
+Grok prompt totals include children: `summary.json`'s `session_kind` beginning with `subagent` excludes a child's own records, and preserved prompt/model identities deduplicate top-level fork copies.
+Grok incomplete usage or partial cost retains the reported token lower bound with an incomplete flag and no cost.
+OpenCode reads completed assistant messages' `step-finish` parts, whose input already excludes cache and whose output excludes reasoning, so reasoning is added once.
+Each part supplies its own cost; the accumulated message cost is used only for a single-step message without a part cost, and message tokens never feed totals.
+Its bounded keyset cursor revisits the last timestamp for late rows and restarts on file replacement or a changed schema version, including `VACUUM`.
+
+### Historical cost estimates
+
+Native recorded costs remain authoritative for Grok, OpenCode, Pi and omp.
+Claude and Codex use exact model-id matches from the public [LiteLLM price JSON](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), restricted to first-party Anthropic and OpenAI rows.
+That root-level dataset is outside LiteLLM's enterprise subtree and covered by its [MIT license](https://github.com/BerriAI/litellm/blob/main/LICENSE); the copyright and permission notice travel with the cached table.
+LiteLLM was selected because its native one-hour cache-write fields avoid guessing that price from a five-minute rate.
+
+The estimate uses standard API rates, including disjoint cache reads, five-minute and one-hour writes, and whole-request context tiers; it is not subscription billing or a reconstruction of an unrecorded fast, batch or regional mode.
+Daily rollups retain token-only bands at the supported 100,000, 200,000 and 272,000 prompt-token thresholds, counting input plus both cache categories before choosing a band.
+This lets a later table reprice old days after individual events expire.
+An unknown model, new unsupported context threshold, missing nonzero token-category rate or incomplete native usage produces a partial lower bound, never an invented zero price.
+
+The worker fetches one constant URL, with no credentials, usage payload, model query or redirects, and a five-second global timeout and 16 MiB response cap.
+It records the attempt in the ledger before starting the request, including failed attempts, so restart cannot exceed one attempt per day.
+The retained table is capped at 2 MiB and 2,048 models and is stale after 60 days; a failed refresh keeps the last table, and an offline first run leaves tokens available while cost waits for a table.
+The price worker asks only the own node for the fixed public URL; devices refuse this call and the core has no HTTP client.
+The price worker is joined on shutdown, and diagnostics contain fixed codes and counts rather than source paths or response bodies.
+
 ## Selection and fallback
 
 A request is asked of the chosen provider and then of each provider in the `fallback` list, in that order, once each, and of nothing else (`RouterConfig::priority` is exactly that list).
@@ -380,7 +430,7 @@ The judgment is a request-time check against a shared `UsageLimits` cell, not a 
 The routers for what the operator waits on (worktree names, issue intake review), `hide memory add` and the Factory's judgments are built without the cell, so the limit never delays them (PRD hide-ai-usage-limit D-03).
 `statuses()` and `availability()` stay ungated, so Settings still lists a past-limit agent as signed in; only `active` in `provider_state()` skips it.
 
-The figures are the weekly rows the toolbar's usage read already produces (`navigator.usage` through `weekly_reading()`, the seven-day account window with a percent and a future reset); no new read command exists.
+The figures are the weekly rows the toolbar's usage read already produces (`usage` through `weekly_reading()`, the seven-day account window with a percent and a future reset); no new read command exists.
 With no window attached the same reader also runs while a limit is set and Hide AI is on and either the order is paused (only a fresh figure can lift it) or an agent worked in the last 30 minutes, so labels are not judged by a figure that is days old; that is at most one read per agent every five minutes and none while nothing runs.
 Until the first read lands (one second after launch) an agent has no figure and is not limited.
 An agent with no figure, or whose reading belongs to a window that has already reset, is never past the limit, and No limit judges nothing.

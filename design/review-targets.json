@@ -1175,7 +1175,7 @@
       {
         "node": "b07-settings-notifications-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1183,7 +1183,7 @@
       {
         "node": "b07-settings-notifications-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1263,7 +1263,7 @@
       {
         "node": "b13-settings-notifications-pc-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1271,7 +1271,7 @@
       {
         "node": "b13-settings-notifications-pc-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1442,6 +1442,78 @@
     "judgment": [
       "Each board draws several states at once and the bundle pairs it with the scene at rest; the state sheets hold every state the scene draws. Do the built steps, the start panel, the empty Home and the Settings rows carry the spacing, weight, color and alignment of their boards in both themes?",
       "The startup and failure screen (board 09) and the Factory line (board 08) are not on this scene; they are checked against their boards from the desktop app and the Factory scene."
+    ]
+  },
+  "usage-history": {
+    "description": "Approved heatmap C new-token column, with shared A calendar and detail parts. Values are invented; native accounting is tested separately.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-usage",
+    "scene": "usage-history",
+    "selector": "[data-usage-history=\"year\"]",
+    "measurement": "web/e2e/usage-history-geometry.mjs",
+    "frames": [
+      {
+        "node": "screen-usage-year-l",
+        "referenceNode": "hc-0-l-col",
+        "theme": "light",
+        "width": 800,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "screen-usage-year-d",
+        "referenceNode": "hc-0-d-col",
+        "theme": "dark",
+        "width": 800,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        800,
+        360
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
+      ]
+    },
+    "states": {
+      "rest": "Whole-period shares, cost hidden until hover.",
+      "backfill": "Unread days and reading progress.",
+      "sparse": "Start-anchored short history.",
+      "unpriced": "Partial public price coverage."
+    },
+    "urlStates": {
+      "backfill": {
+        "history": "backfill"
+      },
+      "sparse": {
+        "history": "sparse"
+      },
+      "unpriced": {
+        "history": "unpriced"
+      }
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Keep one-hue five-level new-token cells, start-anchored weeks, token totals, peak and streak, and cost only on hover.",
+      "The production column wraps its statistics at narrow widths; the approved reference is the wide composition.",
+      "A day replaces period totals with its top contributors; filtering stays reversible."
     ]
   }
 }

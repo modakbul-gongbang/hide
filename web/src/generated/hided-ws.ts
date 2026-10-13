@@ -1,9 +1,6 @@
 /* Generated from contracts/hided-ws.schema.json. */
 
-/**
- * Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.
- */
-export type HidedWebSocketContract =
+export type HidedWs =
   | Handshake
   | ServerFrame
   | ClientEvent
@@ -13,6 +10,72 @@ export type HidedWebSocketContract =
   | LinksQuery
   | MemoryHookAsk
   | WorkspaceResult;
+export type LimitCell =
+  | {
+      state: "unsupported";
+    }
+  | {
+      state: "loading";
+    }
+  | {
+      state: "unavailable";
+      cause: UsageCause;
+      last_checked_at_ms: number | null;
+    }
+  | {
+      state: "reading";
+      value: LimitReading;
+      freshness: "fresh" | "stale" | "fallback";
+      observed_at_ms: number;
+    };
+export type UsageCause =
+  | "signed_out"
+  | "not_installed"
+  | "offline"
+  | "timed_out"
+  | "rate_limited"
+  | "format_changed"
+  | "capped"
+  | "no_records";
+export type WindowKind = "five_hour" | "weekly" | "monthly";
+export type WindowOutcome =
+  | {
+      state: "not_started";
+    }
+  | {
+      state: "open";
+      used_percent: number;
+      resets_at_s: number;
+    }
+  | {
+      state: "expired";
+      reset_at_s: number;
+    }
+  | {
+      state: "not_offered";
+    }
+  | {
+      state: "unreadable";
+      cause: UsageCause;
+    };
+export type ConsumptionCell =
+  | {
+      state: "unsupported";
+    }
+  | {
+      state: "loading";
+    }
+  | {
+      state: "unavailable";
+      cause: UsageCause;
+      last_checked_at_ms: number | null;
+    }
+  | {
+      state: "reading";
+      value: ConsumptionReading;
+      freshness: "fresh" | "stale" | "fallback";
+      observed_at_ms: number;
+    };
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
   | {
@@ -53,7 +116,27 @@ export type WorkspaceCommand =
       area_id: string;
       index: number;
     };
+export type SnapshotSections =
+  | UsageSnapshot1
+  | UsagePreferences
+  | UsagePinSetPayload
+  | UsageHiddenSetPayload
+  | UiStateUsageHints
+  | FocusCheckoutPayload
+  | InterfaceLanguageSetPayload
+  | TerminalFrame
+  | AgentNotice
+  | DesktopNoticesPayload;
+/**
+ * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
+ */
+export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
 
+export interface HideWireTypes {
+  frame?: HidedWs;
+  sections?: SnapshotSections;
+  [k: string]: unknown;
+}
 export interface Handshake {
   token: string;
   schema_version: 2;
@@ -96,9 +179,156 @@ export interface ServerFrame {
     | "core_link"
     | "agent_notice";
   payload: {
+    usage?: UsageSnapshot;
     [k: string]: unknown;
   };
   message?: string;
+}
+/**
+ * The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.
+ */
+export interface UsageSnapshot {
+  nodes: NodeUsage[];
+}
+export interface NodeUsage {
+  node: string;
+  agents: AgentUsage[];
+  history: UsageHistory | null;
+}
+export interface AgentUsage {
+  agent: string;
+  limits: LimitCell;
+  consumption: ConsumptionCell;
+}
+export interface LimitReading {
+  /**
+   * @maxItems 16
+   */
+  windows: WindowReading[];
+}
+export interface WindowReading {
+  kind: WindowKind;
+  scope:
+    | {
+        kind: "all";
+      }
+    | {
+        kind: "model";
+        label: string;
+      };
+  outcome: WindowOutcome;
+}
+export interface ConsumptionReading {
+  popover: UsageRange;
+  year: UsageRange;
+  retained: {
+    since: string | null;
+    amount: UsageAmount;
+    /**
+     * @maxItems 32
+     */
+    providers: string[];
+  } | null;
+}
+export interface UsageRange {
+  /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_start: string;
+  /**
+   * Inclusive civil-date calendar bound owned by the core.
+   */
+  calendar_end: string;
+  /**
+   * Sparse recorded days, including calls with zero new tokens. The shell fills omitted dates inside the inclusive calendar bounds.
+   *
+   * @maxItems 371
+   */
+  days: UsageDay[];
+  amount: UsageAmount;
+  since: string | null;
+  active_days: number;
+  observed_days: number;
+  peak: {
+    date: string;
+    new_tokens: number;
+  } | null;
+  current_streak: number;
+  longest_streak: number;
+  reading: boolean;
+  limited: boolean;
+  files_done: number;
+  files_total: number;
+}
+export interface UsageDay {
+  date: string;
+  week: number;
+  weekday: number;
+  today: boolean;
+  recent_week: boolean;
+  level: number;
+  pending: boolean;
+  amount: UsageAmount;
+  /**
+   * @maxItems 3
+   */
+  top_agents: UsageContribution[];
+  /**
+   * @maxItems 6
+   */
+  agents: UsageContribution[];
+  other_agents: number;
+}
+export interface UsageAmount {
+  calls: number;
+  new_tokens: number;
+  tokens: UsageTokens;
+  cost: UsageCost;
+}
+export interface UsageTokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cache_write_1h: number;
+  reasoning: number | null;
+}
+export interface UsageCost {
+  micro_usd: number;
+  partial: boolean;
+  waiting: boolean;
+  stale: boolean;
+  incomplete: boolean;
+  /**
+   * @maxItems 8
+   */
+  unpriced_models: string[];
+  other_unpriced_models: number;
+}
+export interface UsageContribution {
+  agent: string;
+  new_tokens: number;
+  share_basis_points: number;
+}
+export interface UsageHistory {
+  popover: UsageHistorySurface;
+  year: UsageHistorySurface;
+}
+export interface UsageHistorySurface {
+  range: UsageRange;
+  /**
+   * @maxItems 6
+   */
+  shares: UsageShare[];
+}
+export interface UsageShare {
+  contribution: UsageContribution;
+  since: string | null;
+  lifetime: UsageAmount;
+  /**
+   * @maxItems 32
+   */
+  providers: string[];
 }
 export interface ClientEvent {
   schema_version: 2;
@@ -161,7 +391,7 @@ export interface LinksQuery {
   };
 }
 /**
- * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
+ * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. The core's own node and any registered linked device have Memory through that device's node, regardless of connection direction; a link that is down or a helper without a Memory reader refuses immediately with a diagnostic reason, and a disconnected node refuses its callers with hide_unavailable. No store is copied to the device. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
  */
 export interface MemoryHookAsk {
   type: "memory_hook";
@@ -185,94 +415,8 @@ export interface WorkspaceResult {
   next_action?: string;
   [k: string]: unknown;
 }
-export type SnapshotSections =
-  | UsageSnapshot
-  | UsagePreferences
-  | UsagePinSetPayload
-  | UsageHiddenSetPayload
-  | UiStateUsageHints
-  | FocusCheckoutPayload
-  | InterfaceLanguageSetPayload
-  | TerminalFrame
-  | AgentNotice
-  | DesktopNoticesPayload;
-export type LimitCell =
-  | {
-      state: "unsupported";
-    }
-  | {
-      state: "loading";
-    }
-  | {
-      state: "unavailable";
-      cause: UsageCause;
-      last_checked_at_ms: number | null;
-    }
-  | {
-      state: "reading";
-      value: LimitReading;
-      freshness: "fresh" | "stale" | "fallback";
-      observed_at_ms: number;
-    };
-export type UsageCause =
-  "signed_out" | "not_installed" | "offline" | "timed_out" | "rate_limited" | "format_changed" | "capped";
-export type WindowKind = "five_hour" | "weekly" | "monthly";
-export type WindowOutcome =
-  | {
-      state: "not_started";
-    }
-  | {
-      state: "open";
-      used_percent: number;
-      resets_at_s: number;
-    }
-  | {
-      state: "expired";
-      reset_at_s: number;
-    }
-  | {
-      state: "not_offered";
-    }
-  | {
-      state: "unreadable";
-      cause: UsageCause;
-    };
-/**
- * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
- */
-export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
-
-export interface UsageSnapshot {
+export interface UsageSnapshot1 {
   nodes: NodeUsage[];
-}
-export interface NodeUsage {
-  node: string;
-  agents: AgentUsage[];
-}
-export interface AgentUsage {
-  agent: string;
-  limits: LimitCell;
-  consumption: {
-    state: "unsupported";
-  };
-}
-export interface LimitReading {
-  /**
-   * @maxItems 16
-   */
-  windows: WindowReading[];
-}
-export interface WindowReading {
-  kind: WindowKind;
-  scope:
-    | {
-        kind: "all";
-      }
-    | {
-        kind: "model";
-        label: string;
-      };
-  outcome: WindowOutcome;
 }
 export interface UsagePreferences {
   /**
@@ -343,6 +487,28 @@ export interface AgentNotice {
     title: string;
     state: "needs_you" | "done";
     place: string;
+    /**
+     * The root row's status word code. Optional for older frames.
+     */
+    status_code?:
+      | "error"
+      | "question"
+      | "approval"
+      | "working"
+      | "done"
+      | "idle"
+      | "unknown"
+      | "waiting"
+      | "stopped"
+      | "attached"
+      | "sleeping"
+      | "waking"
+      | "sleep_failed"
+      | null;
+    /**
+     * The core's chosen row detail, untranslated; absent or null means the original state-and-project body.
+     */
+    detail?: string | null;
   }[];
   clear: string[];
 }

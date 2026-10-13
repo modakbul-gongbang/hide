@@ -25,6 +25,7 @@ pub enum ReaderFeature {
     Activity,
     Turns,
     UserTurnContent,
+    Usage,
 }
 
 /// Limits on the existing Hello's reader field. The outer transport already
@@ -54,6 +55,12 @@ impl ReaderFeatures {
             let mut features = std::collections::BTreeSet::from([Identity, Labels]);
             if agent != hide_session::Agent::Cursor {
                 features.insert(Links);
+            }
+            if matches!(
+                row.usage.tokens,
+                hide_agent_adapter::usage::Support::Supported(_)
+            ) {
+                features.insert(Usage);
             }
             // Memory reads a session through its conversation reader
             // (`Call::SessionConversation`).

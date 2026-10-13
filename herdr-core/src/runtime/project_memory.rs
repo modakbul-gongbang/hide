@@ -6,7 +6,7 @@
 //! Memory is its own snapshot section, keyed by the Project a shell opens;
 //! nothing here follows the focused checkout or the Overview's Sessions.
 //! The Project's folder is read by the node of the machine that holds it:
-//! this machine's or a node that dials in (PRD core-host-node-move B14).
+//! this machine's or any linked device's (PRD core-host-node-move B14).
 //! Every store read and write runs on a worker; the lock only starts it and
 //! applies its answer.
 
@@ -92,9 +92,9 @@ pub(super) struct OpenedMemoryLoad {
 }
 
 impl Runtime {
-    /// Checks a `hide memory` caller like a Factory command does and takes
-    /// what the command needs (B16, D-22): a caller on this machine or on a
-    /// node that dials in is answered, its Project read by its own node (PRD
+    /// Checks a `hide memory` caller and takes what the command needs
+    /// (B16, D-22): a caller on any linked machine is answered, its Project
+    /// read by its own node (PRD
     /// core-host-node-move B14), and an agent pane's own session is the one a
     /// `show` is recorded for.
     pub(crate) fn prepare_memory(
@@ -104,9 +104,7 @@ impl Runtime {
         expected: &crate::workspace_control::Context,
         command: crate::memory_command::MemoryCommand,
     ) -> Result<crate::memory_command::PreparedMemory, String> {
-        let (node, sessions_node) = self
-            .linked_node(device)
-            .map_err(|_| "memory_device_unsupported".to_owned())?;
+        let (node, sessions_node) = self.memory_node(device).map_err(str::to_owned)?;
         // The caller's checkout as it is now; Memory needs no window, so
         // the Views a Workspace query also checks do not matter here.
         let context = self
@@ -234,10 +232,8 @@ impl Runtime {
     }
 
     /// Where a catalog Project's Memory is read from, with the machine that
-    /// holds it, or why it is not kept: Memory is kept for the Projects of
-    /// this machine and of a node that dials in, never of a device the core
-    /// dials (B16; PRD core-host-node-move B14, Q20). A node whose link is
-    /// down keeps its Projects' Memory; reading it waits for the link.
+    /// reads its files. Every registered device keeps its Projects' Memory
+    /// in the core's store; reading waits for its link and reader.
     fn memory_folder(
         &self,
         workspace_id: &str,
@@ -251,10 +247,7 @@ impl Runtime {
             Err("link_down") => crate::node::NodeId::parse(&workspace.device_id).ok(),
             Err(_) => None,
         };
-        let Some(node) = node else {
-            let device_name = self.device_name(&workspace.device_id);
-            return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
-        };
+        let node = node.ok_or(MemoryUnavailableSnapshot::Unregistered)?;
         Ok((node, workspace.path.clone()))
     }
 
@@ -340,7 +333,7 @@ impl Runtime {
         let Some(context) = self.worker_context.clone() else {
             return;
         };
-        let sessions_node = match self.linked_node(node.as_str()) {
+        let sessions_node = match self.memory_node(node.as_str()) {
             Ok((_, link)) => link,
             Err(reason) => {
                 crate::diagnostic!(json!({
@@ -439,6 +432,13 @@ impl Runtime {
         let project_id = self.project_memory.project_id.clone().unwrap_or_default();
         let mut rows = load.rows;
         let mut questions = Vec::new();
+        let closed = load
+            .promotions
+            .iter()
+            .filter_map(|(number, promotion)| {
+                (promotion.state == hide_memory::PromotionState::ClosedUnmerged).then_some(*number)
+            })
+            .collect::<std::collections::HashSet<_>>();
         let mut open = false;
         for (number, promotion) in &load.promotions {
             open |= matches!(
@@ -461,6 +461,29 @@ impl Runtime {
             }
             row.promotion = snapshot;
         }
+        questions.extend(rows.iter().filter_map(|row| {
+            let document = row.document_comparison.as_ref()?;
+            if matches!(row.kind, MemoryCardKind::Fact | MemoryCardKind::Preference)
+                || document.authority == hide_memory::DocumentAuthority::Outdated
+                || closed.contains(&row.number)
+                || row.promotion.as_ref().is_some_and(|promotion| {
+                    matches!(
+                        promotion.state,
+                        crate::model::MemoryPromotionState::Running
+                            | crate::model::MemoryPromotionState::PrOpen
+                            | crate::model::MemoryPromotionState::Failed
+                            | crate::model::MemoryPromotionState::Unconfirmed
+                    )
+                })
+            {
+                return None;
+            }
+            Some(MemoryQuestionSnapshot::DocsDisagree {
+                number: row.number,
+                title: row.title.clone(),
+                document: document.clone(),
+            })
+        }));
         questions.extend(load.suggestions.iter().filter_map(|suggestion| {
             let row = rows.iter().find(|row| row.number == suggestion.number)?;
             Some(MemoryQuestionSnapshot::Promote {
@@ -480,6 +503,7 @@ impl Runtime {
             rows.iter()
                 .filter(|row| {
                     !row.verifying
+                        && row.document_comparison.is_none()
                         && !row.promotion.as_ref().is_some_and(|promotion| {
                             promotion.state == crate::model::MemoryPromotionState::Merged
                         })
@@ -563,18 +587,22 @@ impl Runtime {
             Err(_) => {
                 self.set_error(
                     "memory.project_unavailable",
-                    "Project Memory is kept only for the Projects of this computer and of computers that connect to it",
+                    "This Project is no longer registered",
                     false,
                 );
                 return true;
             }
         };
-        let sessions_node = match self.linked_node(node.as_str()) {
+        let sessions_node = match self.memory_node(node.as_str()) {
             Ok((_, link)) => link,
-            Err(_) => {
+            Err(reason) => {
+                crate::diagnostic!(json!({
+                    "component": "memory", "kind": "memory.action_unreachable",
+                    "workspace_id": payload.workspace_id, "device": node.as_str(), "reason": reason,
+                }));
                 self.set_error(
                     "memory.project_unreachable",
-                    "The computer that holds this Project is not connected",
+                    crate::memory_command::next_action(reason),
                     true,
                 );
                 return true;
@@ -744,6 +772,7 @@ impl Runtime {
             workspace_id,
             action: MemoryAction::Enable,
             number: None,
+            numbers: Vec::new(),
         });
     }
 }
@@ -765,7 +794,8 @@ fn mutate_memory(
     start: Option<super::memory_promotion::PromotionStart>,
 ) -> Result<MemoryActionOutcome, String> {
     let identity = project_identity(sessions_node, node, checkout_path)?;
-    let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
+    let mut store =
+        super::memory::open_memory_store(database).map_err(|error| error.to_string())?;
     let outcome = || MemoryActionOutcome {
         project_id: identity.id.clone(),
         diagnostic: None,
@@ -831,13 +861,33 @@ fn mutate_memory(
         }
         MemoryAction::Promote => {
             let start = start.ok_or("The promotion has no agent to start")?;
-            let number = named()?;
-            let unseen =
-                super::memory_promotion::start_promotion(&mut store, &identity.id, number, start)?;
+            let mut numbers = if payload.numbers.is_empty() {
+                vec![named()?]
+            } else {
+                payload.numbers.clone()
+            };
+            numbers.sort_unstable();
+            let number = *numbers.first().ok_or("The promotion names no cards")?;
+            let unseen = super::memory_promotion::start_promotion(
+                &mut store,
+                &identity.id,
+                &numbers,
+                start,
+            )?;
             Ok(MemoryActionOutcome {
                 unseen: unseen.map(|(attempt, start)| (number, attempt, start)),
                 ..outcome()
             })
+        }
+        MemoryAction::CardRight | MemoryAction::DocRight => {
+            store
+                .resolve_document_comparison(
+                    &identity.id,
+                    named()?,
+                    payload.action == MemoryAction::CardRight,
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(outcome())
         }
         MemoryAction::Dismiss => {
             super::memory_promotion::dismiss_promotion(&mut store, &identity.id, named()?)?;
@@ -875,12 +925,35 @@ fn load_opened_memory(
         Err(hide_memory::MemoryError::ProjectMissing) => return Ok(empty(identity.id)),
         Err(error) => return Err(error.to_string()),
     };
+    let promotions = store
+        .promotions(&identity.id)
+        .map_err(|error| error.to_string())?;
+    let previewed = promotions
+        .iter()
+        .filter_map(|(number, promotion)| {
+            matches!(
+                promotion.state,
+                hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+            )
+            .then_some(*number)
+        })
+        .collect::<std::collections::HashSet<_>>();
     let rows = store
         .list_memories(&identity.id)
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(memory_row)
-        .collect();
+        .map(|item| {
+            let comparison = store
+                .document_comparison(&identity.id, item.number)
+                .map_err(|error| error.to_string())?;
+            let preview = previewed.contains(&item.number);
+            let mut row = memory_row(item, preview);
+            row.document_comparison = comparison
+                .as_ref()
+                .map(crate::model::MemoryDocumentSnapshot::from);
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let expanded = match expanded {
         Some(number) => match store
             .item_by_number(&identity.id, number)
@@ -893,6 +966,9 @@ fn load_opened_memory(
                     .map_err(|error| error.to_string())?;
                 Some(MemoryCardSnapshot {
                     number,
+                    document_comparison: store
+                        .document_comparison(&identity.id, number)
+                        .map_err(|error| error.to_string())?,
                     body: item.body,
                     cited_paths: item.cited_paths,
                     sources: detail
@@ -926,9 +1002,6 @@ fn load_opened_memory(
         }),
         None => None,
     };
-    let promotions = store
-        .promotions(&identity.id)
-        .map_err(|error| error.to_string())?;
     let suggestions = store
         .promotion_suggestions(
             &identity.id,
@@ -947,17 +1020,19 @@ fn load_opened_memory(
     })
 }
 
-fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
+fn memory_row(item: hide_memory::MemoryItem, preview: bool) -> MemoryRowSnapshot {
     MemoryRowSnapshot {
         number: item.number,
         title: item.title,
         kind: card_kind(item.kind),
+        body_preview: preview.then(|| item.body.chars().take(512).collect()),
         human_source_count: item.human_source_count,
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
         updated_at_unix_ms: item.updated_at_unix_ms,
         verifying: item.verifying,
         promotion: None,
+        document_comparison: None,
     }
 }
 
@@ -967,6 +1042,7 @@ pub(crate) fn card_kind(kind: hide_memory::CandidateKind) -> MemoryCardKind {
         hide_memory::CandidateKind::Decision => MemoryCardKind::Decision,
         hide_memory::CandidateKind::Lesson => MemoryCardKind::Lesson,
         hide_memory::CandidateKind::Fact => MemoryCardKind::Fact,
+        hide_memory::CandidateKind::Preference => MemoryCardKind::Preference,
     }
 }
 
@@ -1049,6 +1125,7 @@ mod tests {
         assert_eq!(
             load.expanded,
             Some(MemoryCardSnapshot {
+                document_comparison: None,
                 number: 1,
                 body: "Run tests with nextest before a merge".to_owned(),
                 cited_paths: vec!["docs/TESTING.md".to_owned()],
@@ -1077,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn a_read_puts_each_promotion_on_its_row_and_asks_only_about_suggestions_and_failures() {
+    fn migration_keeps_the_index_usable_cards_and_promotion_questions_on_a_read() {
         // B28-B32.
         use crate::model::{MemoryPromotionSnapshot, MemoryPromotionState};
         use hide_memory::{Promotion, PromotionState};
@@ -1128,11 +1205,14 @@ mod tests {
                         CandidateKind::Decision,
                         vec![3],
                     ),
-                    card(
-                        "Migrations never rewrite a column",
-                        CandidateKind::Lesson,
-                        vec![4],
-                    ),
+                    Candidate {
+                        text: "한".repeat(700),
+                        ..card(
+                            "Migrations never rewrite a column",
+                            CandidateKind::Lesson,
+                            vec![4],
+                        )
+                    },
                     card(
                         "The service listens on port 8080",
                         CandidateKind::Fact,
@@ -1186,6 +1266,29 @@ mod tests {
                 &promotion(PromotionState::PrOpen, Some(924)),
             )
             .unwrap();
+        let before_index = store
+            .retrieve(&hide_memory::RetrievalQuery::session_start(&identity.id))
+            .unwrap()
+            .items;
+        let before_suggestions = store.promotion_suggestions(&identity.id, 1000, 3).unwrap();
+        drop(store);
+        // Reproduce the historical v11 shape before the first docs check.
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; PRAGMA user_version=11;").unwrap();
+        drop(connection);
+        let store = super::memory::open_memory_store(&database).unwrap();
+        assert_eq!(
+            store
+                .retrieve(&hide_memory::RetrievalQuery::session_start(&identity.id))
+                .unwrap()
+                .items,
+            before_index
+        );
+        assert_eq!(
+            store.promotion_suggestions(&identity.id, 1000, 3).unwrap(),
+            before_suggestions
+        );
+        assert_eq!(store.pending_cards(&identity.id, 1000, 4).unwrap().len(), 4);
         drop(store);
         let load = load_opened_memory(
             &crate::node::test_node(),
@@ -1239,9 +1342,26 @@ mod tests {
                 .iter()
                 .find(|row| row.number == 3)
                 .unwrap()
+                .body_preview,
+            Some("한".repeat(512))
+        );
+        assert!(
+            project
+                .rows
+                .iter()
+                .filter(|row| row.number != 3)
+                .all(|row| row.body_preview.is_none())
+        );
+        assert_eq!(
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == 3)
+                .unwrap()
                 .promotion,
             Some(MemoryPromotionSnapshot {
                 state: MemoryPromotionState::PrOpen,
+                started_at_unix_ms: 1,
                 agent: None,
                 pr_number: Some(924),
                 target_path: None,
@@ -1266,10 +1386,129 @@ mod tests {
             "a fact is never suggested, an open pull request asks nothing"
         );
         assert_eq!(project.usable_cards, 4);
-        MemoryStore::open(&database)
-            .unwrap()
-            .set_enabled(&identity.id, false, false)
+        let mut store = MemoryStore::open(&database).unwrap();
+        // D08 permits rule/lesson/decision corrections, never an unsupported
+        // Fact action. Its comparison remains readable and withheld (D04).
+        for number in [2, 3] {
+            store
+                .set_promotion(
+                    &identity.id,
+                    number,
+                    &promotion(PromotionState::Dismissed, None),
+                )
+                .unwrap();
+        }
+        for authority in [
+            hide_memory::DocumentAuthority::CardNewer,
+            hide_memory::DocumentAuthority::Ask,
+        ] {
+            for number in 1..=4 {
+                store
+                    .set_document_comparison(
+                        &identity.id,
+                        number,
+                        1,
+                        &hide_memory::DocumentComparison {
+                            authority,
+                            document: "AGENTS.md".into(),
+                            document_text: "Repository rule".into(),
+                            document_at_unix_ms: None,
+                            operator_text: "Operator decision".into(),
+                            operator_at_unix_ms: Some(1),
+                            source_session: Some("s-1".into()),
+                        },
+                    )
+                    .unwrap();
+            }
+            let load = load_opened_memory(
+                &crate::node::test_node(),
+                node.as_ref(),
+                &database,
+                &root,
+                Some(4),
+                None,
+            )
             .unwrap();
+            assert!(
+                load.expanded
+                    .as_ref()
+                    .unwrap()
+                    .document_comparison
+                    .is_some()
+            );
+            let generation = runtime.project_memory.reads.begin().unwrap();
+            assert!(runtime.ingest_project_memory(generation, Ok(load)));
+            let project = runtime
+                .snapshot
+                .memory
+                .as_ref()
+                .unwrap()
+                .project
+                .as_ref()
+                .unwrap();
+            let numbers = project
+                .questions
+                .iter()
+                .map(|question| match question {
+                    MemoryQuestionSnapshot::DocsDisagree { number, .. } => *number,
+                    _ => panic!("only eligible document questions"),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(numbers.len(), 3);
+            assert!(numbers.iter().all(|number| [1, 2, 3].contains(number)));
+            assert_eq!(project.usable_cards, 0);
+            assert!(
+                store
+                    .retrieve(&hide_memory::RetrievalQuery::prompt(
+                        &identity.id,
+                        "service port",
+                        vec![]
+                    ))
+                    .unwrap()
+                    .items
+                    .is_empty()
+            );
+        }
+        store
+            .set_promotion(
+                &identity.id,
+                1,
+                &promotion(PromotionState::ClosedUnmerged, Some(925)),
+            )
+            .unwrap();
+        let load = load_opened_memory(
+            &crate::node::test_node(),
+            node.as_ref(),
+            &database,
+            &root,
+            None,
+            None,
+        )
+        .unwrap();
+        let generation = runtime.project_memory.reads.begin().unwrap();
+        assert!(runtime.ingest_project_memory(generation, Ok(load)));
+        let project = runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap();
+        assert!(
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == 1)
+                .unwrap()
+                .promotion
+                .is_none()
+        );
+        assert!(!project.questions.iter().any(|question| matches!(
+            question,
+            MemoryQuestionSnapshot::DocsDisagree { number: 1, .. }
+        )));
+        store.set_enabled(&identity.id, false, false).unwrap();
         let load = load_opened_memory(
             &crate::node::test_node(),
             node.as_ref(),

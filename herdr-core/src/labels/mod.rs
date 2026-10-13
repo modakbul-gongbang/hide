@@ -256,6 +256,9 @@ impl TranscriptSource for NodeTranscripts {
             {
                 ReadFailure::Refused("device_helper_unsupported".to_owned())
             }
+            LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::Busy => {
+                ReadFailure::Pending(error.message)
+            }
             LinkError::Refused(error) => ReadFailure::Refused(error.message),
         })
     }

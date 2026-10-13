@@ -5,7 +5,7 @@ import type { AgentScope } from "./agentScope";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { UsageSnapshot, UsagePreferences } from "./generated/hided-ws";
+import type { UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -1477,19 +1477,21 @@ export type ArchiveDetail = {
 };
 
 /** A card's kind (`contracts/snapshot-wire-enums.json`: `memory_card_kind`). */
-export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact";
+export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact" | "preference";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
 export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
-export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss";
+export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss" | "card_right" | "doc_right";
 
 /** One card of the opened Project, as its two-line row shows it. */
 export type MemoryRow = {
   number: number;
   title: string;
   kind: MemoryCardKind;
+  /** At most 512 characters, only for cards in an active promotion. */
+  body_preview?: string;
   human_source_count: number;
   /** Sessions the card was given to in full. */
   provided_session_count: number;
@@ -1499,8 +1501,11 @@ export type MemoryRow = {
   /** Waiting to be checked against the repository again; agents are not given it meanwhile (`확인 중`). */
   verifying: boolean;
   /** Null for an ordinary card, a dismissed one, or one whose pull request closed unmerged. */
+  document_comparison?: MemoryDocument | null;
   promotion: {
     state: MemoryPromotionState;
+    /** The durable promotion attempt's start; absent on older daemons. */
+    started_at_unix_ms?: number;
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
@@ -1513,16 +1518,21 @@ export type MemoryRow = {
 /** What `물어볼 것` asks: a card to promote (with its reasons) or a promotion that ended with no pull request. */
 export type MemoryQuestion =
   | { kind: "promote"; number: number; title: string; human_session_count: number; pulled_session_count: number }
+  | { kind: "docs_disagree"; number: number; title: string; document: MemoryDocument }
   | { kind: "failed"; number: number; title: string; start_failure: MemoryStartFailure | null };
 
 /**
  * Why a failed promotion's agent never started (`memory_start_failure_code`):
  * `detail` is the line its new pane's shell stopped at, for `shell_starting`.
  */
-export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "other"; detail: string | null };
+export type MemoryStartFailure = { code: "shell_starting" | "agent_not_started" | "card_not_processed" | "other"; detail: string | null };
+
+export type MemoryDocument = { authority: "outdated" | "card_newer" | "ask"; document: string; document_at_unix_ms: number | null; operator_at_unix_ms: number | null };
+export type MemoryDocumentComparison = MemoryDocument & { document_text: string; operator_text: string; source_session: string | null };
 
 /** The card shown in full (`memory_expand`). */
 export type MemoryCard = {
+  document_comparison?: MemoryDocumentComparison | null;
   number: number;
   body: string;
   cited_paths: string[];
@@ -1535,7 +1545,7 @@ export type MemoryCard = {
 export type ProjectMemory = {
   workspace_id: string;
   /** Why this Project has no Memory here; null when it has. */
-  unavailable: { reason: "remote_device"; device_name: string } | { reason: "unregistered" } | { reason: "unreadable" } | null;
+  unavailable: { reason: "unregistered" } | { reason: "unreadable" } | null;
   loading: boolean;
   enabled: boolean;
   capacity_reached: boolean;
@@ -1705,8 +1715,6 @@ export type SnapshotRest = {
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
-    /** The core node comes first; each registered agent has typed limit and consumption cells. */
-    usage?: UsageSnapshot;
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
@@ -1758,6 +1766,7 @@ export type SnapshotRest = {
     first_run?: FirstRun | null;
     /** Settings > Notifications' Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
     desktop_notifications?: boolean;
+    desktop_notifications_done?: boolean;
     usage?: UsagePreferences;
     /** The screens whose one-line introduction was shown (B43). */
     screen_intros_seen?: ScreenIntro[];

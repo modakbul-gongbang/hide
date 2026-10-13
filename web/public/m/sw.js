@@ -4,15 +4,17 @@
 // shows the unreachable line rather than a blank page. Agent state, rows,
 // replies and the push subscription travel on /ws and are never cached here.
 //
-// A push carries data, not a sentence: the agent's title, its state
+// A push carries the core's chosen row sentence as detail, the status_code,
+// the agent's title, its state
 // ("needs_you" | "done" | "observer_unconfirmed" | "letter_undelivered") and
 // its place. The words for the state belong to the
 // language the phone page is in, so the page posts `{type: "words", words}` on
 // load, on every language change and when a subscription is created, and this
 // worker keeps them in the Cache API (a closed app must still notify). The
-// body is the state's word and the place joined with " · "; with no words
-// stored, which is a subscription made before the page ever sent them, it is
-// the place alone.
+// body joins the row's status word, its untranslated detail and the project
+// with " · ". Without detail it keeps the original state and project format.
+// A cached page that sends only the old words keeps its original state word;
+// with no stored words, only detail and place can be drawn.
 //
 // There is no start_url in the manifest on purpose: the Home Screen app keeps
 // the address it was added from, whose fragment carries the phone's
@@ -88,14 +90,15 @@ function isWord(value) {
   return typeof value === "string" && value.length > 0;
 }
 
-// Only the state words are kept, whatever else a page sends. The two
-// delivery words are optional, so a page from before them still works.
+// Only notification words are kept. Row-status and delivery words are
+// optional, so a page from before them still works.
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.type !== "words" || !data.words || typeof data.words !== "object") return;
   const { needs_you, done, observer_unconfirmed, letter_undelivered } = data.words;
   if (!isWord(needs_you) || !isWord(done)) return;
-  const words = JSON.stringify({ needs_you, done, observer_unconfirmed, letter_undelivered });
+  const statusWords = Object.fromEntries(["question", "approval", "error", "working", "done", "idle", "unknown", "waiting", "stopped"].map((code) => [`status_${code}`, data.words[`status_${code}`]]).filter(([, word]) => isWord(word)));
+  const words = JSON.stringify({ needs_you, done, observer_unconfirmed, letter_undelivered, ...statusWords });
   event.waitUntil(
     caches
       .open(WORDS_CACHE)
@@ -131,7 +134,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     Promise.all([closeTags(payload.clear), storedWords()]).then(([, words]) =>
       self.registration.showNotification(payload.title, {
-        body: [words[payload.state], payload.place].filter(isWord).join(" · "),
+        body: [isWord(payload.detail) ? words[`status_${payload.status_code}`] || words[payload.state] : words[payload.state], payload.detail, payload.place].filter(isWord).join(" · "),
         tag: payload.tag,
         icon: "/m/icon-192.png",
         badge: "/m/icon-192.png",

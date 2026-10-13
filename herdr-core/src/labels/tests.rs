@@ -365,6 +365,129 @@ fn task(label: Option<AgentLabel>) -> Option<String> {
 }
 
 #[test]
+fn an_opencode_refusal_recovers_native_proof_without_another_state_report() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let journal = directory.join("opencode.db-journal");
+    std::fs::write(&journal, b"unfinished native transaction").unwrap();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .is_none()
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    std::fs::remove_file(journal).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(5));
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        1,
+        "no immediate retry loop"
+    );
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .as_deref(),
+        Some("ses_0a1b2c3d4e5f60718293a4b5c6")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
+fn an_opencode_transaction_keeps_proof_and_caps_its_pending_reread() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let mut observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    let proven = shown_facts(&worker, &observed).unwrap().native_session_id;
+    assert!(proven.is_some());
+    let journal = directory.join("opencode.db-journal");
+    std::fs::write(&journal, b"unfinished native transaction").unwrap();
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    worker.tick(Instant::now() + Duration::from_secs(60));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        3,
+        "one pending reread, then a real state change must wake it"
+    );
+    std::fs::remove_file(journal).unwrap();
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        shown_facts(&worker, &observed).unwrap().native_session_id,
+        proven
+    );
+    observed.reference = Some(("id".into(), "ses_other".into()));
+    observed.state_change_seq += 1;
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .is_none(),
+        "proof never transfers to another requested owner"
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
 fn a_titles_only_opencode_session_keeps_its_native_title_and_generated_goal() {
     let harness = Harness::new();
     let directory = harness.home.path().join(".local/share/opencode");
@@ -902,6 +1025,143 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
         record.analysis_turn_end, None,
         "the turn is asked again next time"
     );
+}
+
+#[test]
+fn a_null_goal_is_valid_but_an_absent_or_invalid_goal_is_not() {
+    use super::analysis::{AnalysisPhase, LabelEnd};
+    use super::context_label::{parse, request};
+    for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
+        let mut answer = json!({"goal": null, "goal_changed": false, "line": ""});
+        if phase == AnalysisPhase::TurnEnd {
+            answer["end"] = json!("done");
+            answer["work"] =
+                json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
+        }
+        let parsed = parse(phase, answer.clone()).unwrap();
+        assert_eq!(parsed.goal, None);
+        assert_eq!(parsed.line, "");
+        assert_eq!(
+            parsed.end,
+            if phase == AnalysisPhase::TurnStart {
+                LabelEnd::Working
+            } else {
+                LabelEnd::Done
+            }
+        );
+        let schema = request(phase, "pane", "null-goal".into(), "context").output_schema;
+        assert_eq!(
+            schema["properties"]["goal"]["type"],
+            json!(["string", "null"])
+        );
+        answer["goal_changed"] = json!(true);
+        assert!(parse(phase, answer.clone()).is_err());
+        answer["goal_changed"] = json!(false);
+        for invalid in [json!(""), json!("짧음"), json!(42)] {
+            answer["goal"] = invalid;
+            assert!(parse(phase, answer.clone()).is_err());
+        }
+        answer.as_object_mut().unwrap().remove("goal");
+        assert!(
+            parse(phase, answer).is_err(),
+            "null is explicit, not a missing field"
+        );
+    }
+}
+
+#[test]
+fn greetings_keep_the_native_title_until_real_work_sets_a_goal() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let greeting = [("user", "안녕하세요"), ("assistant", "안녕하세요!")];
+    let path = harness.session("greeting", "native-greeting", &greeting);
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", json!({"type":"custom-title", "customTitle":"Claude 이름 질문", "sessionId":"native-greeting"})).unwrap();
+    }
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(task(shown(&worker, &idle)), None);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+        "agent_session":{"kind":"path", "value":path},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    let projection = crate::sidebar::project_agents(payload);
+    assert!(projection.excluded.is_empty());
+    assert_eq!(projection.agents[0].identity_label, "Claude 이름 질문");
+
+    let named = [
+        greeting[0],
+        greeting[1],
+        ("user", "너의 이름은 뭐니?"),
+        ("assistant", "저는 Claude입니다."),
+    ];
+    harness.session("greeting", "native-greeting", &named);
+    harness.input.record("w1:p1", turn_at(2) - 300, false);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "", "end": "done",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    observe(&mut worker, &agent(&path, "idle", 2));
+    settle(&mut worker, &woken);
+    assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+
+    let working_turn = [
+        named[0],
+        named[1],
+        named[2],
+        named[3],
+        ("user", "로그인 화면 만들어줘"),
+    ];
+    harness.session("greeting", "native-greeting", &working_turn);
+    harness.input.record("w1:p1", turn_at(4) - 300, false);
+    harness.backend.begin("사용자 로그인 화면");
+    let working = agent(&path, "working", 3);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("사용자 로그인 화면")
+    );
+
+    // A false change flag keeps the goal, while the turn's own answer
+    // still reaches the row even if the provider returned null.
+    let mut completed_turn = working_turn.to_vec();
+    completed_turn.push(("assistant", "배포 환경을 선택해 주세요."));
+    harness.session("greeting", "native-greeting", &completed_turn);
+    harness.backend.answers.lock().unwrap().push_back(json!({
+        "goal": null, "goal_changed": false, "line": "배포 환경을 선택하세요", "end": "question",
+        "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+    }));
+    let question = agent(&path, "idle", 4);
+    observe(&mut worker, &question);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        store.target(LOCAL_TARGET)["w1:p1"].goal.as_deref(),
+        Some("사용자 로그인 화면")
+    );
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.line, "배포 환경을 선택하세요");
+    assert_eq!(record.end, Some(super::analysis::LabelEnd::Question));
+    let label = shown(&worker, &question).unwrap();
+    assert_eq!(
+        label.expected_reply.as_deref(),
+        Some("배포 환경을 선택하세요")
+    );
+    assert!(label.question);
 }
 
 #[test]

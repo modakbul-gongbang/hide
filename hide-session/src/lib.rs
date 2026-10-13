@@ -42,7 +42,9 @@ pub mod search;
 pub mod search_read;
 pub mod session_activity;
 mod sightings;
+mod sqlite;
 pub mod turns;
+pub mod usage;
 
 pub use envelope::{envelope_header, envelope_sender};
 pub use sightings::{

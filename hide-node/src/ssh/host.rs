@@ -1316,7 +1316,15 @@ async fn start_helper(
         })?;
     let raw = RawSftpSession::new(channel.into_stream());
     raw.set_timeout(30);
-    let installed = install(&raw, helper_root, &payload, retirement_projects, &locations).await;
+    let installed = install(
+        &raw,
+        helper_root,
+        &payload,
+        retirement_projects,
+        &locations,
+        |phase| establish_stage(&target, phase, since),
+    )
+    .await;
     let _ = raw.close_session();
     drop(raw);
     drop(permit);
@@ -1380,18 +1388,23 @@ async fn install(
     payload: &Payload,
     retirement_projects: &[String],
     locations: &retirement::Locations,
+    stage: impl Fn(&str),
 ) -> Result<Installed, EstablishError> {
+    stage("install_init");
     raw.init()
         .await
         .map_err(|error| sftp_failure("SFTP did not start", error))?;
+    stage("install_root");
     let (home, owner, root) = private_root_spelling(raw, helper_root).await?;
     // No folders, staging files or current link have changed at this point.
+    stage("install_preflight");
     tokio::time::timeout(
         SSH_OPERATION_TIMEOUT,
         retirement::preflight(raw, &home, owner, retirement_projects, locations),
     ).await.map_err(|_| EstablishError::Install(
         "The device retirement preflight timed out; inspect its run and request state and retry; no helper was uploaded".into()
     ))??;
+    stage("install_payload");
     place_payload(raw, &home, owner, &root, payload).await
 }
 
@@ -1668,6 +1681,20 @@ async fn place_file(
     owner: u32,
     what: &str,
 ) -> Result<String, EstablishError> {
+    let upload_id = NEXT_UPLOAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let since = Instant::now();
+    let stage = |phase: &str| {
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.upload_stage",
+            "upload_id": upload_id,
+            "package": package.relative,
+            "bytes": package.bytes.len(),
+            "phase": phase,
+            "elapsed_ms": since.elapsed().as_millis() as u64,
+        }));
+    };
+    stage("open");
     let final_path = format!("{version_dir}/{}", package.relative);
     let (folder, name) = final_path
         .rsplit_once('/')
@@ -1675,7 +1702,7 @@ async fn place_file(
     let staging = format!(
         "{folder}/.upload-{name}-{}-{}",
         std::process::id(),
-        NEXT_UPLOAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        upload_id
     );
     remove_abandoned_staging(raw, folder).await;
     // Only a process that ended with this same pid could have left it.
@@ -1697,19 +1724,24 @@ async fn place_file(
         .map_err(|error| sftp_failure(&format!("The {what} could not be uploaded"), error))?
         .handle;
     // The read-back below checks the whole file.
+    stage("write");
     let written = super::transfer::write_bytes(raw, &handle, &package.bytes, |error| {
         sftp_failure(&format!("The {what} upload failed"), error)
     })
     .await;
+    stage("close");
     let closed = raw.close(handle).await;
     let verified = match (written, closed) {
-        (Ok(()), Ok(_)) => match remote_digest(raw, &staging, package.bytes.len(), what).await {
-            Ok(uploaded) if uploaded == package.digest => Ok(()),
-            Ok(_) => Err(EstablishError::Install(format!(
-                "The uploaded {what} did not match the package; it was not used"
-            ))),
-            Err(error) => Err(error),
-        },
+        (Ok(()), Ok(_)) => {
+            stage("read_back");
+            match remote_digest(raw, &staging, package.bytes.len(), what).await {
+                Ok(uploaded) if uploaded == package.digest => Ok(()),
+                Ok(_) => Err(EstablishError::Install(format!(
+                    "The uploaded {what} did not match the package; it was not used"
+                ))),
+                Err(error) => Err(error),
+            }
+        }
         (Err(error), _) => Err(error),
         (Ok(()), Err(error)) => Err(sftp_failure(
             &format!("The {what} upload did not finish"),
@@ -1721,6 +1753,7 @@ async fn place_file(
         staged.finish();
         return Err(error);
     }
+    stage("place");
     if holds(raw, &final_path, package, what).await {
         let _ = raw.remove(&staging).await;
         staged.finish();
@@ -1752,6 +1785,7 @@ async fn place_file(
             "{final_path} was not left a file only the account can change, so the {what} was not used"
         )));
     }
+    stage("complete");
     Ok(final_path)
 }
 

@@ -456,6 +456,9 @@ fn reader_requirements(call: &Call) -> Vec<(hide_session::Agent, ReaderFeature)>
         Call::SessionActivity { request } => vec![(request.agent, ReaderFeature::Activity)],
         Call::SessionIndexRead { agent, .. } => vec![(*agent, ReaderFeature::Search)],
         Call::SessionConversation { agent, .. } => vec![(*agent, ReaderFeature::Conversation)],
+        Call::UsageFiles { agent, .. } | Call::UsageRead { agent, .. } => {
+            vec![(*agent, ReaderFeature::Usage)]
+        }
         Call::LinkRead { requests } => requests
             .iter()
             .map(|request| (request.agent, ReaderFeature::Links))
@@ -740,6 +743,34 @@ mod tests {
         for shown in [parsed, raw] {
             assert!(!shown.contains("sk-secret"), "{shown}");
             assert!(shown.contains("bytes"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn usage_calls_require_the_live_usage_reader_not_a_protocol_guess() {
+        for agent in hide_session::Agent::supported() {
+            for call in [
+                Call::UsageFiles {
+                    agent,
+                    since_unix_ms: 0,
+                },
+                Call::UsageRead {
+                    agent,
+                    path: "/fixture/native.jsonl".into(),
+                    checkpoint: None,
+                },
+            ] {
+                assert!(check_reader_features(&ReaderFeatures::protocol24(), &call).is_err());
+                let peer = LabelPeer {
+                    features: ReaderFeatures::protocol24(),
+                    response: "null",
+                };
+                assert!(check_reader_call(&peer, &call).is_err());
+                assert_eq!(
+                    check_reader_features(&ReaderFeatures::implemented(), &call).is_ok(),
+                    agent != hide_session::Agent::Cursor
+                );
+            }
         }
     }
 

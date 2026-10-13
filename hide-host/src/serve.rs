@@ -695,6 +695,7 @@ pub fn label_transcript(
     let transcript = hide_session::label_transcript::read(home, request).map_err(|reason| {
         let code = match reason.as_str() {
             "session_file_missing" => ErrorCode::NotFound,
+            "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
             "session_kind_unsupported" => ErrorCode::Unsupported,
             reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
             _ => ErrorCode::Io,
@@ -1044,6 +1045,7 @@ pub fn handle_with_progress(
             env.ai.release(instance);
             to_value(())
         }
+        Call::UsagePriceFetch => to_value(crate::usage::fetch_prices()),
         Call::UsageLimitFetch { source, root } => {
             let root = absolute(&root)?;
             to_value(crate::usage::fetch(source, &root, &mut || {
@@ -1188,6 +1190,27 @@ pub fn handle_with_progress(
                 hide_session::links::candidates(Path::new(&home), since_unix_ms, until_unix_ms)
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
+        }
+        Call::UsageFiles {
+            agent,
+            since_unix_ms,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let candidates = hide_session::usage::list(Path::new(&home), agent, since_unix_ms)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(candidates)
+        }
+        Call::UsageRead {
+            agent,
+            path,
+            checkpoint,
+        } => {
+            let home = env.home("usage_home_unavailable")?;
+            let path = hide_platform::path::from_wire(&path)
+                .map_err(|_| HostError::new(ErrorCode::InvalidPath, "usage_path_invalid"))?;
+            let step = hide_session::usage::read(Path::new(&home), agent, &path, checkpoint)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason.to_string()))?;
+            to_value(step)
         }
         Call::SessionIndexRead {
             agent: hide_session::Agent::OpenCode,

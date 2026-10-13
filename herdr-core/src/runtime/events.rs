@@ -698,6 +698,8 @@ fn default_true() -> bool {
 /// number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
+    #[serde(default)]
+    pub(super) numbers: Vec<u64>,
     pub(super) workspace_id: String,
     pub(super) action: crate::model::MemoryAction,
     /// The card a forget or an undo names.
@@ -1193,6 +1195,14 @@ pub(super) struct FirstRunAdvancePayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopNotificationsSetPayload {
     pub(super) enabled: bool,
+    /// The reopened wizard's Not now disables both with its one event.
+    #[serde(default)]
+    pub(super) done_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopNotificationsDoneSetPayload {
+    pub(super) enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1399,6 +1409,7 @@ pub(super) enum Event {
     AgentOnboardingApply(AgentOnboardingApplyPayload),
     FirstRunAdvance(FirstRunAdvancePayload),
     DesktopNotificationsSet(DesktopNotificationsSetPayload),
+    DesktopNotificationsDoneSet(DesktopNotificationsDoneSetPayload),
     ScreenIntroSeen(ScreenIntroSeenPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
@@ -1633,6 +1644,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "first_run_advance" => decode!(FirstRunAdvancePayload, FirstRunAdvance),
         "desktop_notifications_set" => {
             decode!(DesktopNotificationsSetPayload, DesktopNotificationsSet)
+        }
+        "desktop_notifications_done_set" => {
+            decode!(
+                DesktopNotificationsDoneSetPayload,
+                DesktopNotificationsDoneSet
+            )
         }
         "screen_intro_seen" => decode!(ScreenIntroSeenPayload, ScreenIntroSeen),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
@@ -3603,8 +3620,10 @@ impl Runtime {
             Event::FirstRunAdvance(payload) => {
                 self.advance_first_run(payload.from, payload.notifications)
             }
-            Event::DesktopNotificationsSet(payload) => {
-                self.set_desktop_notifications(payload.enabled)
+            Event::DesktopNotificationsSet(payload) => self
+                .set_desktop_notification_preferences(Some(payload.enabled), payload.done_enabled),
+            Event::DesktopNotificationsDoneSet(payload) => {
+                self.set_desktop_notification_preferences(None, Some(payload.enabled))
             }
             Event::ScreenIntroSeen(payload) => self.mark_screen_intro_seen(payload.screen),
             Event::UsagePinSet(payload) => {
@@ -3614,7 +3633,7 @@ impl Runtime {
                         window: payload.window,
                     },
                     payload.enabled,
-                    &self.snapshot.navigator.usage,
+                    &self.snapshot.usage,
                 ) {
                     Ok(false) => false,
                     Ok(true) => {
@@ -3766,6 +3785,9 @@ impl Runtime {
                     }
                     self.usage_popover_open = open;
                 }
+                if payload.usage_window_visible.is_some() || payload.usage_popover_open.is_some() {
+                    self.feed_usage_ledger();
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
@@ -3867,6 +3889,7 @@ impl Runtime {
                     // notification switch and the introductions seen.
                     first_run: current.first_run,
                     desktop_notifications: current.desktop_notifications,
+                    desktop_notifications_done: current.desktop_notifications_done,
                     screen_intros_seen: current.screen_intros_seen,
                     // A width outside the drag's range keeps the last one; the
                     // shell never sends it, so there is nothing to show.

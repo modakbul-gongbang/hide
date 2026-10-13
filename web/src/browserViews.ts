@@ -55,8 +55,9 @@ const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?::\d+)?(?
  * daemon writes back after it checks the path.
  */
 export function fileUrl(path: string): string {
+  const slash = path.startsWith("/") ? "" : "/";
   // eslint-disable-next-line no-control-regex
-  return `file://${path.replace(/[\u0000-\u0020"#%<>?`{}\u007f]|[^\u0000-\u007f]+/gu, encodeURIComponent)}`;
+  return `file://${slash}${path.replace(/[\u0000-\u0020"#%<>?`{}\u007f]|[^\u0000-\u007f]+/gu, encodeURIComponent)}`;
 }
 
 /**

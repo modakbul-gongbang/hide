@@ -586,14 +586,8 @@ fn opencode_candidates(
     if !path.is_file() {
         return Ok(());
     }
-    let Ok(connection) = rusqlite::Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) else {
-        return Err("opencode_db_unreadable".to_owned());
-    };
-    let _ = connection.busy_timeout(std::time::Duration::from_millis(50));
-    let rows = connection
+    let rows = crate::opencode::with_read(home, |connection| {
+        connection
         .prepare(
             "SELECT id, time_updated, (SELECT count(*) FROM message WHERE session_id = session.id) \
              FROM session WHERE time_updated >= ?1 AND time_updated <= ?2 \
@@ -616,7 +610,8 @@ fn opencode_candidates(
                     },
                 )?
                 .collect::<Result<Vec<_>, _>>()
-        });
+        })
+    })?;
     let Ok(rows) = rows else {
         return Err("opencode_db_unreadable".to_owned());
     };

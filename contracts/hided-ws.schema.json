@@ -57,7 +57,7 @@
       }
     },
     "memoryHookAsk": {
-      "description": "`hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.",
+      "description": "`hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. The core's own node and any registered linked device have Memory through that device's node, regardless of connection direction; a link that is down or a helper without a Memory reader refuses immediately with a diagnostic reason, and a disconnected node refuses its callers with hide_unavailable. No store is copied to the device. result is {context, outcome, count?}: context is the Memory text or null, a prompt's cards with their signed receipt and a session start's card index without one, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "request_id", "event", "runtime", "session"],
@@ -144,7 +144,15 @@
       "required": ["type", "payload"],
       "properties": {
         "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "terminal", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result", "clone_target", "core_move", "core_link", "agent_notice"] },
-        "payload": { "type": "object" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "usage": {
+              "description": "The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.",
+              "$ref": "#/$defs/usageSnapshot"
+            }
+          }
+        },
         "message": { "type": "string" }
       }
     },
@@ -225,7 +233,8 @@
       "additionalProperties": false,
       "required": [
         "node",
-        "agents"
+        "agents",
+        "history"
       ],
       "properties": {
         "node": {
@@ -236,6 +245,16 @@
           "items": {
             "$ref": "#/$defs/agentUsage"
           }
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/usageHistory"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -255,16 +274,7 @@
           "$ref": "#/$defs/limitCell"
         },
         "consumption": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "state"
-          ],
-          "properties": {
-            "state": {
-              "const": "unsupported"
-            }
-          }
+          "$ref": "#/$defs/consumptionCell"
         }
       }
     },
@@ -359,7 +369,8 @@
         "timed_out",
         "rate_limited",
         "format_changed",
-        "capped"
+        "capped",
+        "no_records"
       ]
     },
     "limitReading": {
@@ -633,7 +644,9 @@
               "pane_id": { "type": "string" },
               "title": { "type": "string" },
               "state": { "type": "string", "enum": ["needs_you", "done"] },
-              "place": { "type": "string" }
+              "place": { "type": "string" },
+              "status_code": { "description": "The root row's status word code. Optional for older frames.", "type": ["string", "null"], "enum": ["error", "question", "approval", "working", "done", "idle", "unknown", "waiting", "stopped", "attached", "sleeping", "waking", "sleep_failed", null] },
+              "detail": { "description": "The core's chosen row detail, untranslated; absent or null means the original state-and-project body.", "type": ["string", "null"], "maxLength": 80 }
             }
           }
         },
@@ -896,6 +909,523 @@
         "version": { "type": "string" },
         "schema_version": { "type": "integer", "const": 2 },
         "clients": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+  "consumptionCell": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unsupported"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "loading"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause",
+            "last_checked_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            },
+            "last_checked_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "value",
+            "freshness",
+            "observed_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "reading"
+            },
+            "value": {
+              "$ref": "#/$defs/consumptionReading"
+            },
+            "freshness": {
+              "type": "string",
+              "enum": [
+                "fresh",
+                "stale",
+                "fallback"
+              ]
+            },
+            "observed_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "usageTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "output",
+        "cache_read",
+        "cache_write",
+        "cache_write_1h",
+        "reasoning"
+      ],
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_1h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "usageCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "micro_usd",
+        "partial",
+        "waiting",
+        "stale",
+        "incomplete",
+        "unpriced_models",
+        "other_unpriced_models"
+      ],
+      "properties": {
+        "micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "waiting": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "unpriced_models": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "other_unpriced_models": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "usageAmount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calls",
+        "new_tokens",
+        "tokens",
+        "cost"
+      ],
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "new_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "$ref": "#/$defs/usageTokens"
+        },
+        "cost": {
+          "$ref": "#/$defs/usageCost"
+        }
+      }
+    },
+    "usageContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "new_tokens",
+        "share_basis_points"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "new_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "share_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "usageDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "week",
+        "weekday",
+        "today",
+        "recent_week",
+        "level",
+        "pending",
+        "amount",
+        "top_agents",
+        "agents",
+        "other_agents"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "week": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 52
+        },
+        "weekday": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "today": {
+          "type": "boolean"
+        },
+        "recent_week": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "amount": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "top_agents": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/usageContribution"
+          }
+        },
+        "agents": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/usageContribution" } },
+        "other_agents": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "usageRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calendar_start",
+        "calendar_end",
+        "days",
+        "amount",
+        "since",
+        "active_days",
+        "observed_days",
+        "peak",
+        "current_streak",
+        "longest_streak",
+        "reading",
+        "limited",
+        "files_done",
+        "files_total"
+      ],
+      "properties": {
+        "calendar_start": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive civil-date calendar bound owned by the core."
+        },
+        "calendar_end": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Inclusive civil-date calendar bound owned by the core."
+        },
+        "days": {
+          "type": "array",
+          "maxItems": 371,
+          "items": {
+            "$ref": "#/$defs/usageDay"
+          },
+          "description": "Sparse recorded days, including calls with zero new tokens. The shell fills omitted dates inside the inclusive calendar bounds."
+        },
+        "amount": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "date",
+                "new_tokens"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                "new_tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_streak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "longest_streak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reading": {
+          "type": "boolean"
+        },
+        "limited": {
+          "type": "boolean"
+        },
+        "files_done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "usageShare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contribution",
+        "since",
+        "lifetime",
+        "providers"
+      ],
+      "properties": {
+        "contribution": {
+          "$ref": "#/$defs/usageContribution"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifetime": {
+          "$ref": "#/$defs/usageAmount"
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "usageHistorySurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "range",
+        "shares"
+      ],
+      "properties": {
+        "range": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "shares": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/usageShare"
+          }
+        }
+      }
+    },
+    "usageHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "popover",
+        "year"
+      ],
+      "properties": {
+        "popover": {
+          "$ref": "#/$defs/usageHistorySurface"
+        },
+        "year": {
+          "$ref": "#/$defs/usageHistorySurface"
+        }
+      }
+    },
+    "consumptionReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "popover",
+        "year",
+        "retained"
+      ],
+      "properties": {
+        "popover": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "year": {
+          "$ref": "#/$defs/usageRange"
+        },
+        "retained": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "since",
+                "amount",
+                "providers"
+              ],
+              "properties": {
+                "since": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amount": {
+                  "$ref": "#/$defs/usageAmount"
+                },
+                "providers": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       }
     }
   }

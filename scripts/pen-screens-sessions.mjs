@@ -47,7 +47,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       ...(open || spec.chain?.on ? [rail(`${id}-out`, 8, open === null ? 13 : 22, 1, height - (open === null ? 13 : 22))] : []),
     ]);
   };
-  const row = (id, spec, width) => frame(id, spec.title, {width, layout:'horizontal', alignItems:'start', padding:[0,8,0,spec.depth ? 0 : 4], cornerRadius:'$--radius-xs', ...(spec.selected ? {fill:'$--secondary'} : {})}, [
+  const row = (id, spec, width) => frame(id, spec.title, {width, layout:'horizontal', alignItems:'start', padding:[0,8,0,spec.depth ? 0 : 4], cornerRadius:'$--radius-xs', ...(spec.selected ? {fill:'$--color-selected'} : {})}, [
     ...columns(id, spec),
     lane(id, spec),
     frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[4,0,4,4]}, [

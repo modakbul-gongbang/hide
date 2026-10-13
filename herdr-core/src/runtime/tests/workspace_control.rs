@@ -1746,9 +1746,8 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
 }
 
 #[test]
-fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() {
-    // PRD project-memory-v2 B16, D-22: a device's Memory is its own; a device
-    // the core dials has none (PRD core-host-node-move Q20).
+fn hide_memory_refuses_a_disconnected_or_unknown_caller_and_a_changed_checkout() {
+    // Memory requires a ready reader and the caller's attested checkout.
     let (mut runtime, _dir) = caller_fixture();
     runtime
         .snapshot
@@ -1779,13 +1778,11 @@ fn hide_memory_answers_only_a_caller_on_this_machine_in_the_checkout_it_named() 
             .prepare_memory(device, pane, &expected, command())
             .err()
     };
-    for device in ["studio", "remote:fixture"] {
-        assert_eq!(
-            refused(device, "pane-b").as_deref(),
-            Some("memory_device_unsupported"),
-            "{device}"
-        );
-    }
+    assert_eq!(refused("studio", "pane-b").as_deref(), Some("link_down"));
+    assert_eq!(
+        refused("remote:fixture", "pane-b").as_deref(),
+        Some("unregistered")
+    );
     assert_eq!(
         refused(crate::node::TEST_NODE, "pane-a").as_deref(),
         Some("caller_context_changed")

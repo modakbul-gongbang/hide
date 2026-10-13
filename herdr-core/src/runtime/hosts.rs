@@ -870,24 +870,20 @@ impl Runtime {
     }
 
     /// The node that does a Project's work on `device` for what the core
-    /// keeps (Memory, Sessions, a Factory), with its link: the core's own
-    /// node, or a node that dials in while its link is up, never a device the
-    /// core dials, which keeps none of it (PRD core-host-node-move B14, Q17,
-    /// Q20); asking starts no helper.
+    /// keeps, with its link: the core's own node or any registered device
+    /// while its link is up. Link direction grants no feature authority;
+    /// Factory admission and reader support are checked by their owners.
+    /// Asking starts no helper.
     pub(crate) fn linked_node(&self, device: &str) -> Result<LinkedNode, &'static str> {
         if device == self.node.as_str() {
             return Ok((self.node.clone(), self.own_node()));
         }
-        let registration = self
-            .snapshot
+        self.snapshot
             .ui_state
             .device_registrations
             .iter()
             .find(|registration| registration.id == device)
             .ok_or("unregistered")?;
-        if registration.origin != crate::model::LinkOrigin::Inbound {
-            return Err("dialed_device");
-        }
         let node = crate::node::NodeId::parse(device).map_err(|_| "unregistered")?;
         match self.device_hosts.get(device).map(|host| &host.phase) {
             Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
@@ -897,21 +893,51 @@ impl Runtime {
         }
     }
 
-    /// The machines whose Projects have Memory now, each with the link that
-    /// reads its files: this machine's and each node that dials in and is
-    /// linked; and the nodes that dial in but whose link is down.
-    pub(crate) fn memory_nodes(&self) -> (Vec<LinkedNode>, Vec<crate::node::NodeId>) {
+    /// A Memory-capable node, independent of who opened the connection.
+    /// An older helper without the conversation-based Memory reader is an
+    /// explicit refusal, never a successfully read empty Project.
+    pub(crate) fn memory_node(&self, device: &str) -> Result<LinkedNode, &'static str> {
+        let (node, link) = self.linked_node(device)?;
+        let readers = link
+            .reader_features()
+            .ok_or("session_reader_support_unavailable")?;
+        if !hide_session::Agent::supported().any(|agent| {
+            readers.supports(
+                agent.as_str(),
+                hide_node_link::sessions::ReaderFeature::Memory,
+            ) && readers.supports(
+                agent.as_str(),
+                hide_node_link::sessions::ReaderFeature::Conversation,
+            )
+        }) {
+            return Err("session_reader_memory_unsupported");
+        }
+        Ok((node, link))
+    }
+
+    /// The machines whose Projects have Memory now, each with its own file
+    /// reader, and registered nodes waiting for their link or reader.
+    pub(crate) fn memory_nodes(&mut self) -> (Vec<LinkedNode>, Vec<crate::node::NodeId>) {
         let mut nodes = vec![(self.node.clone(), self.own_node())];
         let mut unreached = Vec::new();
+        let previous = std::mem::take(&mut self.memory_work.node_refusals);
+        let mut refusals = HashMap::new();
         for registration in &self.snapshot.ui_state.device_registrations {
-            if registration.origin != crate::model::LinkOrigin::Inbound {
-                continue;
-            }
-            match self.linked_node(&registration.id) {
+            match self.memory_node(&registration.id) {
                 Ok(linked) => nodes.push(linked),
-                Err(_) => unreached.extend(crate::node::NodeId::parse(&registration.id).ok()),
+                Err(reason) => {
+                    if reason != "link_down" && previous.get(&registration.id) != Some(&reason) {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "memory", "kind": "analysis.node_unavailable",
+                            "device": registration.id, "reason": reason,
+                        }));
+                    }
+                    refusals.insert(registration.id.clone(), reason);
+                    unreached.extend(crate::node::NodeId::parse(&registration.id).ok());
+                }
             }
         }
+        self.memory_work.node_refusals = refusals;
         (nodes, unreached)
     }
 
@@ -921,7 +947,7 @@ impl Runtime {
         &self,
         context: &crate::workspace_control::Context,
     ) -> Result<crate::memory_hook::Scope, &'static str> {
-        let (node, link) = self.linked_node(&context.device_id)?;
+        let (node, link) = self.memory_node(&context.device_id)?;
         Ok(crate::memory_hook::Scope {
             store: self.memory_database_path(),
             node,

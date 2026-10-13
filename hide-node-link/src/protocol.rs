@@ -428,6 +428,9 @@ pub enum Call {
         source: crate::usage::LimitSource,
         root: String,
     },
+    /// One bounded public price-table read (`usage::PriceFetch`).
+    /// No caller-selected URL or payload; devices refuse it.
+    UsagePriceFetch,
     /// Reads files the operator picked to attach to a terminal
     /// (`attachments::ReadFile`, in order), reporting before each file; a
     /// report answered with false ends the read as cancelled.
@@ -531,6 +534,20 @@ pub enum Call {
     /// conversation; a path outside the agent roots is refused.
     LinkRead {
         requests: Vec<hide_session::links::ReadRequest>,
+    },
+    /// Content-free usage candidates from this node's native agent roots.
+    /// Requires the independently advertised `Usage` reader feature.
+    UsageFiles {
+        agent: hide_session::Agent,
+        since_unix_ms: u64,
+    },
+    /// One bounded usage step; the core owns the durable checkpoint and
+    /// ledger. This never returns conversation records.
+    UsageRead {
+        agent: hide_session::Agent,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::usage::Checkpoint>,
     },
     /// One bounded read of a session file for the core's search index, on
     /// from what the index saved (`hide_session::search_read::read_step`);
@@ -772,6 +789,8 @@ impl Call {
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }
+            | Self::UsageFiles { .. }
+            | Self::UsageRead { .. }
             | Self::SessionIndexRead { .. }
             | Self::SessionStamps { .. }
             | Self::ProjectSessions { .. }
@@ -799,6 +818,7 @@ impl Call {
             | Self::AiRestart { .. }
             | Self::AiRelease { .. }
             | Self::UsageLimitFetch { .. }
+            | Self::UsagePriceFetch
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
             | Self::RemoveClipboard { .. }

@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
-import { usePaneMenu } from "./PaneRelations";
+import { usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
+import type { TerminalContextLink } from "./terminalLinkProvider";
 import type { PaneRow } from "./snapshot";
 
 // The shell's modules reach xterm, which asks jsdom for a canvas it lacks.
@@ -23,9 +24,11 @@ async function openMenu(first: PaneRow, firstTitle: string) {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
   const actions = createActions(() => true);
   let open: (x: number, y: number) => void = () => {};
+  let openTerminal: ReturnType<typeof usePaneMenu>["openTerminalAt"] = () => {};
   function Header({ pane, title }: { pane: PaneRow; title: string }) {
     const menu = usePaneMenu(pane, title, actions);
     open = menu.openAt;
+    openTerminal = menu.openTerminalAt;
     return menu.menu;
   }
   const container = document.createElement("div");
@@ -35,8 +38,34 @@ async function openMenu(first: PaneRow, firstTitle: string) {
   await render(first, firstTitle);
   await act(async () => open(10, 10));
   const labels = () => Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent);
-  return { render, labels, unmount: () => act(async () => root.unmount()) };
+  return {
+    render, labels,
+    header: () => act(async () => open(10, 10)),
+    terminal: (context: TerminalMenuContext, link: Promise<TerminalContextLink | null>) => act(async () => openTerminal(10, 10, context, link)),
+    unmount: () => act(async () => root.unmount()),
+  };
 }
+
+it("keeps a dismissed or newer menu when a terminal link resolves late", async () => {
+  const menu = await openMenu(row(), "Shell");
+  const context: TerminalMenuContext = {
+    selection: false, zoomed: false, paneCount: 1,
+    chords: { copy: "", paste: "", find: "", splitRight: "", splitDown: "", zoom: "" },
+  };
+  for (const replace of [false, true]) {
+    let resolve!: (link: TerminalContextLink) => void;
+    const pending = new Promise<TerminalContextLink>((done) => { resolve = done; });
+    await menu.terminal(context, pending);
+    expect(menu.labels()).toContain("Paste");
+    if (replace) await menu.header();
+    else await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await act(async () => resolve({ target: { kind: "url", url: "https://example.test/" }, found: null }));
+    expect(menu.labels()).not.toContain("Copy link");
+    if (replace) expect(menu.labels()).toContain("Close pane Shell");
+    else expect(menu.labels()).toEqual([]);
+  }
+  await menu.unmount();
+});
 
 it("names the pane as its header does while the menu is open", async () => {
   const menu = await openMenu(row(), "Claude");

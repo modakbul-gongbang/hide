@@ -40,6 +40,16 @@ The desktop page's connecting and failure states keep a drag strip of the same h
 Window-wide notices (the connection badge, the notice line, the agent close notice, draft recovery and Workspace notices) run the window's width under the row.
 Windows, Linux and a browser tab keep their own window frame and draw the same row with no traffic-light space.
 
+### A part that cannot be drawn
+
+Web owner: `web/src/RenderBoundary.tsx`, `web/src/App.tsx`.
+
+A part of the window that fails to draw takes no other part with it: the top row, each window-wide notice, the sidebar, the screen in the center, each overlay and the browser displays' bridge fail on their own, and the page keeps its connection to the core.
+The sidebar, at its own width, and the center screen show one quiet line in their place, `이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.`; the top row keeps an empty strip of its height the window is dragged from, and a notice, an overlay or the bridge that fails is left out.
+A part is drawn again on the next change to the core's snapshot or to the page's own state, a new diagnostic not counted, and nothing listens for that change while every part draws.
+The failure is a diagnostic naming the part and the error, once per error until the part draws again; there is no banner.
+Only when the window's frame itself cannot draw does the line take the whole window, under the drag strip.
+
 ### The three columns
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
@@ -351,7 +361,8 @@ Connection and sleep recovery controls stay in the body, and Not connected stays
 Bands overlay the terminal and change neither its viewport nor PTY grid.
 Pending and failed moves appear at the initiating popover, ancestor step or band with the existing retry rules, plus the Agent-area notice when the source pane is no longer visible.
 
-The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name, Copy pane ID and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
+The pane menu (from its overflow control or a right-click on the header) lists the parent and the other siblings as explicit Open items, then Copy pane name, Copy pane ID and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
+The pane's own children are not in it: its tree button opens them.
 The menu names the pane as its header does and is drawn from the pane as it is now, not as it was when the menu opened: a session's label arrives after its first turn, and the menu already open then reads `Close pane <label>` and offers Fork agent and Sleep agent as the core now says.
 A right-click in the terminal focuses that pane, like a click, and opens a longer menu: Copy (only over a selection), Paste, Select all, and Find; then Split right, Split down, and Zoom pane or Unzoom pane (disabled on a tab's only pane); then the pane menu's items; an item with a chord that does the same shows it, ⌘C and ⌘V included.
 The Zoom pane chord on a tab's only pane does nothing either, on this machine and on a device: the core does not send it and logs `pane.zoom.single_pane` (`remote.control.zoom_single_pane` for a device).
@@ -476,15 +487,20 @@ A URL takes the same boundary, and since a URL cannot be checked, a particle aft
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
-A click opens it in the front Workspace: a URL as a browser display, a file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
+A click opens it in the front Workspace: a URL or an HTML file (`.html`, `.htm` or `.xhtml`, case-insensitive) as a browser display, another file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
 A path in another registered checkout brings that checkout forward; with no Workspace in front a URL goes to the default browser.
+Right-clicking a URL offers Open in Hide, Open in default browser and Copy link above the terminal's ordinary editing and pane actions.
+Right-clicking an existing path offers Open, Open in default application, the host's Reveal in Finder/File Explorer/file manager and Copy path; an HTML file in a registered checkout offers Open in browser and Open source instead of Open.
+Open source opens that HTML file in View at the line its link names.
+These choices use the exact target under the pointer, including an OSC 8 label, and keep that target after the pointer leaves it; Copy path copies its physical path without the line suffix.
+Opening or dismissing the menu moves no checkout, opens nothing and sends no click to the terminal program; a late path check cannot reopen a dismissed menu or replace a newer one.
 ⌘-click (Ctrl off macOS) hands the link to the operating system: a URL to the default browser, a path to its default application or, for a folder, a Finder window, within the limits below.
 A path outside every registered checkout, such as `/tmp`, goes to the operating system on a plain click as well.
 The operating system opens only a plain document (text, source, a PDF, an image, audio or video) or a folder whose name has no extension; anything else, such as a script, a program, a spreadsheet, an application bundle or an installer, is revealed in Finder, never opened.
 A program's OSC 8 link takes the same routes with no confirmation dialog: `file://` and `vscode://file/` addresses are paths, any other scheme is not opened, and a refused link goes to the diagnostic log.
 A pane on an SSH device, and a page outside the desktop app, links URLs only, because its paths name files this Mac cannot check.
 A path with a space in it is a link only where the program marks it (OSC 8), since plain text gives no way to tell where it ends.
-Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider.ts` (the check and the routes), `web/src/actions.ts` (`openLink`, `openTerminalPath`), `web/src/editor/lineRequest.ts` (the line); desktop owner: `desktop/src/main/localPath.ts`.
+Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider.ts` (the check and the routes), `web/src/terminals.ts` (pointer-to-cell lookup), `web/src/PaneRelations.tsx` (target-specific menu), `web/src/actions.ts` (`openLink`, `openTerminalPath`), `web/src/editor/lineRequest.ts` (the line); desktop owner: `desktop/src/main/localPath.ts`.
 
 ## Web Project Conversation history
 
@@ -511,7 +527,7 @@ The open session's row is the list's one Tab stop; the arrows, Home, and End mov
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it unavailable, and keeps its reason, Retry, and Copy source location under it, copying the provider file's own path.
 A session whose file is no longer found after the history listed it stays listed the same way, with an explanation that it may have been moved or deleted, and its last location to copy.
-The list place shows one small mark per state: loading, no sessions yet, no matching sessions (with Clear filters), sessions could not be read (with the reason and Retry), and on a device Project, sessions unavailable with the device's reason and no Retry.
+The list place shows one small mark per state: loading, no sessions yet, no matching sessions (with Clear filters), sessions could not be read (with the reason and Retry), and on a disconnected device Project, sessions unavailable with the device's reason and no Retry.
 The open session shows its row's provider, checkout, and time with Copy source location, its request as the title, then each request and answer in order as plain text; injected context, where Project Memory travels, is not shown.
 A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again and then the session.
 A session the link record joined to pull requests carries a chip for each on its row and on the open session's head, `#317 만듦` for one it made and `#317` for one it worked on, which opens the PRs tab with that pull request's panel (PRD link-graph B36); a session with none has no chip, and a chip that arrives while the record fills just appears.
@@ -527,21 +543,48 @@ The core opens one Project's Memory per daemon; the Tools column, whatever tool 
 Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI asks now with its logo (the listed agent standing in while Runs on is past the usage limit or cannot answer); with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
 While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says verified cards are still used; when every agent is past the usage limit the same dimmed state reads "Hide AI is paused: every agent is past your usage limit this week. Saved cards are still used." (PRD hide-ai-usage-limit D-06).
-A Project on an SSH device, one Hide connects to, shows one line that Memory is not kept for SSH devices' sessions and names the device; nothing else is drawn.
-A Project on a computer that connects to Hide on its own has Memory as this machine's Projects do (PRD core-host-node-move B14).
-`물어볼 것` appears, and the tab's name carries a dot, only while the Project has a card to suggest for the repository's documents or a promotion that ended without a pull request.
-A suggestion shows its reasons (`사람 말이 세션 3개에 · 14일 동안 세션 9개에서 꺼냄`, counted by session and never by how often it was said) with `올리기` and `안 올림`; a failed one shows `PR 없이 끝남` with `다시 시도`, or, in that status slot, why its agent never started: `셸이 질문에서 멈춤: <the question's line>` when the new pane's shell stopped at a startup question, `에이전트가 시작되지 않음`, or `에이전트를 시작하지 못함` for any other refusal, whose words stay in the log; at most three suggestions are open, and a card answered `안 올림` is not suggested again until its text changes.
+A Project on any linked device shows the same Memory controls and cards as this machine's Projects, read from the core's store with the device's own Project identity.
+The disclosure says cards stay in Hide's Memory, and the delete confirmation removes them from this Project's Memory; neither claims the screen's device owns the store.
+An unavailable link or Memory reader uses the existing unreadable state; its reason is recorded in the diagnostic log.
+`물어볼 것` appears, and the tab's name carries a dot, while the Project has a suggestion, an unresolved document comparison or a failed placement.
+Each compact row has a one-line title and one-line reason, truncating long text; `Compare` reads and opens the document excerpt and original operator words with their dates only when requested.
+A newer operator decision offers `Fix the doc` and `Card is wrong`; unknown or equal dates first offer `Card is right` and `Doc is right`, and cannot be selected until answered.
+Choosing the document marks the card Outdated; choosing the card turns the row into a document correction proposal.
+Eligible rows have checkboxes; selecting one to five shows `N selected · up to 5 per PR`, `Clear` and `Open one PR`, and at five the other checkboxes are disabled.
+The row's single-card action uses the same batch path.
+While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
+Promotion reasons omit zero counts and use short source-session counts.
+Started single or batch promotions remain in To ask, in the same two-line format as the questions: a PR mark in the checkbox slot, card numbers, the first title and `+N` for additional cards, then the status and links.
+Before a PR exists the row says Writing PR with the durable attempt's elapsed time; cards bound to the same running agent and attempt share a row.
+After confirmation, cards with the same PR number share a row, and `PR <number>` opens the existing PR panel.
+The catalog's failed checks use destructive text, requested changes and an agent asking the operator use warning text, and writing or awaiting review is neutral.
+`Agent ↗` appears only while writing or needing attention and only when a real pane is known; a quiet review row keeps only its disclosure indicator.
+After PR creation the agent link requires a Hide AI promotion origin and that agent's live PR association with the catalog's full repository-qualified URL, rather than a name or branch guess.
+This applies equally to promotions already open before upgrade; PR numbers remain plain identifier digits in all four languages.
+Every To ask row expands from its title, reason or empty space, or its single disclosure button with Enter or Space; the chevron only indicates expansion.
+Checkboxes, links and action buttons perform only their own actions.
+An ordinary question opens its current body, cited files and sources below its action buttons, while a document disagreement opens Compare content.
+A progress row opens each card's title and a two-line body preview, followed by Open PR and Open agent where their real targets are available.
+Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
+A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
+A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
-A card being promoted adds `에이전트가 올리는 중 · <agent>` and the name opens that agent's pane (with no name while the agent has not shown its session); with a pull request open it adds the pull request mark and `검토 대기`, which opens the PRs tab with its panel; once merged it dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`; a pull request closed unmerged leaves an ordinary card.
-A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+A searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears; expanding a progress row does not duplicate it in Cards.
+Once merged, its ordinary card dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`.
+A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
+Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
+An Outdated comparison dims its card and names the document and its date, asks nothing and is excluded from injection.
+Document references in card metadata and Compare headers show a single-line filename, truncated when needed, with the full path on hover and the date alongside.
+An unverified card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
+An already verified card awaiting its first document comparison stays usable and keeps its suggestions while waiting, even when the checking budget is spent.
 The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
 When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.
 The core supplies the checking budget's next reset timestamp, and its explanation draws that date and time in the viewer's timezone and interface language, with no UTC wording.
 With Memory off, stored cards are retained but the list and its empty slot stay hidden behind the existing off disclosure, and the usable count is zero.
 An older consent shows a short re-consent explanation under the existing off disclosure and points to the switch above; it never enables or injects on its own.
 The core supplies the usable count, current card and reasons, and the shell only draws them; no banner, alert, toast or panel is added.
-The checking mark is one line in the 260px Tools column in all four languages, the card is still listed and opens in full, and agents are not given it until the check ends (PRD memory-card-quality D-13, B6, B19).
+The checking mark is one line in the 260px Tools column in all four languages, and the card is still listed and opens in full; an unverified card is not given to agents until the check ends (PRD memory-card-quality D-13, B6, B19).
 When the agent is gone and GitHub cannot say whether its pull request came (gh missing or logged out, or GitHub not answering), the line reads `PR 확인 못 함 · <reason>` with no spinner and nothing to press, since restoring GitHub settles it; it is not asked about in `물어볼 것`.
 A card on its way into the repository is never folded under `그 외 N`, and a card opened from a conversation clears a search that leaves it out.
 A card opens in place: `N분 전에 바뀜 · 이전 내용` when a text replaced another (the earlier text with `되돌리기`), its body, its cited files, its sources with their runtime, time and whether they are the operator's words, and `지우기`.
@@ -744,12 +787,13 @@ The Issues tab opens a board of issues, laid out by PRD overview-lenses-issues: 
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
 Every project on this Mac has one issue source, chosen in the project row's Issue source menu (Auto, GitHub or Local, the stored choice checked): GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
+An open Issue source menu follows the core's stored choice as it arrives, including an acknowledgement received after the menu reopened; selecting an item does not create a second, optimistic choice in the shell.
 A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project of a device the core dials has no source here, while a project of a node that dials the core (the screen machine of a core that runs elsewhere) keeps its source, its issues and its Start as it had them before the core moved (PRD core-host-node-move D-29).
 The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, when it last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
 
 Every card is an issue; a worktree or a pull request is never a card of its own.
 An issue's stage is its checkout's: 완료 when the worktree is merged (as the Agents view says), 리뷰 with an open pull request, and 진행 중 otherwise; agents and the issue's own state never move it.
-An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards.
+An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards; the checkout's agents ride only on the issue the checkout works on, and the other card carries the chip without agent rows.
 Git ancestry against the base the core resolves, in the local branch or in its `origin/` copy as of the last fetch, reads a branch with no commits of its own as merged once its base resolves, which is why merged also needs the link record and why a Local issue is never closed by a merge, only by the operator.
 백로그 holds the open issues no checkout works on, most recently changed first; past 20 cards the rest wait behind `+N · 최근 갱신 순`.
 The primary checkout or a folder is a card only while an agent works there on a linked issue; an agent there with no issue is on the Agents view, not an issue.
@@ -1283,24 +1327,29 @@ Its What changes opens a list with one row per place Hide writes, the path in mo
 A chosen agent that did not go in keeps the step with `<agent> was not set up: <reason>` and Try again (B12).
 A pass that could not run (the kit link failed, or the pass listed no agent) keeps the step, says `Hide could not set up agents on this Mac:` with the reason, leaves the choice unanswered, and reads the agents again; the step says the same whenever the kit could not run here, as after a relaunch, and never that no agent is installed; `Try again` then records nothing and only has the agents read again, and once they are back Continue sends the choice anew; the walk Help reopens does the same, staying on the agents step with that line and no banner (B12, B44).
 The notifications step's description names the system that shows the notification (macOS, Windows, or `your desktop`), and its footer offers `Not now` and `Turn on notifications` at the right, with `Also on your phone →` at the left.
-Turning them on stores the switch and sends one test notification, `Notifications work`, which is what makes macOS ask; while macOS's dialog waits the step says `Waiting for your answer…` and holds `Turn on notifications`, an allowed answer shows `Notifications are on` with `Send a test`, and a refusal shows `macOS is blocking Hide's notifications` with `Open System Settings`, which opens Hide's page of the system's notification settings; once answered the footer offers Continue, drawn as a secondary button while macOS blocks, and a blocked state is not counted as on (B14, B15).
+On a fresh install, `Turn on notifications` enables Needs You only; Done stays off to avoid announcing every completion (operator decision 2026-10-13).
+Turning them on stores that choice and sends one test notification, `Notifications work`, which is what makes macOS ask; while macOS's dialog waits the step says `Waiting for your answer…` and holds `Turn on notifications`, an allowed answer shows `Notifications are on` with `Send a test`, and a refusal shows `macOS is blocking Hide's notifications` with `Open System Settings`, which opens Hide's page of the system's notification settings; once answered the footer offers Continue, drawn as a secondary button while macOS blocks, and a blocked state is not counted as on (B14, B15).
 The step reads macOS's permission every two seconds while it is open, one read at a time, so a change in System Settings shows within seconds; an already allowed Mac shows `Notifications are on` at once, with Continue, which turns the switch on with the step; nothing is said before the first read; a permission Hide cannot read shows `Hide can't read the notification setting` with `Send a test`, and the reason goes to the host log (B16-B18).
 On Windows and Linux the step has no permission to show: turning on stores the switch and sends the test once (B19).
-A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > Notifications shows the same line under its switch, which stays off and locked, with no test (D-24, B47, B48).
-Settings > Notifications' desktop group is the switch `Notify me when an agent needs me`; while it is on, a second row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front; the app icon marks agents that need you.` (B30).
-`Not now` goes on with the switch off, even after `Turn on notifications` was pressed while macOS still asks, in the same event that leaves the step, and `Also on your phone →` opens Settings > Mobile over the wizard, which returns to the step when it closes (B21).
+A desktop with no notification service (Electron says notifications are not supported, or on Linux the last notification failed to show, until one shows again) shows no `Turn on notifications`: the step says `This desktop has no notification service, so Hide can't show notifications here.` with Continue, and Settings > Notifications shows the same line under Needs You; both switches stay off and locked, with no test (D-24, B47, B48).
+Settings > Notifications' desktop group has independent `Notify me when an agent needs me` (Needs You) and `Notify me when an agent finishes` (Done) switches; while either is on, the permission row says what macOS allows (`macOS permission`, `✓ Allowed` with `Send a test`, `! Blocked by macOS` with `Open System Settings`), or on Windows and Linux `Test notification` with `Send a test`, and the group ends with `Sent only while no Hide window is in front. With Needs You on, the app icon counts agents that need you.` (B30).
+`Not now` goes on with both switches off, even after `Turn on notifications` was pressed while macOS still asks, in the same event that leaves the step, and `Also on your phone →` opens Settings > Mobile over the wizard, which returns to the step when it closes (B21).
 The project step is Add a project under `Add your first project`, with its Host select, Browse folder, Clone from URL and Create new project, its refusals and its clone progress, and `Skip for now` (B22, B25); its Host list has no Add device, which would take the wizard's place, and only a project on the chosen host counts as the one added.
 The first project added ends the wizard and opens the start panel once, on that project, with the first agent that is on and signed in (in the order Claude Code, Codex, Grok, Pi), else the first agent that is on, and the keyboard in its text box; with no agent on it opens no panel and the wizard closes to the empty Home, whose Start an agent is the way on; a later project opens nothing (D-15, B23, B24).
 The start panel says `! Not signed in` right after its agent menu whenever that agent is one whose sign-in Hide checks and its last read was signed out (B23, D-06).
 A browser tab shows the agents step alone, with no progress bar, and Continue there ends the wizard; the notifications and project steps are the desktop app's (D-14, B26).
 The desktop app's Help > Set up Hide opens the same steps from the first as this window's own walk: the agents step starts from the agents switched on now and its Continue switches only the agents whose switch changed, the way Settings > Agents does; Escape and the close button end it, and a step not continued changes nothing (B45, B46).
 
-With the switch on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error) or newly finishes, while no Hide window has the keyboard: its title is the task name (the agent's name when there is none) and its body `Needs you · <project>` or `Done · <project>` in the interface language (D-09 to D-11, B31, B39).
+With Needs You on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error); Done independently enables new completions.
+Both are sent only while no Hide window has the keyboard: its title is the root's row title (the provider when no task or proven native title exists), and with a second-line sentence its body is `<translated row status> · <exact sentence> · <project>` (D-09 to D-11, B31, B39, operator-approved update 2026-10-13).
+The sentence stays in its original language; without one the body remains exactly `Needs you · <project>` or `Done · <project>` in the interface language, and an empty project omits its separator.
+See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for the title priorities, native and inferred questions, counts and both notification channels in each mode.
 hided judges the changes with the phone push's rules (status-model.md, Row presentation and phone notifications), so a child's raise arrives on its root, the same state never notifies twice, an agent back within ten minutes is not announced again, and nothing already waiting when the app opened is announced (B32, B33).
 A click brings Hide forward and opens that agent's pane, on a device too; an agent the operator has seen takes its notification back, and a newer one for the same agent replaces it (B34, B35).
 On Windows a click on a notification in Action Center after Hide quit starts Hide and opens what it named once the shell is up, as a click while it runs does.
-The same switch puts a count on the app icon: how many root agents are in the Needs You group across every device and project the window shows, Done not counted, and nothing at zero; macOS draws it on the Dock once it lets Hide notify, Linux where the desktop shows launcher counts, and Windows as a dot on the taskbar button whose description gives the count.
-With the switch off nothing is sent and the app icon has no count, and the phone's push follows its own settings whatever this switch says (B36, B38).
+The Needs You switch puts a count on the app icon: how many root agents are in the Needs You group across every device and project the window shows, Done not counted, and nothing at zero; macOS draws it on the Dock once it lets Hide notify, Linux where the desktop shows launcher counts, and Windows as a dot on the taskbar button whose description gives the count.
+With both switches off nothing is sent; with Needs You off the app icon has no count even if Done is on.
+The phone's push follows its own settings whatever these switches say (B36, B38).
 
 The Factory screen shows one line under its title the first time it opens, saying what the screen does and its first step, and never again (`ui_state.screen_intros_seen`); it counts as seen once it has been drawn, so a visit that only showed loading or a Task page leaves it for the next; Settings > Devices keeps its own description instead, and both empty states are unchanged (D-18, B43).
 
@@ -1548,8 +1597,8 @@ Settings > Agents > Starting work has no default agent of its own.
 
 ## Usage
 
-Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
-The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/UsageOverview.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
 The footer draws up to three pinned account windows, followed by Help and Settings.
@@ -1571,7 +1620,31 @@ Network and timeout detail stays in diagnostics.
 No usage state becomes a banner, toast or alert.
 The countdown advances once a minute only while the popover is open.
 
-The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Below the account cards, New tokens draws up to twenty Sunday-first weeks of the core's own machine's recorded usage.
+Overview's Usage tab draws up to a year beside the same account cards and the agents without limit readings.
+New tokens means input, output and cache writes; cache reads are shown in the day detail and excluded from every total, share and intensity.
+The core prepares the day boundaries, quartile levels, peak, active days, streak and shares; the page only formats and draws them.
+Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
+The calendar starts at the first retained record's week, bounded by the surface's width in weeks; during initial backfill it starts forty-five days ago, marks unread days and shows file progress and `so far`.
+Finishing the backfill removes leading empty weeks once.
+With no records and no backfill there is no popover section or Overview history column; with no visible account chips the footer's chart button opens the available history.
+
+The popover reserves its tallest localized day or agent detail before hover, so its height and the cell under the pointer stay still.
+At rest it shows the peak and all agent shares; a day shows date, total, input/output/write, excluded read tokens, API-rate equivalent cost and the top three agents plus the remaining count.
+An agent share shows that agent's retained lifetime cost; costs are otherwise hidden.
+An unpriced model or incomplete native usage makes the cost a lower bound with its reason; an absent price table says cost will appear once it loads, and a table older than sixty days is marked stale.
+No calls means No data, never a zero dollar amount.
+Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes the limit outline.
+Arrow keys move through dates, Home and End reach the range's ends, and keyboard focus shows the same details as hover.
+
+Pressing an agent share or bar filters the calendar and statistics while keeping the complete agent comparison visible; pressing it again clears the filter.
+Usage history opens Overview's global Usage tab; it is not a per-project ledger.
+The large surface adds current and longest streak, peak, period totals and agent bars, replaced by the selected day's details and bars while over a day.
+Pi and omp show recorded provider provenance using known display names, account wording only for a recorded account provider, and no line for an unknown provider.
+A bounded or partly unreadable source has the small limited marker in its own row and range.
+At narrow widths and large Interface text the Overview columns stack and copy wraps; a full-year grid scrolls within its calendar, never the whole page sideways.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` while the popover or Usage tab is open.
 Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
 The core keeps one value of each hint, so with several pages open the last page to report decides.
 
@@ -1712,7 +1785,12 @@ General is Appearance alone: one group with Language, Theme, Accent and Interfac
 ### Notifications
 
 Notifications holds every notification Hide sends, in two groups (PRD settings-left-nav B6).
-The first, named for this machine and only in the desktop app, has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
+The first, named for this machine and only in the desktop app, has two independently stored switches in the existing row group: `Notify me when an agent needs me` (Needs You) and `Notify me when an agent finishes` (Done).
+Both default off before the wizard's choice; the fresh wizard enables Needs You only, and `Not now` disables both.
+An existing install whose old shared switch was on migrates to both on; an old off or absent switch migrates to both off, so no existing notification choice silently disappears.
+Each toggle sends one event and persists through the core's existing UI-state writer; a repeated choice publishes nothing and a stale generic UI save cannot replace either choice.
+While either switch is on, the group shows what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, or a `Test notification` row on Windows and Linux.
+The note says notices arrive only while no Hide window is in front, and the icon count follows Needs You only (First run above).
 The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile below describes.
 
 ### Usage
@@ -1918,7 +1996,9 @@ Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표,
 When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
 A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
 With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
-A notification's title is the task name and its body 내 확인 대기 or 끝 with the project; tapping it opens that agent's detail.
+A notification's title is the root's row title and, with a sentence, its body is `<translated row status> · <exact sentence> · <project>`; without a sentence it keeps 내 확인 대기 or 끝 with the project in Korean, and the corresponding group words in the phone's language.
+The sentence is the core's chosen row detail, untranslated, and may appear in lock-screen previews according to the phone's setting (operator-approved update 2026-10-13); tapping the notice opens that agent's detail.
+See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for native question and plain-text question behavior, and cached-worker compatibility.
 A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
 The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
 
@@ -2048,6 +2128,7 @@ Pane focus, active tab, tab order, zoom state, and disappearing anchors all upda
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.
 There the operator chose `모두 닫기` as the Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
 Escape closes the innermost open layer and returns focus to whatever held it before that layer opened, including a terminal that was focused when a sheet, menu, or overlay opened over it.
+A context menu returns focus to its real target; a delayed focus return from any layer leaves a newer control or layer's focus in place.
 A tooltip or hover card is not a layer: an Escape pressed while one shows still reaches the terminal or the screen it was meant for, and closes the tooltip on its way, whether the tooltip's own dismiss or the shell answers the press.
 A disabled control cannot activate, and destructive meaning always comes from the control's role rather than from its text color alone.
 Hover and focus are local presentation state: they never publish core snapshots, dispatch core events, or trigger Git/disk work by themselves.

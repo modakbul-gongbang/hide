@@ -18,7 +18,7 @@ import { wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { caughtUp } from "./operatorFocus";
 import { useShellStore } from "./store";
-import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalSelectionText } from "./terminals";
+import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalLinkAt, terminalSelectionText } from "./terminals";
 
 /**
  * Transport states with a live stream; anything else is drawn as a caption in
@@ -264,7 +264,7 @@ export const PaneView = memo(function PaneView({
       zoomed,
       paneCount,
       chords: terminalMenuChords(),
-    });
+    }, terminalLinkAt(paneId, event));
   };
   const zoomChord = zoomed ? terminalMenuChords().zoom : "";
   const hidden = paneCount - 1;

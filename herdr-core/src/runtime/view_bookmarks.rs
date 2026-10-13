@@ -283,13 +283,18 @@ impl Runtime {
                 self.record_view_bookmark(key, &tab, view_id);
             }
             None => {
-                if let Some(active) = self.workspace_active_tab(key) {
-                    self.record_view_bookmark(key, &active, view_id);
-                }
+                self.note_active_view(key, view_id);
                 if let Some(tab) = self.control_caller_tab(key, caller_id) {
                     self.record_view_bookmark(key, &tab, view_id);
                 }
             }
+        }
+    }
+
+    /// An operator's revealed View must survive a newly shown tab's saved bookmark.
+    pub(super) fn note_active_view(&mut self, key: &WorkspaceKey, view_id: &str) {
+        if let Some(active) = self.workspace_active_tab(key) {
+            self.record_view_bookmark(key, &active, view_id);
         }
     }
 
