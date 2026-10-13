@@ -35,6 +35,8 @@ pub struct RowFacts {
     /// Available only from a current reference-proven native read.
     pub(crate) native_session_id: Option<String>,
     pub(crate) native_title: Option<String>,
+    /// A title whose native record explicitly identifies a manual rename.
+    pub(crate) native_custom_title: Option<String>,
     pub(crate) operator_request: Option<Request>,
     pub(crate) other_request: Option<Request>,
     pub(crate) reply: Option<Reply>,

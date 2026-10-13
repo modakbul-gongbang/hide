@@ -614,18 +614,17 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let message = label.and_then(agent_message);
 
     let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
-    // Every surface uses the adapter's title priority, from proven facts
+    // Every surface uses one title order, from proven facts
     // alone. Herdr's workspace and control names never enter this ladder.
     let native_title = agent
         .facts
         .as_ref()
         .and_then(|facts| line_text(facts.native_title.as_deref(), MAX_LABEL_TEXT_CHARS));
-    use hide_agent_adapter::TitlePriority;
-    let title = match hide_agent_adapter::adapter(agent_kind).map(|row| row.key.title_priority()) {
-        Some(TitlePriority::NativeFirst) => native_title.or(task),
-        Some(TitlePriority::GoalOnly) => task,
-        Some(TitlePriority::GoalFirst) | None => task.or(native_title),
-    };
+    let manual_title = agent
+        .facts
+        .as_ref()
+        .and_then(|facts| line_text(facts.native_custom_title.as_deref(), MAX_LABEL_TEXT_CHARS));
+    let title = manual_title.or(task).or(native_title);
     let identity_label = title.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         state: Default::default(),
@@ -1619,33 +1618,38 @@ mod tests {
         );
     }
 
-    /// Product title rules are fixed independently of adapter capabilities.
-    /// Summaries may be absent; Cursor has no native title authority.
+    /// status-model.md: manual, goal, automatic, provider for every agent.
+    /// Reader capability determines which facts can reach this ladder.
     #[test]
-    fn all_shared_surfaces_receive_the_providers_title_priority() {
-        for (kind, both, without_goal, without_native) in [
-            (
-                "claude",
-                "generated goal",
-                "native rename",
-                "generated goal",
-            ),
-            ("codex", "generated goal", "native rename", "generated goal"),
-            ("grok", "native rename", "native rename", "generated goal"),
-            (
-                "opencode",
-                "native rename",
-                "native rename",
-                "generated goal",
-            ),
-            ("pi", "native rename", "native rename", "generated goal"),
-            ("omp", "native rename", "native rename", "generated goal"),
-            ("cursor", "generated goal", "cursor", "generated goal"),
+    fn all_shared_surfaces_receive_manual_then_goal_then_automatic_then_provider() {
+        for (kind, provider) in [
+            ("claude", "Claude"),
+            ("codex", "Codex"),
+            ("grok", "grok"),
+            ("opencode", "OpenCode"),
+            ("pi", "pi"),
+            ("omp", "omp"),
+            ("cursor", "cursor"),
         ] {
-            for (goal, native, expected) in [
-                (Some("generated goal"), Some("native rename"), both),
-                (None, Some("native rename"), without_goal),
-                (Some("generated goal"), None, without_native),
+            for (manual, goal, automatic, expected) in [
+                (
+                    Some("운영자 이름"),
+                    Some("Hide 작업명"),
+                    Some("자동 제목"),
+                    "운영자 이름",
+                ),
+                (None, Some("Hide 작업명"), Some("자동 제목"), "Hide 작업명"),
+                (None, None, Some("자동 제목"), "자동 제목"),
+                (None, None, None, provider),
+                (Some("운영자 이름"), None, Some("자동 제목"), "운영자 이름"),
+                (
+                    Some(" \n\t"),
+                    Some("Hide 작업명"),
+                    Some("자동 제목"),
+                    "Hide 작업명",
+                ),
+                (None, Some(" \n\t"), Some("自動 제목"), "自動 제목"),
+                (None, None, Some(" \n\t"), provider),
             ] {
                 let mut agent: SessionAgentPayload = serde_json::from_value(json!({
                     "pane_id":"p", "id":"control-name", "agent":kind,
@@ -1660,7 +1664,8 @@ mod tests {
                     blocked: false,
                 });
                 agent.facts = Some(crate::request_view::RowFacts {
-                    native_title: native.map(str::to_owned),
+                    native_title: automatic.map(str::to_owned),
+                    native_custom_title: manual.map(str::to_owned),
                     ..Default::default()
                 });
                 assert_eq!(
