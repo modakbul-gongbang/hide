@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::turns::TurnTracker;
 use crate::{
@@ -59,12 +60,63 @@ pub struct WorkTurnRequest {
     pub path: Option<String>,
     pub cwd: String,
     pub offset: u64,
+    pub witness: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkTurn {
     pub request: String,
     pub assistant: String,
+}
+
+impl WorkTurn {
+    /// An append-safe witness of the exact material judged at this END.
+    pub fn witness(&self) -> String {
+        let mut digest = Sha256::new();
+        for part in [&self.request, &self.assistant] {
+            digest.update((part.len() as u64).to_le_bytes());
+            digest.update(part.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+}
+
+/// The same original-turn material from a label worker's already read events.
+pub fn work_turn(events: &[LabelEvent], offset: u64) -> Option<WorkTurn> {
+    let first = events
+        .iter()
+        .position(|e| e.kind == LabelEventKind::Human && e.offset == offset)?;
+    let request = events[first].text.clone();
+    if request.chars().count() > WORK_TURN_REQUEST_CHARS {
+        return None;
+    }
+    let mut assistant = String::new();
+    let mut chars = 0;
+    for event in events[first + 1..]
+        .iter()
+        .take_while(|e| e.kind != LabelEventKind::Human)
+    {
+        if event.kind != LabelEventKind::Assistant {
+            continue;
+        }
+        chars += event.text.chars().count() + 1;
+        if chars > WORK_TURN_ASSISTANT_CHARS {
+            return None;
+        }
+        if !assistant.is_empty() {
+            assistant.push('\n');
+        }
+        assistant.push_str(&event.text);
+    }
+    Some(WorkTurn { request, assistant })
+}
+
+fn witnessed(answer: Option<WorkTurn>, expected: &str) -> Result<WorkTurn, String> {
+    let answer = answer.ok_or("work_turn_missing")?;
+    if expected.len() != 64 || answer.witness() != expected {
+        return Err("work_turn_changed".into());
+    }
+    Ok(answer)
 }
 
 pub const WORK_TURN_REQUEST_CHARS: usize = 16_000;
@@ -74,10 +126,13 @@ const WORK_TURN_PAGES: usize = 64;
 /// Return only the requested original turn, through the same location,
 /// owner and replacement checks as labels. No other turn reaches a caller.
 pub fn read_work_turn(home: &Path, turn: &WorkTurnRequest) -> Result<WorkTurn, String> {
-    let (kind, value) = turn
-        .path
-        .as_deref()
-        .map_or(("id", turn.session_id.as_str()), |path| ("path", path));
+    let (kind, value) = if matches!(turn.agent, Agent::OpenCode | Agent::Cursor) {
+        ("id", turn.session_id.as_str())
+    } else {
+        turn.path
+            .as_deref()
+            .map_or(("id", turn.session_id.as_str()), |path| ("path", path))
+    };
     let mut request = LabelTranscriptRequest {
         agent: turn.agent,
         reference_kind: kind.into(),
@@ -113,7 +168,7 @@ pub fn read_work_turn(home: &Path, turn: &WorkTurnRequest) -> Result<WorkTurn, S
         for event in page.events {
             if event.kind == LabelEventKind::Human {
                 if answer.is_some() {
-                    return Ok(answer.expect("checked above"));
+                    return witnessed(answer, &turn.witness);
                 }
                 if event.offset == turn.offset {
                     if event.text.chars().count() > WORK_TURN_REQUEST_CHARS {
@@ -138,7 +193,7 @@ pub fn read_work_turn(home: &Path, turn: &WorkTurnRequest) -> Result<WorkTurn, S
             }
         }
         if !page.has_more {
-            return answer.ok_or("work_turn_missing".into());
+            return witnessed(answer, &turn.witness);
         }
         if request
             .checkpoint

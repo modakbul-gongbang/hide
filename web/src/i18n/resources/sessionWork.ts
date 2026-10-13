@@ -14,6 +14,7 @@ const words = {
   "sessionWork.ended": ["Ended sessions", "끝난 세션", "終了したセッション", "已结束的会话"],
   "sessionWork.tasks": ["Assigned work", "시킨 일", "依頼した仕事", "分配的工作"],
   "sessionWork.requests": ["Requests", "요청", "依頼", "请求"],
+  "sessionWork.moreChildren": ["Show {{count}} more", "{{count}}개 더 보기", "さらに{{count}}件", "再显示 {{count}} 项"],
   "sessionWork.children": ["Children", "자식", "子セッション", "子会话"],
   "sessionWork.done": ["Done", "끝남", "完了", "完成"],
   "sessionWork.working": ["Working", "하는 중", "作業中", "进行中"],

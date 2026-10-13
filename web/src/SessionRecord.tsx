@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, FlagIcon, GitPullRequestIcon, CircleDotIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { deviceConnected } from "./devices";
@@ -12,6 +12,7 @@ import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOut
 import { statusText } from "./agentStatus";
 import { useShellStore } from "./store";
 import { summariesEnabled } from "./hideAi";
+import { SESSION_INDENT_LEVELS } from "./sessionTree";
 
 const ROW = "min-w-0 rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const TONES = { done: "text-success", merged: "text-pr-merged", working: "text-agent-working", blocked: "text-warning", question: "text-warning", unfinished: "text-warning", waiting: "text-subtle-foreground", review: "text-success", ci_failed: "text-destructive", open: "text-success", closed: "text-muted-foreground" };
@@ -67,14 +68,16 @@ function OutputRow({ output, actions }: { output: WorkOutput; actions: Actions }
   </button>;
 }
 
-export function MissedRow({ missed, record, actions, connected }: { missed: MissedWork; record: Pick<RecordValue, "session" | "title">; actions: Actions; connected: boolean }) {
+export function MissedRow({ missed, record, actions }: { missed: MissedWork; record: Pick<RecordValue, "session" | "title">; actions: Actions; connected: boolean }) {
   const { t } = useInterfaceTranslation();
-  const draft = useShellStore((state) => state.rest?.issue_work?.draft);
+  const rest = useShellStore((state) => state.rest);
+  const connected = deviceConnected(rest, record.session.device_id);
+  const draft = rest?.issue_work?.draft;
   const ownDraft = draft && workKey(draft.source.session) === workKey(record.session) && draft.source.id === missed.id ? draft : null;
   const drafting = ownDraft?.phase === "working";
   const busy = missed.creating || draft?.phase === "working";
   return <li className="min-w-0 py-xs" data-missed-work={missed.id} data-missed-status={missed.status}>
-    <p className="flex items-start gap-xs"><FlagIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-warning" /><span className="min-w-0">{missed.text}</span></p>
+    <p className="flex items-start gap-xs"><FlagIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-warning" /><span className="min-w-0 truncate" title={missed.text}>{missed.text}</span></p>
     <button type="button" className={cn(ROW, "mt-xxs block w-full truncate text-micro text-muted-foreground")} title={record.title} onClick={() => actions.openSessionRecord(record.session)}>{record.title} · {t(`sessionWork.kind.${missed.kind}`)}</button>
     {missed.status === "open" ? <div className="mt-xs flex gap-xs"><Hint label={!connected ? t("devices.rail.notConnected") : t("sessionWork.issue")}><span><Button size="sm" variant="outline" disabled={!connected || busy} data-missed-issue={missed.id} onClick={() => actions.draftMissedIssue(record.session, missed.id)}>{t(drafting ? "sessionWork.drafting" : "sessionWork.issue")}</Button></span></Hint><Button size="sm" variant="ghost" disabled={busy} onClick={() => actions.setMissedStatus(record.session, missed.id, "dismissed")}>{t("sessionWork.dismiss")}</Button>{drafting ? <Button size="sm" variant="ghost" onClick={() => actions.cancelMissedIssueDraft()}>{t("common.cancel")}</Button> : null}</div> : missed.status === "issue" && missed.issue_number && missed.issue_repository ? <Button size="sm" variant="link" onClick={() => actions.openRecordedIssue(record.session, missed.issue_repository!, missed.issue_number!)}>#{missed.issue_number}</Button> : <div className="mt-xs flex items-center gap-xs text-micro text-muted-foreground"><span>{t(missed.status === "resolved" ? "sessionWork.resolved" : "sessionWork.dismissed")}</span><Button size="sm" variant="ghost" onClick={() => actions.setMissedStatus(record.session, missed.id, "open")}>{t(missed.status === "resolved" ? "sessionWork.reopen" : "sessionWork.undo")}</Button></div>}
     {ownDraft?.phase === "failed" ? <p role="status" className="mt-xxs text-micro text-destructive">{t("sessionWork.issue_draft_unavailable")}</p> : null}
@@ -121,7 +124,8 @@ function TaskRow({ task, record }: { task: WorkTask; record: RecordValue }) {
   </summary><div className="ml-sm border-l border-lineage-rail pl-sm">{record.requests.filter((request) => request.task_ids.includes(task.id)).map((request) => <RequestRow key={request.offset} text={request.text} at={request.at_unix_ms} />)}</div></details>;
 }
 
-function Children({ record, summaries }: { record: RecordValue; summaries: boolean }) {
+function Children({ record, summaries, depth = 1 }: { record: RecordValue; summaries: boolean; depth?: number }) {
   const { t } = useInterfaceTranslation();
-  return <div className="min-w-0 border-l border-lineage-rail pl-sm">{record.children.map((child) => <details key={workKey(child.session)} data-record-child={child.session.session_id}><summary className={cn(ROW, "flex cursor-pointer items-center gap-xs py-xs")}><ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" /><AgentMark kind={child.session.agent} /><span className="min-w-0 flex-1 truncate" title={recordTitle(child, summaries)}>{recordTitle(child, summaries)}</span><span className="shrink-0 text-micro text-muted-foreground">{child.state ? statusText(t, child.state as AgentStatusCode) : null}</span><span className="shrink-0 text-micro text-pr-merged">{child.outputs.filter((output) => output.kind === "pr").map((output) => `#${output.number}`).join(" ")}</span></summary><WorkList record={child} summaries={summaries} />{child.children.length ? <Children record={child} summaries={summaries} /> : null}</details>)}</div>;
+  const [visible, setVisible] = useState(5);
+  return <div className={cn("min-w-0", depth <= SESSION_INDENT_LEVELS && "border-l border-lineage-rail pl-sm")}>{record.children.slice(0, visible).map((child) => <details key={workKey(child.session)} data-record-child={child.session.session_id}><summary className={cn(ROW, "flex cursor-pointer items-center gap-xs py-xs")}><ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" /><AgentMark kind={child.session.agent} /><span className="min-w-0 flex-1 truncate" title={recordTitle(child, summaries)}>{recordTitle(child, summaries)}</span><span className="shrink-0 text-micro text-muted-foreground">{child.state ? statusText(t, child.state as AgentStatusCode) : null}</span><span className="shrink-0 text-micro text-pr-merged">{child.outputs.filter((output) => output.kind === "pr").map((output) => `#${output.number}`).join(" ")}</span></summary><WorkList record={child} summaries={summaries} />{child.children.length ? <Children record={child} summaries={summaries} depth={depth + 1} /> : null}</details>)}{record.children.length > visible ? <Button size="sm" variant="ghost" onClick={() => setVisible((count) => count + 5)}>{t("sessionWork.moreChildren", { count: record.children.length - visible })}</Button> : null}</div>;
 }

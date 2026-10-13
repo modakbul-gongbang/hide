@@ -134,6 +134,8 @@ pub struct MissedWork {
     pub status: MissedStatus,
     pub at_unix_ms: u64,
     pub turn_offset: u64,
+    #[serde(skip_serializing)]
+    pub turn_witness: Option<String>,
     pub issue_repository: Option<String>,
     pub issue_number: Option<u64>,
     pub creating: bool,
@@ -212,6 +214,7 @@ pub enum LedgerUpdate {
         at_unix_ms: u64,
         end: LabelEnd,
         work_author: bool,
+        turn_witness: Option<String>,
         judgment: TurnJudgment,
     },
     MissedStatus {
@@ -223,6 +226,7 @@ pub enum LedgerUpdate {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct LedgerContext {
+    pub parent_name: Option<String>,
     pub open_tasks: Vec<WorkTask>,
     pub open_missed: Vec<MissedWork>,
 }
@@ -252,6 +256,8 @@ pub struct SessionRecord {
     pub state: Option<String>,
     pub last_end: Option<LabelEnd>,
     pub cwd: Option<String>,
+    pub project: Option<String>,
+    pub repository: Option<String>,
     pub path: Option<String>,
     pub started_at_unix_ms: Option<u64>,
     pub ended_at_unix_ms: Option<u64>,

@@ -196,7 +196,9 @@ impl Runtime {
                 Some(client) => client.search_sessions(
                     self.links_work.search_generation,
                     payload.query,
-                    self.agent_summary(),
+                    self.ai_settings.as_ref().is_some_and(|settings| {
+                        settings.enabled && settings.chosen && settings.agent_summary
+                    }),
                 ),
                 None => {
                     search.loading = false;
@@ -209,18 +211,23 @@ impl Runtime {
     }
 
     pub(super) fn set_missed_status(&mut self, payload: MissedStatusPayload) -> bool {
-        if !self.agent_summary() {
+        if !self
+            .ai_settings
+            .as_ref()
+            .is_some_and(|settings| settings.enabled && settings.agent_summary)
+        {
             return false;
         }
         let Some(client) = self.links_work.client.as_ref() else {
             return false;
         };
         if let Err(code) = client.ledger(LedgerUpdate::MissedStatus {
-            session: payload.session,
+            session: payload.session.clone(),
             id: payload.id,
             status: payload.status,
         }) {
             self.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot {
+                session: Some(payload.session),
                 failure: Some(code),
                 ..Default::default()
             }));
@@ -316,6 +323,7 @@ impl Runtime {
                 (
                     project.pull_requests_read,
                     project.status.last_success_at_unix_ms,
+                    project.status.stale,
                     project.pull_requests.len(),
                     &project.issues.repository,
                     &project.issues.repository_id,
@@ -491,6 +499,7 @@ impl Runtime {
                     device_id: record.actor.device_id.clone(),
                     agent: session_agent(&record.actor.kind)?.to_owned(),
                     session_id: record.session.clone(),
+                    parent_device_id: parent.actor.device_id.clone(),
                     parent_agent: session_agent(&parent.actor.kind)?.to_owned(),
                     parent_session_id: parent.session.clone(),
                     parent_name: parent.name.clone(),
@@ -685,6 +694,23 @@ impl Runtime {
         &mut self,
         projects: BTreeMap<String, ProjectLinkSummary>,
     ) -> bool {
+        for workspace in &self.snapshot.navigator.workspaces {
+            let before = self
+                .snapshot
+                .link_summaries
+                .as_ref()
+                .and_then(|summaries| summaries.projects.get(&workspace.id));
+            let after = projects.get(&workspace.id);
+            if before.map(|summary| &summary.record_issues)
+                != after.map(|summary| &summary.record_issues)
+            {
+                let generation = self
+                    .github_generations
+                    .entry(workspace.path.clone())
+                    .or_default();
+                *generation = generation.wrapping_add(1);
+            }
+        }
         let summaries = self
             .snapshot
             .link_summaries

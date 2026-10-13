@@ -15,7 +15,7 @@ export function taskState(task: WorkTask, outputs: readonly WorkOutput[]) {
   if (prs.some((output) => output.state === "ci_failed")) return "ci_failed";
   if (prs.some((output) => ["open", "review"].includes(output.state))) return "review";
   if (task.done) return "done";
-  return task.end === "done" ? "unfinished" : task.end;
+  return task.end === "done" ? "unfinished" : task.end === "waiting" ? "working" : task.end;
 }
 const OUTPUT_ORDER: Record<string, number> = { ci_failed: 0, review: 1, open: 2, merged: 3, closed: 4 };
 export function orderedOutputs(outputs: readonly WorkOutput[]): WorkOutput[] {

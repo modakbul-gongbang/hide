@@ -24,6 +24,10 @@ pub struct RequestMark {
     pub offset: u64,
     pub at_unix_ms: u64,
     pub text: String,
+    #[serde(default)]
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub letter_kind: Option<String>,
 }
 
 /// One stretch of records that ran on one branch.
@@ -153,11 +157,11 @@ impl LinkAccumulator {
     /// for the span it was made in.
     pub(crate) fn event(&mut self, kind: EventKind, at: u64, text: &str, offset: u64) {
         // A Hide letter is another agent's message, not the operator's.
-        if kind != EventKind::Human
-            || self.sidechain_line
-            || text.trim().is_empty()
-            || crate::envelope_sender(text).is_some()
-        {
+        if kind != EventKind::Human || self.sidechain_line || text.trim().is_empty() {
+            return;
+        }
+        let envelope = crate::envelope_header(text);
+        if envelope.as_ref().is_some_and(|(_, kind)| kind != "request") {
             return;
         }
         let request = cut(text);
@@ -169,7 +173,12 @@ impl LinkAccumulator {
             offset,
             at_unix_ms: at,
             text: request.clone(),
+            sender: envelope.as_ref().map(|(sender, _)| sender.clone()),
+            letter_kind: envelope.as_ref().map(|(_, kind)| kind.clone()),
         });
+        if envelope.is_some() {
+            return;
+        }
         if let Some(span) = self.facts.spans.last_mut() {
             span.last_request = Some(request.clone());
         }

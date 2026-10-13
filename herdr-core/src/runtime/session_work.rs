@@ -9,6 +9,8 @@ use crate::node_access::NodeLink;
 use hide_ai::{AiSettings, CancelToken};
 use hide_node_link::protocol::Call;
 
+const DRAFT_PLACE_LIMIT: usize = 512;
+
 #[derive(Clone)]
 struct Place {
     workspace_id: String,
@@ -46,7 +48,7 @@ impl Runtime {
         if !self
             .ai_settings
             .as_ref()
-            .is_some_and(|settings| settings.agent_summary && self.ai_active())
+            .is_some_and(|settings| settings.agent_summary && settings.enabled && settings.chosen)
         {
             return false;
         }
@@ -78,11 +80,16 @@ impl Runtime {
             }
         };
         let mut places = Vec::new();
+        let mut overflow = false;
         let mut add = |workspace: &WorkspaceSnapshot| {
             if workspace.device_id != source.session.device_id {
                 return;
             }
             for checkout in &workspace.checkouts {
+                if places.len() >= DRAFT_PLACE_LIMIT {
+                    overflow = true;
+                    break;
+                }
                 places.push(Place {
                     workspace_id: workspace.id.clone(),
                     project: workspace.path.clone(),
@@ -101,7 +108,19 @@ impl Runtime {
                 }
             }
         }
+        if overflow {
+            crate::diagnostic!(
+                serde_json::json!({"component":"session_work","kind":"issue_draft.place_capacity","limit":DRAFT_PLACE_LIMIT})
+            );
+            self.set_error(
+                "session_issue_draft.capacity",
+                "The session checkout lookup exceeded its capacity",
+                true,
+            );
+            return true;
+        }
         let settings = self.ai_settings.clone().unwrap_or_default();
+        let ai_usable = self.ai_active() && !self.usage_paused();
         let provider = self.own_node();
         self.session_issue_work.generation += 1;
         let generation = self.session_issue_work.generation;
@@ -119,10 +138,11 @@ impl Runtime {
         });
         let requested = source.clone();
         let spawned = self.spawn_issue_worker("session-issue-preview", move || {
-            read_draft(&client, &requested, &places, &node, &provider, &settings, &cancel)
+            read_draft(&client, &requested, &places, &node, &provider, &settings, ai_usable, &cancel)
         }, move |runtime, result| {
             if runtime.session_issue_work.generation != generation { return false; }
             runtime.session_issue_work.active = None;
+            if !runtime.ai_settings.as_ref().is_some_and(|settings| settings.enabled && settings.chosen && settings.agent_summary) { return runtime.cancel_session_issue_draft(); }
             let Some(slot) = runtime.snapshot.issue_work.draft.as_mut().filter(|slot|slot.source == source) else { return false; };
             match result {
                 Ok(draft) => {
@@ -149,6 +169,13 @@ impl Runtime {
     }
 
     pub(super) fn create_missed_issue(&mut self, payload: IssueCreatePayload) -> bool {
+        if !self
+            .ai_settings
+            .as_ref()
+            .is_some_and(|settings| settings.enabled && settings.chosen && settings.agent_summary)
+        {
+            return false;
+        }
         let Some(source) = payload.missed else {
             return false;
         };
@@ -223,8 +250,8 @@ impl Runtime {
                     runtime.remember_created_issue(node, &project, issue);
                     runtime.settle_issue_create(id, Ok(key))
                 }
-                Err(code) => {
-                    crate::diagnostic!(serde_json::json!({"component":"session_work","kind":"issue_create.failed","id":id,"code":code}));
+                Err(_) => {
+                    crate::diagnostic!(serde_json::json!({"component":"session_work","kind":"issue_create.failed","id":id,"code":"issue_create_unconfirmed"}));
                     runtime.settle_issue_create(id, Err("The issue could not be confirmed. Retry to check the previous attempt before creating it.".into()))
                 }
             }
@@ -243,6 +270,7 @@ fn read_draft(
     node: &Arc<dyn NodeLink>,
     provider: &Arc<dyn NodeLink>,
     settings: &AiSettings,
+    ai_usable: bool,
     cancel: &CancelToken,
 ) -> Result<Draft, String> {
     let LedgerAnswer::Record(record) = client.call(LedgerCall::Record(source.session.clone()))?
@@ -263,15 +291,50 @@ fn read_draft(
         .filter(|place| hide_platform::path::wire_relative(&place.checkout, cwd).is_ok())
         .max_by_key(|place| place.checkout.len())
         .cloned()
+        .or_else(|| {
+            places
+                .iter()
+                .find(|place| {
+                    record.project.as_deref() == Some(place.project.as_str())
+                        || record.repository.as_deref().is_some_and(|repo| {
+                            place
+                                .repository
+                                .as_deref()
+                                .is_some_and(|known| known.eq_ignore_ascii_case(repo))
+                        })
+                })
+                .cloned()
+        })
         .ok_or("issue_draft_checkout_missing")?;
     let gh_place = crate::github::Where::DeviceCheckout(place.checkout.clone());
     let repository = crate::github::issue_repository(node.as_ref(), &gh_place);
     if let Ok(repository) = &repository {
+        if record
+            .repository
+            .as_deref()
+            .is_some_and(|known| !known.eq_ignore_ascii_case(repository))
+        {
+            return Err("issue_draft_repository_changed".into());
+        }
         place.repository = Some(repository.clone());
     }
     if cancel.is_cancelled() {
         return Err("cancelled".into());
     }
+    let mut draft = Draft {
+        place,
+        title: missed.text.clone(),
+        body: String::new(),
+        message: None,
+    };
+    if !ai_usable {
+        draft.message = Some("issue_draft_ai_unavailable".into());
+        return Ok(draft);
+    }
+    let Some(witness) = missed.turn_witness.clone() else {
+        draft.message = Some("issue_draft_context_unavailable".into());
+        return Ok(draft);
+    };
     let request = hide_session::label_transcript::WorkTurnRequest {
         agent: hide_session::Agent::from_kind(&record.session.agent)
             .ok_or("issue_draft_agent_unsupported")?,
@@ -279,21 +342,16 @@ fn read_draft(
         path: record.path.clone(),
         cwd: cwd.into(),
         offset: missed.turn_offset,
+        witness,
     };
     let context = crate::node_access::call_as::<hide_host::session_work::Context>(
         node.as_ref(),
         Call::SessionWorkContext {
             request,
-            checkout_path: place.checkout.clone(),
+            checkout_path: draft.place.checkout.clone(),
         },
         std::time::Duration::from_secs(20),
     );
-    let mut draft = Draft {
-        place,
-        title: missed.text.clone(),
-        body: String::new(),
-        message: None,
-    };
     match context {
         Ok(context) => match crate::ai::draft_session_issue(
             provider,
@@ -314,9 +372,9 @@ fn read_draft(
                 draft.message = Some("issue_draft_ai_unavailable".into());
             }
         },
-        Err(error) => {
+        Err(_) => {
             crate::diagnostic!(
-                serde_json::json!({"component":"session_work","kind":"issue_draft.context_failed","code":error.to_string()})
+                serde_json::json!({"component":"session_work","kind":"issue_draft.context_failed","code":"issue_draft_context_unavailable"})
             );
             draft.message = Some("issue_draft_context_unavailable".into());
         }
@@ -345,7 +403,7 @@ fn create_once(
     if place
         .repository
         .as_ref()
-        .is_some_and(|known| !known.eq_ignore_ascii_case(&repository))
+        .is_none_or(|known| !known.eq_ignore_ascii_case(&repository))
     {
         return Err("issue_repository_changed".into());
     }
@@ -396,7 +454,12 @@ fn create_once(
                 at_unix_ms: unix_milliseconds(),
             })?;
         }
-        crate::github::create_issue(node.as_ref(), &gh_place, &title, &body)
+        let approved = crate::github::Where::DeviceRepository {
+            checkout: place.checkout.clone(),
+            repository: attempt.repository.clone(),
+        };
+        crate::github::create_issue(node.as_ref(), &approved, &title, &body)
+            .map_err(|_| "issue_create_unconfirmed".to_owned())
     })();
     let issue = match result {
         Ok(issue) => issue,

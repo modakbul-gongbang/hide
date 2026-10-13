@@ -22,7 +22,12 @@ pub fn read(
 ) -> HostResult<Context> {
     let turn = hide_session::label_transcript::read_work_turn(home, request)
         .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
-    let root = Root::open(Path::new(checkout))?;
+    let templates = read_templates(Path::new(checkout))?;
+    Ok(Context { turn, templates })
+}
+
+fn read_templates(checkout: &Path) -> HostResult<String> {
+    let root = Root::open(checkout)?;
     let mut paths = vec![
         ".github/ISSUE_TEMPLATE.md".to_owned(),
         "ISSUE_TEMPLATE.md".to_owned(),
@@ -59,21 +64,16 @@ pub fn read(
     let mut templates = String::new();
     let mut files = 0;
     for path in paths {
-        let file = match root.dir().open(&path) {
+        let file = match crate::bytes::open_regular(root.dir(), Path::new(&path)) {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(HostError::io(&error, "issue_template_read_failed")),
+            Err(error) if error.code == ErrorCode::NotFound => continue,
+            Err(_) => {
+                return Err(HostError::new(
+                    ErrorCode::InvalidPath,
+                    "issue_template_read_failed",
+                ));
+            }
         };
-        if !file
-            .metadata()
-            .map_err(|error| HostError::io(&error, "issue_template_read_failed"))?
-            .is_file()
-        {
-            return Err(HostError::new(
-                ErrorCode::InvalidPath,
-                "issue_template_not_file",
-            ));
-        }
         files += 1;
         if files > TEMPLATE_FILE_LIMIT {
             return Err(HostError::new(
@@ -105,5 +105,62 @@ pub fn read(
             ));
         }
     }
-    Ok(Context { turn, templates })
+    Ok(templates)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn templates_read_sorted_regular_files_and_reject_directories_and_oversized_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let templates = directory.path().join(".github/ISSUE_TEMPLATE");
+        fs::create_dir_all(&templates).unwrap();
+        fs::write(templates.join("b.md"), "Second template").unwrap();
+        fs::write(templates.join("a.yml"), "First template").unwrap();
+        fs::write(
+            templates.join("config.yml"),
+            "Contact links are not a template",
+        )
+        .unwrap();
+        let text = read_templates(directory.path()).unwrap();
+        assert!(text.find("First template").unwrap() < text.find("Second template").unwrap());
+        assert!(!text.contains("Contact links"));
+        fs::create_dir(templates.join("c.md")).unwrap();
+        assert_eq!(
+            read_templates(directory.path()).unwrap_err().message,
+            "issue_template_read_failed"
+        );
+        fs::remove_dir(templates.join("c.md")).unwrap();
+        fs::write(templates.join("a.yml"), vec![b'x'; TEMPLATE_FILE_BYTES + 1]).unwrap();
+        assert_eq!(
+            read_templates(directory.path()).unwrap_err().message,
+            "issue_template_byte_capacity"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_or_symlink_outside_the_checkout_is_refused_without_waiting_for_a_writer() {
+        let directory = tempfile::tempdir().unwrap();
+        let template = directory.path().join("ISSUE_TEMPLATE.md");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&template)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            read_templates(directory.path()).unwrap_err().message,
+            "issue_template_read_failed"
+        );
+        fs::remove_file(&template).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), &template).unwrap();
+        assert_eq!(
+            read_templates(directory.path()).unwrap_err().message,
+            "issue_template_read_failed"
+        );
+    }
 }

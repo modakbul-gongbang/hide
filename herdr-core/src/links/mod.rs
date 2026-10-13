@@ -191,6 +191,7 @@ pub struct ParentFact {
     pub device_id: String,
     pub agent: String,
     pub session_id: String,
+    pub parent_device_id: String,
     pub parent_agent: String,
     pub parent_session_id: String,
     pub parent_name: String,
@@ -260,6 +261,8 @@ pub struct LinkedIssue {
 /// The small per-project values ⌘K and the Sessions tab read (D-45).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ProjectLinkSummary {
+    #[serde(skip)]
+    pub record_issues: Vec<crate::issues::IssueReference>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub creators: Vec<ledger::OutputCreator>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

@@ -176,6 +176,8 @@ enum WorkerResult {
 /// What an analysis was asked under, carried back with its answer.
 struct AnalysisMeta {
     ledger_session: Option<SessionIdentity>,
+    work_author: bool,
+    turn_witness: Option<String>,
     offset: Option<u64>,
     at_unix_ms: u64,
     request_at_unix_ms: u64,
@@ -1036,20 +1038,29 @@ impl LabelWorker {
                 agent: pane.agent.as_str().to_owned(),
                 session_id: native_id,
             };
+            let parent = self
+                .ledger
+                .lock()
+                .ok()
+                .and_then(|client| client.as_ref().and_then(|client| client.context(&session)))
+                .and_then(|context| context.parent_name);
             let requests = transcript
                 .events
                 .iter()
                 .filter(|event| {
                     event.kind == LabelEventKind::Human
-                        && event.sender.is_none()
-                        && record.facts.feeds_analysis(event.offset)
+                        && record.facts.feeds_work(event, parent.as_deref())
                         && !event.text.trim().is_empty()
                 })
                 .map(|event| RecordedRequest {
                     offset: event.offset,
                     at_unix_ms: event.at_unix_ms,
                     text: hide_session::links::cut(&event.text),
-                    author: WorkAuthor::Operator,
+                    author: if parent.is_some() {
+                        WorkAuthor::Parent
+                    } else {
+                        WorkAuthor::Operator
+                    },
                     task_ids: vec![],
                     chapter_id: None,
                     judged: false,
@@ -1060,7 +1071,7 @@ impl LabelWorker {
                 .iter()
                 .filter(|event| {
                     event.kind == LabelEventKind::Human
-                        && (event.sender.is_some() || !record.facts.feeds_analysis(event.offset))
+                        && !record.facts.feeds_work(event, parent.as_deref())
                 })
                 .map(|event| event.offset)
                 .collect::<Vec<_>>();
@@ -1318,15 +1329,25 @@ impl LabelWorker {
             agent: pane.agent.as_str().to_owned(),
             session_id: id.clone(),
         });
+        let ledger = ledger_session
+            .as_ref()
+            .and_then(|session| {
+                self.ledger
+                    .lock()
+                    .ok()
+                    .and_then(|client| client.as_ref().and_then(|client| client.context(session)))
+            })
+            .unwrap_or_default();
+        let work_author = events
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
+        let turn_witness = events
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .and_then(|event| hide_session::label_transcript::work_turn(events, event.offset))
+            .map(|turn| turn.witness());
         if phase == AnalysisPhase::TurnEnd {
-            let ledger = ledger_session
-                .as_ref()
-                .and_then(|session| {
-                    self.ledger.lock().ok().and_then(|client| {
-                        client.as_ref().and_then(|client| client.context(session))
-                    })
-                })
-                .unwrap_or_default();
             let tasks = ledger
                 .open_tasks
                 .iter()
@@ -1337,7 +1358,7 @@ impl LabelWorker {
                 .iter()
                 .map(|missed| json!({"id":missed.id,"kind":missed.kind,"text":missed.text}))
                 .collect::<Vec<_>>();
-            context.push_str(&format!("\n<work-author>{operator_turn}</work-author>\n<open-tasks>{}</open-tasks>\n<open-missed>{}</open-missed>",
+            context.push_str(&format!("\n<work-author>{work_author}</work-author>\n<open-tasks>{}</open-tasks>\n<open-missed>{}</open-missed>",
                 super::analysis::redact(&json!(tasks).to_string()),super::analysis::redact(&json!(missed).to_string())));
         }
         let generation = pane.generation;
@@ -1360,6 +1381,8 @@ impl LabelWorker {
         );
         let meta = AnalysisMeta {
             ledger_session,
+            work_author,
+            turn_witness,
             offset: events
                 .iter()
                 .rfind(|event| event.kind == LabelEventKind::Human)
@@ -1451,13 +1474,11 @@ impl LabelWorker {
                         .is_some_and(|since| outcome.request_at_unix_ms >= since)
                     && outcome.request_at_unix_ms >= self.summaries_on_since
                 {
-                    if (goal_changed || outcome.initial_context)
-                        && let Err(code) = client.ledger(LedgerUpdate::Chapter {
-                            session: session.clone(),
-                            goal: record.goal.clone().unwrap_or_else(|| analysis.goal.clone()),
-                            at_unix_ms: outcome.request_at_unix_ms,
-                        })
-                    {
+                    if let Err(code) = client.ledger(LedgerUpdate::Chapter {
+                        session: session.clone(),
+                        goal: record.goal.clone().unwrap_or_else(|| analysis.goal.clone()),
+                        at_unix_ms: outcome.request_at_unix_ms,
+                    }) {
                         crate::diagnostic!(
                             json!({"component":"labels","kind":"ledger.enqueue_failed","pane_id":pane_id,"code":code})
                         );
@@ -1470,7 +1491,8 @@ impl LabelWorker {
                             offset,
                             at_unix_ms: outcome.at_unix_ms,
                             end: analysis.end,
-                            work_author: outcome.operator_turn,
+                            work_author: outcome.work_author,
+                            turn_witness: outcome.turn_witness.clone(),
                             judgment,
                         })
                     {

@@ -178,7 +178,7 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
-            <Button type="submit" disabled={working || !project || !title.trim()} data-new-issue-create="true">
+            <Button type="submit" disabled={working || !project || !title.trim() || !!draft && !draft.repository} data-new-issue-create="true">
               {t(failure ? "common.retry" : draft ? "sessionWork.createIssue" : thenStart ? "issue.createStart" : "issue.create")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>

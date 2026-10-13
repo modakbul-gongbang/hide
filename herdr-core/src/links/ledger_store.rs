@@ -8,6 +8,8 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) const SCHEMA: &str = "
+ALTER TABLE session_parents ADD COLUMN parent_device TEXT NOT NULL DEFAULT '';
+UPDATE session_parents SET parent_device=device;
 CREATE TABLE ledger_titles(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
  native_title TEXT, manual_title TEXT, state TEXT, PRIMARY KEY(device,agent,id));
 CREATE TABLE ledger_excluded(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
@@ -34,7 +36,7 @@ CREATE TABLE ledger_tasks(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT
 CREATE TABLE ledger_missed(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
  missed TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL,
  at INTEGER NOT NULL, turn_offset INTEGER NOT NULL, issue_repo TEXT, issue_number INTEGER,
- resolved_issue_number INTEGER, resolved_turn_offset INTEGER,
+ resolved_issue_number INTEGER, resolved_turn_offset INTEGER, turn_witness TEXT,
  PRIMARY KEY(device,agent,id,missed));
 CREATE TABLE ledger_turns(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL,
  offset INTEGER NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL,
@@ -48,6 +50,9 @@ CREATE TABLE ledger_issue_attempts(device TEXT NOT NULL, agent TEXT NOT NULL, id
  missed TEXT NOT NULL, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
  started_at INTEGER NOT NULL, state TEXT NOT NULL, number INTEGER, url TEXT, failure TEXT,
  PRIMARY KEY(device,agent,id,missed));
+INSERT INTO ledger_requests(device,agent,id,offset,at,text,author)
+ SELECT device,agent,id,0,COALESCE(last_request_at,ended_at,started_at,0),last_request,'\"operator\"'
+ FROM sessions WHERE last_request IS NOT NULL AND trim(last_request)!='';
 ";
 
 fn encoded(value: &impl serde::Serialize) -> Result<String, String> {
@@ -101,18 +106,42 @@ pub(super) fn apply_reader(
             serde_json::json!({"component":"links","kind":"ledger.reader_capacity","session_id":id,"device_id":device,"agent":agent,"dropped":facts.requests_capped})
         );
     }
-    let parent: bool = tx
+    let parent: Option<String> = tx
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3)",
+            "SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",
+            params![device, agent, id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(failed)?;
+    let known_first: Option<u64> = tx
+        .query_row(
+            "SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3",
             params![device, agent, id],
             |r| r.get(0),
         )
         .map_err(failed)?;
+    let first = known_first
+        .into_iter()
+        .chain(facts.requests.iter().map(|request| request.offset))
+        .min();
     for request in &facts.requests {
+        let counts = match parent.as_deref() {
+            Some(parent) => match request.sender.as_deref() {
+                Some(sender) => {
+                    sender == parent && request.letter_kind.as_deref() == Some("request")
+                }
+                None => Some(request.offset) == first,
+            },
+            None => request.sender.is_none(),
+        };
+        if !counts {
+            continue;
+        }
         tx.execute("INSERT INTO ledger_requests(device,agent,id,offset,at,text,author) \
             SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE NOT EXISTS(SELECT 1 FROM ledger_excluded WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4) \
             ON CONFLICT(device,agent,id,offset) DO UPDATE SET text=excluded.text,at=excluded.at",
-            params![device,agent,id,request.offset as i64,request.at_unix_ms as i64,hide_session::links::cut(&request.text),encoded(&if parent {WorkAuthor::Parent} else {WorkAuthor::Operator})?]).map_err(failed)?;
+            params![device,agent,id,request.offset as i64,request.at_unix_ms as i64,hide_session::links::cut(&request.text),encoded(&if parent.is_some() {WorkAuthor::Parent} else {WorkAuthor::Operator})?]).map_err(failed)?;
     }
     for (kind, marks) in [("issue", &facts.issues)] {
         for mark in marks {
@@ -190,6 +219,21 @@ impl LinkStore {
                 .map(Box::new)
                 .map(LedgerAnswer::Record);
         }
+        // Only explicit external-effect calls use FULL. Its WAL sync completes
+        // before the RPC acknowledgement permits GitHub to run.
+        self.connection
+            .pragma_update(None, "synchronous", "FULL")
+            .map_err(failed)?;
+        let result = self.ledger_issue_call(call);
+        let restored = self
+            .connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(failed);
+        restored?;
+        result
+    }
+
+    fn ledger_issue_call(&mut self, call: LedgerCall) -> Result<LedgerAnswer, String> {
         let tx = self.connection.transaction().map_err(failed)?;
         let answer = match call {
             LedgerCall::Record(_) => unreachable!(),
@@ -415,6 +459,7 @@ impl LinkStore {
                 at_unix_ms,
                 end,
                 work_author,
+                turn_witness,
                 judgment,
             } => {
                 let exists: bool = tx
@@ -559,10 +604,10 @@ impl LinkStore {
                     if missed.text.trim().is_empty() || missed.text.chars().count() > MISSED_CHARS {
                         return Err("ledger_missed_invalid".to_owned());
                     }
-                    tx.execute("INSERT INTO ledger_missed(device,agent,id,missed,kind,text,status,at,turn_offset) \
-                        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    tx.execute("INSERT INTO ledger_missed(device,agent,id,missed,kind,text,status,at,turn_offset,turn_witness) \
+                        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
                         params![session.device_id,session.agent,session.session_id,format!("missed-{offset}-{index}"),
-                            encoded(&missed.kind)?,missed.text,encoded(&MissedStatus::Open)?,*at_unix_ms as i64,*offset as i64]).map_err(failed)?;
+                            encoded(&missed.kind)?,missed.text,encoded(&MissedStatus::Open)?,*at_unix_ms as i64,*offset as i64,turn_witness]).map_err(failed)?;
                 }
                 for resolved in &judgment.resolved {
                     // A printed existing issue is insufficient: only this
@@ -644,7 +689,23 @@ impl LinkStore {
 
     pub fn ledger_record(&self, session: &SessionIdentity) -> Result<SessionRecord, String> {
         let mut visited = BTreeSet::new();
-        self.record_tree(session, &mut visited, 0)
+        let mut budget = REQUEST_LIMIT;
+        let mut record = self.record_tree(session, &mut visited, 0, &mut budget, true)?;
+        let row = self
+            .session(&key(session))?
+            .ok_or("ledger_session_missing")?;
+        let projects = self.projects()?;
+        if projects.len() > LEDGER_QUEUE_LIMIT {
+            return Err("ledger_project_capacity".into());
+        }
+        for project in projects {
+            if row.inside(&self.project_paths(&project)?) {
+                record.project = Some(project.root);
+                record.repository = project.name;
+                break;
+            }
+        }
+        Ok(record)
     }
 
     fn record_tree(
@@ -652,6 +713,8 @@ impl LinkStore {
         session: &SessionIdentity,
         visited: &mut BTreeSet<SessionIdentity>,
         depth: usize,
+        request_budget: &mut usize,
+        include_requests: bool,
     ) -> Result<SessionRecord, String> {
         if depth > 32 || visited.len() >= SUMMARY_SESSION_LIMIT {
             return Err("ledger_descendant_capacity".to_owned());
@@ -714,40 +777,46 @@ impl LinkStore {
             .map(|chapter| chapter.goal.clone())
             .or_else(|| record.native_title.clone())
             .unwrap_or_else(|| session.session_id.clone());
-        let mut statement=self.connection.prepare("SELECT offset,at,text,author,task_ids,chapter,judged \
+        if include_requests {
+            let mut statement=self.connection.prepare("SELECT offset,at,text,author,task_ids,chapter,judged \
             FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,offset DESC LIMIT ?4").map_err(failed)?;
-        let requests = statement
-            .query_map(
-                params![
-                    session.device_id,
-                    session.agent,
-                    session.session_id,
-                    REQUEST_LIMIT as i64
-                ],
-                |r| {
-                    Ok((
-                        r.get::<_, u64>(0)?,
-                        r.get::<_, u64>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, String>(4)?,
-                        r.get::<_, Option<String>>(5)?,
-                        r.get::<_, bool>(6)?,
-                    ))
-                },
-            )
-            .map_err(failed)?;
-        for request in requests {
-            let (offset, at, text, author, tasks, chapter, judged) = request.map_err(failed)?;
-            record.requests.push(RecordedRequest {
-                offset,
-                at_unix_ms: at,
-                text,
-                author: decoded(author)?,
-                task_ids: decoded(tasks)?,
-                chapter_id: chapter,
-                judged,
-            });
+            let requests = statement
+                .query_map(
+                    params![
+                        session.device_id,
+                        session.agent,
+                        session.session_id,
+                        *request_budget as i64 + 1
+                    ],
+                    |r| {
+                        Ok((
+                            r.get::<_, u64>(0)?,
+                            r.get::<_, u64>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, String>(4)?,
+                            r.get::<_, Option<String>>(5)?,
+                            r.get::<_, bool>(6)?,
+                        ))
+                    },
+                )
+                .map_err(failed)?;
+            for request in requests {
+                if *request_budget == 0 {
+                    return Err("ledger_record_request_capacity".into());
+                }
+                *request_budget -= 1;
+                let (offset, at, text, author, tasks, chapter, judged) = request.map_err(failed)?;
+                record.requests.push(RecordedRequest {
+                    offset,
+                    at_unix_ms: at,
+                    text,
+                    author: decoded(author)?,
+                    task_ids: decoded(tasks)?,
+                    chapter_id: chapter,
+                    judged,
+                });
+            }
         }
         let mut statement = self
             .connection
@@ -783,48 +852,13 @@ impl LinkStore {
                 done: false,
             });
         }
-        let mut statement=self.connection.prepare("SELECT missed,kind,text,status,at,turn_offset,issue_repo,issue_number, \
-            EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=m.device AND a.agent=m.agent AND a.id=m.id \
-            AND a.missed=m.missed AND a.state='creating') FROM ledger_missed m WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC").map_err(failed)?;
-        let missed = statement
-            .query_map(
-                params![session.device_id, session.agent, session.session_id],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, u64>(4)?,
-                        r.get::<_, u64>(5)?,
-                        r.get::<_, Option<String>>(6)?,
-                        r.get::<_, Option<u64>>(7)?,
-                        r.get::<_, bool>(8)?,
-                    ))
-                },
-            )
-            .map_err(failed)?;
-        for missed in missed {
-            let (id, kind, text, status, at, offset, repo, number, creating) =
-                missed.map_err(failed)?;
-            record.missed.push(MissedWork {
-                id,
-                kind: decoded(kind)?,
-                text,
-                status: decoded(status)?,
-                at_unix_ms: at,
-                turn_offset: offset,
-                issue_repository: repo,
-                issue_number: number,
-                creating,
-            });
-        }
+        record.missed = self.ledger_missed(session)?;
         let mut statement = self
             .connection
             .prepare(
                 "SELECT o.kind,o.repo,o.number,o.title,o.url,o.state,o.created_at,o.task,COALESCE(f.stale,1),f.read_at \
             FROM ledger_outputs o LEFT JOIN ledger_output_facts f ON f.repo=o.repo AND f.kind=o.kind AND f.number=o.number \
-            WHERE o.device=?1 AND o.agent=?2 AND o.id=?3 ORDER BY o.created_at DESC",
+            WHERE o.device=?1 AND o.agent=?2 AND o.id=?3 ORDER BY o.created_at DESC LIMIT 2001",
             )
             .map_err(failed)?;
         record.outputs = statement
@@ -850,11 +884,14 @@ impl LinkStore {
             .map_err(failed)?
             .collect::<Result<_, _>>()
             .map_err(failed)?;
+        if record.outputs.len() > REQUEST_LIMIT {
+            return Err("ledger_output_capacity".into());
+        }
         let mut statement = self
             .connection
             .prepare(
-                "SELECT agent,id FROM session_parents \
-            WHERE device=?1 AND parent_agent=?2 AND parent_id=?3 LIMIT ?4",
+                "SELECT device,agent,id FROM session_parents \
+            WHERE parent_device=?1 AND parent_agent=?2 AND parent_id=?3 LIMIT ?4",
             )
             .map_err(failed)?;
         let children = statement
@@ -867,9 +904,9 @@ impl LinkStore {
                 ],
                 |r| {
                     Ok(SessionIdentity {
-                        device_id: session.device_id.clone(),
-                        agent: r.get(0)?,
-                        session_id: r.get(1)?,
+                        device_id: r.get(0)?,
+                        agent: r.get(1)?,
+                        session_id: r.get(2)?,
                     })
                 },
             )
@@ -877,7 +914,8 @@ impl LinkStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(failed)?;
         for child in children {
-            let child = self.record_tree(&child, visited, depth + 1)?;
+            let child =
+                self.record_tree(&child, visited, depth + 1, request_budget, include_requests)?;
             let spawn_task: Option<String> = self.connection.query_row("SELECT output_task FROM ledger_turns WHERE device=?1 AND agent=?2 AND id=?3 AND ?4 BETWEEN start_at AND end_at ORDER BY start_at DESC LIMIT 1",
                 params![session.device_id,session.agent,session.session_id,child.started_at_unix_ms.map(|n|n as i64)],|r|r.get(0)).optional().map_err(failed)?.flatten();
             record
@@ -891,6 +929,14 @@ impl LinkStore {
             }
             record.children.push(child);
         }
+        let mut outputs_seen = BTreeSet::new();
+        record.outputs.retain(|output| {
+            outputs_seen.insert((
+                output.kind.clone(),
+                output.repository.clone(),
+                output.number,
+            ))
+        });
         for task in &mut record.tasks {
             task.done = task.end == LabelEnd::Done
                 && record
@@ -902,87 +948,114 @@ impl LinkStore {
         Ok(record)
     }
 
-    pub fn ledger_context(&self, session: &SessionIdentity) -> Result<LedgerContext, String> {
-        let mut context = LedgerContext::default();
-        let mut statement=self.connection.prepare("SELECT task,chapter,name,at,last_at,end FROM ledger_tasks t \
-            WHERE device=?1 AND agent=?2 AND id=?3 AND (end!=?4 OR EXISTS(SELECT 1 FROM ledger_outputs o \
-            WHERE o.device=t.device AND o.agent=t.agent AND o.id=t.id AND o.task=t.task AND o.kind='pr' AND o.state!='merged')) \
-            ORDER BY last_at DESC LIMIT ?5").map_err(failed)?;
-        let tasks = statement
-            .query_map(
-                params![
-                    session.device_id,
-                    session.agent,
-                    session.session_id,
-                    encoded(&LabelEnd::Done)?,
-                    TASK_LIMIT as i64
-                ],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, u64>(3)?,
-                        r.get::<_, u64>(4)?,
-                        r.get::<_, String>(5)?,
-                    ))
-                },
-            )
-            .map_err(failed)?;
-        for task in tasks {
-            let (id, chapter, name, at, last, end) = task.map_err(failed)?;
-            context.open_tasks.push(WorkTask {
-                id,
-                chapter_id: chapter,
-                name,
-                at_unix_ms: at,
-                last_at_unix_ms: last,
-                end: decoded(end)?,
-                done: false,
-            });
-        }
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT missed,kind,text,at,turn_offset FROM ledger_missed \
-            WHERE device=?1 AND agent=?2 AND id=?3 AND status=?4 ORDER BY at DESC LIMIT ?5",
-            )
-            .map_err(failed)?;
+    fn ledger_missed(&self, session: &SessionIdentity) -> Result<Vec<MissedWork>, String> {
+        let mut missed_items = Vec::new();
+        let mut statement=self.connection.prepare("SELECT missed,kind,text,status,at,turn_offset,issue_repo,issue_number, \
+            EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=m.device AND a.agent=m.agent AND a.id=m.id \
+            AND a.missed=m.missed AND a.state='creating'),turn_witness FROM ledger_missed m WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC").map_err(failed)?;
         let missed = statement
             .query_map(
-                params![
-                    session.device_id,
-                    session.agent,
-                    session.session_id,
-                    encoded(&MissedStatus::Open)?,
-                    MISSED_LIMIT as i64
-                ],
+                params![session.device_id, session.agent, session.session_id],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
-                        r.get::<_, u64>(3)?,
+                        r.get::<_, String>(3)?,
                         r.get::<_, u64>(4)?,
+                        r.get::<_, u64>(5)?,
+                        r.get::<_, Option<String>>(6)?,
+                        r.get::<_, Option<u64>>(7)?,
+                        r.get::<_, bool>(8)?,
+                        r.get::<_, Option<String>>(9)?,
                     ))
                 },
             )
             .map_err(failed)?;
         for missed in missed {
-            let (id, kind, text, at, offset) = missed.map_err(failed)?;
-            context.open_missed.push(MissedWork {
+            let (id, kind, text, status, at, offset, repo, number, creating, witness) =
+                missed.map_err(failed)?;
+            missed_items.push(MissedWork {
                 id,
                 kind: decoded(kind)?,
                 text,
-                status: MissedStatus::Open,
+                status: decoded(status)?,
                 at_unix_ms: at,
                 turn_offset: offset,
-                issue_repository: None,
-                issue_number: None,
-                creating: false,
+                turn_witness: witness,
+                issue_repository: repo,
+                issue_number: number,
+                creating,
             });
         }
-        Ok(context)
+        Ok(missed_items)
+    }
+
+    pub fn ledger_context(&self, session: &SessionIdentity) -> Result<LedgerContext, String> {
+        // The same descendant-to-spawn-turn attribution decides both the
+        // visible verdict and which tasks a later turn may continue.
+        let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
+        Ok(LedgerContext {
+            parent_name: self.connection.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| r.get(0)).optional().map_err(failed)?,
+            open_tasks: record.tasks.into_iter().filter(|task| !task.done).collect(),
+            open_missed: record.missed.into_iter().filter(|missed| missed.status == MissedStatus::Open).collect(),
+        })
+    }
+
+    pub fn ledger_parent(
+        &self,
+        session: &SessionIdentity,
+    ) -> Result<Option<SessionIdentity>, String> {
+        self.connection.query_row("SELECT parent_device,parent_agent,parent_id FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| Ok(SessionIdentity { device_id:r.get(0)?,agent:r.get(1)?,session_id:r.get(2)? })).optional().map_err(failed)
+    }
+
+    /// Closed issues also need creation facts; feed sightings to the existing
+    /// bounded GitHub reader, never fetch from record/search code.
+    pub fn ledger_issue_refs(
+        &self,
+        project: &str,
+    ) -> Result<Vec<crate::issues::IssueReference>, String> {
+        let project = self.project(project)?.ok_or("ledger_project_missing")?;
+        let paths = self.project_paths(&project)?;
+        let mut statement = self.connection.prepare("SELECT DISTINCT x.device,x.agent,x.id,x.repo,x.number FROM ledger_sightings x WHERE kind='issue' ORDER BY at DESC LIMIT ?1").map_err(failed)?;
+        let rows = statement
+            .query_map([SUMMARY_SESSION_LIMIT as i64 + 1], |r| {
+                Ok((
+                    SessionIdentity {
+                        device_id: r.get(0)?,
+                        agent: r.get(1)?,
+                        session_id: r.get(2)?,
+                    },
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u64>(4)?,
+                ))
+            })
+            .map_err(failed)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(failed)?;
+        if rows.len() > SUMMARY_SESSION_LIMIT {
+            return Err("ledger_sighting_capacity".into());
+        }
+        let mut refs = BTreeSet::new();
+        for (session, repo, number) in rows {
+            if self
+                .session(&key(&session))?
+                .is_some_and(|row| row.inside(&paths))
+            {
+                let reference = crate::issues::IssueReference::parse(
+                    &format!("https://github.com/{repo}/issues/{number}"),
+                    None,
+                )
+                .map_err(|_| "ledger_issue_reference_invalid")?;
+                refs.insert(reference);
+            }
+        }
+        if refs.len() > crate::issues::ISSUE_LIMIT {
+            crate::diagnostic!(
+                serde_json::json!({"component":"links","kind":"ledger.issue_read_capacity","limit":crate::issues::ISSUE_LIMIT,"omitted":refs.len()-crate::issues::ISSUE_LIMIT})
+            );
+        }
+        Ok(refs.into_iter().take(crate::issues::ISSUE_LIMIT).collect())
     }
 
     pub fn ledger_summaries(&self, project: &str) -> Result<Vec<SessionWorkSummary>, String> {
@@ -1022,7 +1095,7 @@ impl LinkStore {
         }
         let mut statement = self
             .connection
-            .prepare("SELECT device,agent,id,parent_agent,parent_id FROM session_parents LIMIT ?1")
+            .prepare("SELECT device,agent,id,parent_agent,parent_id,parent_device FROM session_parents LIMIT ?1")
             .map_err(failed)?;
         let parents = statement
             .query_map([SUMMARY_SESSION_LIMIT as i64 + 1], |r| {
@@ -1034,7 +1107,7 @@ impl LinkStore {
                         session_id: r.get(2)?,
                     },
                     SessionIdentity {
-                        device_id: device,
+                        device_id: r.get(5)?,
                         agent: r.get(3)?,
                         session_id: r.get(4)?,
                     },
@@ -1088,7 +1161,10 @@ impl LinkStore {
                 )
                 .map_err(failed)?;
             let missed = if counts.get(&identity).copied().unwrap_or(0) > 0 {
-                self.ledger_context(&identity)?.open_missed
+                self.ledger_missed(&identity)?
+                    .into_iter()
+                    .filter(|missed| missed.status == MissedStatus::Open)
+                    .collect()
             } else {
                 Vec::new()
             };

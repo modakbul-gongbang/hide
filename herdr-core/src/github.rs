@@ -766,7 +766,7 @@ pub(crate) fn create_issue(
 
 pub(crate) fn issue_repository(node: &dyn NodeLink, place: &Where) -> Result<String, String> {
     let output = gh_at(node, place, &["repo", "view", "--json", "nameWithOwner"])
-        .map_err(|error| error.reason)?;
+        .map_err(|_| "issue_github_unavailable")?;
     let value: serde_json::Value =
         serde_json::from_str(&output).map_err(|_| "issue_repository_invalid")?;
     value
@@ -789,8 +789,8 @@ pub(crate) fn reconcile_issue_attempt(
 ) -> Result<Option<crate::issues::IssueSnapshot>, String> {
     let query =
         hide_node_link::gh::issue_attempt_query(repository).ok_or("issue_repository_invalid")?;
-    let output =
-        gh_at(node, place, &["api", "graphql", "-f", &query]).map_err(|error| error.reason)?;
+    let output = gh_at(node, place, &["api", "graphql", "-f", &query])
+        .map_err(|_| "issue_github_unavailable")?;
     let value: serde_json::Value =
         serde_json::from_str(&output).map_err(|_| "issue_reconcile_invalid")?;
     if value
@@ -1893,6 +1893,10 @@ pub(crate) enum Where {
     Checkout(PathBuf),
     /// A wire path interpreted only by the node that owns it.
     DeviceCheckout(String),
+    DeviceRepository {
+        checkout: String,
+        repository: String,
+    },
     Repository(String),
 }
 
@@ -1900,6 +1904,10 @@ fn gh_at(node: &dyn NodeLink, place: &Where, arguments: &[&str]) -> Result<Strin
     match place {
         Where::Checkout(root) => gh(node, Some(root), arguments),
         Where::DeviceCheckout(root) => run_gh_call_at(node, Some(root), None, arguments),
+        Where::DeviceRepository {
+            checkout,
+            repository,
+        } => run_gh_call_at(node, Some(checkout), Some(repository), arguments),
         Where::Repository(repository) => run_gh_call(node, None, Some(repository), arguments),
     }
 }

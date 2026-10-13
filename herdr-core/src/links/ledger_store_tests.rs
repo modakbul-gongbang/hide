@@ -45,6 +45,7 @@ fn end(store: &mut LinkStore, offset: u64, judgment: TurnJudgment) {
             at_unix_ms: offset * 1_000 + 500,
             end: LabelEnd::Done,
             work_author: true,
+            turn_witness: None,
             judgment,
         })
         .unwrap();
@@ -80,7 +81,13 @@ fn a_v1_store_keeps_its_sessions_and_links_through_migration() {
             .unwrap(),
         "legacy request"
     );
-    assert!(store.ledger_record(&session()).unwrap().tasks.is_empty());
+    let record = store.ledger_record(&session()).unwrap();
+    assert!(record.tasks.is_empty());
+    assert_eq!(record.requests[0].text, "legacy request");
+    assert_eq!(
+        store.ledger_search("legacy", false).unwrap()[0].session,
+        session()
+    );
     drop(store);
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection.pragma_update(None, "user_version", 3).unwrap();
@@ -458,4 +465,193 @@ fn search_returns_one_session_with_its_latest_matching_request_and_own_title_whe
     assert_eq!(off.len(), 1);
     assert_eq!(off[0].title, "세션 자기 제목");
     assert_eq!(off[0].matched, "기록 마지막 요청");
+}
+
+#[test]
+fn a_mixed_device_tree_rolls_outputs_and_missed_items_into_the_spawn_task_and_open_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "위임해 기록 화면 구현");
+    chapter(&mut store);
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            task: TaskDecision::New {
+                name: "기록 화면".into(),
+            },
+            ..Default::default()
+        },
+    );
+    let child = SessionIdentity {
+        device_id: "device-b".into(),
+        agent: "claude".into(),
+        session_id: "child".into(),
+    };
+    let grandchild = SessionIdentity {
+        device_id: "device-a".into(),
+        agent: "opencode".into(),
+        session_id: "grandchild".into(),
+    };
+    for (session, parent, at) in [
+        (&child, session(), 1_100),
+        (&grandchild, child.clone(), 1_200),
+    ] {
+        store
+            .apply_ledger_update(&LedgerUpdate::Requests {
+                session: session.clone(),
+                cwd: "/repo".into(),
+                path: None,
+                requests: vec![RecordedRequest {
+                    offset: 1,
+                    at_unix_ms: at,
+                    text: "부모가 준 일".into(),
+                    author: WorkAuthor::Parent,
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                }],
+            })
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE sessions SET started_at=?4 WHERE device=?1 AND agent=?2 AND id=?3",
+                params![session.device_id, session.agent, session.session_id, at],
+            )
+            .unwrap();
+        store
+            .apply_parents(&[crate::links::ParentFact {
+                device_id: session.device_id.clone(),
+                agent: session.agent.clone(),
+                session_id: session.session_id.clone(),
+                parent_device_id: parent.device_id,
+                parent_agent: parent.agent,
+                parent_session_id: parent.session_id,
+                parent_name: "parent".into(),
+            }])
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: session.clone(),
+                goal: "구현".into(),
+                at_unix_ms: at,
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                session: session.clone(),
+                offset: 1,
+                at_unix_ms: 1_400,
+                end: LabelEnd::Done,
+                work_author: true,
+                turn_witness: None,
+                judgment: TurnJudgment {
+                    task: TaskDecision::New {
+                        name: "구현".into(),
+                    },
+                    missed: vec![NewMissedWork {
+                        kind: MissedKind::Leftover,
+                        text: "정리할 일".into(),
+                    }],
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    store.connection.execute("INSERT INTO ledger_outputs VALUES('device-a','opencode','grandchild','pr','acme/app',12,'child PR','https://github.com/acme/app/pull/12','open',1200,1200,NULL)", []).unwrap();
+    for state in ["open", "ci_failed", "closed", "merged"] {
+        store
+            .connection
+            .execute("UPDATE ledger_outputs SET state=?1", [state])
+            .unwrap();
+        let record = store.ledger_record(&session()).unwrap();
+        assert_eq!(record.children[0].session, child);
+        assert_eq!(record.children[0].children[0].session, grandchild);
+        assert_eq!(record.outputs.len(), 1);
+        assert_eq!(record.outputs[0].source, grandchild);
+        assert_eq!(
+            record.outputs[0].task_id.as_deref(),
+            Some(record.tasks[0].id.as_str())
+        );
+        assert_eq!(record.tasks[0].done, state == "merged");
+        assert_eq!(
+            store.ledger_context(&session()).unwrap().open_tasks.len(),
+            usize::from(state != "merged")
+        );
+    }
+    assert_eq!(
+        store.ledger_context(&child).unwrap().parent_name.as_deref(),
+        Some("parent")
+    );
+}
+
+#[test]
+fn delegated_raw_records_accept_only_the_initial_and_parents_work_requests() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "initial parent prompt");
+    request(&mut store, 2, "operator direct input");
+    store
+        .apply_parents(&[crate::links::ParentFact {
+            device_id: session().device_id,
+            agent: session().agent,
+            session_id: session().session_id,
+            parent_device_id: "device-b".into(),
+            parent_agent: "claude".into(),
+            parent_session_id: "parent".into(),
+            parent_name: "lead".into(),
+        }])
+        .unwrap();
+    let facts = hide_session::links::LinkFacts {
+        requests: vec![
+            hide_session::links::RequestMark {
+                offset: 3,
+                at_unix_ms: 3_000,
+                text: "parent work request".into(),
+                sender: Some("lead".into()),
+                letter_kind: Some("request".into()),
+            },
+            hide_session::links::RequestMark {
+                offset: 4,
+                at_unix_ms: 4_000,
+                text: "other request".into(),
+                sender: Some("peer".into()),
+                letter_kind: Some("request".into()),
+            },
+            hide_session::links::RequestMark {
+                offset: 5,
+                at_unix_ms: 5_000,
+                text: "parent report".into(),
+                sender: Some("lead".into()),
+                letter_kind: Some("report".into()),
+            },
+            hide_session::links::RequestMark {
+                offset: 6,
+                at_unix_ms: 6_000,
+                text: "operator later input".into(),
+                sender: None,
+                letter_kind: None,
+            },
+        ],
+        ..Default::default()
+    };
+    let tx = store.connection.transaction().unwrap();
+    apply_reader(&tx, "device-a", "codex", "session-a", &facts).unwrap();
+    tx.commit().unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(
+        record
+            .requests
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>(),
+        ["parent work request", "initial parent prompt"]
+    );
+    assert!(
+        record
+            .requests
+            .iter()
+            .all(|r| r.author == WorkAuthor::Parent)
+    );
 }

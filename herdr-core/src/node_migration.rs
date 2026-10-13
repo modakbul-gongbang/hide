@@ -1353,7 +1353,7 @@ mod tests {
                      VALUES('local','claude','s1','/f','b',1,1);
                  INSERT INTO session_prs(device,agent,id,file,repo_name,number,at)
                      VALUES('local','claude','s1','/f','acme/p',7,1);
-                 INSERT INTO session_parents VALUES('local','claude','s2','claude','s1','p');
+                 INSERT INTO session_parents VALUES('local','claude','s2','claude','s1','p','local');
                  INSERT INTO cursors(device,path,agent,stamp) VALUES('local','/f','claude','1');
                  INSERT INTO meta VALUES('listed_at','1');",
                 old = old_project,
@@ -1513,6 +1513,16 @@ mod tests {
                 "{table} still names `local`"
             );
         }
+        assert_eq!(
+            count("SELECT COUNT(*) FROM session_parents WHERE parent_device='local'"),
+            0
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM session_parents WHERE parent_device='8f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5'"
+            ),
+            1
+        );
         let moved: (String, String, String, String) = links
             .query_row(
                 "SELECT (SELECT device FROM projects WHERE key=?1), \

@@ -109,6 +109,7 @@ struct Mailbox {
         LedgerCall,
         std::sync::mpsc::SyncSender<Result<LedgerAnswer, String>>,
     )>,
+    calls_pending: usize,
 }
 
 /// The runtime's handle on the worker's mailbox.
@@ -130,12 +131,13 @@ impl LinkClient {
             if mailbox.stop {
                 return Err("links_worker_closed".into());
             }
-            if mailbox.calls.len() >= LEDGER_RPC_LIMIT {
+            if mailbox.calls_pending >= LEDGER_RPC_LIMIT {
                 crate::diagnostic!(
                     serde_json::json!({"component":"links","kind":"ledger.rpc_capacity","limit":LEDGER_RPC_LIMIT})
                 );
                 return Err("ledger_rpc_capacity".into());
             }
+            mailbox.calls_pending += 1;
             mailbox.calls.push_back((call, send));
             wake.notify_one();
         }
@@ -524,6 +526,9 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             Err(code) => {
                 for (_, answer) in calls {
                     let _ = answer.send(Err(code.clone()));
+                    if let Ok(mut mailbox) = client.0.0.lock() {
+                        mailbox.calls_pending = mailbox.calls_pending.saturating_sub(1);
+                    }
                 }
                 if let Some((generation, _)) = state.record.as_ref() {
                     sink.record(*generation, Err(code.clone()));
@@ -550,6 +555,9 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 state.dirty_at.get_or_insert_with(Instant::now);
             }
             let _ = answer.send(result);
+            if let Ok(mut mailbox) = client.0.0.lock() {
+                mailbox.calls_pending = mailbox.calls_pending.saturating_sub(1);
+            }
         }
         if client.ledger_started_at().is_none() {
             let started = match store.meta("ledger_started_at") {
@@ -600,7 +608,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                     mailbox.ledger_pending = mailbox.ledger_pending.saturating_sub(1);
                 }
                 state.dirty_at.get_or_insert_with(Instant::now);
-                update_context(client, store, &session);
+                update_context_ancestors(client, store, &session);
             }
         }
         if std::mem::take(&mut state.projects_due) {
@@ -611,6 +619,14 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             }
             let result = store.refresh_ledger_outputs();
             state.wrote(result, "ledger_outputs");
+            let held = client
+                .1
+                .lock()
+                .map(|contexts| contexts.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for session in held {
+                update_context_ancestors(client, store, &session);
+            }
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         if state.panes_at.is_none_or(|at| at.elapsed() >= PANES_EVERY) {
@@ -635,6 +651,17 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         if let Some(parents) = state.parents.take() {
             let result = store.apply_parents(&parents);
             state.wrote(result, "parents");
+            for parent in parents.iter() {
+                update_context_ancestors(
+                    client,
+                    store,
+                    &SessionIdentity {
+                        device_id: parent.device_id.clone(),
+                        agent: parent.agent.clone(),
+                        session_id: parent.session_id.clone(),
+                    },
+                );
+            }
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         if state.panel.is_some() && state.panel_answer.is_none() {
@@ -1195,11 +1222,25 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     for project in state.projects.iter() {
         match store.summary(&project.key, &project.worktrees) {
             Ok(mut summary) => {
+                match store.ledger_issue_refs(&project.key) {
+                    Ok(refs) => summary.record_issues = refs,
+                    Err(code) => {
+                        log_write(&code, "ledger_issue_refs");
+                        if let Some(held) = state.summaries.get(&project.workspace_id) {
+                            summary.record_issues = held.record_issues.clone();
+                        }
+                    }
+                }
                 match store.ledger_summaries(&project.key) {
                     Ok(work) => {
                         match store.ledger_creators(&work) {
                             Ok(creators) => summary.creators = creators,
-                            Err(code) => log_write(&code, "ledger_creators"),
+                            Err(code) => {
+                                log_write(&code, "ledger_creators");
+                                if let Some(held) = state.summaries.get(&project.workspace_id) {
+                                    summary.creators = held.creators.clone();
+                                }
+                            }
                         }
                         summary.work = work;
                     }
@@ -1207,6 +1248,7 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
                         log_write(&code, "ledger_summary");
                         if let Some(held) = state.summaries.get(&project.workspace_id) {
                             summary.work = held.work.clone();
+                            summary.creators = held.creators.clone();
                         }
                     }
                 }
@@ -1227,6 +1269,26 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
         state.summaries = summaries.clone();
         sink.summaries(summaries);
     }
+}
+
+fn update_context_ancestors(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {
+    let mut current = session.clone();
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..32 {
+        if !seen.insert(current.clone()) {
+            break;
+        }
+        update_context(client, store, &current);
+        match store.ledger_parent(&current) {
+            Ok(Some(parent)) => current = parent,
+            Ok(None) => return,
+            Err(code) => {
+                log_write(&code, "ledger_parent");
+                return;
+            }
+        }
+    }
+    log_write("ledger_parent_capacity", "ledger_context");
 }
 
 fn update_context(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {

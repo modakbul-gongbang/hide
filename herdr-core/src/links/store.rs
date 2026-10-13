@@ -263,7 +263,8 @@ impl LinkStore {
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM projects WHERE device=?1) \
                  OR EXISTS(SELECT 1 FROM sessions WHERE device=?1) \
-                 OR EXISTS(SELECT 1 FROM cursors WHERE device=?1)",
+                 OR EXISTS(SELECT 1 FROM cursors WHERE device=?1) \
+                 OR EXISTS(SELECT 1 FROM session_parents WHERE parent_device=?1)",
                 [device],
                 |row| row.get(0),
             )
@@ -337,6 +338,11 @@ impl LinkStore {
             )
             .map_err(|error| format!("moving {table} to {to} failed: {error}"))?;
         }
+        tx.execute(
+            "UPDATE session_parents SET parent_device=?1 WHERE parent_device=?2",
+            [to, from],
+        )
+        .map_err(|_| "links_parent_device_move_failed".to_owned())?;
         tx.commit().map_err(failed)?;
         Ok(projects.len())
     }
@@ -799,10 +805,12 @@ impl LinkStore {
     pub fn apply_parents(&mut self, parents: &[ParentFact]) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(failed)?;
         for parent in parents {
+            let changed = tx.query_row("SELECT parent_device,parent_agent,parent_id,parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![parent.device_id,parent.agent,parent.session_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?))).optional().map_err(failed)?
+                != Some((parent.parent_device_id.clone(),parent.parent_agent.clone(),parent.parent_session_id.clone(),parent.parent_name.clone()));
             tx.execute(
-                "INSERT INTO session_parents VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(device,agent,id) \
+                "INSERT INTO session_parents VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(device,agent,id) \
                  DO UPDATE SET parent_agent=excluded.parent_agent, parent_id=excluded.parent_id, \
-                 parent_name=excluded.parent_name",
+                 parent_name=excluded.parent_name,parent_device=excluded.parent_device",
                 params![
                     parent.device_id,
                     parent.agent,
@@ -810,11 +818,12 @@ impl LinkStore {
                     parent.parent_agent,
                     parent.parent_session_id,
                     parent.parent_name,
+                    parent.parent_device_id,
                 ],
             )
             .map_err(failed)?;
             tx.execute(
-                "UPDATE ledger_requests SET author=?4 WHERE device=?1 AND agent=?2 AND id=?3",
+                "UPDATE ledger_requests SET author=?4 WHERE device=?1 AND agent=?2 AND id=?3 AND offset=(SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3)",
                 params![
                     parent.device_id,
                     parent.agent,
@@ -824,6 +833,26 @@ impl LinkStore {
                 ],
             )
             .map_err(failed)?;
+            tx.execute(
+                "DELETE FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND author=?4",
+                params![
+                    parent.device_id,
+                    parent.agent,
+                    parent.session_id,
+                    "\"operator\""
+                ],
+            )
+            .map_err(failed)?;
+            if changed {
+                // Lineage arrived after the first catalog read: rescan only
+                // this session through its existing bounded reader.
+                tx.execute("UPDATE cursors SET stamp='',checkpoint=NULL WHERE device=?1 AND agent=?2 AND session=?3", params![parent.device_id,parent.agent,parent.session_id]).map_err(failed)?;
+                tx.execute(
+                    "DELETE FROM ledger_excluded WHERE device=?1 AND agent=?2 AND id=?3",
+                    params![parent.device_id, parent.agent, parent.session_id],
+                )
+                .map_err(failed)?;
+            }
         }
         tx.commit().map_err(failed)
     }
@@ -940,6 +969,7 @@ impl LinkStore {
                 .map_err(failed)?;
             }
         }
+        tx.execute("DELETE FROM ledger_output_facts AS f WHERE NOT EXISTS(SELECT 1 FROM ledger_outputs o WHERE o.repo=f.repo AND o.kind=f.kind AND o.number=f.number) AND NOT EXISTS(SELECT 1 FROM ledger_sightings s WHERE s.repo=f.repo AND s.kind=f.kind AND s.number=f.number) AND NOT EXISTS(SELECT 1 FROM session_prs s WHERE f.kind='pr' AND s.repo_name=f.repo AND s.number=f.number)", []).map_err(failed)?;
         tx.commit().map_err(failed)?;
         if !gone.is_empty() {
             // `secure_delete` clears the main file's pages; the pruned text
@@ -1413,22 +1443,22 @@ impl LinkStore {
     }
 
     fn parent(&self, key: &SessionKey) -> Result<Option<LinkedParent>, String> {
-        let row: Option<(String, String, String)> = self
+        let row: Option<(String, String, String, String)> = self
             .connection
             .query_row(
-                "SELECT parent_agent, parent_id, parent_name FROM session_parents \
+                "SELECT parent_agent, parent_id, parent_name, parent_device FROM session_parents \
                  WHERE device=?1 AND agent=?2 AND id=?3",
                 params![key.device, key.agent, key.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(failed)?;
-        let Some((agent, session_id, name)) = row else {
+        let Some((agent, session_id, name, device)) = row else {
             return Ok(None);
         };
         let available = self
             .session(&SessionKey {
-                device: key.device.clone(),
+                device,
                 agent: agent.clone(),
                 id: session_id.clone(),
             })?
