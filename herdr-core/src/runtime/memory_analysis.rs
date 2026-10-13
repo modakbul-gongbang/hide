@@ -2963,7 +2963,11 @@ mod tests {
         assert_eq!(reports, ["analyzing", "learned one"]);
         assert_eq!(
             memory_kinds(&records),
-            ["receipts.records_skipped", "analysis.records_skipped"]
+            [
+                "receipts.records_skipped",
+                "analysis.session_cards",
+                "analysis.records_skipped"
+            ]
         );
         for record in &records {
             assert_eq!(record["skipped"], json!({"non_conversation_capacity": 1}));
