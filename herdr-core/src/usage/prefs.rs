@@ -89,14 +89,21 @@ impl UsagePreferences {
         }
         if enabled
             && let Some(row) = usage.own_agent(&pin.agent)
-            && let Cell::Reading { value, .. } = &row.limits
-            && value.windows.iter().any(|w| {
-                w.kind == pin.window
-                    && w.scope == Scope::All
-                    && matches!(w.outcome, WindowOutcome::NotOffered)
-            })
+            && let Cell::Reading {
+                value,
+                freshness: super::model::Freshness::Fresh,
+                ..
+            } = &row.limits
+            && let Some(window) = value
+                .windows
+                .iter()
+                .find(|w| w.kind == pin.window && w.scope == Scope::All)
         {
-            return Err("usage.not_offered");
+            match window.outcome {
+                WindowOutcome::NotOffered => return Err("usage.not_offered"),
+                WindowOutcome::Unreadable { .. } => return Err("usage.unreadable_window"),
+                _ => {}
+            }
         }
         if self.pinned.contains(&pin) == enabled {
             return Ok(false);

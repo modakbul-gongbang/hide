@@ -516,6 +516,12 @@ fn an_absent_pin_frees_a_shared_slot_and_stays_removed_after_restart() {
         }
         runtime.ingest_usage(rows);
         assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+        runtime.dispatch_json(&pin("codex"));
+        assert_eq!(
+            runtime.snapshot.ui_state.usage.pinned.len(),
+            2,
+            "a late event from another window cannot restore an inaccessible pin"
+        );
         assert!(
             runtime.dispatch_json(&pin("claude")),
             "the newly freed slot is selectable"
