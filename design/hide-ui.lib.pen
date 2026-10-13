@@ -32033,6 +32033,17 @@
                 },
                 {
                   "type": "text",
+                  "id": "usage-chip-window",
+                  "name": "5h",
+                  "content": "5h",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600",
+                  "enabled": false
+                },
+                {
+                  "type": "text",
                   "id": "usage-chip-percent",
                   "name": "62%",
                   "fill": "$--success",
@@ -32048,7 +32059,7 @@
               "id": "usage-row",
               "name": "Component / Usage row",
               "reusable": true,
-              "width": 218,
+              "width": 262,
               "layout": "vertical",
               "gap": "$--spacing-xs",
               "children": [
@@ -32085,16 +32096,17 @@
                         "url": "../web/src/assets/agent-claude.png",
                         "mode": "contain"
                       },
-                      "cornerRadius": "$--radius-xs"
+                      "cornerRadius": "$--radius-xs",
+                      "enabled": false
                     },
                     {
                       "type": "text",
                       "id": "usage-row-label",
-                      "name": "Claude Code",
+                      "name": "Window",
                       "fill": "$--subtle-foreground",
-                      "content": "Claude Code",
+                      "content": "7 days",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
+                      "fontSize": "$--text-caption",
                       "fontWeight": "500"
                     },
                     {
@@ -43932,6 +43944,745 @@
       "width": "fit_content",
       "x": 12000,
       "y": 6421
+    },
+    {
+      "type": "frame",
+      "id": "cmp-usage-windows",
+      "name": "Component / Usage windows",
+      "children": [
+        {
+          "type": "frame",
+          "id": "usage-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "usage-states-light",
+              "name": "Chip states",
+              "children": [
+                {
+                  "id": "usage-default-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-five-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h 11%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "11%",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-week-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "7d 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "7d"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-empty-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                },
+                {
+                  "id": "usage-loading-light",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-light",
+              "name": "Usage popover",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-header-light",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-title-light",
+                      "name": "Usage",
+                      "content": "Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-spacer-light",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "usage-choose-light",
+                      "type": "ref",
+                      "ref": "btn-m",
+                      "name": "Choose chips",
+                      "height": 24,
+                      "fill": [],
+                      "descendants": {
+                        "btn-lb": {
+                          "content": "Choose chips",
+                          "fill": "$--subtle-foreground"
+                        },
+                        "btn-ic": {
+                          "icon": "settings",
+                          "enabled": true,
+                          "fill": "$--subtle-foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-0-light",
+                  "name": "Claude Code",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-0-light",
+                      "name": "Claude Code",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-0-light",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-0-light",
+                          "name": "Claude Code",
+                          "content": "Claude Code",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-session-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "5 hours",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "5 hours"
+                        },
+                        "usage-row-value": {
+                          "content": "11%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 3h 12m"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--success",
+                          "width": 29
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-weekly-0-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-scoped-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Fable",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": true
+                        },
+                        "usage-row-label": {
+                          "content": "Fable"
+                        },
+                        "usage-row-value": {
+                          "content": "42%"
+                        },
+                        "usage-row-fill": {
+                          "width": 110
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-1-light",
+                  "name": "Codex",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-1-light",
+                      "name": "Codex",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-1-light",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-1-light",
+                          "name": "Codex",
+                          "content": "Codex",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-weekly-1-light",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "reusable": true,
+              "width": 320,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "cornerRadius": "$--radius-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "vertical",
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background"
+        },
+        {
+          "type": "frame",
+          "id": "usage-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "usage-states-dark",
+              "name": "Chip states",
+              "children": [
+                {
+                  "id": "usage-default-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-five-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h 11%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "11%",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-week-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "7d 81%",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "7d"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": true,
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "id": "usage-empty-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "5h ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": true,
+                      "content": "5h"
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                },
+                {
+                  "id": "usage-loading-dark",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": " ",
+                  "descendants": {
+                    "usage-chip-window": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false,
+                      "content": "",
+                      "fill": "$--success"
+                    },
+                    "usage-chip-mark": {
+                      "opacity": 0.5
+                    }
+                  }
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-dark",
+              "name": "Usage popover",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-header-dark",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-title-dark",
+                      "name": "Usage",
+                      "content": "Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-spacer-dark",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "usage-choose-dark",
+                      "type": "ref",
+                      "ref": "btn-m",
+                      "name": "Choose chips",
+                      "height": 24,
+                      "fill": [],
+                      "descendants": {
+                        "btn-lb": {
+                          "content": "Choose chips",
+                          "fill": "$--subtle-foreground"
+                        },
+                        "btn-ic": {
+                          "icon": "settings",
+                          "enabled": true,
+                          "fill": "$--subtle-foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-0-dark",
+                  "name": "Claude Code",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-0-dark",
+                      "name": "Claude Code",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-0-dark",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-0-dark",
+                          "name": "Claude Code",
+                          "content": "Claude Code",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-session-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "5 hours",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "5 hours"
+                        },
+                        "usage-row-value": {
+                          "content": "11%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 3h 12m"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--success",
+                          "width": 29
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-weekly-0-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-scoped-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Fable",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": true
+                        },
+                        "usage-row-label": {
+                          "content": "Fable"
+                        },
+                        "usage-row-value": {
+                          "content": "42%"
+                        },
+                        "usage-row-fill": {
+                          "width": 110
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-card-1-dark",
+                  "name": "Codex",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-agent-header-1-dark",
+                      "name": "Codex",
+                      "children": [
+                        {
+                          "id": "usage-agent-mark-1-dark",
+                          "type": "rectangle",
+                          "width": 16,
+                          "height": 16,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "usage-agent-1-dark",
+                          "name": "Codex",
+                          "content": "Codex",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "usage-weekly-1-dark",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "7 days",
+                      "descendants": {
+                        "usage-row-label": {
+                          "content": "7 days"
+                        },
+                        "usage-row-value": {
+                          "content": "81%",
+                          "fill": "$--warning"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-fill": {
+                          "fill": "$--warning",
+                          "width": 212
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": "$--spacing-md",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "reusable": true,
+              "width": 320,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "cornerRadius": "$--radius-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "vertical",
+          "gap": "$--spacing-lg",
+          "padding": "$--spacing-lg",
+          "fill": "$--background"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "x": 13200,
+      "y": 6421
     }
   ],
   "themes": {
@@ -45415,7 +46166,7 @@
     },
     "--size-usage-popover": {
       "type": "number",
-      "value": 250
+      "value": 320
     },
     "--size-status-mark": {
       "type": "number",

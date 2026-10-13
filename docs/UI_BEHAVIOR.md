@@ -1520,22 +1520,34 @@ A start with no answer in 90 seconds, the core's own limit for one, says so insi
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
 Settings > Agents > Starting work has no default agent of its own.
 
-## Weekly usage
+## Usage
 
-Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`.
-The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shell only draws them.
+Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The sidebar footer reads one chip per provider, then Help (`?`) and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
-A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
-A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
-The chips' accessible name lists every provider with its reading.
-Clicking the chips opens the Weekly Usage popover above them, titled `Weekly Usage` with `7 days`: one row per provider with its mark, name, the time left before the reset (`in 5d 4h`, `in 3h 12m`, `in 7m`), the percent and a bar, and each scoped bucket such as Fable indented under its provider with `└`.
-A loading row reads `…` and an unavailable row reads `Unavailable`, each with the core's message in place of the bar; a stale or fallback row keeps its bar and shows its message under it.
-No usage state becomes a banner, toast or alert (design principle 13).
-The countdown advances once a minute while the popover is open, and nothing ticks while it is closed.
+The footer draws up to three pinned account windows, followed by Help and Settings.
+Defaults pin each supported agent's weekly window.
+Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
+A numberless not-started or expired chip always names its window.
+Each chip has its own accessible name with agent, window and value.
+Success is below 70%, warning starts at 70%, danger at 90%.
+Loading or unavailable agents collapse their pins into one dimmed mark; recent stale and fallback readings keep their values until the reset.
+At narrow widths the footer wraps rather than clipping its controls.
 
-The web page tells the core when a read is worth making, through two hints on `ui_state_update`: `usage_window_visible` follows the page's visibility and is sent on every live connection and on each change, and `usage_popover_open` is sent when the popover opens and again when it closes or leaves the screen.
-The core keeps one value of each, so with several pages open the last page to report decides.
+Any chip opens the 320-wide Usage popover above the footer.
+Each visible agent has one card, with 5 hours and 7 days rows, countdown, percent and bar, and model-specific limits indented below their weekly row.
+Not-started windows say `Not started`, never 0%.
+Expired, not-offered and individually unreadable windows have no popover row; a whole malformed response makes the agent unavailable.
+Loading cards show `…`; unavailable cards show `Unavailable`, with a sign-in command only for a signed-out account, or the missing CLI for an uninstalled agent.
+Network and timeout detail stays in diagnostics.
+`Choose chips` opens Settings > Usage.
+No usage state becomes a banner, toast or alert.
+The countdown advances once a minute only while the popover is open.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
+The core keeps one value of each hint, so with several pages open the last page to report decides.
 
 ## Help menu
 
@@ -1651,7 +1663,8 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
 Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
-The list reads, top to bottom: the group name `App` with General, Notifications, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+The list reads, top to bottom: the group name `App` with General, Notifications, Usage, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+Its top inset uses `spacing-sm` and group labels use `spacing-xs` above and below, so the additional Usage page fits at 720×480 with the default Interface text without shrinking row targets.
 Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
 The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
 A page has its title and no description line (B4).
@@ -1668,6 +1681,21 @@ General is Appearance alone: one group with Language, Theme, Accent and Interfac
 Notifications holds every notification Hide sends, in two groups (PRD settings-left-nav B6).
 The first, named for this machine and only in the desktop app, has `Notify me when an agent needs me` (off on an existing install and after the wizard's `Not now`), and while it is on a row for what macOS allows with `Open System Settings` when it blocks Hide or `Send a test` when it allows, a `Test notification` row on Windows and Linux, and the note `Sent only while no Hide window is in front; the app icon marks agents that need you.` (PRD first-run-onboarding D-21, B30; First run above).
 The second, Phone, is the push to a paired phone, the dropdown Settings > Mobile below describes.
+
+### Usage
+
+Usage follows Notifications in the App group, with a gauge mark and the localized Usage title.
+The page walks the shared adapter declaration so all seven agents appear even before a read.
+An agent with limit support has one card: its mark and name with Hide, then a row for each declared account window with its current value and a pin switch.
+A window the account reports as not offered has no row or switch.
+When a fresh reading explicitly marks a window not offered or unreadable, the core removes its saved pin so an invisible row cannot hold a chip slot; loading, failed and retained readings preserve choices.
+The initial choices are the weekly window for Claude and Codex; the core stores the choices for every connected window and retains them across restart.
+At three pins, an unselected switch is disabled with “The sidebar shows at most three chips. Switch one off to pick this one.” beneath that row; removing a pin enables it again.
+Every window switch stays in one right-aligned column beside the first line of its label; a long value wraps below the label, including unavailable and refused-fourth-pin rows.
+Hide folds the card to its header, Hidden and Show, preserves the pins, and removes the agent from chips and the popover.
+The five agents without supported limits appear in No limit reading with a reason from the adapter declaration, without Hide or switches.
+Grok's weekly reader is not built, OpenCode Go would need an API key Hide does not hold, Pi and omp count toward their signed-in account, and Cursor would require its stored sign-in.
+The page reuses the settings group, row and switch parts; loading is an ellipsis and a missing reading is Unavailable, never an invented zero.
 
 ### GitHub
 

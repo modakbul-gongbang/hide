@@ -1044,15 +1044,9 @@ pub fn handle_with_progress(
             env.ai.release(instance);
             to_value(())
         }
-        Call::CodexCredentials { codex_home } => {
-            to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))
-        }
-        Call::CodexSessionUsage { codex_home } => {
-            to_value(crate::usage::codex_session_usage(&absolute(&codex_home)?))
-        }
-        Call::ClaudeUsageText { cwd } => {
-            let cwd = absolute(&cwd)?;
-            to_value(crate::usage::claude_usage_text(&cwd, &mut || {
+        Call::UsageLimitFetch { source, root } => {
+            let root = absolute(&root)?;
+            to_value(crate::usage::fetch(source, &root, &mut || {
                 progress(Value::Null)
             }))
         }
@@ -1975,7 +1969,7 @@ mod tests {
         let requests = [
             r#"{"id":1,"op":"gh","cwd":null,"args":["auth","status"]}"#,
             r#"{"id":2,"op":"factory","call":{"factory":"hide_program"}}"#,
-            r#"{"id":3,"op":"codex_credentials","codex_home":"/"}"#,
+            r#"{"id":3,"op":"usage_limit_fetch","source":"codex_usage","root":"/"}"#,
             r#"{"id":4,"op":"hello"}"#,
         ];
         let input = requests.join("\n") + "\n";

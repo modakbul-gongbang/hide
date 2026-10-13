@@ -1,5 +1,9 @@
 use super::*;
 use Capability::{Available, Unavailable, Unconfirmed};
+use usage::{
+    AbsenceKind, Attribution, LimitDeclaration, LimitSource, Support, UsageDeclaration, absent,
+    not_built,
+};
 
 /// The supported order is also the stable Settings order.
 pub const ADAPTERS: &[AgentAdapter] = &[
@@ -32,7 +36,25 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Claude),
         start: Some(LaunchDialect::Claude),
         find: Some(FindDialect::ClaudeTranscript),
-        usage: Some(UsageDialect::Claude),
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: Support::Supported(LimitSource::ClaudeUsageText),
+                weekly: Support::Supported(LimitSource::ClaudeUsageText),
+                scoped: Support::Supported(LimitSource::ClaudeUsageText),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: not_built(3),
+            cost: not_built(3),
+            models: not_built(3),
+            attribution: Attribution {
+                session: not_built(3),
+                project: not_built(3),
+            },
+        },
         doc_url: "https://code.claude.com/docs/en/skills",
         install_url: "https://code.claude.com/docs/en/setup",
         logo_id: "claude-code",
@@ -77,7 +99,25 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Codex),
         start: Some(LaunchDialect::Codex),
         find: Some(FindDialect::CodexTranscript),
-        usage: Some(UsageDialect::Codex),
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: Support::Supported(LimitSource::CodexUsage),
+                weekly: Support::Supported(LimitSource::CodexUsage),
+                scoped: not_built(5),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: not_built(3),
+            cost: not_built(3),
+            models: not_built(3),
+            attribution: Attribution {
+                session: not_built(3),
+                project: not_built(3),
+            },
+        },
         doc_url: "https://learn.chatgpt.com/docs/build-skills",
         install_url: "https://learn.chatgpt.com/docs/codex/cli",
         logo_id: "codex",
@@ -124,7 +164,33 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Grok),
         start: Some(LaunchDialect::Grok),
         find: None,
-        usage: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                weekly: not_built(5),
+                scoped: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: not_built(4),
+            cost: not_built(4),
+            models: not_built(4),
+            attribution: Attribution {
+                session: not_built(4),
+                project: not_built(4),
+            },
+        },
         doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
         install_url: "https://github.com/xai-org/grok-build",
         logo_id: "grok",
@@ -168,7 +234,37 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::OpenCode),
         start: Some(LaunchDialect::OpenCode),
         find: None,
-        usage: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                weekly: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                scoped: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                monthly: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+            },
+            tokens: not_built(4),
+            cost: not_built(4),
+            models: not_built(4),
+            attribution: Attribution {
+                session: not_built(4),
+                project: not_built(4),
+            },
+        },
         doc_url: "https://opencode.ai/docs/skills/",
         install_url: "https://opencode.ai/docs/",
         logo_id: "opencode",
@@ -218,7 +314,37 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Pi),
         start: Some(LaunchDialect::Pi),
         find: None,
-        usage: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                weekly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                scoped: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: not_built(4),
+            cost: not_built(4),
+            models: not_built(4),
+            attribution: Attribution {
+                session: not_built(4),
+                project: not_built(4),
+            },
+        },
         doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
         install_url: "https://pi.dev/",
         logo_id: "pi",
@@ -264,7 +390,37 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: Some(SessionFormat::Omp),
         start: Some(LaunchDialect::Omp),
         find: None,
-        usage: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                weekly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                scoped: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: not_built(4),
+            cost: not_built(4),
+            models: not_built(4),
+            attribution: Attribution {
+                session: not_built(4),
+                project: not_built(4),
+            },
+        },
         doc_url: "https://omp.sh/docs/skills",
         install_url: "https://omp.sh/docs/quickstart",
         logo_id: "omp",
@@ -316,7 +472,57 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         titles: None,
         start: Some(LaunchDialect::Cursor),
         find: None,
-        usage: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                weekly: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                scoped: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+                monthly: absent(
+                    AbsenceKind::Excluded,
+                    "Reading limits requires credentials outside the supported usage boundary.",
+                    "An official delegated usage reader becomes available.",
+                ),
+            },
+            tokens: absent(
+                AbsenceKind::NoSuchData,
+                "No supported local usage record is available.",
+                "The agent provides a documented local usage record.",
+            ),
+            cost: absent(
+                AbsenceKind::NoSuchData,
+                "No supported local usage record is available.",
+                "The agent provides a documented local usage record.",
+            ),
+            models: absent(
+                AbsenceKind::NoSuchData,
+                "No supported local usage record is available.",
+                "The agent provides a documented local usage record.",
+            ),
+            attribution: Attribution {
+                session: absent(
+                    AbsenceKind::NoSuchData,
+                    "No supported local usage record is available.",
+                    "The agent provides a documented local usage record.",
+                ),
+                project: absent(
+                    AbsenceKind::NoSuchData,
+                    "No supported local usage record is available.",
+                    "The agent provides a documented local usage record.",
+                ),
+            },
+        },
         doc_url: "https://cursor.com/docs/context/skills",
         install_url: "https://cursor.com/docs/cli/installation",
         logo_id: "cursor",

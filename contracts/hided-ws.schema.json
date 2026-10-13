@@ -205,36 +205,392 @@
         "device_id": { "type": "string" }
       }
     },
-    "providerUsage": {
-      "description": "One row of a snapshot's `navigator.provider_usage`: a provider's seven-day account window as herdr-core/src/usage.rs reads it (docs/AI_PROVIDERS.md, Weekly usage display). state is `loading` until the first read answers, `available` for a current read, `stale` for a success kept while the provider is offline (message says how old), `fallback` for Codex's latest local session window, and `unavailable` with message saying why, a window whose reset has passed included. used_percent and resets_at_unix_seconds are null in `loading` and `unavailable`. buckets are scoped windows under the row, such as one model's own weekly limit.",
+    "usageSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "label", "window_minutes", "state", "used_percent", "resets_at_unix_seconds", "message", "last_checked_at_unix_ms", "last_success_at_unix_ms", "last_error_kind", "buckets"],
+      "required": [
+        "nodes"
+      ],
       "properties": {
-        "provider": { "type": "string" },
-        "label": { "type": "string" },
-        "window_minutes": { "type": "integer", "minimum": 0 },
-        "state": { "type": "string", "enum": ["loading", "available", "stale", "fallback", "unavailable"] },
-        "used_percent": { "type": ["number", "null"] },
-        "resets_at_unix_seconds": { "type": ["integer", "null"], "minimum": 0 },
-        "message": { "type": ["string", "null"] },
-        "last_checked_at_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "last_success_at_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "last_error_kind": { "type": ["string", "null"] },
-        "buckets": { "type": "array", "items": { "$ref": "#/$defs/providerUsageBucket" } }
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeUsage"
+          }
+        }
       }
     },
-    "providerUsageBucket": {
-      "description": "A scoped window under a providerUsage row. state is the row's own `available` or `stale` while the bucket has a value, and `unavailable` with message when its line could not be read or its reset has passed.",
+    "nodeUsage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["label", "state", "used_percent", "resets_at_unix_seconds", "message"],
+      "required": [
+        "node",
+        "agents"
+      ],
       "properties": {
-        "label": { "type": "string" },
-        "state": { "type": "string", "enum": ["available", "stale", "unavailable"] },
-        "used_percent": { "type": ["number", "null"] },
-        "resets_at_unix_seconds": { "type": ["integer", "null"], "minimum": 0 },
-        "message": { "type": ["string", "null"] }
+        "node": {
+          "type": "string"
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agentUsage"
+          }
+        }
+      }
+    },
+    "agentUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "limits",
+        "consumption"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/limitCell"
+        },
+        "consumption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unsupported"
+            }
+          }
+        }
+      }
+    },
+    "limitCell": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "unsupported"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "loading"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause",
+            "last_checked_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            },
+            "last_checked_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "value",
+            "freshness",
+            "observed_at_ms"
+          ],
+          "properties": {
+            "state": {
+              "const": "reading"
+            },
+            "value": {
+              "$ref": "#/$defs/limitReading"
+            },
+            "freshness": {
+              "type": "string",
+              "enum": [
+                "fresh",
+                "stale",
+                "fallback"
+              ]
+            },
+            "observed_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "usageCause": {
+      "type": "string",
+      "enum": [
+        "signed_out",
+        "not_installed",
+        "offline",
+        "timed_out",
+        "rate_limited",
+        "format_changed",
+        "capped"
+      ]
+    },
+    "limitReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "windows"
+      ],
+      "properties": {
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/windowReading"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "windowKind": {
+      "type": "string",
+      "enum": [
+        "five_hour",
+        "weekly",
+        "monthly"
+      ]
+    },
+    "windowReading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "outcome"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/windowKind"
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "all"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "label"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "model"
+                },
+                "label": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              }
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/windowOutcome"
+        }
+      }
+    },
+    "windowOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "not_started"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "used_percent",
+            "resets_at_s"
+          ],
+          "properties": {
+            "state": {
+              "const": "open"
+            },
+            "used_percent": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "resets_at_s": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reset_at_s"
+          ],
+          "properties": {
+            "state": {
+              "const": "expired"
+            },
+            "reset_at_s": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "not_offered"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "cause"
+          ],
+          "properties": {
+            "state": {
+              "const": "unreadable"
+            },
+            "cause": {
+              "$ref": "#/$defs/usageCause"
+            }
+          }
+        }
+      ]
+    },
+    "usagePreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pinned",
+        "hidden"
+      ],
+      "properties": {
+        "pinned": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "agent",
+              "window"
+            ],
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "window": {
+                "$ref": "#/$defs/windowKind"
+              }
+            }
+          },
+          "maxItems": 3
+        },
+        "hidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 7
+        }
+      }
+    },
+    "usagePinSetPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "window",
+        "enabled"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/windowKind"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "usageHiddenSetPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "hidden"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        }
       }
     },
     "uiStateUsageHints": {

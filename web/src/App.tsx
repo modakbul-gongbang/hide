@@ -36,7 +36,7 @@ import { applyEditorTheme } from "./editor/theme";
 import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { useUsageWindowHint } from "./components/weekly-usage";
+import { useUsageWindowHint } from "./components/usage";
 import { useUiStore } from "./ui";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";

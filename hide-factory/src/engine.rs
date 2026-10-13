@@ -5965,7 +5965,8 @@ impl Engine {
     /// until its reset (B58).
     fn read_usage_limits(&mut self) {
         // Every agent whose adapter declares a usage reading (D-52).
-        for runtime in Runtime::all().filter(|r| r.adapter().usage.is_some()) {
+        for runtime in Runtime::all().filter(|r| r.adapter().usage.limit_sources().next().is_some())
+        {
             if let Some(until) = self.ports.workers.usage_limited(runtime) {
                 let entry = self.runtime_blocked.entry(runtime).or_insert(until);
                 *entry = (*entry).max(until);

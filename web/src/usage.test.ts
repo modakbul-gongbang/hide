@@ -1,62 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderUsage } from "./generated/hided-ws";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { resetCountdown as resetCountdownIn, usagePercent, usageSummary as usageSummaryIn, usageTone, usageValueLabel as usageValueLabelIn } from "./usage";
-
+import { resetCountdown as resetCountdownIn, usageTone } from "./usage";
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
-const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
-const usageValueLabel = (reading: Parameters<typeof usageValueLabelIn>[0]) => usageValueLabelIn(reading, t);
-const usageSummary = (rows: Parameters<typeof usageSummaryIn>[0]) => usageSummaryIn(rows, t);
 const resetCountdown = (resetsAt: number, now: number) => resetCountdownIn(resetsAt, now, t);
-
-function row(patch: Partial<ProviderUsage>): ProviderUsage {
-  return {
-    provider: "claude",
-    label: "Claude Code",
-    window_minutes: 10_080,
-    state: "available",
-    used_percent: 62,
-    resets_at_unix_seconds: 1_790_000_000,
-    message: null,
-    last_checked_at_unix_ms: 1_789_000_000_000,
-    last_success_at_unix_ms: 1_789_000_000_000,
-    last_error_kind: null,
-    buckets: [],
-    ...patch,
-  };
-}
-
-describe("a row's reading (#153: the footer and popover rules)", () => {
-  it("shows a percent for a current, stale or fallback read and none while loading or unavailable", () => {
-    expect(usagePercent(row({ state: "available", used_percent: 62 }))).toBe(62);
-    expect(usagePercent(row({ state: "stale", used_percent: 40 }))).toBe(40);
-    expect(usagePercent(row({ state: "fallback", used_percent: 12 }))).toBe(12);
-    expect(usagePercent(row({ state: "loading", used_percent: null }))).toBeNull();
-    expect(usagePercent(row({ state: "unavailable", used_percent: null }))).toBeNull();
-  });
-
-  it("colors by the used share: success below 70, warning from 70, destructive from 90, muted without a reading", () => {
-    expect(usageTone(69.9)).toBe("success");
-    expect(usageTone(70)).toBe("warning");
-    expect(usageTone(89.9)).toBe("warning");
-    expect(usageTone(90)).toBe("danger");
-    expect(usageTone(null)).toBe("muted");
-  });
-
-  it("prints the rounded percent, an ellipsis while the first read runs, and Unavailable otherwise", () => {
-    expect(usageValueLabel(row({ used_percent: 61.5 }))).toBe("62%");
-    expect(usageValueLabel(row({ state: "loading", used_percent: null }))).toBe("…");
-    expect(usageValueLabel(row({ state: "unavailable", used_percent: null, message: "Sign in with claude to see usage" }))).toBe("Unavailable");
-  });
-
-  it("names every provider's reading for the chips, in order", () => {
-    expect(usageSummary([row({}), row({ provider: "codex", label: "Codex", state: "unavailable", used_percent: null })])).toBe(
-      "Weekly usage, Claude Code 62%, Codex unavailable",
-    );
-    expect(usageSummary([row({ state: "loading", used_percent: null })])).toBe("Weekly usage, Claude Code loading");
-  });
+it("colors by the used share at the approved 70 and 90 boundaries", () => {
+  expect([69.9, 70, 89.9, 90, null].map(usageTone)).toEqual(["success", "warning", "warning", "danger", "muted"]);
 });
-
 describe("the reset countdown", () => {
   const now = Date.UTC(2026, 8, 26, 0, 0, 0);
   const at = (seconds: number) => now / 1000 + seconds;
@@ -71,15 +20,6 @@ describe("the reset countdown", () => {
   it("never reads less than a minute, a reset that just passed included", () => {
     expect(resetCountdown(at(20), now)).toBe("in 1m");
     expect(resetCountdown(at(-30), now)).toBe("in 1m");
-  });
-});
-
-describe("in Korean", () => {
-  it("words the chips' name and the countdown in the interface language", () => {
-    expect(usageSummaryIn([row({}), row({ provider: "codex", label: "Codex", state: "unavailable", used_percent: null })], korean)).toBe("주간 사용량, Claude Code 62%, Codex 사용량 확인 불가");
-    expect(usageValueLabelIn(row({ state: "unavailable", used_percent: null }), korean)).toBe("사용할 수 없음");
-    const now = Date.UTC(2026, 8, 26, 0, 0, 0);
-    expect(resetCountdownIn(now / 1000 + 5 * 86_400 + 4 * 3_600, now, korean)).toBe("5일 4시간 후");
   });
 });
 

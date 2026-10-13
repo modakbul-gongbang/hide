@@ -27,6 +27,17 @@
       "startup_guidance": "available",
       "resume": "available",
       "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "claude_usage_text",
+      "weekly": "claude_usage_text",
+      "scoped": "claude_usage_text",
+      "monthly": "no_such_data",
+      "tokens": "not_built:3",
+      "cost": "not_built:3",
+      "models": "not_built:3",
+      "session": "not_built:3",
+      "project": "not_built:3"
     }
   },
   {
@@ -57,6 +68,17 @@
       "startup_guidance": "available",
       "resume": "available",
       "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "codex_usage",
+      "weekly": "codex_usage",
+      "scoped": "not_built:5",
+      "monthly": "no_such_data",
+      "tokens": "not_built:3",
+      "cost": "not_built:3",
+      "models": "not_built:3",
+      "session": "not_built:3",
+      "project": "not_built:3"
     }
   },
   {
@@ -83,6 +105,17 @@
       "startup_guidance": "unavailable",
       "resume": "unconfirmed",
       "next_prompt_letters": "unavailable"
+    },
+    "usage": {
+      "five_hour": "no_such_data",
+      "weekly": "not_built:5",
+      "scoped": "no_such_data",
+      "monthly": "no_such_data",
+      "tokens": "not_built:4",
+      "cost": "not_built:4",
+      "models": "not_built:4",
+      "session": "not_built:4",
+      "project": "not_built:4"
     }
   },
   {
@@ -112,6 +145,17 @@
       "startup_guidance": "available",
       "resume": "unconfirmed",
       "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "excluded",
+      "weekly": "excluded",
+      "scoped": "excluded",
+      "monthly": "excluded",
+      "tokens": "not_built:4",
+      "cost": "not_built:4",
+      "models": "not_built:4",
+      "session": "not_built:4",
+      "project": "not_built:4"
     }
   },
   {
@@ -141,6 +185,17 @@
       "startup_guidance": "available",
       "resume": "unconfirmed",
       "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "no_such_data",
+      "weekly": "no_such_data",
+      "scoped": "no_such_data",
+      "monthly": "no_such_data",
+      "tokens": "not_built:4",
+      "cost": "not_built:4",
+      "models": "not_built:4",
+      "session": "not_built:4",
+      "project": "not_built:4"
     }
   },
   {
@@ -170,6 +225,17 @@
       "startup_guidance": "available",
       "resume": "unconfirmed",
       "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "no_such_data",
+      "weekly": "no_such_data",
+      "scoped": "no_such_data",
+      "monthly": "no_such_data",
+      "tokens": "not_built:4",
+      "cost": "not_built:4",
+      "models": "not_built:4",
+      "session": "not_built:4",
+      "project": "not_built:4"
     }
   },
   {
@@ -196,6 +262,17 @@
       "startup_guidance": "available",
       "resume": "available",
       "next_prompt_letters": "unavailable"
+    },
+    "usage": {
+      "five_hour": "excluded",
+      "weekly": "excluded",
+      "scoped": "excluded",
+      "monthly": "excluded",
+      "tokens": "no_such_data",
+      "cost": "no_such_data",
+      "models": "no_such_data",
+      "session": "no_such_data",
+      "project": "no_such_data"
     }
   }
 ]

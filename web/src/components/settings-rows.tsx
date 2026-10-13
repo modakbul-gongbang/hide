@@ -31,14 +31,20 @@ export function Group({ title, caption, note, action, children, ...data }: { tit
   );
 }
 
-/** One row: its label on the left, whatever the row is about on the right; wraps on a narrow sheet. */
-export function Row({ label, children, detail, className, ...data }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+/** A row wraps on narrow sheets; a separate value keeps its control at the first line's right edge. */
+export function Row({ label, children, detail, value, className, ...data }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; value?: ReactNode; className?: string } & Record<`data-${string}`, string>) {
   return (
     <div className={cn("px-md py-sm", className)} {...data}>
-      <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
+      {value !== undefined ? <div className="flex items-start gap-md">
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-md gap-y-xs">
+          <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
+          <div className="min-w-0 max-w-full">{value}</div>
+        </div>
+        <div className="flex min-h-lh shrink-0 items-center text-subhead">{children}</div>
+      </div> : <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
         <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
         {children ? <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-sm">{children}</div> : null}
-      </div>
+      </div>}
       {detail ? <div className="mt-xs">{detail}</div> : null}
     </div>
   );

@@ -140,7 +140,7 @@ fn run_coordinator(
     // The rows read the operator's logins, which are the core's own node's.
     let mut usage_reader = usage_paths
         .zip(context.node().map(Arc::clone))
-        .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
+        .map(|(paths, node)| crate::usage::UsageDriver::new(paths, node));
     // A listening port is its machine's: the local coordinator looks at this
     // machine's, and a node that dials this core is asked for its own.
     let mut ports_reader = context
@@ -410,8 +410,8 @@ fn run_coordinator(
                 stop_subscription(&mut subscription);
                 return;
             };
-            if let Some(provider_usage) = reader.read_if_due(activity)
-                && !publish_provider_usage(&context, provider_usage)
+            if let Some(usage) = reader.read_if_due(activity)
+                && !publish_usage(&context, usage)
             {
                 stop_subscription(&mut subscription);
                 return;
@@ -1726,15 +1726,15 @@ fn publish_failure(context: &SessionSyncContext, error: SessionFetchError) -> bo
     true
 }
 
-fn publish_provider_usage(
+fn publish_usage(
     context: &SessionSyncContext,
-    provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
+    usage: Vec<crate::usage::model::AgentUsage>,
 ) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_provider_usage(provider_usage),
+        Ok(mut guard) => guard.ingest_usage(usage),
         Err(_) => return false,
     };
     drop(runtime);

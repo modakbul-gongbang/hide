@@ -5,7 +5,7 @@ import type { AgentScope } from "./agentScope";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { ProviderUsage } from "./generated/hided-ws";
+import type { UsageSnapshot, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -1680,8 +1680,8 @@ export type SnapshotRest = {
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
-    /** Each provider's weekly window, typed by the contract (`providerUsage`). */
-    provider_usage?: ProviderUsage[];
+    /** The core node comes first; each registered agent has typed limit and consumption cells. */
+    usage?: UsageSnapshot;
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
@@ -1733,6 +1733,7 @@ export type SnapshotRest = {
     first_run?: FirstRun | null;
     /** Settings > Notifications' Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
     desktop_notifications?: boolean;
+    usage?: UsagePreferences;
     /** The screens whose one-line introduction was shown (B43). */
     screen_intros_seen?: ScreenIntro[];
     font_size?: number;

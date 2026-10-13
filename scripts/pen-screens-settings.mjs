@@ -17,14 +17,14 @@ const SIZES = {micro: 10, caption: 11, body: 12, subhead: 13, title: 14, headlin
 
 // The list top to bottom (web/src/settings.ts SETTINGS_GROUPS) with each page's lucide glyph (web/src/SettingsSheet.tsx TAB_ICONS).
 const GROUPS = [
-  ['app', [['general', 'sliders-horizontal'], ['notifications', 'bell'], ['devices', 'monitor-smartphone'], ['shortcuts', 'keyboard']]],
+  ['app', [['general', 'sliders-horizontal'], ['notifications', 'bell'], ['usage', 'gauge'], ['devices', 'monitor-smartphone'], ['shortcuts', 'keyboard']]],
   ['machine', [['agents', 'bot'], ['hideAi', 'sparkles'], ['mobile', 'smartphone'], ['github', 'github']]],
 ];
 
 const COPY = {
   en: {
     settings: 'Settings', groups: {app: 'App', machine: 'This Mac'}, about: 'About',
-    nav: {general: 'General', notifications: 'Notifications', devices: 'Devices', shortcuts: 'Shortcuts', agents: 'Agents', hideAi: 'Hide AI', mobile: 'Mobile', github: 'GitHub'},
+    nav: {general: 'General', notifications: 'Notifications', usage: 'Usage', devices: 'Devices', shortcuts: 'Shortcuts', agents: 'Agents', hideAi: 'Hide AI', mobile: 'Mobile', github: 'GitHub'},
     general: {appearance: 'Appearance', language: 'Language', languageValue: 'Use system language', theme: 'Theme', themes: ['System', 'Light', 'Dark'], accent: 'Accent', interfaceText: 'Interface text', density: 'Terminal and editor text keep their own size (⌘= and ⌘- in a pane or document).', pt: '13 pt'},
     notifications: {desktop: 'This Mac', notify: 'Notify me when an agent needs me', permission: 'macOS permission', allowed: 'Allowed', blocked: 'Blocked by macOS', openSystem: 'Open System Settings', testRow: 'Test notification', test: 'Send a test', sentWhen: 'Sent only while no Hide window is in front; the app icon marks agents that need you.', noService: 'This desktop has no notification service, so Hide can’t show notifications here.', phone: 'Phone', pushTo: 'Push to phone', pushValue: 'Only when the app is closed', pushDetail: "Send to your phone only while desktop hide isn't connected, and only when an agent needs your attention or finishes."},
     agents: {machines: ['This Mac', 'Mac mini'], installed: 'Installed 4', checkAgain: 'Check again', sessions: '2 sessions', ready: 'Ready', basic: 'Basic', notInstalled: 'Not installed 3', idle: 'Idle agents', sleepAfter: 'Sleep after', sleepValue: '3 days', sleeping: '4 sleeping now. Working, unread and on-screen agents never sleep.', starting: 'Starting work', link: 'Link the issue in pull requests'},
@@ -34,7 +34,7 @@ const COPY = {
   },
   ko: {
     settings: '설정', groups: {app: '앱', machine: '이 Mac'}, about: '정보',
-    nav: {general: '일반', notifications: '알림', devices: '기기', shortcuts: '단축키', agents: '에이전트', hideAi: 'Hide AI', mobile: '모바일', github: 'GitHub'},
+    nav: {general: '일반', notifications: '알림', usage: '사용량', devices: '기기', shortcuts: '단축키', agents: '에이전트', hideAi: 'Hide AI', mobile: '모바일', github: 'GitHub'},
     hideAi: {use: 'Hide AI 사용', useDesc: '끄면 Hide가 AI를 호출하지 않아요. 에이전트 제목은 세션 원문으로 보이고, 워크트리 이름은 직접 입력해요.', runsOn: '사용 에이전트', runsOnNote: '내 로그인으로 동작해요. Hide는 API 키를 요구하지 않아요.', agent: '에이전트', model: '모델', signedIn: '로그인됨', modelValue: 'sonnet', fallbackTitle: 'Claude Code에서 답할 수 없을 때', fallbackNote: 'Claude Code에서 로그아웃, 사용량 소진, 사용 불가일 때 이 순서대로 시도해요. 추가하지 않으면 Claude Code만 사용해요.', cliDefault: 'CLI 기본값', addAgent: '에이전트 추가', features: '기능', summaries: '에이전트 요약', summariesDesc: '에이전트마다 제목과 한 줄 상태', worktree: '워크트리 이름', worktreeDesc: '작업을 시작할 때 이슈 제목으로 이름을 제안해요'},
   },
 };
@@ -117,8 +117,8 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     ]);
   }
   function nav(p, L, page, machine) {
-    const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-md', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
-    return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-lg', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
+    const groupLabel = (id, label) => frame(id, label, {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${id}-t`, label, {size: 'micro', weight: '500', fill: '$--muted-foreground'})]);
+    return frame(`${p}-nav`, 'List', {width: NAV_W, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-md', '$--spacing-sm'], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       frame(`${p}-nav-h`, 'Title', {width: 'fill_container', padding: [0, '$--spacing-sm', '$--spacing-xs', '$--spacing-sm']}, [T(`${p}-nav-ht`, L.settings, {size: 'title', weight: '600'})]),
       ...GROUPS.flatMap(([group, items]) => [
         groupLabel(`${p}-nav-${group}`, group === 'machine' && machine ? machine : L.groups[group]),
@@ -209,6 +209,18 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
   }
 
   const PAGES = {
+    usage: (p, _L, inner) => [
+      ...['Claude Code', 'Codex'].map((name, i) => group(`${p}-agent${i}`, inner, {rows: [
+        row(`${p}-head${i}`, inner, {labelNode: agentName(`${p}-name${i}`, i === 0 ? 'claude' : 'codex', name), controls: [button(`${p}-hide${i}`, 'Hide', {variant: 'ghost', height: 24})], controlsWidth: 60}),
+        ...(i === 0 ? [row(`${p}-five`, inner, {label: '5 hours', controls: [T(`${p}-five-value`, '11% · in 3h 12m', {mono: true, fill: '$--muted-foreground'}), sw(`${p}-five-switch`, false)], controlsWidth: 170})] : []),
+        row(`${p}-week${i}`, inner, {label: '7 days', controls: [T(`${p}-week-value${i}`, '81% · in 5d 4h', {mono: true, fill: '$--muted-foreground'}), sw(`${p}-week-switch${i}`, true)], controlsWidth: 170}),
+      ]})),
+      group(`${p}-unsupported`, inner, {title: 'No limit reading', rows: [
+        ['Grok', 'Hide does not read its weekly limit yet.'], ['OpenCode', 'Go limits need an API key, which Hide does not hold.'],
+        ['Pi', 'No limit of its own; counts toward its signed-in account.'], ['omp', 'No limit of its own; counts toward its signed-in account.'],
+        ['Cursor', 'Not supported: needs its stored sign-in.'],
+      ].map(([label, detail], i) => row(`${p}-no${i}`, inner, {labelNode: agentName(`${p}-no-name${i}`, ['grok', 'opencode', 'pi', 'omp', 'cursor'][i], label), detail, controls: [], controlsWidth: 0}))}),
+    ],
     general: (p, _L, inner, {theme}) => {
       const C = COPY.en.general;
       return [group(`${p}-app`, inner, {title: C.appearance, rows: [
@@ -306,6 +318,7 @@ export function settingsBoards(tokens, root, helpers) {
       hstack(`set-r1-${s}`, [
         cell(`set-c-general-${s}`, 'General · Appearance alone', settingsSheet(`set-general-${s}`, {page: 'general', theme: s})),
         cell(`set-c-notif-${s}`, 'Notifications · This Mac and Phone in one page', settingsSheet(`set-notifications-${s}`, {page: 'notifications', theme: s})),
+        cell(`set-c-usage-${s}`, 'Usage · account windows', settingsSheet(`set-usage-${s}`, {page: 'usage', theme: s, height: 800})),
         cell(`set-c-agents-${s}`, 'Agents · two machines, the switch stays in the page', settingsSheet(`set-agents-${s}`, {page: 'agents', theme: s, height: 700})),
       ]),
       hstack(`set-r2-${s}`, [

@@ -1199,6 +1199,18 @@ pub(super) struct ScreenIntroSeenPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct UsagePinSetPayload {
+    pub(super) agent: String,
+    pub(super) window: hide_agent_adapter::usage::WindowKind,
+    pub(super) enabled: bool,
+}
+#[derive(Debug, Deserialize)]
+pub(super) struct UsageHiddenSetPayload {
+    pub(super) agent: String,
+    pub(super) hidden: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct InterfaceLanguageSetPayload {
     // Required, including an explicit null to return to system language.
     #[serde(deserialize_with = "serde_json::Value::deserialize")]
@@ -1374,6 +1386,8 @@ pub(super) enum Event {
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
+    UsagePinSet(UsagePinSetPayload),
+    UsageHiddenSet(UsageHiddenSetPayload),
     AgentOnboardingApply(AgentOnboardingApplyPayload),
     FirstRunAdvance(FirstRunAdvancePayload),
     DesktopNotificationsSet(DesktopNotificationsSetPayload),
@@ -1598,6 +1612,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "usage_pin_set" => decode!(UsagePinSetPayload, UsagePinSet),
+        "usage_hidden_set" => decode!(UsageHiddenSetPayload, UsageHiddenSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
         "first_run_advance" => decode!(FirstRunAdvancePayload, FirstRunAdvance),
@@ -3571,6 +3587,44 @@ impl Runtime {
                 self.set_desktop_notifications(payload.enabled)
             }
             Event::ScreenIntroSeen(payload) => self.mark_screen_intro_seen(payload.screen),
+            Event::UsagePinSet(payload) => {
+                match self.snapshot.ui_state.usage.pin(
+                    crate::usage::prefs::Pin {
+                        agent: payload.agent,
+                        window: payload.window,
+                    },
+                    payload.enabled,
+                    &self.snapshot.navigator.usage,
+                ) {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
+            Event::UsageHiddenSet(payload) => {
+                match self
+                    .snapshot
+                    .ui_state
+                    .usage
+                    .hide(payload.agent, payload.hidden)
+                {
+                    Ok(false) => false,
+                    Ok(true) => {
+                        self.persist_ui_state();
+                        true
+                    }
+                    Err(kind) => {
+                        self.set_error(kind, "Usage preferences were not saved", false);
+                        true
+                    }
+                }
+            }
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
@@ -3785,6 +3839,7 @@ impl Runtime {
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
                     interface_language: current.interface_language,
+                    usage: current.usage,
                     // `agent_onboarding_*` events own the first-run choice.
                     agent_onboarding: current.agent_onboarding,
                     agent_onboarding_agents: current.agent_onboarding_agents,

@@ -813,15 +813,19 @@ impl Runtime {
         )
     }
 
-    pub fn ingest_provider_usage(
-        &mut self,
-        provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
-    ) -> bool {
-        if self.snapshot.navigator.provider_usage == provider_usage {
+    pub fn ingest_usage(&mut self, usage: Vec<crate::usage::model::AgentUsage>) -> bool {
+        if self.snapshot.navigator.usage.nodes[0].agents == usage {
             return false;
         }
-        self.snapshot.navigator.provider_usage = provider_usage;
-        // The usage limit is judged by these figures.
+        self.snapshot.navigator.usage.nodes[0].agents = usage;
+        if self
+            .snapshot
+            .ui_state
+            .usage
+            .reconcile(&self.snapshot.navigator.usage)
+        {
+            self.persist_ui_state();
+        }
         self.refresh_background_ai();
         true
     }
@@ -834,6 +838,31 @@ impl Runtime {
                 || self.memory_reads_usage()
                 || self.limit_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
+            hidden: self.snapshot.ui_state.usage.hidden.clone(),
+            required: if !self.factory_recipients.is_empty() {
+                // A Factory may choose any supported worker; its admission
+                // reads every declared limit through the same accessor.
+                hide_agent_adapter::ADAPTERS
+                    .iter()
+                    .filter(|row| row.usage.limit_sources().next().is_some())
+                    .map(|row| row.herdr.name.into())
+                    .collect()
+            } else if self.memory_reads_usage() || self.limit_reads_usage() {
+                self.ai_settings
+                    .as_ref()
+                    .filter(|settings| settings.enabled && settings.chosen)
+                    .map(|settings| {
+                        settings
+                            .router_config()
+                            .priority
+                            .iter()
+                            .map(|provider| provider.as_str().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         }
     }
 

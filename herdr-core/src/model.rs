@@ -543,7 +543,7 @@ pub struct NavigatorSnapshot {
     pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
-    pub provider_usage: Vec<ProviderUsageSnapshot>,
+    pub usage: crate::usage::model::UsageSnapshot,
 }
 
 /// Hide AI started this agent, read from the coordination ledger's record of
@@ -569,77 +569,6 @@ pub struct InactiveProjectGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
     pub project_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageSnapshot {
-    pub provider: String,
-    pub label: String,
-    pub window_minutes: u64,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
-    pub last_success_at_unix_ms: Option<u64>,
-    pub last_error_kind: Option<String>,
-    pub buckets: Vec<ProviderUsageBucketSnapshot>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ProviderUsageBucketSnapshot {
-    pub label: String,
-    pub state: String,
-    pub used_percent: Option<f64>,
-    pub resets_at_unix_seconds: Option<u64>,
-    pub message: Option<String>,
-}
-
-impl ProviderUsageSnapshot {
-    pub fn initial_rows() -> Vec<Self> {
-        hide_agent_adapter::ADAPTERS
-            .iter()
-            .filter(|row| row.usage.is_some())
-            .map(|row| Self::loading(row.herdr.name, row.label))
-            .collect()
-    }
-
-    pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "loading".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some("Checking usage…".to_owned()),
-            last_checked_at_unix_ms: None,
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
-
-    pub fn unavailable(
-        provider: impl Into<String>,
-        label: impl Into<String>,
-        message: impl Into<String>,
-        checked_at_unix_ms: u64,
-    ) -> Self {
-        Self {
-            provider: provider.into(),
-            label: label.into(),
-            window_minutes: 10_080,
-            state: "unavailable".to_owned(),
-            used_percent: None,
-            resets_at_unix_seconds: None,
-            message: Some(message.into()),
-            last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
-            last_success_at_unix_ms: None,
-            last_error_kind: None,
-            buckets: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -3151,6 +3080,8 @@ pub struct UiStateSnapshot {
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
     pub interface_language: Option<serde_json::Value>,
+    #[serde(default)]
+    pub usage: crate::usage::prefs::UsagePreferences,
     /// The first-run agent choice (issue 517), a reading of this Mac's kit
     /// record (the one place that knows whether it was asked and answered):
     /// `None` until the kit has answered once, `Pending` while the record
@@ -3664,6 +3595,7 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
             interface_language: None,
+            usage: Default::default(),
             agent_onboarding: None,
             agent_onboarding_agents: Vec::new(),
             first_run: None,
@@ -5033,7 +4965,7 @@ impl Snapshot {
                 agents: Vec::new(),
                 hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
-                provider_usage: ProviderUsageSnapshot::initial_rows(),
+                usage: crate::usage::model::UsageSnapshot::initial(options.node_id.as_str()),
             },
             overlay: OverlaySnapshot {
                 kind: None,

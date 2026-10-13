@@ -12,11 +12,16 @@ import { SessionWorkflowScene } from "./SessionWorkflowScene";
 import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
+import { UsageScene } from "./UsageScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "usage") {
+      root.render(<StrictMode><UsageScene params={params} /></StrictMode>);
+      return;
+    }
     if (scene === "session-panel" || scene === "pane-header") {
       root.render(<StrictMode><SessionWorkflowScene scene={scene} {...sceneParams(params)} /></StrictMode>);
       return;
