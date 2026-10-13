@@ -84,7 +84,7 @@ export function SidebarHeader({
       {overview ? (
         <Hint label={overview.count > 0 ? t("overview.needsYouHint", { count: overview.count }) : t("overview.title")} shortcut={overview.chord}>
           <button type="button" aria-current={overview.selected ? "page" : undefined} data-sidebar-overview="true" onClick={overview.onOpen}
-            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
             <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">{t("overview.title")}</span>
             {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{t("overview.askingCount", { count: overview.count })}</span> : null}
@@ -96,7 +96,7 @@ export function SidebarHeader({
         <>
           <Hint label={factory.count > 0 ? t("factory.sidebar.turnHint", { count: factory.count }) : t("factory.title")} shortcut={factory.chord}>
             <button type="button" aria-current={factory.selected ? "page" : undefined} data-sidebar-factory="true" onClick={factory.onOpen}
-              className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${factory.secretary ? "" : "border-b border-border"} ${factory.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+              className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${factory.secretary ? "" : "border-b border-border"} ${factory.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
               <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left">{t("factory.title")}</span>
               {factory.count > 0 ? <span data-factory-badge={factory.count} className="text-caption text-warning">{factory.count}</span> : null}
@@ -106,7 +106,7 @@ export function SidebarHeader({
           {factory.projects.map((project) => (
             <Hint key={project.id} label={project.paused ? `${project.name} · ${t("factory.pausedChip")}` : project.name}>
               <button type="button" aria-current={project.selected ? "page" : undefined} data-sidebar-factory-project={project.id} data-factory-paused={project.paused ? "true" : undefined} onClick={project.onOpen}
-                className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm pr-md pl-xl text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${project.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+                className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm pr-md pl-xl text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${project.selected ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
                 <FolderGit2Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
                 <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
                 {project.paused ? <CirclePauseIcon aria-label={t("factory.pausedChip")} className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : null}
