@@ -5,8 +5,7 @@ import path from "node:path";
 import { expect, type ElectronApplication } from "@playwright/test";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { countSent, showProjectRow, showTool } from "../../web/e2e/wire";
-import { isolate, launch, fitWindow, test } from "./fixture";
-import { captureNativeWindow } from "./native-window";
+import { isolate, launch, fitWindow, screenshot, test } from "./fixture";
 import { seedReconciliation } from "./memory-reconcile-fixture";
 
 test("Memory compares sources, limits a batch and groups a confirmed PR", async () => {
@@ -40,16 +39,21 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await expect(tab).toContainText("Personal");
     await expect(tab).toContainText("Outdated");
     await expect(tab.locator('[data-memory-select="3"]')).toBeDisabled();
-    const facts = { home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, fixture: "invented cards, no public remote", daemonPid: run.daemonPid() };
-    await captureNativeWindow(app, "memory-compact-dark", facts);
+    const facts = { home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, fixture: "invented cards, no public remote", daemonPid: run.daemonPid(), capture: "candidate-window renderer via its own CDP; no OS capture" };
+    const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, executable: process.execPath, windows: BrowserWindow.getAllWindows().length, visible: BrowserWindow.getAllWindows()[0]?.isVisible() }));
+    expect(candidate.windows).toBe(1);
+    if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "candidate.json"), JSON.stringify({ candidate, ...facts }, null, 2));
+    await screenshot(page, "memory-compact-dark");
+    await tab.locator('[data-memory-cards] [data-memory-card="5"]').scrollIntoViewIfNeeded();
+    await screenshot(page, "memory-personal-outdated-dark");
     await tab.locator('[data-memory-compare="2"]').click();
     await expect(tab.locator("[data-memory-comparison]")).toContainText("Use a pooled connection for all writes.");
-    await captureNativeWindow(app, "memory-compare-dark", facts);
+    await screenshot(page, "memory-compare-dark");
     await tab.locator('[data-memory-compare="2"]').click();
     await tab.locator('[data-memory-select="1"]').click();
     await tab.locator('[data-memory-select="2"]').click();
     await expect(tab.locator('[data-memory-selection="2"]')).toBeVisible();
-    await captureNativeWindow(app, "memory-two-selected-dark", facts);
+    await screenshot(page, "memory-two-selected-dark");
     await tab.locator('[data-memory-promote="3"]').click();
     await expect(tab.locator('[data-memory-select="3"]')).toBeEnabled();
     for (const number of [6, 7, 8]) await tab.locator(`[data-memory-select="${number}"]`).click();
@@ -57,19 +61,32 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
     await expect(tab.locator('[data-memory-select="3"]')).toBeDisabled();
     await tab.locator('[data-memory-pr-group="72"]').click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    // Back to the same Memory and selection, then the compact light/narrow state.
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+    // Return to this Memory after the existing PR navigation, then the light/narrow state.
+    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "sample" }).locator("[data-checkout]").first())).click();
     await showTool(page, "memory");
     await page.evaluate(() => { document.documentElement.classList.remove("dark"); document.documentElement.classList.add("light"); });
     await fitWindow(app, { width: 900, height: 760 });
     await showTool(page, "memory");
-    await captureNativeWindow(app, "memory-compact-light-narrow", facts);
+    await screenshot(page, "memory-compact-light-narrow");
+    for (const language of ["en", "ko", "zh-CN", "ja"]) {
+      await page.locator("[data-open-settings]").click();
+      await page.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await page.keyboard.press("Escape");
+      await showTool(page, "memory");
+      await expect.poll(() => tab.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expect(tab.locator('[data-memory-pr-group="72"]')).toContainText("72");
+      await screenshot(page, `memory-narrow-${language}`);
+    }
     // Optional bounded interactive inspection of this same private daemon through Aside.
     const inspection = process.env.HIDE_MEMORY_INSPECTION_FILE;
     if (inspection) {
       fs.writeFileSync(inspection, JSON.stringify({ url: page.url(), root: run.root, pid: app.process().pid }));
       await expect.poll(() => fs.existsSync(`${inspection}.done`), { timeout: 180_000 }).toBe(true);
     }
-    console.log("Memory overflow", await tab.evaluate((tab) => Array.from(tab.querySelectorAll("*")).filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({ tag: e.tagName, css: e.className, width: e.clientWidth, scroll: e.scrollWidth, text: e.textContent?.slice(0, 60) })).slice(0, 20)));
     await expect.poll(() => tab.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   } finally {
     if (app) await app.close();

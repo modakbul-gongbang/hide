@@ -209,6 +209,9 @@ pub struct ApplyOptions {
     /// The evidence of each candidate, by its index; a candidate with none
     /// is verified when written and rests on nothing the node can check.
     pub evidence: Vec<Vec<Evidence>>,
+    /// Extraction checks duplicates only; new project claims wait for the
+    /// existing document-aware verification before they can be injected.
+    pub document_check_pending: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1370,6 +1373,10 @@ impl MemoryStore {
                         options.evidence.get(index).map_or(&[], Vec::as_slice),
                         batch.created_at_unix_ms,
                     )?;
+                    if options.document_check_pending && candidate.kind != CandidateKind::Preference
+                    {
+                        transaction.execute("UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id=?1 AND revision=1", [&item_id])?;
+                    }
                     live_count += 1;
                     summary.created += 1;
                     CandidateOutcome::Created { number }
@@ -1438,6 +1445,10 @@ impl MemoryStore {
                         options.evidence.get(index).map_or(&[], Vec::as_slice),
                         batch.created_at_unix_ms,
                     )?;
+                    if options.document_check_pending && candidate.kind != CandidateKind::Preference
+                    {
+                        transaction.execute("UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id=?1 AND revision=?2", params![target_id,revision])?;
+                    }
                     reindex(&transaction, &batch.project_id, target_id, &card)?;
                     summary.superseded += 1;
                     CandidateOutcome::Superseded {

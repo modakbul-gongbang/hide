@@ -1926,7 +1926,7 @@ pub(crate) fn write_cards(
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
     let mut facts = CheckoutFacts::new(sessions_node, source.evidence_root);
     let documents =
-        super::memory_verify::repository_sources(sessions_node, &mut facts, source.evidence_root);
+        super::memory_verify::repository_sources(sessions_node, &facts, source.evidence_root);
     let matches = candidates
         .iter()
         .enumerate()
@@ -1979,7 +1979,7 @@ pub(crate) fn write_cards(
         document_input = check.input.chars().count();
         let answer = router
             .execute(&check, cancel)
-            .map_err(|error| AnalysisFailure::Provider(error))?;
+            .map_err(AnalysisFailure::Provider)?;
         let results = answer.value["results"].as_array().ok_or_else(|| {
             AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_results".into()))
         })?;
@@ -2044,6 +2044,7 @@ pub(crate) fn write_cards(
             &ApplyOptions {
                 new_card_limit: source.new_card_limit,
                 evidence,
+                document_check_pending: !documents.is_empty(),
             },
         )
         .map_err(|error| match error {
@@ -2614,6 +2615,122 @@ mod tests {
     }
 
     #[test]
+    fn a_new_decision_is_checked_against_unchanged_documents_before_injection() {
+        // memory-docs-reconcile B5: decisions cannot use the promotion-only
+        // check, and a document need not move to disagree with a new card.
+        let mut fixture = Fixture::new();
+        fixture.lines[0]["message"]["content"] = json!(format!(
+            "Always run tests with nextest before a merge. {}",
+            "Extra session context. ".repeat(450)
+        ));
+        fixture.write(&fixture.lines);
+        std::fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Run tests with the ordinary runner before a merge.\n",
+        )
+        .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "docs_disagree", "document": "AGENTS.md",
+            "text": "Run tests with the ordinary runner before a merge.",
+            "title": null, "aliases": [],
+        }));
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(json!({"results":[{"candidate":0,"same":false}]}));
+        fixture.answer(&[]);
+        fixture.backend.answers.lock().unwrap().last_mut().unwrap()["candidates"][0]["kind"] =
+            json!("decision");
+        let _ = fixture.pass(false, true);
+        let store = fixture.store();
+        let decision = store
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decision.kind, CandidateKind::Decision);
+        let comparison = store
+            .document_comparison(&fixture.project_id, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(comparison.authority, hide_memory::DocumentAuthority::Ask);
+        assert!(
+            comparison
+                .operator_text
+                .contains("Always run tests with nextest")
+        );
+        assert!(
+            !store
+                .retrieve(&hide_memory::RetrievalQuery::session_start(
+                    &fixture.project_id
+                ))
+                .unwrap()
+                .items
+                .iter()
+                .any(|card| card.number == 2)
+        );
+        assert_eq!(
+            fixture.calls(),
+            3,
+            "duplicate-only creation check, then existing reverify"
+        );
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+        println!(
+            "memory-fixture-inputs extraction={} creation_docs={} reverify={}",
+            inputs[0].chars().count(),
+            inputs[1].chars().count(),
+            inputs[2].chars().count()
+        );
+        drop(inputs);
+        let _ = fixture.pass(false, false);
+        assert_eq!(
+            fixture.calls(),
+            3,
+            "an unresolved comparison does not spend another call"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_document_claim_is_suppressed_within_the_extraction_input_cap() {
+        let mut fixture = Fixture::new();
+        fixture.lines[0]["message"]["content"] = json!(format!(
+            "Always run tests with nextest before a merge. {}",
+            "Extra session context. ".repeat(450)
+        ));
+        fixture.write(&fixture.lines);
+        std::fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Run tests with nextest before a merge.\n",
+        )
+        .unwrap();
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(json!({"results":[{"candidate":0,"same":true}]}));
+        fixture.answer(&[]);
+        let _ = fixture.pass(false, true);
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fixture.calls(), 2);
+        let inputs = fixture.backend.inputs.lock().unwrap();
+        assert!(inputs[1].chars().count() * 100 <= inputs[0].chars().count() * 15);
+        println!(
+            "memory-fixture-inputs extraction={} creation_docs={} created=0",
+            inputs[0].chars().count(),
+            inputs[1].chars().count()
+        );
+    }
+
+    #[test]
     fn a_pass_records_receipts_a_live_pane_cannot_and_analyzes_a_closed_session_once() {
         // B1, B2, B3, B27, D-16.
         let fixture = Fixture::new();
@@ -2969,7 +3086,11 @@ mod tests {
                 "analysis.records_skipped"
             ]
         );
-        for record in &records {
+        for record in records.iter().filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("records_skipped"))
+        }) {
             assert_eq!(record["skipped"], json!({"non_conversation_capacity": 1}));
         }
         let inputs = fixture.backend.inputs.lock().unwrap().clone();

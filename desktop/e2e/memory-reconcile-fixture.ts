@@ -9,7 +9,7 @@ import json, sqlite3, sys
 db=sqlite3.connect(sys.argv[1], timeout=5)
 project=db.execute('SELECT id FROM projects').fetchone()[0]
 now=1791849600000
-db.execute('UPDATE projects SET enabled=1,disclosure_version=2,next_number=11 WHERE id=?',(project,))
+db.execute('UPDATE projects SET enabled=1,disclosure_version=3,next_number=11 WHERE id=?',(project,))
 cards=[(1,'Run checks before merging','rule'),(2,'Use a pooled connection for writes','decision'),(3,'Keep session files for thirty days','rule'),(4,'Use the retired test command','lesson'),(5,'Prefer concise Korean replies','preference'),(6,'Bound the worker queue','rule'),(7,'Reject stale replies','rule'),(8,'Keep one owner per process','lesson'),(9,'Validate paths before writes','rule'),(10,'Keep output inside the checkout','rule')]
 for number,title,kind in cards:
   item='fixture-m'+str(number)

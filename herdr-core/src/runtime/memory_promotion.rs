@@ -715,17 +715,16 @@ fn track_promotions(
                             && pr_number.is_none()
                             && let (Some((connector, link)), Some(branch)) =
                                 (releasers.get(*node), &promotion.branch)
+                            && released.insert((project_id.clone(), branch.clone()))
                         {
-                            if released.insert((project_id.clone(), branch.clone())) {
-                                release_attempt(
-                                    connector.as_ref(),
-                                    link.as_ref(),
-                                    root,
-                                    branch,
-                                    project_id,
-                                    *number,
-                                );
-                            }
+                            release_attempt(
+                                connector.as_ref(),
+                                link.as_ref(),
+                                root,
+                                branch,
+                                project_id,
+                                *number,
+                            );
                         }
                         state
                     }
@@ -1181,14 +1180,14 @@ pub(super) fn start_promotion(
     }
     let existing_pr = previous
         .iter()
-        .find(|(_, promotion)| {
+        .filter(|(_, promotion)| {
             promotion.branch.as_ref() == Some(&branch)
                 && matches!(
                     promotion.state,
                     PromotionState::PrOpen | PromotionState::Failed
                 )
         })
-        .and_then(|(_, promotion)| promotion.pr_number);
+        .find_map(|(_, promotion)| promotion.pr_number);
     let mut promotions = Vec::new();
     let mut evidence = Vec::new();
     for number in &numbers {
@@ -1987,6 +1986,28 @@ mod tests {
             promotion(&store).unwrap().attempt,
             2,
             "다시 시도 is the next attempt"
+        );
+
+        // A lower-numbered skipped card has no PR receipt yet; its peer's
+        // known PR still belongs to the shared branch during a delayed retry.
+        store.set_promotion("p", 1, &failed).unwrap();
+        let mut placed = peer.clone();
+        placed.state = PromotionState::PrOpen;
+        placed.pr_number = Some(72);
+        store.set_promotion("p", 2, &placed).unwrap();
+        start_promotion(&mut store, "p", &[1], start()).unwrap();
+        assert_eq!(promotion(&store).unwrap().pr_number, Some(72));
+        assert_eq!(promotion(&store).unwrap().branch, placed.branch);
+        assert_eq!(
+            store
+                .promotions("p")
+                .unwrap()
+                .into_iter()
+                .find(|(number, _)| *number == 2)
+                .unwrap()
+                .1
+                .state,
+            PromotionState::PrOpen
         );
 
         dismiss_promotion(&mut store, "p", 1).unwrap();
