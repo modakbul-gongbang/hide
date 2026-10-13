@@ -127,13 +127,19 @@ impl TerminalRoutes for NoDrawing {
     fn terminals_unstarted(&self, _: &str, _: &str) {}
 }
 
-fn event(core: &Core, kind: &str, payload: Value) -> Result<()> {
-    if !core.dispatch_bytes(&serde_json::to_vec(
+fn event(core: &Core, kind: &str, payload: Value) -> Result<bool> {
+    // The public return says whether state changed, not whether a no-op was refused.
+    Ok(core.dispatch_bytes(&serde_json::to_vec(
         &json!({"schema_version":2,"kind":kind,"payload":payload}),
-    )?) {
-        return Err(format!("core refused {kind}").into());
+    )?))
+}
+
+fn host_load() -> Result<String> {
+    let answer = std::process::Command::new("/usr/bin/uptime").output()?;
+    if !answer.status.success() {
+        return Err("host load command failed".into());
     }
-    Ok(())
+    Ok(String::from_utf8(answer.stdout)?.trim().into())
 }
 
 #[cfg(typed_snapshot)]
@@ -272,20 +278,34 @@ fn main() -> Result<()> {
     )?;
     let mut samples = Vec::new();
     let mut cursor = read(&core, 0)?.0;
+    let load_before = host_load()?;
+    let first_width = if current
+        .pointer("/rest/ui_state/sidebar_width")
+        .and_then(Value::as_f64)
+        == Some(220.0)
+    {
+        221
+    } else {
+        220
+    };
     for sample in 0..100 {
-        event(
+        let changed = event(
             &core,
             "ui_state_update",
-            json!({"sidebar_width":if sample % 2 == 0 {220} else {221}}),
+            json!({"sidebar_width":if sample % 2 == 0 {first_width} else {441 - first_width}}),
         )?;
+        if !changed {
+            return Err("measured sidebar event did not change state".into());
+        }
         let (revision, _, owner_ms, encode_ms, bytes) = read(&core, cursor)?;
         samples.push(json!({"owner_read_ms":owner_ms,"transport_encode_ms":encode_ms,"bytes":bytes,"revision":revision}));
         cursor = revision;
     }
+    let load_after = host_load()?;
     std::fs::write(
         output.join("core-cost.json"),
         serde_json::to_vec_pretty(&json!({
-            "typed":cfg!(typed_snapshot), "samples":samples,
+            "typed":cfg!(typed_snapshot), "samples":samples,"load_before":load_before,"load_after":load_after,
             "method":"real release Core, Local node and private Herdr; sidebar state changes; owner clock includes capture/comparison and baseline first encoding, transport clock is remaining baseline parse/envelope or candidate single encoding; excludes observation parse, owner-channel queue, socket and UI"
         }))?,
     )?;
