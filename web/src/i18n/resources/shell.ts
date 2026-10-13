@@ -3,6 +3,7 @@ import type { Catalog, Catalogs } from "../schema";
 export const shellEnglish = {
   "shell.openingLastWorkspace": "Opening your last Workspace…",
   "shell.openTimeout": "It did not come forward in time; nothing changed.",
+  "shell.renderFailed": "This area could not be drawn. It is drawn again on the next change.",
   "shell.notOpened": "Not opened: {{reason}}",
   "shell.recentViewTabs": "Recent View tabs",
   "shell.recentAgentPanes": "Recent Agent panes",
@@ -139,6 +140,7 @@ export const shellEnglish = {
 const ko = {
   "shell.openingLastWorkspace": "마지막 Workspace 여는 중…",
   "shell.openTimeout": "시간 안에 열리지 않았습니다. 변경된 내용은 없습니다.",
+  "shell.renderFailed": "이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.",
   "shell.notOpened": "열리지 않았습니다: {{reason}}",
   "shell.recentViewTabs": "최근 View 탭",
   "shell.recentAgentPanes": "최근 Agent 페인",
@@ -275,6 +277,7 @@ const ko = {
 const zhCN = {
   "shell.openingLastWorkspace": "正在打开上次的工作区…",
   "shell.openTimeout": "未能在限定时间内打开，未作任何更改。",
+  "shell.renderFailed": "无法绘制此区域。下次有变更时会重新绘制。",
   "shell.notOpened": "未打开：{{reason}}",
   "shell.recentViewTabs": "最近使用的视图标签页",
   "shell.recentAgentPanes": "最近使用的智能体窗格",
@@ -411,6 +414,7 @@ const zhCN = {
 const ja = {
   "shell.openingLastWorkspace": "最後に使用したワークスペースを開いています…",
   "shell.openTimeout": "時間内に開けませんでした。変更はありません。",
+  "shell.renderFailed": "この領域を描画できませんでした。次の変更時に再描画します。",
   "shell.notOpened": "開けませんでした: {{reason}}",
   "shell.recentViewTabs": "最近使用したビューのタブ",
   "shell.recentAgentPanes": "最近使用したエージェントのペイン",
