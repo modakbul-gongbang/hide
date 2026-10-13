@@ -20,7 +20,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const SCHEMA_VERSION: i64 = 1;
+#[path = "ledger_store.rs"]
+mod ledger;
+
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE projects(key TEXT PRIMARY KEY, device TEXT NOT NULL, root TEXT NOT NULL,
@@ -903,6 +906,13 @@ impl LinkStore {
                 "session_branches",
                 "session_prs",
                 "session_parents",
+                "ledger_requests",
+                "ledger_chapters",
+                "ledger_tasks",
+                "ledger_missed",
+                "ledger_turns",
+                "ledger_outputs",
+                "ledger_issue_attempts",
             ] {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE device=?1 AND agent=?2 AND id=?3"),
@@ -1772,10 +1782,12 @@ fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     if !(0..=SCHEMA_VERSION).contains(&version) {
         return Err(OpenFailure::Newer);
     }
-    if version == 0 {
+    if version < SCHEMA_VERSION {
+        let initial = if version == 0 { SCHEMA } else { "" };
         connection
             .execute_batch(&format!(
-                "BEGIN IMMEDIATE; {SCHEMA} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
+                "BEGIN IMMEDIATE; {initial} {} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
+                ledger::SCHEMA
             ))
             .map_err(|error| {
                 let _ = connection.execute_batch("ROLLBACK");
