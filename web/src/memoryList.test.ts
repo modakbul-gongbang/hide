@@ -51,7 +51,7 @@ describe("Memory promotion rows", () => {
     const other = { ...pull, url: "https://github.com/acme/two/pull/72" };
     expect(memoryProgressAgent(grouped(), other, [agent(true, { ...agentPull, url: other.url })])).toBeUndefined();
     const mixed = { ...row(5), promotion: { ...promotion, pr_url: "https://github.com/Acme/One/pull/72" } };
-    expect(memoryProgress(project({ rows: [cards[0], mixed] })).map((group) => group.cards.map((card) => card.number))).toEqual([[1, 5]]);
+    expect(memoryProgress(project({ rows: [cards[0]!, mixed] })).map((group) => group.cards.map((card) => card.number))).toEqual([[1, 5]]);
     expect(memoryProgressAgent(grouped(), { ...pull, url: "https://github.com/Acme/One/pull/72" }, [agent()])).toBeDefined();
   });
 
