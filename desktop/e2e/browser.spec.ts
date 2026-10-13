@@ -206,22 +206,35 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 
 // The native child-view lifetime is shared; the pane CLI uses cmd on Windows
 // and a POSIX shell elsewhere, through the same portable fixture boundary.
-test("browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller", { tag: "@platform" }, async () => {
+for (const width of [1500, 720]) {
+test(`browser: Agent tabs retain independent same-URL pages through a background reopen and reveal the caller (${width}px)`, { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
-  await fitWindow(app, { width: 1500, height: 900 });
+  await fitWindow(app, { width, height: 900 });
   const page = await shellPage(app);
   await enterWorkspace(page, "fixture");
   const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Other tab", "--no-focus"]) as { result: { tab: { tab_id: string } } };
   const other = created.result.tab.tab_id;
   const url = `${origin}/a.html`;
+  const chooseTab = async (id: string) => {
+    // The native screen can leave only one Workspace column visible.
+    // Use its existing toolbar navigation, then call File Views back.
+    if (!(await page.locator('[data-column="agents"]').isVisible())) {
+      await page.locator('[data-column-toggle="views"]').click();
+    }
+    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+    await page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`).click();
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`)).toHaveAttribute("aria-selected", "true");
+    if (!(await page.locator('[data-column="views"]').isVisible())) {
+      await page.locator('[data-column-toggle="views"]').click();
+    }
+  };
   try {
     const opened = await openFromCli(url, ["--reveal", "--wait"]);
     expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
     const a = (opened.result as { view_id: string }).view_id;
     await shownAndSelected(page, url, a);
     const original = await viewOf(url);
-    await expect(page.locator('[data-column="agents"]')).toBeVisible();
-    await page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`).click();
+    await chooseTab(other);
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
     await expect.poll(() => displayIdOf(page, "Page A")).not.toBe(a);
     const b = await displayIdOf(page, "Page A");
@@ -241,22 +254,23 @@ test("browser: Agent tabs retain independent same-URL pages through a background
     const waiting = await openFromCli(`${origin}/c.html`, ["--wait"]);
     expect(waiting).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
     expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`).click();
+    await chooseTab(herdr.tab);
     await expect(tab(page, "Page C")).toBeVisible();
     await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
-    await page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`).click();
+    await chooseTab(other);
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
     expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await windowShot("background-tab-B-retained", process.platform === "darwin");
+    await windowShot(`background-tab-B-retained-${width}`, process.platform === "darwin");
     expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
-    await windowShot("background-tab-A-revealed", process.platform === "darwin");
+    await windowShot(`background-tab-A-revealed-${width}`, process.platform === "darwin");
   } finally {
     herdr.run(["tab", "close", other]);
   }
 });
+}
 
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {
   const report = path.join(herdr.root, "fixture", "리포트 1.html");

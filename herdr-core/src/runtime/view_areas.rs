@@ -180,6 +180,7 @@ struct DisplayFacts<'a> {
 #[derive(Clone, Debug)]
 pub(super) struct ViewPlacement {
     pub(super) key: WorkspaceKey,
+    pub(super) owner: Option<String>,
     pub(super) area: String,
     pub(super) preview: bool,
     pub(super) beside: bool,
@@ -655,6 +656,12 @@ impl Runtime {
                     && replace.is_none()
                     && self.focus_view_document(&key, path, DisplayKind::File, None, !preview);
                 let placement = (!shown).then(|| ViewPlacement {
+                    owner: self
+                        .workspace_views
+                        .as_ref()
+                        .and_then(|store| store.views.get(&key.0, &key.1))
+                        .and_then(|entry| entry.view_owner.clone())
+                        .or_else(|| self.workspace_active_tab(&key)),
                     area: self
                         .view_layout_of(&key)
                         .map(|layout| layout.active_area().id.clone())
@@ -679,6 +686,77 @@ impl Runtime {
                     },
                 );
             }
+        }
+    }
+
+    /// Finish a GUI read in the presentation that requested it. Empty
+    /// layouts may close while the worker reads; visibility follows the
+    /// successfully placed result, without opening an empty column.
+    pub(super) fn complete_file_in_view(
+        &mut self,
+        prepared: super::editor::PreparedFileTab,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        placement: ViewPlacement,
+    ) {
+        self.reconcile_view_displays();
+        let action = crate::workspace_control::Action::OpenFile {
+            path: path.to_owned(),
+            beside: placement.beside,
+            reveal: false,
+        };
+        let parked = match placement.owner {
+            Some(owner) => match self.parked_tab(&placement.key, owner, &action) {
+                Ok(parked) => parked,
+                Err(refusal) => {
+                    self.set_error(refusal.reason, refusal.next_action, false);
+                    return;
+                }
+            },
+            None => None,
+        };
+        let area = parked
+            .as_ref()
+            .map(|parked| parked.identity(&placement.area))
+            .unwrap_or(placement.area);
+        let replace = placement.replace.map(|id| {
+            parked
+                .as_ref()
+                .map(|parked| parked.identity(&id))
+                .unwrap_or(id)
+        });
+        let tab_id = match prepared {
+            super::editor::PreparedFileTab::Open(tab_id) => Some(tab_id),
+            prepared => {
+                self.insert_file_tab(prepared, workspace_id, checkout_id, path, placement.preview)
+            }
+        };
+        let Some(tab_id) = tab_id else {
+            self.put_back_parked(&placement.key, parked);
+            return;
+        };
+        let before_error = self.snapshot.status.last_error.clone();
+        self.place_document(
+            &placement.key,
+            &tab_id,
+            placement.preview,
+            placement.beside,
+            Some(&area),
+            replace.as_deref(),
+        );
+        if self.snapshot.status.last_error != before_error {
+            self.put_back_parked(&placement.key, parked);
+            return;
+        }
+        let in_front =
+            parked.is_none() && self.front_checkout() == Some((workspace_id, checkout_id));
+        if in_front {
+            self.apply_area_intent_to(&placement.key, AreaIntent::Views);
+            self.snapshot.ui_state.selected_path = Some(path.to_owned());
+        }
+        if let Err(refusal) = self.note_control_view(&placement.key, "", &action, &tab_id, parked) {
+            self.set_error(refusal.reason, refusal.next_action, false);
         }
     }
 

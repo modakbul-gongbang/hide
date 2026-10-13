@@ -107,11 +107,13 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     }
     const firstRow = await showProjectRow(page, page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first());
     await firstRow.click();
-    // Opens without --reveal leave the Workspace's File Views as it was: off.
+    await expect(firstRow).toHaveAttribute("aria-current", "true");
+    // Background opens kept beta intact; choosing the caller's Workspace
+    // now projects its prepared File Views without another toggle.
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-file-views", "off");
-    await page.locator('[data-column-toggle="views"]').click();
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(page.locator(`[data-view-tab-bar] [data-display="${opened.result.view_id}"]`)).toHaveAttribute("data-tab-kind", "file");
+    await expect(page.locator(`[data-view-tab-bar] [data-display="${diff.result.view_id}"]`)).toHaveAttribute("data-tab-kind", "diff");
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/보고서.md"]')).toHaveCount(1);
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/changed.txt"]')).toHaveCount(1);
     await expect(page.locator("[data-view-area-id]")).toHaveCount(2);

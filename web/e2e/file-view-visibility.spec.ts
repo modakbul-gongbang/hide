@@ -47,6 +47,7 @@ test("Agent tabs keep File Views on or off through switching and restart @platfo
     await agentTab(page, second).click();
     await openFile(herdr, daemon, created.result.root_pane.pane_id, "b.md");
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
     await toggle(page).click();
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
     await expect(fileViews(page)).toBeHidden();
@@ -54,7 +55,8 @@ test("Agent tabs keep File Views on or off through switching and restart @platfo
     await agentTab(page, first).click();
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
-    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveAttribute("aria-label", /\/a\.md/);
     await screenshot(page, "file-view-visibility-first-on");
     await agentTab(page, second).click();
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");

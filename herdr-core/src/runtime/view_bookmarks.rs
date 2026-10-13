@@ -259,6 +259,17 @@ impl Runtime {
         let Some(tab) = bound_owner.or_else(|| self.control_caller_tab(key, caller_id)) else {
             return Ok(None);
         };
+        self.parked_tab(key, tab, action)
+    }
+
+    /// A worker's GUI read has the same presentation transaction as a
+    /// caller, but its owner was captured before the worker started.
+    pub(super) fn parked_tab(
+        &mut self,
+        key: &WorkspaceKey,
+        tab: String,
+        action: &Action,
+    ) -> Result<Option<Parked>, crate::workspace_control::Refusal> {
         let active = self.workspace_active_tab(key);
         let topology_ready = key.0 != self.node.as_str() || self.live.is_some();
         if topology_ready
@@ -487,11 +498,12 @@ impl Runtime {
     }
 
     pub(super) fn prune_view_bookmarks(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
+        let reads_dropped = self.prune_gui_reads(key, tabs);
         let Some(store) = self.workspace_views.as_mut() else {
-            return false;
+            return reads_dropped;
         };
         let Some(entry) = store.views.get_mut(&key.0, &key.1) else {
-            return false;
+            return reads_dropped;
         };
         let documents: HashSet<String> = entry
             .layouts()
@@ -536,7 +548,7 @@ impl Runtime {
             store.generation += 1;
             self.retire_unreferenced_view_documents(key, |id| documents.contains(id));
         }
-        changed
+        changed | reads_dropped
     }
 }
 

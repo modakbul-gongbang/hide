@@ -1661,6 +1661,142 @@ fn a_double_click_during_the_first_clicks_read_pins_the_document() {
     assert_eq!(tabs, vec![("a.txt", false)]);
 }
 
+/// D10/B18: GUI opens show their result even when the empty column was
+/// closed while the node read was outstanding.
+#[test]
+fn a_gui_file_read_opens_file_views_when_its_document_lands() {
+    for preview in [true, false] {
+        let f = Fixture::new();
+        let views_dir = f.runtime_dir("hide-gui-read-");
+        {
+            let mut runtime = f.shared.lock().unwrap();
+            studio_connecting(&mut runtime);
+            helper_ready(&mut runtime, &f.device);
+            runtime.workspace_views =
+                Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
+        }
+        f.device.hold_read("a.txt");
+        f.dispatch(
+            "file_open",
+            serde_json::json!({
+                "path": f.path("a.txt"), "workspace_id": WORKSPACE,
+                "checkout_id": f.checkout, "preview": preview,
+            }),
+        );
+        f.wait("the held node read", |_| f.device.waiting() > 0);
+        f.device.release_read("a.txt");
+        f.wait_for_document("a.txt", "the GUI read", |_| true);
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.sync_workspace_view();
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        assert!(view.views, "a successful GUI open must be visible");
+        assert_eq!(view.layout.display_count, 1);
+        assert_eq!(runtime.visible_view_documents().len(), 1);
+    }
+}
+
+#[test]
+fn a_gui_file_read_keeps_its_tab_when_another_tab_is_chosen() {
+    let f = Fixture::new();
+    let views_dir = f.runtime_dir("hide-gui-tab-read-");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        helper_ready(&mut runtime, &f.device);
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout.tabs = ["tab-a", "tab-b"]
+            .into_iter()
+            .map(|id| {
+                let mut held = tab(WORKSPACE, &f.checkout, None);
+                held.id = Some(id.to_owned());
+                held
+            })
+            .collect();
+        checkout.active_tab_id = Some("tab-a".to_owned());
+        runtime.workspace_views =
+            Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
+        runtime.sync_workspace_view();
+    }
+    f.device.hold_read("a.txt");
+    f.open("a.txt");
+    f.wait("the held node read", |_| f.device.waiting() > 0);
+    let before = {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
+            Some("tab-b".to_owned());
+        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
+        runtime.sync_workspace_view();
+        runtime.snapshot.workspace_view.clone()
+    };
+    f.device.release_read("a.txt");
+    f.wait_for_document("a.txt", "the GUI read", |_| true);
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.snapshot.workspace_view, before,
+        "B keeps its empty, closed presentation"
+    );
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
+    runtime.choose_remote_view_presentation(DEVICE, "tab-a");
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert!(view.views);
+    assert_eq!(view.layout.display_count, 1);
+    assert_eq!(runtime.visible_view_documents().len(), 1);
+}
+
+#[test]
+fn a_gui_file_read_cannot_recreate_its_closed_agent_tab() {
+    let f = Fixture::new();
+    let views_dir = f.runtime_dir("hide-gui-closed-read-");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        helper_ready(&mut runtime, &f.device);
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout.tabs = ["tab-a", "tab-b"]
+            .into_iter()
+            .map(|id| {
+                let mut held = tab(WORKSPACE, &f.checkout, None);
+                held.id = Some(id.to_owned());
+                held
+            })
+            .collect();
+        checkout.active_tab_id = Some("tab-a".to_owned());
+        runtime.workspace_views =
+            Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
+        runtime.sync_workspace_view();
+    }
+    f.device.hold_read("a.txt");
+    f.open("a.txt");
+    f.wait("the held node read", |_| f.device.waiting() > 0);
+    let before = {
+        let mut runtime = f.shared.lock().unwrap();
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout
+            .tabs
+            .retain(|tab| tab.id.as_deref() != Some("tab-a"));
+        checkout.active_tab_id = Some("tab-b".to_owned());
+        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
+        runtime.sync_workspace_view();
+        runtime.prune_view_bookmarks(
+            &(DEVICE.to_owned(), f.root.to_string_lossy().into_owned()),
+            &["tab-b"],
+        );
+        runtime.sync_workspace_view();
+        runtime.snapshot.workspace_view.clone()
+    };
+    f.device.release_read("a.txt");
+    f.wait("the late answer to be dropped", |runtime| {
+        diagnostic_count(runtime, "file.open_dropped") == 1
+    });
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.workspace_view, before);
+    assert!(runtime.snapshot.editor.tabs.is_empty());
+    assert!(runtime.snapshot.editor.opening.is_empty());
+}
+
 /// S7 B23: this machine and a device can hold a checkout at the same path,
 /// and each is its own Workspace: the file opened in each is two documents,
 /// each shown by its own Workspace's view, so a draft in one leaves the

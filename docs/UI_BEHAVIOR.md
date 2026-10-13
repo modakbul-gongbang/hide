@@ -80,6 +80,8 @@ File Views is never empty: closing its last view turns it off in the same transi
 With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
 Tools alone is an ordinary state.
 Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
+A file read opens File Views when its document is ready, in the Agent tab that requested it.
+Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing the requesting tab drops its pending open.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
 Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
 

@@ -168,6 +168,26 @@ impl Runtime {
             .count()
     }
 
+    /// Authoritative tab removal also retires its pending GUI reads. Their
+    /// late answers cannot recreate a presentation after its owner closed.
+    pub(super) fn prune_gui_reads(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
+        let before = self.document_opens.len();
+        self.document_opens.retain(|_, open| {
+            !open.placement.as_ref().is_some_and(|placement| {
+                &placement.key == key
+                    && placement
+                        .owner
+                        .as_deref()
+                        .is_some_and(|owner| !tabs.contains(&owner))
+            })
+        });
+        let changed = self.document_opens.len() != before;
+        if changed {
+            self.sync_opening_snapshot();
+        }
+        changed
+    }
+
     /// Stops waiting for a read of `path` that no View display needs any
     /// more: its answer then lands nowhere, and no tab appears for it.
     pub(super) fn cancel_document_read(
@@ -482,18 +502,13 @@ impl Runtime {
             } else if let Some(placement) = request.placement {
                 // With View areas it lands where it was asked for, as a
                 // fresh read does: Open to the side of it opens beside.
-                self.reconcile_view_displays();
-                self.place_document(
-                    &placement.key,
-                    tab_id,
-                    placement.preview,
-                    placement.beside,
-                    Some(&placement.area),
-                    placement.replace.as_deref(),
+                self.complete_file_in_view(
+                    prepared,
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    placement,
                 );
-                if in_front {
-                    self.snapshot.ui_state.selected_path = Some(request.path.clone());
-                }
             } else if in_front {
                 self.show_file_tab(
                     prepared,
@@ -557,26 +572,13 @@ impl Runtime {
         // read that landed just before this one left its display unbound,
         // so the displays are reconciled before this one is placed.
         if let Some(placement) = request.placement {
-            self.reconcile_view_displays();
-            if let Some(tab_id) = self.insert_file_tab(
+            self.complete_file_in_view(
                 prepared,
                 &request.workspace_id,
                 &request.checkout_id,
                 &request.path,
-                request.preview,
-            ) {
-                self.place_document(
-                    &placement.key,
-                    &tab_id,
-                    placement.preview,
-                    placement.beside,
-                    Some(&placement.area),
-                    placement.replace.as_deref(),
-                );
-            }
-            if in_front {
-                self.snapshot.ui_state.selected_path = Some(request.path.clone());
-            }
+                placement,
+            );
             self.persist_current_ui_state();
             return true;
         }
