@@ -156,7 +156,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
       await chooseTheme(page, theme);
       await screenshot(page, `sessions-panel-${theme}`);
     }
-    // All projects has three tabs; project Overview has conversation history, no Requests.
+    // All projects includes Usage; project Overview has conversation history, no Requests.
     await page.keyboard.press(chord("sidebar_agents"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await modal.getByRole("tab", { name: "repo", exact: true }).click();
@@ -164,7 +164,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
     await page.keyboard.press("Escape");
     await openAllProjectsPage(page);
-    expect(await page.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects"]);
+    expect(await page.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects", "usage"]);
     await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();
     await page.mouse.move(2, 998);

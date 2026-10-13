@@ -51,7 +51,6 @@ impl Runtime {
             .filter_map(|provider| {
                 let (used_percent, resets_at_s) = self
                     .snapshot
-                    .navigator
                     .usage
                     .weekly_reading(provider.as_str(), unix_milliseconds() / 1000)?;
                 Some((

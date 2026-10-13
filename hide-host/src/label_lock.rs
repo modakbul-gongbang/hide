@@ -49,7 +49,13 @@ struct Held {
 /// socket exists when it is spelled, so it is not a stable key.
 #[derive(Debug, Default)]
 pub struct LabelLocks {
-    held: Mutex<HashMap<PathBuf, Held>>,
+    state: Mutex<LockState>,
+}
+
+#[derive(Debug, Default)]
+struct LockState {
+    closed: bool,
+    held: HashMap<PathBuf, Held>,
 }
 
 impl LabelLocks {
@@ -63,7 +69,11 @@ impl LabelLocks {
             holder: Some(u64::from(std::process::id())),
         };
         {
-            let held = self.lock();
+            let state = self.lock();
+            if state.closed {
+                return Err(closed());
+            }
+            let held = &state.held;
             if let Some(lock) = held.get(socket) {
                 return Ok(ours(lock));
             }
@@ -83,11 +93,24 @@ impl LabelLocks {
             });
         };
         record_holder(&file);
-        let mut held = self.lock();
+        let mut state = self.lock();
+        // Close may have released the table while this ask opened its file.
+        // Never retain a late acquisition beyond the link's lifetime.
+        if state.closed || state.held.len() >= MAX_LOCKS {
+            let error = if state.closed {
+                closed()
+            } else {
+                io::Error::other(format!("this node already holds {MAX_LOCKS} label locks"))
+            };
+            drop(state);
+            unlock(file);
+            return Err(error);
+        }
+        let held = &mut state.held;
         // Another worker of this core took it meanwhile: this lock goes.
         if let Some(lock) = held.get(socket) {
             let answer = ours(lock);
-            drop(held);
+            drop(state);
             unlock(file);
             return Ok(answer);
         }
@@ -101,20 +124,31 @@ impl LabelLocks {
     /// Gives the lock of the server at `socket` back, if this node holds it
     /// for `generator`.
     pub fn release(&self, socket: &Path, generator: u64) {
-        let mut held = self.lock();
+        let mut state = self.lock();
+        let held = &mut state.held;
         let lock = held
             .get(socket)
             .is_some_and(|lock| lock.generator == generator)
             .then(|| held.remove(socket))
             .flatten();
-        drop(held);
+        drop(state);
         if let Some(lock) = lock {
             unlock(lock.file);
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Held>> {
-        self.held
+    /// Ends the link's ownership even while other work retains this table.
+    /// Taking the same mutex before and after file acquisition fences late asks.
+    pub fn close(&self) {
+        let mut state = self.lock();
+        state.closed = true;
+        for (_, lock) in state.held.drain() {
+            unlock(lock.file);
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, LockState> {
+        self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -122,10 +156,15 @@ impl LabelLocks {
 
 impl Drop for LabelLocks {
     fn drop(&mut self) {
-        for (_, lock) in self.lock().drain() {
-            unlock(lock.file);
-        }
+        self.close();
     }
+}
+
+fn closed() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotConnected,
+        "this node's label-lock owner has closed",
+    )
 }
 
 /// On Unix, close alone keeps a flock alive while a concurrent fork holds
@@ -295,6 +334,7 @@ mod tests {
         // it. Keep a duplicate to hold that window open deterministically.
         let inherited = first
             .lock()
+            .held
             .values()
             .next()
             .unwrap()
@@ -303,7 +343,11 @@ mod tests {
             .unwrap();
         let second = LabelLocks::default();
         assert!(!second.take(&socket, 1).unwrap().held);
-        drop(first);
+        first.close();
+        assert_eq!(
+            first.take(&socket, 1).unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
         assert!(
             second.take(&socket, 1).unwrap().held,
             "the role ends with its owner, even before a forked child execs"
@@ -311,6 +355,8 @@ mod tests {
         // Closing the previous owner's inherited descriptor must not give
         // away the role that the second core now holds.
         drop(inherited);
+        first.close();
+        drop(first);
         assert!(!LabelLocks::default().take(&socket, 1).unwrap().held);
     }
 }

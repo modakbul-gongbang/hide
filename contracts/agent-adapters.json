@@ -26,60 +26,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "claude_transcript"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "public_table"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 3
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 3
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },
@@ -140,60 +105,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "codex_rollout"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "public_table"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 3
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 3
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 3
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },
@@ -263,60 +193,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "grok_updates"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "recorded"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },
@@ -379,60 +274,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "open_code_parts"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "recorded"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },
@@ -495,60 +355,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "pi_session"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "recorded"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },
@@ -611,60 +436,25 @@
         }
       },
       "tokens": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "omp_session"
       },
       "cost": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "recorded"
       },
       "models": {
-        "support": "unsupported",
-        "detail": {
-          "kind": {
-            "kind": "not_built",
-            "layer": 4
-          },
-          "reason": "The usage reader is not built yet.",
-          "would_change": "Ship the declared usage layer and its reader."
-        }
+        "support": "supported",
+        "detail": "usage_record"
       },
       "attribution": {
         "session": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         },
         "project": {
-          "support": "unsupported",
-          "detail": {
-            "kind": {
-              "kind": "not_built",
-              "layer": 4
-            },
-            "reason": "The usage reader is not built yet.",
-            "would_change": "Ship the declared usage layer and its reader."
-          }
+          "support": "supported",
+          "detail": "usage_record"
         }
       }
     },

@@ -12,4 +12,5 @@ mod project;
 mod register;
 mod save;
 mod stamps;
+mod usage;
 mod worktrees;

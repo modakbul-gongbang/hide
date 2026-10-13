@@ -2,6 +2,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use hide_platform::fs::lock::{Lock, Mode, Waited, lock_file, lock_file_blocking};
 use hide_platform::fs::{Access, atomic, private};
 use serde::{Deserialize, Serialize};
 
@@ -85,11 +86,10 @@ pub fn forget_daemon(dir: &Path, pid: u32) {
 /// Serializes `hide connect`s on one state folder: held from looking at the
 /// running daemon until the one to attach to answers. The file persists;
 /// the lock is released with the returned handle.
-pub fn lock_connect(dir: &Path) -> io::Result<File> {
+pub fn lock_connect(dir: &Path) -> io::Result<Lock> {
     create_private_dir(dir)?;
     let file = private::open_own_file(&dir.join("connect.lock"), true)?;
-    file.lock()?;
-    Ok(file)
+    lock_file_blocking(file, Mode::Exclusive)
 }
 
 pub fn new_token() -> String {
@@ -149,22 +149,51 @@ fn is_host_id(text: &str) -> bool {
         .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-pub fn acquire_lock(dir: &Path) -> io::Result<File> {
+pub fn acquire_lock(dir: &Path) -> io::Result<Lock> {
     create_private_dir(dir)?;
     let file = private::open_own_file(&lock_path(dir), true)?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(fs::TryLockError::WouldBlock) => Err(io::Error::new(
+    lock_instance(file)
+}
+
+fn lock_instance(file: File) -> io::Result<Lock> {
+    match lock_file(file, Mode::Exclusive, std::time::Duration::ZERO, &|| false)? {
+        Waited::Locked(lock) => Ok(lock),
+        Waited::TimedOut => Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "another hide instance holds the lock",
         )),
-        Err(fs::TryLockError::Error(error)) => Err(error),
+        Waited::Cancelled => Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "instance lock cancelled",
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn ending_an_instance_releases_its_lock_before_inherited_descriptors_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = private::open_own_file(&lock_path(dir.path()), true).unwrap();
+        // A concurrent fork retains this open file description until exec.
+        // Keep that exact window open without scheduling a child process.
+        let inherited = file.try_clone().unwrap();
+        let owner = lock_instance(file).unwrap();
+        assert!(acquire_lock(dir.path()).is_err());
+        drop(owner);
+        let replacement =
+            acquire_lock(dir.path()).expect("the ended instance no longer owns its lock");
+        drop(inherited);
+        assert!(
+            acquire_lock(dir.path()).is_err(),
+            "the replacement still owns its lock"
+        );
+        drop(replacement);
+        assert!(acquire_lock(dir.path()).is_ok());
+    }
 
     #[test]
     fn state_file_is_private() {

@@ -358,6 +358,7 @@ impl Fixture {
 
     /// Waits until the source's core holds a ready link to the target.
     pub fn device_ready(&self) -> Result<()> {
+        let mut last_host = None;
         wait_for("the target's helper ready", || {
             let snapshot = self.snapshot()?;
             let host = snapshot
@@ -366,6 +367,7 @@ impl Fixture {
                 .and_then(|rows| rows.iter().find(|row| row["id"] == DEVICE_ID))
                 .and_then(|row| row.get("host"))
                 .cloned();
+            last_host = host.clone();
             if let Some(host) = &host
                 && matches!(
                     host["state"].as_str(),
@@ -378,6 +380,7 @@ impl Fixture {
                 .is_some_and(|host| host["state"] == "ready")
                 .then_some(()))
         })
+        .with_context(|| format!("last target helper state: {last_host:?}"))
     }
 
     /// The target's device helper: the `hided` the source runs a move's

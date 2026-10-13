@@ -169,10 +169,26 @@ fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
                 Support::Supported(source) => match source {
                     UsageSource::Limit(LimitSource::ClaudeUsageText) => "claude_usage_text".into(),
                     UsageSource::Limit(LimitSource::CodexUsage) => "codex_usage".into(),
-                    UsageSource::Tokens(source) => match source {},
-                    UsageSource::Cost(source) => match source {},
-                    UsageSource::Models(source) => match source {},
-                    UsageSource::Attribution(source) => match source {},
+                    UsageSource::Tokens(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Cost(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Models(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    UsageSource::Attribution(source) => serde_json::to_value(source)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
                 },
                 Support::Unsupported(absence) => {
                     assert!(!absence.reason.trim().is_empty(), "{} {name}", row.id);

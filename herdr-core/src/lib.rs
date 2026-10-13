@@ -62,6 +62,7 @@ pub mod tasks;
 mod terminal_attachments;
 pub mod terminal_reports;
 mod usage;
+pub mod usage_ledger;
 mod view_bookmarks;
 mod view_layout;
 pub mod wire;

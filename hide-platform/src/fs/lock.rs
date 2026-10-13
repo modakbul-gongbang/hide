@@ -85,6 +85,16 @@ pub fn lock_file(
     }
 }
 
+/// Takes a blocking lock for an existing serialization boundary. The guard
+/// explicitly releases it on drop, like the bounded acquisition above.
+pub fn lock_file_blocking(file: File, mode: Mode) -> io::Result<Lock> {
+    match mode {
+        Mode::Shared => file.lock_shared()?,
+        Mode::Exclusive => file.lock()?,
+    }
+    Ok(Lock { file })
+}
+
 /// Locks the open folder `dir` the way [`lock_file`] locks a file.
 pub fn lock_dir(
     dir: &impl Handle,
