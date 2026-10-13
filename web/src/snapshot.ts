@@ -1487,6 +1487,8 @@ export type MemoryRow = {
   number: number;
   title: string;
   kind: MemoryCardKind;
+  /** At most 512 characters, only for cards in an active promotion. */
+  body_preview?: string;
   human_source_count: number;
   /** Sessions the card was given to in full. */
   provided_session_count: number;
@@ -1499,6 +1501,8 @@ export type MemoryRow = {
   document_comparison?: MemoryDocument | null;
   promotion: {
     state: MemoryPromotionState;
+    /** The durable promotion attempt's start; absent on older daemons. */
+    started_at_unix_ms?: number;
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;

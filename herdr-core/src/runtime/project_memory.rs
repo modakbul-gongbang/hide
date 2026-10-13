@@ -925,6 +925,19 @@ fn load_opened_memory(
         Err(hide_memory::MemoryError::ProjectMissing) => return Ok(empty(identity.id)),
         Err(error) => return Err(error.to_string()),
     };
+    let promotions = store
+        .promotions(&identity.id)
+        .map_err(|error| error.to_string())?;
+    let previewed = promotions
+        .iter()
+        .filter_map(|(number, promotion)| {
+            matches!(
+                promotion.state,
+                hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+            )
+            .then_some(*number)
+        })
+        .collect::<std::collections::HashSet<_>>();
     let rows = store
         .list_memories(&identity.id)
         .map_err(|error| error.to_string())?
@@ -933,7 +946,8 @@ fn load_opened_memory(
             let comparison = store
                 .document_comparison(&identity.id, item.number)
                 .map_err(|error| error.to_string())?;
-            let mut row = memory_row(item);
+            let preview = previewed.contains(&item.number);
+            let mut row = memory_row(item, preview);
             row.document_comparison = comparison
                 .as_ref()
                 .map(crate::model::MemoryDocumentSnapshot::from);
@@ -988,9 +1002,6 @@ fn load_opened_memory(
         }),
         None => None,
     };
-    let promotions = store
-        .promotions(&identity.id)
-        .map_err(|error| error.to_string())?;
     let suggestions = store
         .promotion_suggestions(
             &identity.id,
@@ -1009,11 +1020,12 @@ fn load_opened_memory(
     })
 }
 
-fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
+fn memory_row(item: hide_memory::MemoryItem, preview: bool) -> MemoryRowSnapshot {
     MemoryRowSnapshot {
         number: item.number,
         title: item.title,
         kind: card_kind(item.kind),
+        body_preview: preview.then(|| item.body.chars().take(512).collect()),
         human_source_count: item.human_source_count,
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
@@ -1193,11 +1205,14 @@ mod tests {
                         CandidateKind::Decision,
                         vec![3],
                     ),
-                    card(
-                        "Migrations never rewrite a column",
-                        CandidateKind::Lesson,
-                        vec![4],
-                    ),
+                    Candidate {
+                        text: "한".repeat(700),
+                        ..card(
+                            "Migrations never rewrite a column",
+                            CandidateKind::Lesson,
+                            vec![4],
+                        )
+                    },
                     card(
                         "The service listens on port 8080",
                         CandidateKind::Fact,
@@ -1327,9 +1342,26 @@ mod tests {
                 .iter()
                 .find(|row| row.number == 3)
                 .unwrap()
+                .body_preview,
+            Some("한".repeat(512))
+        );
+        assert!(
+            project
+                .rows
+                .iter()
+                .filter(|row| row.number != 3)
+                .all(|row| row.body_preview.is_none())
+        );
+        assert_eq!(
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == 3)
+                .unwrap()
                 .promotion,
             Some(MemoryPromotionSnapshot {
                 state: MemoryPromotionState::PrOpen,
+                started_at_unix_ms: 1,
                 agent: None,
                 pr_number: Some(924),
                 target_path: None,
