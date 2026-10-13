@@ -2695,7 +2695,8 @@ pub enum MemoryQuestionSnapshot {
 pub struct MemoryStartFailure {
     pub code: MemoryStartFailureCode,
     /// The last line the new pane's shell showed for `shell_starting`, at
-    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters; the other
+    /// most [`MemoryStartFailure::DETAIL_CHARS`] characters, or the reason
+    /// a worker could not process a card; the other
     /// answers' words are the diagnostic log's (`promotion.start_failed`).
     pub detail: Option<String>,
 }
@@ -5548,6 +5549,13 @@ mod memory_start_failure_tests {
             MemoryStartFailure {
                 code: MemoryStartFailureCode::Other,
                 detail: None,
+            }
+        );
+        assert_eq!(
+            MemoryStartFailure::of("card_not_processed\u{1f}The owning guide is unavailable"),
+            MemoryStartFailure {
+                code: MemoryStartFailureCode::CardNotProcessed,
+                detail: Some("The owning guide is unavailable".to_owned()),
             }
         );
     }
