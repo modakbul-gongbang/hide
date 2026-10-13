@@ -991,6 +991,8 @@ impl Mobile {
                 // A delivery notice names the agent that has not answered,
                 // and the phone words the cause from its state key.
                 title: notice.recipient.clone(),
+                status_code: None,
+                detail: None,
                 state: match notice.kind {
                     HumanNoticeKind::ObserverUnconfirmed => push::NoticeState::ObserverUnconfirmed,
                     HumanNoticeKind::LetterUndelivered => push::NoticeState::LetterUndelivered,

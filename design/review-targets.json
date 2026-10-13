@@ -1156,7 +1156,7 @@
       {
         "node": "b07-settings-notifications-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1164,7 +1164,7 @@
       {
         "node": "b07-settings-notifications-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1244,7 +1244,7 @@
       {
         "node": "b13-settings-notifications-pc-dark",
         "theme": "dark",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -1252,7 +1252,7 @@
       {
         "node": "b13-settings-notifications-pc-light",
         "theme": "light",
-        "width": 1512,
+        "width": 1832,
         "scale": 1,
         "content": "reference",
         "state": "rest"

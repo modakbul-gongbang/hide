@@ -7,8 +7,9 @@
 //!
 //! What is sent: one notification per root entering Needs You or Done (a
 //! raised descendant reaches the phone as its lineage root), as data: the task as
-//! the title, the state (`needs_you` or `done`) and the project; never
-//! terminal content and never a sentence. The words for the state belong to
+//! the title, the state (`needs_you` or `done`), the row's status code and
+//! chosen second-line sentence, and the project; never terminal content.
+//! The sentence stays untranslated and is never logged. Status words belong to
 //! the phone's language, so the phone page hands them to its service worker
 //! and the worker composes the body (`web/public/m/sw.js`). A later
 //! transition of the same agent replaces it (same tag). Agents the desktop
@@ -30,6 +31,9 @@ use herdr_core::agent_state::push::VANISHED_TTL;
 pub use herdr_core::agent_state::push::{Notice, NoticeState, Transitions};
 
 const RECORD_SIZE: u32 = 4096;
+// aes128gcm adds a 16-byte salt, 4-byte record size, 1-byte key length,
+// 65-byte P-256 public key, 1-byte delimiter and 16-byte authentication tag.
+const MAX_PLAINTEXT_SIZE: usize = 4096 - 86 - 1 - 16;
 const TTL_SECS: u64 = 60 * 60;
 const JWT_LIFETIME_SECS: u64 = 12 * 60 * 60;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -164,6 +168,9 @@ pub fn encrypt_with_secret(
     salt: &[u8; 16],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, String> {
+    if plaintext.len() > MAX_PLAINTEXT_SIZE {
+        return Err("the message exceeds the 4 KiB Web Push body limit".to_owned());
+    }
     let prk_key = hmac(auth_secret, &[ecdh_secret]);
     let ikm = hmac(&prk_key, &[b"WebPush: info\0", ua_public, as_public, &[1]]);
     let prk = hmac(salt, &[&ikm]);
@@ -338,6 +345,8 @@ pub fn payload(notice: &Notice, clear: &BTreeSet<AgentKey>) -> Value {
     json!({
         "title": notice.title,
         "state": notice.state.as_str(),
+        "status_code": notice.status_code,
+        "detail": notice.detail,
         "place": notice.place,
         "tag": notice.key.tag(),
         "device_id": notice.key.device_id,
@@ -542,10 +551,10 @@ mod tests {
         );
     }
 
-    /// The wire shape the service worker reads: the state key and the place,
-    /// no sentence in any language.
+    /// The worker receives the row's sentence and status unchanged, not a
+    /// translated body. An old worker ignores the additive fields.
     #[test]
-    fn the_payload_carries_state_and_place_and_no_sentence() {
+    fn the_payload_carries_the_rows_sentence_and_status_unchanged() {
         let notice = Notice {
             key: AgentKey {
                 device_id: "mini".into(),
@@ -553,6 +562,8 @@ mod tests {
             },
             title: "fix the build".into(),
             state: NoticeState::Done,
+            status_code: Some("done".into()),
+            detail: Some("빌드 수정 완료".into()),
             place: "contong".into(),
         };
         let clear = BTreeSet::from([AgentKey {
@@ -564,6 +575,8 @@ mod tests {
             json!({
                 "title": "fix the build",
                 "state": "done",
+                "status_code": "done",
+                "detail": "빌드 수정 완료",
                 "place": "contong",
                 "tag": "mini|w2:p1",
                 "device_id": "mini",
@@ -580,6 +593,60 @@ mod tests {
         assert_eq!(payload["state"], "needs_you");
         assert_eq!(payload["place"], "");
         assert!(payload.get("body").is_none());
+    }
+
+    /// The same public transition boundary used by phone and desktop carries
+    /// the root's exact detail even when the compact phone row hides it.
+    #[test]
+    fn a_raised_roots_notice_keeps_its_detail_without_a_compact_line() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([row("w1:p1", "working", "none", None)])),
+            "local",
+        ));
+        let mut root = row("w1:p1", "needs_you", "none", None);
+        root["detail"] = json!("자식의 질문에 답해 주세요");
+        root["status_code"] = json!("idle");
+        root["raised"] = json!([{"human_notice": false}]);
+        let projection = project(&rest(json!([root])), "local");
+        assert!(projection.agents().next().unwrap().line.is_none());
+        let notices = transitions.observe(&projection).0;
+        let data = payload(&notices[0], &BTreeSet::new());
+        assert_eq!(data["detail"], "자식의 질문에 답해 주세요");
+        assert_eq!(data["status_code"], "idle");
+        assert_eq!(data["pane_id"], "w1:p1");
+    }
+
+    /// RFC 8291 overhead belongs inside the push service's 4096-byte cap,
+    /// not just inside its record. A maximal payload fits; one more byte is
+    /// a reported failure, without logging or truncating its sentence.
+    #[test]
+    fn the_encrypted_push_body_is_at_most_four_kibibytes() {
+        let notice = Notice {
+            key: AgentKey {
+                device_id: "mini".into(),
+                pane_id: "w2:p1".into(),
+            },
+            title: "🦀".repeat(80),
+            state: NoticeState::Done,
+            status_code: Some("done".into()),
+            detail: Some("🦀".repeat(80)),
+            place: String::new(),
+        };
+        let mut data = payload(&notice, &BTreeSet::new());
+        let remaining = 3993 - data.to_string().len();
+        data["place"] = json!("p".repeat(remaining));
+        let mut plaintext = data.to_string().into_bytes();
+        assert_eq!(plaintext.len(), 3993);
+        let encrypted =
+            encrypt_with_secret(&[0; 32], &[0; 16], &[0; 65], &[0; 65], &[0; 16], &plaintext)
+                .unwrap();
+        assert_eq!(encrypted.len(), 4096);
+        plaintext.push(b' ');
+        assert!(
+            encrypt_with_secret(&[0; 32], &[0; 16], &[0; 65], &[0; 65], &[0; 16], &plaintext)
+                .is_err()
+        );
     }
 
     #[test]

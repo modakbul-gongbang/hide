@@ -7672,7 +7672,7 @@
           "ref": "HXWFK",
           "name": "Selected",
           "width": "fill_container",
-          "fill": "$--color-selected-wash",
+          "fill": "$--color-selected",
           "descendants": {
             "sWhWS": {
               "fill": "$--agent-working"
@@ -11074,7 +11074,7 @@
           "ref": "n1zn1O",
           "name": "Selected child",
           "width": "fill_container",
-          "fill": "$--color-selected-wash",
+          "fill": "$--color-selected",
           "descendants": {
             "Lggd1": {
               "enabled": false
@@ -13841,7 +13841,7 @@
               "ref": "qdhY0",
               "width": "fill_container",
               "name": "Row / Selected",
-              "fill": "$--secondary",
+              "fill": "$--color-selected",
               "descendants": {
                 "wgtfo": {
                   "opacity": 0
@@ -15962,7 +15962,7 @@
               "ref": "DLP27",
               "width": "fill_container",
               "name": "Row / Selected",
-              "fill": "$--secondary",
+              "fill": "$--color-selected",
               "height": 32,
               "descendants": {
                 "VtSRn": {
@@ -16525,7 +16525,7 @@
               "ref": "sidebar-agent-row",
               "width": "fill_container",
               "name": "Row / selected",
-              "fill": "$--secondary",
+              "fill": "$--color-selected",
               "descendants": {
                 "sar-title": {
                   "fill": "$--foreground"
@@ -62033,6 +62033,20 @@
       "type": "number",
       "value": 26
     },
+    "--color-selected": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#84CC161F"
+        },
+        {
+          "value": "#B9FF661F",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
     "--opacity-usage-level-1": {
       "type": "number",
       "value": 0.3
@@ -62057,13 +62071,13 @@
       "type": "number",
       "value": 3
     },
-    "--size-usage-year-cell": {
-      "type": "number",
-      "value": 11
-    },
     "--size-usage-year": {
       "type": "number",
       "value": 800
+    },
+    "--size-usage-year-cell": {
+      "type": "number",
+      "value": 11
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

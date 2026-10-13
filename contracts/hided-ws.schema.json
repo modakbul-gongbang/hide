@@ -644,7 +644,9 @@
               "pane_id": { "type": "string" },
               "title": { "type": "string" },
               "state": { "type": "string", "enum": ["needs_you", "done"] },
-              "place": { "type": "string" }
+              "place": { "type": "string" },
+              "status_code": { "description": "The root row's status word code. Optional for older frames.", "type": ["string", "null"], "enum": ["error", "question", "approval", "working", "done", "idle", "unknown", "waiting", "stopped", "attached", "sleeping", "waking", "sleep_failed", null] },
+              "detail": { "description": "The core's chosen row detail, untranslated; absent or null means the original state-and-project body.", "type": ["string", "null"], "maxLength": 80 }
             }
           }
         },

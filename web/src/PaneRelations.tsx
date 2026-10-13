@@ -14,8 +14,8 @@ import { splitLabel } from "./areaLayout";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
 // child pane's header returns to its parent, a parent's badge lists every
-// direct child in a popover, and the pane menu lists parent,
-// siblings and children, each moved to only by its explicit Open. Every move
+// direct child in a popover, and the pane menu lists parent and
+// siblings, each moved to only by its explicit Open. Every move
 // is one tracked focus; its pending and failed states show in the Agent area,
 // which stays on screen while the core moves the visible tab to the target,
 // and a failure never splits the parent or makes a pane.
@@ -127,7 +127,7 @@ type PaneMenuId =
  * the menu moves no focus and marks nothing read.
  */
 export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuId>[] {
-  const relationLabel = { parent: "panes.relation.parent", sibling: "panes.relation.sibling", child: "panes.relation.child" } as const;
+  const relationLabel = { parent: "panes.relation.parent", sibling: "panes.relation.sibling" } as const;
   const items: MenuEntry<PaneMenuId>[] = relationEntries(pane).map((entry) => ({
     id: `open:${entry.paneId}` as const,
     label: translate(relationLabel[entry.relation], { name: entry.label }),

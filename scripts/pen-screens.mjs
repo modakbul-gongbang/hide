@@ -146,7 +146,7 @@ function themedXref(id, masterId, name, overrides = {}, descendants = {}) {
 // this document's text() helper needs them too, so they are read live from the
 // library itself rather than duplicated as a literal, keeping the same
 // never-drifts guarantee pen-tokens.mjs gives the generated set.
-const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono', '--color-selected-wash'];
+const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono', '--color-selected-wash', '--color-selected'];
 
 export const ALIAS = 'hideui';
 export const LIBRARY_PATH = './hide-ui.lib.pen';
@@ -354,7 +354,7 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // slot empty at rest. A list with nothing to fold (an Overview card) passes
 // `none`, and the row has no fold slot at all.
 function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, inset = 4, width = 268}) {
-  return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: '$--secondary'} : {})}, {
+  return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: '$--color-selected'} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
     'sar-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
@@ -410,7 +410,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark or provider.
     ...(more ? {'ath-row-mark': {enabled: false}, 'ath-row-provider': {enabled: false}} : {}),
   };
-  return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--secondary'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
+  return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--color-selected'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
 }
 
 function screenSessionRow(id, {title, checkout, provider, time, width = 360}) {
@@ -455,7 +455,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
     themedXref(`${id}-search-${suffix}`, 'sbc-search', 'Search row', {width: 'fill_container', padding: 0}),
     frame(`${id}-overview-${suffix}`, 'Overview', {
       width: 'fill_container', height: num(tokens, '--size-project-row'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm',
-      ...(overview ? {fill: '$--secondary'} : {}),
+      ...(overview ? {fill: '$--color-selected'} : {}),
     }, [
       icon(`${id}-overviewi-${suffix}`, 'layout-dashboard', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
       text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
@@ -3843,7 +3843,7 @@ function buildProjectsSidebar(tokens) {
   function projectRow(id, {name, marks, expanded, selected = false, glyph = 'folder-git-2', asleep, hover = false, menu = false}) {
     const working = WORKING.some(part => (marks?.[part] ?? 0) > 0);
     const actions = hover || menu;
-    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : actions ? {fill: '$--accent'} : {})}, {
+    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--color-selected'} : actions ? {fill: '$--accent'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
       // An unfolded project's chevron waits for the pointer in its slot.
       wgtfo: {opacity: expanded && !actions ? 0 : 1},
@@ -3877,7 +3877,7 @@ function buildProjectsSidebar(tokens) {
     return themedXref(id, 'DLP27', name, {
       width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-project-row' : '--size-checkout-row'),
       padding: [0, xs, 0, leading],
-      ...(selected ? {fill: '$--secondary'} : hovered ? {fill: '$--accent'} : {}),
+      ...(selected ? {fill: '$--color-selected'} : hovered ? {fill: '$--accent'} : {}),
     }, {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},

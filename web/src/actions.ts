@@ -1094,9 +1094,13 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "first_run_advance", payload: notifications === undefined ? { from } : { from, notifications } });
     },
 
-    /** Notify me when an agent needs me (D-21). */
-    setDesktopNotifications(enabled: boolean) {
-      dispatch({ schema_version: 2, kind: "desktop_notifications_set", payload: { enabled } });
+    /** Needs You, with an optional Done choice for the reopened wizard's Not now. */
+    setDesktopNotifications(enabled: boolean, doneEnabled?: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notifications_set", payload: doneEnabled === undefined ? { enabled } : { enabled, done_enabled: doneEnabled } });
+    },
+
+    setDesktopNotificationsDone(enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notifications_done_set", payload: { enabled } });
     },
 
     /** A screen's one-line introduction was shown, so it is not shown again (B43). */
