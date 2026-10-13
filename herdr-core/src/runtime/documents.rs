@@ -91,7 +91,7 @@ pub(super) struct OpenRequest {
     /// Where the document shows once it is read, in a shell with View areas
     /// (PRD S7 B1): nothing moves until the read lands, and a failed read
     /// moves nothing.
-    placement: Option<ViewPlacement>,
+    placements: Vec<ViewPlacement>,
 }
 
 /// A reveal waiting on its file. The screen moves when the read lands, all
@@ -160,29 +160,29 @@ impl Runtime {
     pub(super) fn pending_view_placements(&self, key: &WorkspaceKey) -> usize {
         self.document_opens
             .values()
-            .filter(|open| {
-                open.placement
-                    .as_ref()
-                    .is_some_and(|placement| &placement.key == key)
-            })
+            .flat_map(|open| &open.placements)
+            .filter(|placement| &placement.key == key)
             .count()
     }
 
-    /// Authoritative tab removal also retires its pending GUI reads. Their
-    /// late answers cannot recreate a presentation after its owner closed.
+    /// Authoritative tab removal retires only that owner's GUI destinations.
+    /// A shared read still serves every surviving explicit request.
     pub(super) fn prune_gui_reads(&mut self, key: &WorkspaceKey, tabs: &[&str]) -> bool {
         let before = self.document_opens.len();
+        let mut changed = false;
         self.document_opens.retain(|_, open| {
-            !open.placement.as_ref().is_some_and(|placement| {
-                &placement.key == key
-                    && placement
+            let count = open.placements.len();
+            open.placements.retain(|placement| {
+                &placement.key != key
+                    || !placement
                         .owner
                         .as_deref()
                         .is_some_and(|owner| !tabs.contains(&owner))
-            })
+            });
+            changed |= count != open.placements.len();
+            count == 0 || !open.placements.is_empty() || open.reload || open.restore
         });
-        let changed = self.document_opens.len() != before;
-        if changed {
+        if self.document_opens.len() != before {
             self.sync_opening_snapshot();
         }
         changed
@@ -199,6 +199,7 @@ impl Runtime {
         let before = self.document_opens.len();
         self.document_opens.retain(|_, open| {
             open.reload
+                || !open.placements.is_empty()
                 || open.workspace_id != workspace_id
                 || open.checkout_id != checkout_id
                 || open.path != path
@@ -311,22 +312,55 @@ impl Runtime {
     ) {
         let tab_id =
             self.new_file_tab_id(&request.workspace_id, &request.checkout_id, &request.path);
+        // Replacing previews/New tabs need no extra display slot, but churn
+        // while a read is held must not grow its destination queue forever.
+        if let Some(placement) = &request.placement {
+            let repeated = self.document_opens.get(&tab_id).is_some_and(|running| {
+                running
+                    .placements
+                    .iter()
+                    .any(|held| held.same_destination(placement))
+            });
+            if !repeated
+                && self.pending_view_placements(&placement.key)
+                    >= crate::view_layout::MAX_VIEW_DISPLAYS
+            {
+                let error = crate::view_layout::LayoutError::DisplayLimit;
+                self.set_error(error.kind(), error.message(), false);
+                return;
+            }
+        }
         if !request.reload
             && let Some(running) = self.document_opens.get_mut(&tab_id)
         {
-            // One read serves every open of the file while it runs, but the
-            // operator's last word on the tab's kind stands: a double-click is
-            // two single clicks and then the pin, and the pin arrives while the
-            // click's read is still out. The document lands pinned, never as a
-            // preview the operator already kept open.
-            if !request.preview && !running.reload && !running.restore {
+            // Share only the file read. Each presentation retains its GUI
+            // destination; repeated clicks at the same destination converge,
+            // with a later pin keeping that display open.
+            if !request.preview && !running.reload {
                 running.preview = false;
-                if let Some(placement) = running.placement.as_mut() {
-                    placement.preview = false;
+            }
+            if let Some(placement) = request.placement {
+                running.restore = false;
+                if let Some(held) = running
+                    .placements
+                    .iter_mut()
+                    .find(|held| held.same_destination(&placement))
+                {
+                    held.preview &= placement.preview;
+                } else {
+                    running.placements.push(placement);
                 }
             }
             return;
         }
+        // Reload supersedes the I/O generation, not any admitted GUI
+        // destinations waiting for this same shared buffer.
+        let mut placements = self
+            .document_opens
+            .remove(&tab_id)
+            .map(|open| open.placements)
+            .unwrap_or_default();
+        placements.extend(request.placement);
         self.next_document_generation += 1;
         let generation = self.next_document_generation;
         self.document_opens.insert(
@@ -340,7 +374,7 @@ impl Runtime {
                 reload: request.reload,
                 reveal: request.reveal,
                 restore: request.restore,
-                placement: request.placement,
+                placements,
             },
         );
         self.sync_opening_snapshot();
@@ -490,7 +524,15 @@ impl Runtime {
             let prepared = PreparedFileTab::Open(tab_id.to_owned());
             let in_front = self.front_checkout()
                 == Some((request.workspace_id.as_str(), request.checkout_id.as_str()));
-            if let Some(reveal) = &request.reveal
+            if !request.placements.is_empty() {
+                self.complete_file_in_views(
+                    prepared,
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    request.placements,
+                );
+            } else if let Some(reveal) = &request.reveal
                 && self.front_checkout_owned() == reveal.front
             {
                 self.settle_reveal(
@@ -498,16 +540,6 @@ impl Runtime {
                     &request.checkout_id,
                     &request.path,
                     Some(prepared),
-                );
-            } else if let Some(placement) = request.placement {
-                // With View areas it lands where it was asked for, as a
-                // fresh read does: Open to the side of it opens beside.
-                self.complete_file_in_view(
-                    prepared,
-                    &request.workspace_id,
-                    &request.checkout_id,
-                    &request.path,
-                    placement,
                 );
             } else if in_front {
                 self.show_file_tab(
@@ -524,6 +556,7 @@ impl Runtime {
         let open = self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id);
         if let Some(reveal) = &request.reveal
             && !open
+            && request.placements.is_empty()
             && self.front_checkout_owned() == reveal.front
         {
             self.settle_reveal(
@@ -538,13 +571,32 @@ impl Runtime {
             );
             return true;
         }
-        if request.reload {
-            if open {
-                self.replace_document(tab_id, document, place);
-            }
+        if request.reload && open {
+            self.replace_document(tab_id, document.clone(), place.clone());
+        }
+        if !request.placements.is_empty() {
+            // A CLI open may already have supplied this shared buffer. Honor
+            // the GUI destinations using it, without replacing dirty/save state.
+            let prepared = if open {
+                PreparedFileTab::Open(tab_id.to_owned())
+            } else {
+                PreparedFileTab::Read {
+                    tab_id: tab_id.to_owned(),
+                    document: Box::new(document),
+                    place,
+                }
+            };
+            self.complete_file_in_views(
+                prepared,
+                &request.workspace_id,
+                &request.checkout_id,
+                &request.path,
+                request.placements,
+            );
+            self.persist_current_ui_state();
             return true;
         }
-        if open {
+        if request.reload || open {
             return true;
         }
         let in_front = self.front_checkout()
@@ -565,21 +617,6 @@ impl Runtime {
                 &request.path,
                 request.preview,
             );
-            return true;
-        }
-        // With View areas the document lands where it was asked for, in its
-        // own Workspace, whichever Workspace is in front now (B1, B34). A
-        // read that landed just before this one left its display unbound,
-        // so the displays are reconciled before this one is placed.
-        if let Some(placement) = request.placement {
-            self.complete_file_in_view(
-                prepared,
-                &request.workspace_id,
-                &request.checkout_id,
-                &request.path,
-                placement,
-            );
-            self.persist_current_ui_state();
             return true;
         }
         if in_front {

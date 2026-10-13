@@ -187,6 +187,16 @@ pub(super) struct ViewPlacement {
     pub(super) replace: Option<String>,
 }
 
+impl ViewPlacement {
+    pub(super) fn same_destination(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.owner == other.owner
+            && self.area == other.area
+            && self.beside == other.beside
+            && self.replace == other.replace
+    }
+}
+
 /// What the last reconcile saw, so an unchanged editor costs a comparison.
 pub(super) struct Reconciled {
     tabs: Vec<EditorTabSnapshot>,
@@ -652,9 +662,17 @@ impl Runtime {
             super::editor::PreparedFileTab::Reading { root, channel } => {
                 // A display that shows the file but could not read it is
                 // focused now, and the read fills its tab (S6 B20).
-                let shown = !beside
-                    && replace.is_none()
-                    && self.focus_view_document(&key, path, DisplayKind::File, None, !preview);
+                let shown = if !beside && replace.is_none() {
+                    match self.focus_view_document(&key, path, DisplayKind::File, None, !preview) {
+                        Ok(shown) => shown,
+                        Err(error) => {
+                            self.set_error(error.kind(), error.message(), false);
+                            return;
+                        }
+                    }
+                } else {
+                    false
+                };
                 let placement = (!shown).then(|| ViewPlacement {
                     owner: self
                         .workspace_views
@@ -686,6 +704,81 @@ impl Runtime {
                     },
                 );
             }
+        }
+    }
+
+    /// Complete every admitted GUI destination of one shared read. Material
+    /// is cloned only when no destination has retained a buffer yet, so a
+    /// refusal in one presentation cannot discard another owner's request.
+    pub(super) fn complete_file_in_views(
+        &mut self,
+        prepared: super::editor::PreparedFileTab,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        mut placements: Vec<ViewPlacement>,
+    ) {
+        if placements.len() == 1 {
+            self.complete_file_in_view(
+                prepared,
+                workspace_id,
+                checkout_id,
+                path,
+                placements.pop().unwrap(),
+            );
+            return;
+        }
+        // Keep the existing buffer's own material until all destinations
+        // finish. A refusal may retire a clean, otherwise unreferenced
+        // buffer, but the next admitted destination still owns its open.
+        let prepared = match prepared {
+            super::editor::PreparedFileTab::Open(ref tab_id) => {
+                match self
+                    .editor_documents
+                    .get(tab_id)
+                    .zip(self.document_places.get(tab_id))
+                {
+                    Some((document, place)) => super::editor::PreparedFileTab::Read {
+                        tab_id: tab_id.clone(),
+                        document: Box::new(EditorDocumentSnapshot::clone(document)),
+                        place: place.clone(),
+                    },
+                    None => prepared,
+                }
+            }
+            other => other,
+        };
+        for placement in placements {
+            let next = match &prepared {
+                super::editor::PreparedFileTab::Read {
+                    tab_id,
+                    document,
+                    place,
+                } => {
+                    if self
+                        .snapshot
+                        .editor
+                        .tabs
+                        .iter()
+                        .any(|tab| &tab.id == tab_id)
+                    {
+                        super::editor::PreparedFileTab::Open(tab_id.clone())
+                    } else {
+                        super::editor::PreparedFileTab::Read {
+                            tab_id: tab_id.clone(),
+                            document: document.clone(),
+                            place: place.clone(),
+                        }
+                    }
+                }
+                super::editor::PreparedFileTab::Open(tab_id) => {
+                    super::editor::PreparedFileTab::Open(tab_id.clone())
+                }
+                super::editor::PreparedFileTab::Reading { .. } => {
+                    unreachable!("completion already has its read result")
+                }
+            };
+            self.complete_file_in_view(next, workspace_id, checkout_id, path, placement);
         }
     }
 
@@ -736,8 +829,7 @@ impl Runtime {
             self.put_back_parked(&placement.key, parked);
             return;
         };
-        let before_error = self.snapshot.status.last_error.clone();
-        self.place_document(
+        let placed = self.try_place_document(
             &placement.key,
             &tab_id,
             placement.preview,
@@ -745,7 +837,8 @@ impl Runtime {
             Some(&area),
             replace.as_deref(),
         );
-        if self.snapshot.status.last_error != before_error {
+        if let Err(error) = placed {
+            self.refuse_placement(&placement.key, &tab_id, error);
             self.put_back_parked(&placement.key, parked);
             return;
         }
@@ -808,7 +901,7 @@ impl Runtime {
         kind: DisplayKind,
         committed: Option<bool>,
         keep_open: bool,
-    ) -> bool {
+    ) -> Result<bool, LayoutError> {
         let Some(display_id) = self.view_layout_of(key).and_then(|layout| {
             last_focused_showing(
                 &layout.displays().collect::<Vec<_>>(),
@@ -817,16 +910,16 @@ impl Runtime {
                 committed,
             )
         }) else {
-            return false;
+            return Ok(false);
         };
-        let _ = self.change_view_layout(key, |layout, stamp| {
+        self.change_view_layout(key, |layout, stamp| {
             let mut changed = layout.focus(&display_id, stamp)?;
             if keep_open && let Some(display) = layout.display_mut(&display_id) {
                 changed |= std::mem::replace(&mut display.preview, false);
             }
             Ok(((), changed))
-        });
-        true
+        })?;
+        Ok(true)
     }
 
     /// Shows the document of editor tab `tab_id` in the Workspace `key`
@@ -851,6 +944,24 @@ impl Runtime {
         area: Option<&str>,
         replace: Option<&str>,
     ) -> bool {
+        match self.try_place_document(key, tab_id, preview, beside, area, replace) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.refuse_placement(key, tab_id, error);
+                true
+            }
+        }
+    }
+
+    fn try_place_document(
+        &mut self,
+        key: &WorkspaceKey,
+        tab_id: &str,
+        preview: bool,
+        beside: bool,
+        area: Option<&str>,
+        replace: Option<&str>,
+    ) -> Result<bool, LayoutError> {
         let Some((path, kind, committed)) = self
             .snapshot
             .editor
@@ -865,7 +976,7 @@ impl Runtime {
                 ))
             })
         else {
-            return false;
+            return Err(LayoutError::UnknownDisplay(tab_id.to_owned()));
         };
         let base = match (self.view_layout_of(key), area) {
             (Some(layout), Some(area)) if layout.area(area).is_some() => area.to_owned(),
@@ -923,13 +1034,11 @@ impl Runtime {
                 layout.focus(id, stamp)?;
                 Ok(((), true))
             });
-            if let Err(error) = placed {
-                self.refuse_placement(key, tab_id, error);
-            }
-            return true;
+            placed?;
+            return Ok(true);
         }
-        if self.focus_view_document(key, &path, kind, committed, !preview) {
-            return true;
+        if self.focus_view_document(key, &path, kind, committed, !preview)? {
+            return Ok(true);
         }
         // The preview display the open takes, with the document it showed.
         let slot = preview
@@ -980,16 +1089,13 @@ impl Runtime {
             }
             Ok(((), true))
         });
-        if let Err(error) = placed {
-            self.refuse_placement(key, tab_id, error);
-            return true;
-        }
+        placed?;
         if let Some((_, old_tab, old_path, old_kind)) = slot
             && !old_kept
         {
             self.release_previewed(key, old_tab, (&old_path, old_kind), tab_id);
         }
-        true
+        Ok(true)
     }
 
     /// Open to the side (B4): a kept-open display in the area next to
@@ -1003,7 +1109,7 @@ impl Runtime {
         path: &str,
         kind: DisplayKind,
         committed: Option<bool>,
-    ) -> bool {
+    ) -> Result<bool, LayoutError> {
         let placed = self.change_view_layout(key, |layout, stamp| {
             let neighbour = BESIDE_ORDER
                 .iter()
@@ -1067,10 +1173,8 @@ impl Runtime {
             }
             Ok(((), true))
         });
-        if let Err(error) = placed {
-            self.refuse_placement(key, tab_id, error);
-        }
-        true
+        placed?;
+        Ok(true)
     }
 
     /// An open whose display cannot be added says why, and the document it
