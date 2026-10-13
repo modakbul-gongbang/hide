@@ -48,6 +48,7 @@ mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod session_state;
+mod session_work;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
@@ -1415,6 +1416,7 @@ pub struct Runtime {
     search_generation: u64,
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
+    session_issue_work: session_work::SessionIssueWork,
     /// Project Memory's background pass, receipts and analysis state
     /// (`runtime/memory_analysis.rs`).
     memory_work: memory_analysis::MemoryWork,
@@ -2071,6 +2073,7 @@ impl Runtime {
             search_client: None,
             search_generation: 0,
             links_work: links::LinksWork::default(),
+            session_issue_work: session_work::SessionIssueWork::default(),
             memory_work: Default::default(),
             project_memory: Default::default(),
             editor_tab_history: Vec::new(),
@@ -2791,6 +2794,7 @@ fn unix_milliseconds() -> u64 {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
+        self.cancel_session_issue_draft();
         self.cancel_memory_pass();
     }
 }

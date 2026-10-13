@@ -8,7 +8,11 @@ import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { frontTarget, relationRows, relationsOf, type Relations } from "./relations";
-import { factoryEntry, filterEntries, githubEntries, groupEntries, openUrlEntry, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
+import { factoryEntry, filterEntries, githubEntries, groupEntries, openUrlEntry, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, SESSIONS_GROUP, sessionEntries, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
+import { summariesEnabled } from "./hideAi";
+import { workKey, recordTitle } from "./sessionWork";
+import { Button } from "./components/ui/button";
+import type { LinkSummaries, WorkSession } from "./snapshot";
 import { detailOf, type Detail } from "./searchDetail";
 import { githubRow, hasGithubProject, ownAnswer, projectRead, projectToRead, startsSearch, type GithubRow, type ProjectRead } from "./searchGithub";
 import { browserBridge } from "./host";
@@ -59,6 +63,8 @@ export function SearchPalette({ actions }: { actions: Actions }) {
   const language = requireInterfaceLanguage(i18n.language);
   const rest = useShellStore((s) => s.rest);
   const linkSummaries = useShellStore((s) => s.linkSummaries);
+  const workSearch = useShellStore((s) => s.sessionWorkSearch);
+  const summaries = summariesEnabled(rest?.status?.background_ai);
   const close = useUiStore((s) => s.closeOverlay);
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState("");
@@ -98,6 +104,8 @@ export function SearchPalette({ actions }: { actions: Actions }) {
   const entries = useMemo(() => (rest ? [...searchEntries(rest, t), factoryEntry(t)] : []), [rest, t]);
   const related = useMemo<Relations | null>(() => (front.target ? relationsOf(rest, front.target, t, true) : null), [rest, front, t]);
   const trimmed = query.trim();
+  useEffect(() => { actions.searchSessionWork(trimmed); }, [actions, trimmed, summaries]);
+  useEffect(() => () => { actions.searchSessionWork(""); }, [actions]);
   const answer = ownAnswer(rest?.issue_work?.search, asked, trimmed);
   const row = githubRow(trimmed, answer, t);
   const showGithub = trimmed.length > 0 && hasGithubProject(rest);
@@ -108,9 +116,11 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     const unavailable = !browserBridge() ? t("search.openUrlDesktopOnly") : !front.checkout ? t("search.openUrlNoWorkspace") : null;
     const link = openUrlEntry(trimmed, unavailable, t);
     const found = [...(link ? [{ group: link.group, entries: [link] }] : []), ...groupEntries(filterEntries(entries, trimmed))];
+    const records = sessionEntries(workSearch, trimmed);
+    const sessionGroup = { group: SESSIONS_GROUP, entries: records };
     const searched = answer?.phase === "ready" ? githubEntries(answer.results, entries, t) : [];
-    return searched.length > 0 ? [...found, { group: GITHUB_GROUP, entries: searched }] : found;
-  }, [entries, trimmed, answer, front, t]);
+    return [...found, sessionGroup, ...(searched.length > 0 ? [{ group: GITHUB_GROUP, entries: searched }] : [])];
+  }, [entries, trimmed, answer, workSearch, front, t]);
 
   const relatedRows = useMemo(() => (trimmed || !related ? [] : relationRows(related)), [trimmed, related]);
   // Recent follows Related on the empty query and leaves out the checkouts already on screen: the one in front and every one Related lists (PRD cmdk-recent B4).
@@ -137,6 +147,8 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     if (entry.dimmed) return;
     close();
     switch (entry.kind) {
+      case "session":
+        return entry.session ? actions.openSessionRecord(entry.session) : undefined;
       case "command":
         if (entry.command === "factory_open") return actions.openFactory();
         return entry.command === "open_url" && entry.url ? actions.openBrowser(entry.url) : actions.openStartPanel();
@@ -209,6 +221,8 @@ export function SearchPalette({ actions }: { actions: Actions }) {
                     ) : null}
                     {sections.map((section) => (
                       <CommandGroup key={section.group.id} heading={t(section.group.label)} data-palette-group={section.group.id}>
+                        {section.group.id === "sessions" && workSearch?.query === trimmed && workSearch.loading ? <p className="px-sm py-xs text-caption text-muted-foreground" role="status">{t("common.loading")}</p> : null}
+                        {section.group.id === "sessions" && workSearch?.query === trimmed && workSearch.failure ? <p className="px-sm py-xs text-caption text-muted-foreground" role="status">{t("sessionWork.failed")}</p> : null}
                         {section.entries.map((entry) => (
                           <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
                         ))}
@@ -235,7 +249,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
                   </>
                 )}
               </CommandList>
-              {detailVisible ? <DetailPane detail={detail} entry={selectedEntry} githubRow={selected === GITHUB_ROW_ID ? row : null} query={trimmed} /> : null}
+              {detailVisible ? <DetailPane detail={detail} entry={selectedEntry} githubRow={selected === GITHUB_ROW_ID ? row : null} query={trimmed} links={linkSummaries} summaries={summaries} onRecord={(session) => { close(); actions.openSessionRecord(session); }} /> : null}
             </div>
           )}
           {collapsed ? null : (
@@ -252,7 +266,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 }
 
 function EntryIcon({ entry }: { entry: SearchEntry }) {
-  if (entry.kind === "agent") return <AgentMark kind={entry.agentKind} />;
+  if (entry.kind === "agent" || entry.kind === "session") return <AgentMark kind={entry.agentKind} />;
   if (entry.prState) {
     return (
       <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
@@ -356,7 +370,7 @@ function RelationBlock({ relations, on }: { relations: Relations; on: string }) 
 }
 
 /** The highlighted row, said in full: its state, its facts and the relations it belongs to. */
-function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail | null; entry: SearchEntry | null; githubRow: GithubRow | null; query: string }) {
+function DetailPane({ detail, entry, githubRow: row, query, links, summaries, onRecord }: { detail: Detail | null; entry: SearchEntry | null; githubRow: GithubRow | null; query: string; links: LinkSummaries | null; summaries: boolean; onRecord: (session: WorkSession) => void }) {
   const { t } = useInterfaceTranslation();
   if (row) {
     return (
@@ -396,10 +410,25 @@ function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail |
           </dl>
         ) : null}
         {detail.relations ? <RelationBlock relations={detail.relations} on={entry.id} /> : null}
+        {entry.kind === "pr" || entry.kind === "issue" ? <Creators entry={entry} links={links} summaries={summaries} onRecord={onRecord} /> : null}
       </div>
       {detail.action ? <ActionLine text={here ? t("search.currentAgent") : detail.action} key_={!here} /> : null}
     </aside>
   );
+}
+
+function Creators({ entry, links, summaries, onRecord }: { entry: SearchEntry; links: LinkSummaries | null; summaries: boolean; onRecord: (session: WorkSession) => void }) {
+  const { t } = useInterfaceTranslation();
+  const repository = entry.repository ?? entry.workspace?.tasks?.source?.name;
+  if (!repository || entry.number === undefined) return null;
+  const seen = new Set<string>();
+  const creators = Object.values(links?.projects ?? {}).flatMap((project) => (project.creators ?? []).flatMap((creator) => {
+    if (creator.kind !== entry.kind || creator.number !== entry.number || creator.repository.toLowerCase() !== repository.toLowerCase() || seen.has(workKey(creator.source))) return [];
+    seen.add(workKey(creator.source));
+    const work = project.work?.find((work) => workKey(work.session) === workKey(creator.source));
+    return [{ session: creator.source, title: work ? recordTitle(work, summaries) : creator.source.session_id }];
+  }));
+  return creators.length ? <div className="mt-md" data-output-creators="true"><p className="text-caption text-muted-foreground">{t("sessionWork.creator")}</p>{creators.map((creator) => <Button key={workKey(creator.session)} variant="link" size="sm" className="max-w-full" onClick={() => onRecord(creator.session)}><AgentMark kind={creator.session.agent} /><span className="truncate">{creator.title}</span></Button>)}</div> : null;
 }
 
 function ActionLine({ text, key_ }: { text: ReactNode; key_: boolean }) {

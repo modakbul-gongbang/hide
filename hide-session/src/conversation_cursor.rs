@@ -27,6 +27,34 @@ pub struct ConversationCheckpoint {
 }
 
 impl ConversationCheckpoint {
+    /// A node-proven JSONL turn boundary. Keep the current file identity so
+    /// replacement cannot turn the saved byte offset into another turn.
+    pub(crate) fn for_turn(path: &Path, offset: u64) -> Result<Self> {
+        let mut file = crate::open_session_file(path)
+            .map_err(|error| SessionError::io("open", path, error))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| SessionError::io("metadata", path, error))?;
+        if offset >= metadata.len() {
+            return Err(SessionError::Checkpoint("turn_offset_invalid".into()));
+        }
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset - 1))
+                .map_err(|error| SessionError::io("seek", path, error))?;
+            let mut before = [0];
+            file.read_exact(&mut before)
+                .map_err(|error| SessionError::io("read", path, error))?;
+            if before[0] != b'\n' {
+                return Err(SessionError::Checkpoint("turn_offset_invalid".into()));
+            }
+        }
+        Ok(crate::CursorCheckpoint {
+            offset,
+            identity: Some(crate::FileIdentity::from_metadata(&metadata)),
+            pending: Vec::new(),
+        }
+        .into())
+    }
     /// A position that is a count rather than a file offset: OpenCode's
     /// messages read so far, with its witness: the session's creation time
     /// and a digest of the last message read, so a session rewound and grown

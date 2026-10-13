@@ -1164,6 +1164,17 @@ pub fn handle_with_progress(
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
+        Call::SessionWorkContext {
+            request,
+            checkout_path,
+        } => {
+            let home = env.home("session_work_home_unavailable")?;
+            to_value(crate::session_work::read(
+                Path::new(&home),
+                &request,
+                &checkout_path,
+            )?)
+        }
         Call::SessionActivity { request } => {
             let home = env.home("session_activity_home_unavailable")?;
             session_activity(Path::new(&home), &request)

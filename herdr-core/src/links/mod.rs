@@ -102,6 +102,22 @@ pub struct ProjectFacts {
     /// Whether GitHub answered this pass: a failed read is not an empty one,
     /// so nothing is closed while it fails (D-35).
     pub prs_read: bool,
+    /// Current GitHub output states, including issue creation times. Failed
+    /// polls retain the last successful facts rather than closing outputs.
+    pub outputs: Vec<OutputFact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputFact {
+    pub kind: String,
+    pub repository: String,
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    pub created_at: Option<u64>,
+    pub stale: bool,
+    pub last_read_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +260,10 @@ pub struct LinkedIssue {
 /// The small per-project values ⌘K and the Sessions tab read (D-45).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ProjectLinkSummary {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub creators: Vec<ledger::OutputCreator>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub work: Vec<ledger::SessionWorkSummary>,
     /// Pull request number → its recorded session lines.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub prs: BTreeMap<u64, u32>,
@@ -264,7 +284,8 @@ pub struct ProjectLinkSummary {
 
 impl ProjectLinkSummary {
     pub fn is_empty(&self) -> bool {
-        self.prs.is_empty()
+        self.work.is_empty()
+            && self.prs.is_empty()
             && self.issues.is_empty()
             && self.sessions.is_empty()
             && self.landed.is_empty()

@@ -436,6 +436,7 @@ export type IssueDetail = {
 
 /** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
 export type IssueWork = {
+  draft?: SessionIssueDraft | null;
   create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
   detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
@@ -444,6 +445,8 @@ export type IssueWork = {
   /** ⌘K's explicit GitHub search, by the web's request id (`github_search`). */
   search?: GithubSearch | null;
 };
+
+export type SessionIssueDraft = { source: { session: WorkSession; id: string }; phase: "working" | "ready" | "failed"; workspace_id: string | null; repository: string | null; title: string; body: string; message: string | null };
 
 /** One pull request or issue the core found on GitHub for ⌘K's search (`GithubSearchResultSnapshot`). */
 export type GithubSearchResult = {
@@ -1645,10 +1648,28 @@ export type LinkSummaries = {
     prs?: Record<string, number>;
     issues?: Record<string, number>;
     sessions?: Record<string, { number: number; created: boolean }[]>;
+    work?: SessionWorkSummary[];
+    creators?: { source: WorkSession; kind: string; repository: string; number: number }[];
   }>;
   /** Session files are still being read for the first time. */
   filling: boolean;
 };
+
+/** Native identity retained by the link record, including ended sessions. */
+export type WorkSession = { device_id: string; agent: string; session_id: string };
+export type WorkRequest = { offset: number; at_unix_ms: number; text: string; author: "operator" | "parent"; task_ids: string[]; chapter_id: string | null; judged: boolean };
+export type WorkEnd = "working" | "question" | "blocked" | "done" | "waiting" | "unfinished";
+export type WorkTask = { id: string; chapter_id: string; name: string; at_unix_ms: number; last_at_unix_ms: number; end: WorkEnd; done: boolean };
+export type MissedWork = { id: string; kind: "leftover" | "problem" | "follow_up"; text: string; status: "open" | "resolved" | "issue" | "dismissed"; at_unix_ms: number; turn_offset: number; issue_repository: string | null; issue_number: number | null; creating: boolean };
+export type WorkOutput = { kind: "pr" | "issue"; repository: string; number: number; title: string; url: string; state: string; stale: boolean; last_read_at_unix_ms: number | null; created_at_unix_ms: number; task_id: string | null; source: WorkSession; source_name: string };
+export type SessionRecord = {
+  session: WorkSession; title: string; native_title: string | null; manual_title: string | null; state: string | null; last_end: WorkEnd | null;
+  cwd: string | null; path: string | null; started_at_unix_ms: number | null; ended_at_unix_ms: number | null;
+  chapters: { id: string; goal: string; at_unix_ms: number }[]; tasks: WorkTask[]; requests: WorkRequest[]; missed: MissedWork[]; outputs: WorkOutput[]; children: SessionRecord[];
+};
+export type SessionWorkSummary = { session: WorkSession; title: string; native_title: string | null; manual_title: string | null; cwd: string | null; ended_at_unix_ms: number | null; open_missed: number; subtree_open_missed: number; missed: MissedWork[] };
+export type SessionRecordSection = { session: WorkSession | null; loading: boolean; failure: string | null; record: SessionRecord | null };
+export type SessionWorkSearch = { query: string; loading: boolean; failure: string | null; results: { session: WorkSession; title: string; matched: string; at_unix_ms: number; cwd: string | null }[] };
 
 /** A durable conversation intent, never a current pane or delivery target. */
 export type SleepingSession = {

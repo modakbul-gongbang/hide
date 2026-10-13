@@ -461,6 +461,7 @@ impl LinkStore {
                 }
             }
         }
+        ledger::apply_output_facts(&tx, &project.outputs)?;
         tx.commit().map_err(failed)
     }
 
@@ -594,6 +595,9 @@ impl LinkStore {
                 None
             };
             upsert_session(&tx, device, agent, id, path, facts)?;
+            if !facts.subagent {
+                ledger::apply_reader(&tx, device, agent, id, facts)?;
+            }
             for (index, span) in facts.spans.iter().enumerate() {
                 let stated = if span.inherited {
                     last_branch.clone()
@@ -809,6 +813,17 @@ impl LinkStore {
                 ],
             )
             .map_err(failed)?;
+            tx.execute(
+                "UPDATE ledger_requests SET author=?4 WHERE device=?1 AND agent=?2 AND id=?3",
+                params![
+                    parent.device_id,
+                    parent.agent,
+                    parent.session_id,
+                    serde_json::to_string(&crate::links::ledger::WorkAuthor::Parent)
+                        .map_err(|_| "ledger_value_invalid")?
+                ],
+            )
+            .map_err(failed)?;
         }
         tx.commit().map_err(failed)
     }
@@ -907,6 +922,10 @@ impl LinkStore {
                 "session_prs",
                 "session_parents",
                 "ledger_requests",
+                "ledger_excluded",
+                "ledger_unjudged",
+                "ledger_sightings",
+                "ledger_titles",
                 "ledger_chapters",
                 "ledger_tasks",
                 "ledger_missed",

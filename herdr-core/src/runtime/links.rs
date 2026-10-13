@@ -7,23 +7,29 @@
 //! the snapshot only when they differ, each on its own delta revision.
 
 use super::*;
+use crate::links::ledger::{
+    LedgerUpdate, MissedStatus, SessionIdentity, SessionRecord, SessionRecordSnapshot,
+    SessionSearchHit, SessionSearchSnapshot,
+};
 use crate::links::worker::{
     LinkClient, LinkWorker, PanelAnswer, PanelRequest, PanelTarget, Paths, Sink,
 };
 use crate::links::{
-    IssueSource, LinkPanelSnapshot, LinkSummariesSnapshot, LinkTarget, LinkedPr, PaneFact,
-    ParentFact, PrFact, ProjectFacts, ProjectLinkSummary, WorktreeFact,
+    IssueSource, LinkPanelSnapshot, LinkSummariesSnapshot, LinkTarget, LinkedPr, OutputFact,
+    PaneFact, ParentFact, PrFact, ProjectFacts, ProjectLinkSummary, WorktreeFact,
 };
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 #[derive(Default)]
 pub(super) struct LinksWork {
-    client: Option<LinkClient>,
+    pub(super) client: Option<LinkClient>,
     projects_print: Option<u64>,
     panes: Arc<Vec<PaneFact>>,
     parents: Arc<Vec<ParentFact>>,
     generation: u64,
+    record_generation: u64,
+    search_generation: u64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -31,6 +37,26 @@ pub(super) struct LinksWork {
 pub(super) struct LinksOpenPayload {
     pub workspace_id: String,
     pub target: LinkTarget,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RecordOpenPayload {
+    pub session: SessionIdentity,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RecordSearchPayload {
+    pub query: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MissedStatusPayload {
+    pub session: SessionIdentity,
+    pub id: String,
+    pub status: MissedStatus,
 }
 
 struct RuntimeSink {
@@ -55,6 +81,12 @@ impl RuntimeSink {
 }
 
 impl Sink for RuntimeSink {
+    fn record(&self, generation: u64, answer: Result<SessionRecord, String>) {
+        self.apply(move |runtime| runtime.ingest_session_record(generation, answer));
+    }
+    fn session_search(&self, generation: u64, answer: Result<Vec<SessionSearchHit>, String>) {
+        self.apply(move |runtime| runtime.ingest_work_search(generation, answer));
+    }
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
         self.apply(move |runtime| runtime.ingest_link_summaries(summaries));
     }
@@ -125,6 +157,126 @@ fn session_agent(kind: &str) -> Option<&'static str> {
 }
 
 impl Runtime {
+    pub(super) fn open_session_record(&mut self, payload: RecordOpenPayload) -> bool {
+        self.links_work.record_generation += 1;
+        let mut record = SessionRecordSnapshot {
+            session: Some(payload.session.clone()),
+            loading: true,
+            ..Default::default()
+        };
+        match self.links_work.client.as_ref() {
+            Some(client) => client.read_record(self.links_work.record_generation, payload.session),
+            None => {
+                record.loading = false;
+                record.failure = Some("links_store_unavailable".into());
+            }
+        }
+        self.snapshot.session_record = Some(Arc::new(record));
+        true
+    }
+
+    pub(super) fn close_session_record(&mut self) -> bool {
+        self.links_work.record_generation += 1;
+        if let Some(client) = self.links_work.client.as_ref() {
+            client.close_record();
+        }
+        self.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot::default()));
+        true
+    }
+
+    pub(super) fn search_work_sessions(&mut self, payload: RecordSearchPayload) -> bool {
+        self.links_work.search_generation += 1;
+        let mut search = SessionSearchSnapshot {
+            query: payload.query.clone(),
+            loading: !payload.query.is_empty(),
+            ..Default::default()
+        };
+        if !payload.query.is_empty() {
+            match self.links_work.client.as_ref() {
+                Some(client) => client.search_sessions(
+                    self.links_work.search_generation,
+                    payload.query,
+                    self.agent_summary(),
+                ),
+                None => {
+                    search.loading = false;
+                    search.failure = Some("links_store_unavailable".into());
+                }
+            }
+        }
+        self.snapshot.session_work_search = Some(Arc::new(search));
+        true
+    }
+
+    pub(super) fn set_missed_status(&mut self, payload: MissedStatusPayload) -> bool {
+        if !self.agent_summary() {
+            return false;
+        }
+        let Some(client) = self.links_work.client.as_ref() else {
+            return false;
+        };
+        if let Err(code) = client.ledger(LedgerUpdate::MissedStatus {
+            session: payload.session,
+            id: payload.id,
+            status: payload.status,
+        }) {
+            self.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot {
+                failure: Some(code),
+                ..Default::default()
+            }));
+            return true;
+        }
+        false
+    }
+
+    fn ingest_session_record(
+        &mut self,
+        generation: u64,
+        answer: Result<SessionRecord, String>,
+    ) -> bool {
+        if generation != self.links_work.record_generation {
+            return false;
+        }
+        let Some(held) = self.snapshot.session_record.as_ref() else {
+            return false;
+        };
+        let Some(session) = held.session.clone() else {
+            return false;
+        };
+        let mut snapshot = SessionRecordSnapshot {
+            session: Some(session),
+            ..Default::default()
+        };
+        match answer {
+            Ok(record) => snapshot.record = Some(record),
+            Err(code) => snapshot.failure = Some(code),
+        }
+        self.snapshot.session_record = Some(Arc::new(snapshot));
+        true
+    }
+
+    fn ingest_work_search(
+        &mut self,
+        generation: u64,
+        answer: Result<Vec<SessionSearchHit>, String>,
+    ) -> bool {
+        if generation != self.links_work.search_generation {
+            return false;
+        }
+        let Some(held) = self.snapshot.session_work_search.as_ref() else {
+            return false;
+        };
+        let mut snapshot = SessionSearchSnapshot {
+            query: held.query.clone(),
+            ..Default::default()
+        };
+        match answer {
+            Ok(results) => snapshot.results = results,
+            Err(code) => snapshot.failure = Some(code),
+        }
+        self.snapshot.session_work_search = Some(Arc::new(snapshot));
+        true
+    }
     /// Hands the worker the projects and the panes' sessions when either
     /// moved since the last time.
     pub(super) fn feed_links(&mut self) {
@@ -214,6 +366,53 @@ impl Runtime {
                         .collect(),
                     prs,
                     prs_read: project.is_some_and(|project| project.pull_requests_read),
+                    outputs: project
+                        .map(|project| {
+                            let mut outputs = project
+                                .pull_requests
+                                .iter()
+                                .filter_map(|pr| {
+                                    Some(OutputFact {
+                                        kind: "pr".into(),
+                                        repository: crate::links::repository_of(&pr.url)?,
+                                        number: u64::from(pr.number),
+                                        title: pr.title.clone(),
+                                        url: pr.url.clone(),
+                                        state:
+                                            if pr.badge == crate::model::PullRequestBadge::Merged {
+                                                "merged"
+                                            } else if pr.badge
+                                                == crate::model::PullRequestBadge::Closed
+                                            {
+                                                "closed"
+                                            } else if pr.checks
+                                                == crate::model::PullRequestChecks::Failed
+                                            {
+                                                "ci_failed"
+                                            } else {
+                                                "review"
+                                            }
+                                            .into(),
+                                        created_at: pr.created_at_unix_ms,
+                                        stale: project.status.stale,
+                                        last_read_at: project.status.last_success_at_unix_ms,
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            outputs.extend(project.issues.issues.iter().map(|issue| OutputFact {
+                                kind: "issue".into(),
+                                repository: issue.reference.repository.clone(),
+                                number: u64::from(issue.reference.number),
+                                title: issue.title.clone(),
+                                url: issue.url.clone(),
+                                state: issue.state.to_ascii_lowercase(),
+                                created_at: issue.created_at_unix_ms,
+                                stale: project.status.stale,
+                                last_read_at: project.status.last_success_at_unix_ms,
+                            }));
+                            outputs
+                        })
+                        .unwrap_or_default(),
                 }
             })
             .collect()

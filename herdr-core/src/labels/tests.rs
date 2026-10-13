@@ -57,6 +57,7 @@ impl Scripted {
         };
         self.answers.lock().unwrap().push_back(json!({
             "goal": goal, "goal_changed": true, "line": line, "end": end,
+            "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
         }));
     }
 
@@ -241,6 +242,7 @@ impl Harness {
                     herdr_socket: Some(self.locks.path().join(socket_name).display().to_string()),
                 },
                 input: Arc::clone(&self.input),
+                ledger: Arc::default(),
             },
             store,
             Arc::clone(&self.analyzer),

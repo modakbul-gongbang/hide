@@ -12,6 +12,57 @@ pub const MISSED_CHARS: usize = 80;
 pub const CONTINUED_TASK_LIMIT: usize = 2;
 pub const LEDGER_QUEUE_LIMIT: usize = 512;
 pub const SEARCH_LIMIT: usize = 50;
+pub const LEDGER_RPC_LIMIT: usize = 16;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MissedSource {
+    pub session: SessionIdentity,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IssueAttempt {
+    pub repository: String,
+    pub title: String,
+    pub body: String,
+    pub started_at_unix_ms: u64,
+    pub reconcile: bool,
+    pub number: Option<u64>,
+    pub url: Option<String>,
+}
+
+/// Short store operations asked by a worker, never waited on by Runtime.
+#[derive(Clone, Debug)]
+pub enum LedgerCall {
+    Record(SessionIdentity),
+    ReserveIssue {
+        source: MissedSource,
+        repository: String,
+        title: String,
+        body: String,
+        at_unix_ms: u64,
+    },
+    StartIssue {
+        source: MissedSource,
+        title: String,
+        body: String,
+        at_unix_ms: u64,
+    },
+    FinishIssue {
+        source: MissedSource,
+        number: u64,
+        url: String,
+    },
+    UnknownIssue(MissedSource),
+}
+
+#[derive(Debug)]
+pub enum LedgerAnswer {
+    Record(Box<SessionRecord>),
+    Attempt(IssueAttempt),
+    Saved,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,6 +179,22 @@ pub struct TurnJudgment {
 
 #[derive(Clone, Debug)]
 pub enum LedgerUpdate {
+    /// A turn observed with summaries off, or whose END judgment failed.
+    /// It remains a raw request even if the label itself is retried later.
+    Unjudged {
+        session: SessionIdentity,
+        offsets: Vec<u64>,
+    },
+    ExcludeRequests {
+        session: SessionIdentity,
+        offsets: Vec<u64>,
+    },
+    Title {
+        session: SessionIdentity,
+        native_title: Option<String>,
+        manual_title: Option<String>,
+        state: String,
+    },
     Requests {
         session: SessionIdentity,
         cwd: String,
@@ -168,6 +235,8 @@ pub struct WorkOutput {
     pub title: String,
     pub url: String,
     pub state: String,
+    pub stale: bool,
+    pub last_read_at_unix_ms: Option<u64>,
     pub created_at_unix_ms: u64,
     pub task_id: Option<String>,
     pub source: SessionIdentity,
@@ -178,6 +247,10 @@ pub struct WorkOutput {
 pub struct SessionRecord {
     pub session: SessionIdentity,
     pub title: String,
+    pub native_title: Option<String>,
+    pub manual_title: Option<String>,
+    pub state: Option<String>,
+    pub last_end: Option<LabelEnd>,
     pub cwd: Option<String>,
     pub path: Option<String>,
     pub started_at_unix_ms: Option<u64>,
@@ -202,10 +275,27 @@ pub struct SessionRecordSnapshot {
 pub struct SessionWorkSummary {
     pub session: SessionIdentity,
     pub title: String,
+    pub native_title: Option<String>,
+    pub manual_title: Option<String>,
     pub cwd: Option<String>,
     pub ended_at_unix_ms: Option<u64>,
     pub open_missed: usize,
     pub subtree_open_missed: usize,
+    pub missed: Vec<MissedWork>,
+}
+
+impl LedgerUpdate {
+    pub fn session(&self) -> &SessionIdentity {
+        match self {
+            Self::Unjudged { session, .. }
+            | Self::ExcludeRequests { session, .. }
+            | Self::Title { session, .. }
+            | Self::Requests { session, .. }
+            | Self::Chapter { session, .. }
+            | Self::TurnEnd { session, .. }
+            | Self::MissedStatus { session, .. } => session,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -215,6 +305,14 @@ pub struct SessionSearchHit {
     pub matched: String,
     pub at_unix_ms: u64,
     pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OutputCreator {
+    pub source: SessionIdentity,
+    pub kind: String,
+    pub repository: String,
+    pub number: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

@@ -122,6 +122,35 @@ pub const ISSUE_LIST_FIELDS: &str = "number,title,url,state,labels,updatedAt,cre
 pub const ISSUE_LIST_PROJECT_FIELDS: &str =
     "number,title,url,state,labels,projectItems,updatedAt,createdAt,closedAt";
 
+/// A fresh creation-ordered read, including closed issues. A search index's
+/// absence is not proof that an interrupted create did not reach GitHub.
+pub fn issue_attempt_query(repository: &str) -> Option<String> {
+    if !is_repository(repository) {
+        return None;
+    }
+    let (owner, name) = repository.split_once('/')?;
+    Some(format!(
+        "query=query HideSessionIssueAttempts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ issues(first:100,states:[OPEN,CLOSED],orderBy:{{field:CREATED_AT,direction:DESC}}) {{ nodes {{ number title url state createdAt }} pageInfo {{ hasNextPage }} }} }} }}"
+    ))
+}
+
+fn is_issue_attempt_query(value: &str) -> bool {
+    let Some(value) =
+        value.strip_prefix("query=query HideSessionIssueAttempts { repository(owner:\"")
+    else {
+        return false;
+    };
+    let Some((owner, rest)) = value.split_once("\",name:\"") else {
+        return false;
+    };
+    let Some((name, _)) = rest.split_once('"') else {
+        return false;
+    };
+    issue_attempt_query(&format!("{owner}/{name}")).is_some_and(|query| {
+        query == format!("query=query HideSessionIssueAttempts {{ repository(owner:\"{value}")
+    })
+}
+
 /// The merged pull requests of one branch a worktree cleanup reads as proof
 /// the branch landed.
 pub const MERGED_PROOF_LIMIT: &str = "100";
@@ -181,7 +210,8 @@ pub fn allowed(arguments: &[&str]) -> bool {
         || (arguments.len() == 4
             && arguments[..3] == ["api", "graphql", "-f"]
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
-                || arguments[3].starts_with("query=query HideIssueDependencies {")))
+                || arguments[3].starts_with("query=query HideIssueDependencies {")
+                || is_issue_attempt_query(arguments[3])))
 }
 
 /// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:

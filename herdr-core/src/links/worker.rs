@@ -9,6 +9,10 @@
 //! backfill never competes with input, and from every other connected node
 //! a batch a minute.
 
+use super::ledger::{
+    LEDGER_QUEUE_LIMIT, LEDGER_RPC_LIMIT, LedgerAnswer, LedgerCall, LedgerContext, LedgerUpdate,
+    SessionIdentity, SessionRecord, SessionSearchHit,
+};
 use super::store::{IssueLinks, LinkStore, LocalFiles, Opened, PrLinks};
 use super::{
     BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, files_present, link_code,
@@ -55,6 +59,8 @@ pub(crate) const LISTED_AT: &str = "listed_at";
 
 /// What the worker hands back to the runtime.
 pub trait Sink: Send + 'static {
+    fn record(&self, _generation: u64, _answer: Result<SessionRecord, String>) {}
+    fn session_search(&self, _generation: u64, _answer: Result<Vec<SessionSearchHit>, String>) {}
     /// Each project's counts and chips, by workspace id, when one changed.
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>);
     /// A panel read's answer; `generation` fences a superseded one.
@@ -94,13 +100,92 @@ struct Mailbox {
     panel: Option<PanelRequest>,
     /// The open panel closed: its reads stop following writes.
     panel_closed: bool,
+    ledger: VecDeque<LedgerUpdate>,
+    ledger_pending: usize,
+    record: Option<(u64, SessionIdentity)>,
+    record_closed: bool,
+    search: Option<(u64, String, bool)>,
+    calls: VecDeque<(
+        LedgerCall,
+        std::sync::mpsc::SyncSender<Result<LedgerAnswer, String>>,
+    )>,
 }
 
 /// The runtime's handle on the worker's mailbox.
 #[derive(Clone)]
-pub struct LinkClient(Arc<(Mutex<Mailbox>, Condvar)>);
+pub struct LinkClient(
+    Arc<(Mutex<Mailbox>, Condvar)>,
+    Arc<Mutex<BTreeMap<SessionIdentity, LedgerContext>>>,
+    Arc<std::sync::atomic::AtomicU64>,
+);
 
 impl LinkClient {
+    /// Only a background worker may wait for a reply. Admission is bounded
+    /// and every mutation is committed before its acknowledgement.
+    pub fn call(&self, call: LedgerCall) -> Result<LedgerAnswer, String> {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        {
+            let (lock, wake) = &*self.0;
+            let mut mailbox = lock.lock().map_err(|_| "links_worker_closed")?;
+            if mailbox.stop {
+                return Err("links_worker_closed".into());
+            }
+            if mailbox.calls.len() >= LEDGER_RPC_LIMIT {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"links","kind":"ledger.rpc_capacity","limit":LEDGER_RPC_LIMIT})
+                );
+                return Err("ledger_rpc_capacity".into());
+            }
+            mailbox.calls.push_back((call, send));
+            wake.notify_one();
+        }
+        receive
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|_| "links_worker_timeout".to_owned())?
+    }
+    pub fn ledger_started_at(&self) -> Option<u64> {
+        let at = self.2.load(std::sync::atomic::Ordering::Acquire);
+        (at != u64::MAX).then_some(at)
+    }
+    pub fn ledger(&self, update: LedgerUpdate) -> Result<(), String> {
+        let (lock, wake) = &*self.0;
+        let mut mailbox = lock.lock().map_err(|_| "links_worker_closed")?;
+        if mailbox.stop {
+            return Err("links_worker_closed".to_owned());
+        }
+        if mailbox.ledger_pending >= LEDGER_QUEUE_LIMIT {
+            crate::diagnostic!(
+                serde_json::json!({"component":"links","kind":"ledger.queue_capacity","session_id":update.session().session_id})
+            );
+            return Err("ledger_queue_capacity".to_owned());
+        }
+        mailbox.ledger_pending += 1;
+        mailbox.ledger.push_back(update);
+        wake.notify_one();
+        Ok(())
+    }
+
+    pub fn context(&self, session: &SessionIdentity) -> Option<LedgerContext> {
+        self.1.lock().ok()?.get(session).cloned()
+    }
+
+    pub fn read_record(&self, generation: u64, session: SessionIdentity) {
+        self.post(|mailbox| {
+            mailbox.record = Some((generation, session));
+            mailbox.record_closed = false;
+        });
+    }
+
+    pub fn close_record(&self) {
+        self.post(|mailbox| {
+            mailbox.record = None;
+            mailbox.record_closed = true;
+        });
+    }
+
+    pub fn search_sessions(&self, generation: u64, query: String, summaries: bool) {
+        self.post(|mailbox| mailbox.search = Some((generation, query, summaries)));
+    }
     fn post(&self, put: impl FnOnce(&mut Mailbox)) {
         let (lock, wake) = &*self.0;
         if let Ok(mut mailbox) = lock.lock() {
@@ -163,7 +248,11 @@ impl Drop for LinkWorker {
 impl LinkWorker {
     /// `own` answers for `paths.local_device`, the node the core runs on.
     pub fn spawn(paths: Paths, own: Arc<dyn NodeLink>, sink: impl Sink) -> Result<Self, String> {
-        let client = LinkClient(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
+        let client = LinkClient(
+            Arc::new((Mutex::new(Mailbox::default()), Condvar::new())),
+            Arc::default(),
+            Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+        );
         let mailbox = client.clone();
         let join = thread::Builder::new()
             .name("hide-links".into())
@@ -181,6 +270,11 @@ impl LinkWorker {
 }
 
 struct State {
+    ledger: VecDeque<LedgerUpdate>,
+    ledger_retry_at: Option<Instant>,
+    record: Option<(u64, SessionIdentity)>,
+    record_answer: Option<Result<SessionRecord, String>>,
+    search: Option<(u64, String, bool)>,
     projects: Arc<Vec<ProjectFacts>>,
     /// Projects posted but not yet written, kept while the store is closed.
     projects_due: bool,
@@ -306,6 +400,7 @@ fn open_store(path: &Path) -> Result<LinkStore, String> {
             "component": "links", "kind": "store.rebuilt", "code": "links_store_corrupt",
         }));
     }
+    store.recover_issue_attempts()?;
     Ok(store)
 }
 
@@ -315,6 +410,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
     let mut store = open_store(&paths.store);
     let mut opened_at = Instant::now();
     let mut state = State {
+        ledger: VecDeque::new(),
+        ledger_retry_at: None,
+        record: None,
+        record_answer: None,
+        search: None,
         projects: Arc::default(),
         projects_due: false,
         panes: Arc::default(),
@@ -349,6 +449,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             && mailbox.parents.is_none()
             && mailbox.panel.is_none()
             && !mailbox.panel_closed
+            && mailbox.ledger.is_empty()
+            && mailbox.record.is_none()
+            && !mailbox.record_closed
+            && mailbox.search.is_none()
+            && mailbox.calls.is_empty()
             && wait > Duration::ZERO
         {
             mailbox = match wake.wait_timeout(mailbox, wait) {
@@ -364,7 +469,25 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         let parents = mailbox.parents.take();
         let panel = mailbox.panel.take();
         let panel_closed = std::mem::take(&mut mailbox.panel_closed);
+        let ledger = std::mem::take(&mut mailbox.ledger);
+        let record = mailbox.record.take();
+        let record_closed = std::mem::take(&mut mailbox.record_closed);
+        let search = mailbox.search.take();
+        let calls = std::mem::take(&mut mailbox.calls);
         drop(mailbox);
+        // Admission counts both mailbox and worker-owned pending updates.
+        state.ledger.extend(ledger);
+        if record_closed {
+            state.record = None;
+            state.record_answer = None;
+        }
+        if let Some(record) = record {
+            state.record = Some(record);
+            state.record_answer = None;
+        }
+        if let Some(search) = search {
+            state.search = Some(search);
+        }
 
         if panel_closed {
             state.panel = None;
@@ -399,6 +522,15 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         let store = match store.as_mut() {
             Ok(store) => store,
             Err(code) => {
+                for (_, answer) in calls {
+                    let _ = answer.send(Err(code.clone()));
+                }
+                if let Some((generation, _)) = state.record.as_ref() {
+                    sink.record(*generation, Err(code.clone()));
+                }
+                if let Some((generation, _, _)) = state.search.take() {
+                    sink.session_search(generation, Err(code.clone()));
+                }
                 if let Some(request) = state.panel.as_ref()
                     && state.panel_answer.is_none()
                 {
@@ -409,9 +541,67 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 continue;
             }
         };
+        for (call, answer) in calls {
+            let result = store.ledger_call(call);
+            if let Err(code) = &result {
+                log_write(code, "ledger_call");
+            }
+            if matches!(&result, Ok(LedgerAnswer::Saved | LedgerAnswer::Attempt(_))) {
+                state.dirty_at.get_or_insert_with(Instant::now);
+            }
+            let _ = answer.send(result);
+        }
+        if client.ledger_started_at().is_none() {
+            let started = match store.meta("ledger_started_at") {
+                Ok(Some(value)) => value
+                    .parse::<u64>()
+                    .map_err(|_| "ledger_start_invalid".to_owned()),
+                Ok(None) => {
+                    let now = now_ms();
+                    store
+                        .set_meta("ledger_started_at", &now.to_string())
+                        .map(|()| now)
+                }
+                Err(code) => Err(code),
+            };
+            match started {
+                Ok(at) => client.2.store(at, std::sync::atomic::Ordering::Release),
+                Err(code) => log_write(&code, "ledger_start"),
+            }
+        }
         if state.filled_unknown {
             state.filled_unknown = false;
             state.filled = store.meta(BACKFILL_DONE).is_ok_and(|done| done.is_some());
+        }
+        if state.ledger_retry_at.is_none_or(|at| at <= Instant::now()) {
+            for _ in 0..16 {
+                let Some(update) = state.ledger.front() else {
+                    break;
+                };
+                let session = update.session().clone();
+                let result = store.apply_ledger_update(update);
+                if let Err(code) = &result
+                    && !code.starts_with("links_store_")
+                {
+                    log_write(code, "ledger_rejected");
+                    state.ledger.pop_front();
+                    if let Ok(mut mailbox) = client.0.0.lock() {
+                        mailbox.ledger_pending = mailbox.ledger_pending.saturating_sub(1);
+                    }
+                    continue;
+                }
+                if !state.wrote(result, "ledger") {
+                    state.ledger_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                    break;
+                }
+                state.ledger.pop_front();
+                state.ledger_retry_at = None;
+                if let Ok(mut mailbox) = client.0.0.lock() {
+                    mailbox.ledger_pending = mailbox.ledger_pending.saturating_sub(1);
+                }
+                state.dirty_at.get_or_insert_with(Instant::now);
+                update_context(client, store, &session);
+            }
         }
         if std::mem::take(&mut state.projects_due) {
             let projects = Arc::clone(&state.projects);
@@ -419,12 +609,25 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
                 let result = store.apply_project(project, now_ms());
                 state.wrote(result, "project");
             }
+            let result = store.refresh_ledger_outputs();
+            state.wrote(result, "ledger_outputs");
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         if state.panes_at.is_none_or(|at| at.elapsed() >= PANES_EVERY) {
             if !state.panes.is_empty() {
                 let result = store.apply_panes(&state.panes, now_ms());
                 state.wrote(result, "panes");
+                for pane in state.panes.iter() {
+                    update_context(
+                        client,
+                        store,
+                        &SessionIdentity {
+                            device_id: pane.device_id.clone(),
+                            agent: pane.agent.clone(),
+                            session_id: pane.session_id.clone(),
+                        },
+                    );
+                }
                 state.dirty_at.get_or_insert_with(Instant::now);
             }
             state.panes_at = Some(Instant::now());
@@ -436,6 +639,12 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         }
         if state.panel.is_some() && state.panel_answer.is_none() {
             answer_panel(store, own, paths, &mut state, sink);
+        }
+        if state.record.is_some() && state.record_answer.is_none() {
+            answer_record(store, &mut state, sink);
+        }
+        if let Some((generation, query, summaries)) = state.search.take() {
+            sink.session_search(generation, store.ledger_search(&query, summaries));
         }
         if state.queue.is_empty() {
             let next_page = state.listing.as_ref().and_then(|listing| listing.next);
@@ -470,19 +679,22 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         }
         if state
             .dirty_at
-            .is_some_and(|at| at.elapsed() >= SUMMARY_AFTER || state.queue.is_empty())
+            .is_some_and(|at| at.elapsed() >= SUMMARY_AFTER)
         {
             state.dirty_at = None;
             publish_summaries(store, &mut state, sink);
             if state.panel.is_some() {
                 answer_panel(store, own, paths, &mut state, sink);
             }
+            if state.record.is_some() {
+                answer_record(store, &mut state, sink);
+            }
         }
     }
 }
 
 fn list_every(state: &State) -> Duration {
-    if state.panel.is_some() {
+    if state.panel.is_some() || state.record.is_some() {
         LIST_OPEN_EVERY
     } else {
         LIST_EVERY
@@ -490,6 +702,9 @@ fn list_every(state: &State) -> Duration {
 }
 
 fn next_wait(state: &State) -> Duration {
+    if !state.ledger.is_empty() && state.ledger_retry_at.is_none_or(|at| at <= Instant::now()) {
+        return REST;
+    }
     // A listing with another page to take goes on at once, even when the
     // page before held nothing new.
     let paging = state
@@ -508,6 +723,9 @@ fn next_wait(state: &State) -> Duration {
     }
     let every = list_every(state);
     let mut wait = every;
+    if let Some(at) = state.ledger_retry_at {
+        wait = wait.min(at.saturating_duration_since(Instant::now()));
+    }
     if let Some(at) = state.dirty_at {
         wait = wait.min(SUMMARY_AFTER.saturating_sub(at.elapsed()));
     }
@@ -976,7 +1194,22 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     let mut summaries = BTreeMap::new();
     for project in state.projects.iter() {
         match store.summary(&project.key, &project.worktrees) {
-            Ok(summary) => {
+            Ok(mut summary) => {
+                match store.ledger_summaries(&project.key) {
+                    Ok(work) => {
+                        match store.ledger_creators(&work) {
+                            Ok(creators) => summary.creators = creators,
+                            Err(code) => log_write(&code, "ledger_creators"),
+                        }
+                        summary.work = work;
+                    }
+                    Err(code) => {
+                        log_write(&code, "ledger_summary");
+                        if let Some(held) = state.summaries.get(&project.workspace_id) {
+                            summary.work = held.work.clone();
+                        }
+                    }
+                }
                 summaries.insert(project.workspace_id.clone(), summary);
             }
             Err(code) => {
@@ -993,6 +1226,39 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     if summaries != state.summaries {
         state.summaries = summaries.clone();
         sink.summaries(summaries);
+    }
+}
+
+fn update_context(client: &LinkClient, store: &LinkStore, session: &SessionIdentity) {
+    match store.ledger_context(session) {
+        Ok(context) => {
+            if let Ok(mut contexts) = client.1.lock() {
+                if !contexts.contains_key(session) && contexts.len() >= LEDGER_QUEUE_LIMIT {
+                    if let Some(first) = contexts.keys().next().cloned() {
+                        contexts.remove(&first);
+                    }
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"links","kind":"ledger.context_capacity"})
+                    );
+                }
+                contexts.insert(session.clone(), context);
+            }
+        }
+        Err(code) => log_write(&code, "ledger_context"),
+    }
+}
+
+fn answer_record(store: &LinkStore, state: &mut State, sink: &impl Sink) {
+    let Some((generation, session)) = &state.record else {
+        return;
+    };
+    let answer = match state.write_failure.as_ref() {
+        Some(code) => Err(code.clone()),
+        None => store.ledger_record(session),
+    };
+    if state.record_answer.as_ref() != Some(&answer) {
+        sink.record(*generation, answer.clone());
+        state.record_answer = Some(answer);
     }
 }
 
@@ -1217,6 +1483,7 @@ mod tests {
                 hide_issue_known: false,
             }],
             prs_read: true,
+            outputs: Vec::new(),
         }]));
         client.read(PanelRequest {
             generation: 1,

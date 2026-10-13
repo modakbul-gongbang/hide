@@ -597,6 +597,7 @@ pub(crate) fn read_as(
     let mut transcript = Read {
         events: Vec::new(),
         sightings: Vec::new(),
+        issue_sightings: Vec::new(),
         receipts: Vec::new(),
         skipped: std::collections::BTreeMap::new(),
         turn_error: None,
@@ -782,6 +783,7 @@ pub(crate) fn read_as(
         title: proven.title.clone(),
         custom_title: None,
         pr_sightings: transcript.sightings,
+        issue_sightings: transcript.issue_sightings,
         memory_receipts: transcript.receipts,
         subagents: Default::default(),
         turns: Some(turns),
@@ -866,6 +868,7 @@ fn unfinished_questions(
 struct Read {
     events: Vec<LabelEvent>,
     sightings: Vec<PrSighting>,
+    issue_sightings: Vec<PrSighting>,
     receipts: Vec<MemoryReceiptPart>,
     skipped: std::collections::BTreeMap<&'static str, usize>,
     /// A question record Hide cannot fold; the read is refused, as a native
@@ -970,9 +973,21 @@ impl Read {
             .unwrap_or(message_at);
         for (repository, number) in pull_request_addresses(output) {
             if self.sightings.len() >= MAX_SIGHTINGS_PER_OUTPUT * 4 {
-                return;
+                self.skip("pr_sighting_capacity");
+                break;
             }
             self.sightings.push(PrSighting {
+                repository,
+                number,
+                at_unix_ms: at,
+            });
+        }
+        for (repository, number) in crate::issue_addresses(output) {
+            if self.issue_sightings.len() >= MAX_SIGHTINGS_PER_OUTPUT * 4 {
+                self.skip("issue_sighting_capacity");
+                break;
+            }
+            self.issue_sightings.push(PrSighting {
                 repository,
                 number,
                 at_unix_ms: at,

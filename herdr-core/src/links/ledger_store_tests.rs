@@ -244,3 +244,218 @@ fn request_retention_discards_the_oldest_and_keeps_recent_questions() {
     assert_eq!(record.requests[0].text, "recent question");
     assert!(record.requests.iter().all(|request| request.offset != 1));
 }
+
+#[test]
+fn an_off_or_failed_turn_remains_raw_after_restart_and_a_late_answer() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    request(&mut store, 1, "요약이 꺼진 동안 한 요청");
+    chapter(&mut store);
+    store
+        .apply_ledger_update(&LedgerUpdate::Unjudged {
+            session: session(),
+            offsets: vec![1],
+        })
+        .unwrap();
+    drop(store);
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            task: TaskDecision::New {
+                name: "과거 요청을 뒤늦게 묶으면 안 됨".into(),
+            },
+            missed: vec![NewMissedWork {
+                kind: MissedKind::Leftover,
+                text: "과거 보고를 뒤늦게 등록하면 안 됨".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    let record = store.ledger_record(&session()).unwrap();
+    assert!(record.tasks.is_empty());
+    assert!(record.missed.is_empty());
+    assert_eq!(record.requests[0].text, "요약이 꺼진 동안 한 요청");
+    assert!(!record.requests[0].judged);
+}
+
+#[test]
+fn the_durable_issue_intent_keeps_the_original_attempt_and_closes_without_an_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("links.sqlite3");
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    request(&mut store, 1, "구현해줘");
+    chapter(&mut store);
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            missed: vec![NewMissedWork {
+                kind: MissedKind::Problem,
+                text: "모바일 검증이 남음".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    let source = MissedSource {
+        session: session(),
+        id: store.ledger_record(&session()).unwrap().missed[0]
+            .id
+            .clone(),
+    };
+    let reserve = |title: &str, at| LedgerCall::ReserveIssue {
+        source: source.clone(),
+        repository: "owner/repo".into(),
+        title: title.into(),
+        body: "본문".into(),
+        at_unix_ms: at,
+    };
+    let LedgerAnswer::Attempt(first) = store.ledger_call(reserve("처음 제목", 2000)).unwrap()
+    else {
+        panic!("expected attempt")
+    };
+    assert!(!first.reconcile);
+    assert!(store.ledger_record(&session()).unwrap().missed[0].creating);
+    assert!(
+        store
+            .apply_ledger_update(&LedgerUpdate::MissedStatus {
+                session: session(),
+                id: source.id.clone(),
+                status: MissedStatus::Dismissed
+            })
+            .is_err()
+    );
+    drop(store);
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    store.recover_issue_attempts().unwrap();
+    let LedgerAnswer::Attempt(retry) = store.ledger_call(reserve("수정한 제목", 4000)).unwrap()
+    else {
+        panic!("expected attempt")
+    };
+    assert!(retry.reconcile);
+    assert_eq!(
+        (retry.title.as_str(), retry.started_at_unix_ms),
+        ("처음 제목", 2000)
+    );
+    store
+        .ledger_call(LedgerCall::FinishIssue {
+            source: source.clone(),
+            number: 7,
+            url: "https://github.com/owner/repo/issues/7".into(),
+        })
+        .unwrap();
+    drop(store);
+    let (mut store, _) = LinkStore::open(&path).unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(record.missed[0].status, MissedStatus::Issue);
+    assert_eq!(record.missed[0].issue_number, Some(7));
+    assert!(
+        record.outputs.is_empty(),
+        "Hide-created issues attach to missed work, not session outputs (D-35)"
+    );
+    let LedgerAnswer::Attempt(completed) = store.ledger_call(reserve("다시 누름", 5000)).unwrap()
+    else {
+        panic!("expected attempt")
+    };
+    assert_eq!(completed.number, Some(7));
+    assert!(
+        store
+            .ledger_call(LedgerCall::FinishIssue {
+                source,
+                number: 8,
+                url: "https://github.com/owner/repo/issues/8".into()
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn issue_creation_uses_both_window_edges_and_late_facts_attach_only_the_resolving_turn() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "처음 요청");
+    chapter(&mut store);
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            missed: vec![NewMissedWork {
+                kind: MissedKind::FollowUp,
+                text: "회귀 검증 이슈 등록".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    request(&mut store, 2, "등록해줘");
+    let id = store.ledger_record(&session()).unwrap().missed[0]
+        .id
+        .clone();
+    end(
+        &mut store,
+        2,
+        TurnJudgment {
+            resolved: vec![ResolvedMissedWork {
+                id: id.clone(),
+                issue_number: Some(1),
+            }],
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        store.ledger_record(&session()).unwrap().missed[0].status,
+        MissedStatus::Resolved
+    );
+    for (number, at, created) in [
+        (1, 2300, 2300),
+        (2, 8000, 10000),
+        (3, 7999, 10000),
+        (4, 40000, 10000),
+        (5, 40001, 10000),
+    ] {
+        store.connection.execute("INSERT INTO ledger_sightings VALUES('device-a','codex','session-a','issue','owner/repo',?1,?2)",params![number,at]).unwrap();
+        store.connection.execute("INSERT INTO ledger_output_facts VALUES('owner/repo','issue',?1,'Issue',?2,'open',?3,0,50000)",params![number,format!("https://github.com/owner/repo/issues/{number}"),created]).unwrap();
+    }
+    store.refresh_ledger_outputs().unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    let numbers = record
+        .outputs
+        .iter()
+        .map(|output| output.number)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(numbers, BTreeSet::from([1, 2, 4]));
+    assert_eq!(record.missed[0].status, MissedStatus::Issue);
+    assert_eq!(record.missed[0].issue_number, Some(1));
+    store
+        .apply_ledger_update(&LedgerUpdate::MissedStatus {
+            session: session(),
+            id,
+            status: MissedStatus::Open,
+        })
+        .unwrap_err();
+}
+
+#[test]
+fn search_returns_one_session_with_its_latest_matching_request_and_own_title_when_off() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "기록 첫 요청");
+    request(&mut store, 2, "기록 마지막 요청");
+    chapter(&mut store);
+    store
+        .apply_ledger_update(&LedgerUpdate::Title {
+            session: session(),
+            native_title: Some("세션 자기 제목".into()),
+            manual_title: None,
+            state: "seen".into(),
+        })
+        .unwrap();
+    let on = store.ledger_search("기록", true).unwrap();
+    assert_eq!(on.len(), 1);
+    assert_eq!(on[0].matched, "기록 마지막 요청");
+    let off = store.ledger_search("기록", false).unwrap();
+    assert_eq!(off.len(), 1);
+    assert_eq!(off[0].title, "세션 자기 제목");
+    assert_eq!(off[0].matched, "기록 마지막 요청");
+}

@@ -21,7 +21,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { catalogOf, localDeviceId, type Device, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { catalogOf, localDeviceId, type Device, type IssueSettings, type SessionIssueDraft, type Task, type Workspace } from "./snapshot";
 import { machineName } from "./screenMachine";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
@@ -103,7 +103,7 @@ export function issuePlaces(projects: readonly Workspace[], devices: readonly De
  * the list; `Create and start immediately` goes on to the Start dialog with the new issue
  * once the source has it.
  */
-export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
+export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions: Actions; workspace: Workspace; draft?: SessionIssueDraft; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const remote = useShellStore((s) => s.rest?.status?.remote);
@@ -111,9 +111,9 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
   const projects = useMemo(() => issueProjects(catalogOf(workspaces, remote)), [workspaces, remote]);
   const places = useMemo(() => issuePlaces(projects, devices, t), [projects, devices, t]);
   const [projectId, setProjectId] = useState(workspace.id);
-  const project = projects.find((row) => row.id === projectId) ?? null;
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const project = draft ? workspace : projects.find((row) => row.id === projectId) ?? null;
+  const [title, setTitle] = useState(draft?.title ?? "");
+  const [body, setBody] = useState(draft?.body ?? "");
   const [thenStart, setThenStart] = useState(false);
   const [request, setRequest] = useState<{ after: number; at: number; start: boolean; projectId: string } | null>(null);
   const create = useShellStore((s) => s.rest?.issue_work?.create ?? null);
@@ -134,7 +134,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
   const submit = () => {
     if (working || !project || !title.trim()) return;
     setRequest({ after: create?.id ?? 0, at: Date.now(), start: thenStart, projectId: project.id });
-    actions.createIssue(project.id, title.trim(), body);
+    actions.createIssue(project.id, title.trim(), body, draft?.source);
   };
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -146,6 +146,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
           </DialogHeader>
           <DialogBody className="space-y-sm">
             <Field label={t("issue.place")}>
+              {draft ? <span className="block truncate text-foreground" title={draft.repository ?? workspace.label}>{draft.repository ?? workspace.label}</span> :
               <Select value={projectId} disabled={working} onValueChange={setProjectId}>
                 <SelectTrigger className="w-full" aria-label={t("issue.place")} data-new-issue-project="true">
                   <SelectValue />
@@ -157,18 +158,20 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
                     </SelectItem>
                   ))}
                 </SelectContent>
-              </Select>
+              </Select>}
             </Field>
+            {draft ? <Note>{t("sessionWork.draftNote")}</Note> : null}
+            {draft?.message ? <Note tone="warn">{t(draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
             <Field label={t("issue.title")}>
               <Input value={title} autoFocus disabled={working} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-new-issue-title="true" />
             </Field>
             <Field label={t("issue.content")}>
               <TextArea value={body} rows={4} disabled={working} onChange={(event) => setBody(event.target.value)} data-new-issue-body="true" />
             </Field>
-            <label className="inline-flex items-center gap-xs text-body text-foreground">
+            {!draft ? <label className="inline-flex items-center gap-xs text-body text-foreground">
               <Checkbox checked={thenStart} disabled={working} onCheckedChange={(checked) => setThenStart(checked === true)} data-new-issue-start="true" />
               {t("issue.createAndStart")}
-            </label>
+            </label> : null}
             {project?.tasks?.source?.failure ? <Note tone="warn">{`${project.tasks.source.label}: ${project.tasks.source.failure}`}</Note> : null}
             {failure ? <Note tone="error" data-new-issue-error="true">{failure}</Note> : null}
             {working ? <Status tone="pending">{t("issue.creating")}</Status> : null}
@@ -176,7 +179,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
           <DialogFooter>
             <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
             <Button type="submit" disabled={working || !project || !title.trim()} data-new-issue-create="true">
-              {t(thenStart ? "issue.createStart" : "issue.create")}
+              {t(failure ? "common.retry" : draft ? "sessionWork.createIssue" : thenStart ? "issue.createStart" : "issue.create")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
