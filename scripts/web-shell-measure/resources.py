@@ -69,10 +69,14 @@ for _ in range(seconds):
         pids = tree(root, after)
         cpu = sum(max(0, after[pid][1] - before.get(pid, (0, 0, 0, ""))[1]) for pid in pids)
         sample[name] = {"cpu_percent": cpu / (ended - started) * 100,
+                        "self_cpu_percent": max(0, after[root][1] - before.get(root, (0, 0, 0, ""))[1]) / (ended - started) * 100,
                         "rss_kb": sum(after[pid][2] for pid in pids), "processes": len(pids),
                         "self_rss_kb": after[root][2],
                         "children": [{"pid": pid, "name": after[pid][3], "rss_kb": after[pid][2]}
                                      for pid in sorted(pids - {root})]}
+    sample["host_load"] = list(os.getloadavg())
     samples.append(sample)
+    if os.environ.get("MEASURE_RESOURCE_STOP_FILE") and os.path.exists(os.environ["MEASURE_RESOURCE_STOP_FILE"]):
+        break
     before, started = after, ended
 print(json.dumps({"method": f"{seconds} one-second CPU-time deltas; RSS sums, the root's own RSS and each child's; owned process trees", "samples": samples}))

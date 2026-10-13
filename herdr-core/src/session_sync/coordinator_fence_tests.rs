@@ -119,7 +119,7 @@ fn publish(context: &SessionSyncContext, replica: &mut SessionReplica) -> bool {
     publish_replica(
         context,
         replica,
-        &mut None,
+        &mut CatalogState::default(),
         &mut None,
         &mut None,
         &mut Vec::new(),

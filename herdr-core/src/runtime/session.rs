@@ -224,6 +224,12 @@ impl Runtime {
         Arc::clone(&self.catalog_paths)
     }
 
+    /// Establish this before the coordinator's first asynchronous read, so
+    /// even an empty initial answer cannot fall back to node I/O under lock.
+    pub(crate) fn begin_catalog_coordinator(&mut self) {
+        self.catalog_from_coordinator = true;
+    }
+
     /// The paths a session applied without a precomputed catalog reads: the
     /// last the coordinator brought once it feeds this runtime, so nothing is
     /// asked under the lock, else what the core's own node answers now.
@@ -300,7 +306,7 @@ impl Runtime {
         }
         spaces
     }
-    pub(super) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
+    pub(crate) fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
         payload
             .panes
             .iter()
@@ -330,6 +336,19 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
         inline_paths: Option<Arc<workspace::PathIndex>>,
     ) -> bool {
+        let accepted_tab_paths = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+            })
+            .collect::<HashMap<_, _>>();
         // Catalog reconstruction precedes canonical machine-qualified lineage.
         // Preserve known ownership until that pass, so admission cannot evict
         // the keyboard from an unchanged delegated canvas at the normal cap.
@@ -346,7 +365,7 @@ impl Runtime {
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog reads what the core's own node says of its paths, so
         // the sync coordinator asks and builds it before taking the runtime
-        // lock. A precomputation whose registrations no longer match current
+        // lock. A precomputation whose registrations or worktrees no longer match current
         // state is stale; the last accepted catalog stands in for it and the
         // next publish, a second away, brings a fresh one. Nothing is asked
         // here once the coordinator feeds this runtime: one `git rev-parse`
@@ -357,7 +376,8 @@ impl Runtime {
         // fixture and test path, asks its node inline.
         let (mut workspaces, paths) = match precomputed {
             Some(catalog)
-                if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
+                if catalog.registrations == self.snapshot.ui_state.workspace_registrations
+                    && catalog.worktrees == self.worktree_catalog =>
             {
                 self.last_session_spaces = Self::session_spaces(payload, &catalog.paths);
                 self.last_accepted_catalog = Some(catalog.workspaces.clone());
@@ -368,7 +388,7 @@ impl Runtime {
             Some(_) if self.last_accepted_catalog.is_some() => {
                 self.push_diagnostic(
                     "catalog.precomputed_stale",
-                    "The precomputed workspace catalog no longer matches the registrations; the last accepted catalog stands until the next publish".to_owned(),
+                    "The precomputed workspace catalog no longer matches its inputs; the last accepted catalog stands until the next publish".to_owned(),
                 );
                 self.last_session_spaces = Self::session_spaces(payload, &self.catalog_paths);
                 (
@@ -493,7 +513,7 @@ impl Runtime {
                     // authoritative for attaching the live layout to the
                     // registered checkout. Falling back to the agent record
                     // keeps agent-specific cwd handling intact.
-                    let context_path = layout.panes.iter().find_map(|pane| {
+                    let mut context_path = layout.panes.iter().find_map(|pane| {
                         payload
                             .panes
                             .iter()
@@ -511,6 +531,19 @@ impl Runtime {
                                     .and_then(|agent| agent.cwd.clone())
                             })
                     });
+                    if self.catalog_from_coordinator
+                        && context_path
+                            .as_deref()
+                            .is_some_and(|path| !paths.knows(path))
+                    {
+                        // A changed directory is not a new checkout until the
+                        // node answers. Keep this tab's confirmed placement;
+                        // a new tab with no confirmed place waits for facts.
+                        context_path = accepted_tab_paths.get(&session_tab.tab_id).cloned();
+                        if context_path.is_none() {
+                            continue;
+                        }
+                    }
                     let Some(workspace_snapshot) = find_workspace_for_context(
                         &self.node,
                         &mut workspaces,
@@ -1359,6 +1392,15 @@ impl Runtime {
         }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
+                // A registered row can exist before the coordinator knows its
+                // path. Its empty tab list cannot prune a durable Agent layout
+                // or choose a replacement tab until that path is answered.
+                if self.catalog_from_coordinator
+                    && workspace.device_id == self.node.as_str()
+                    && !self.catalog_paths.knows(&checkout.path)
+                {
+                    continue;
+                }
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
@@ -2030,7 +2072,6 @@ impl Runtime {
         if !self.restore_hint_pending {
             return;
         }
-        self.restore_hint_pending = false;
         // A saved selection this session does not hold is gone, or was this
         // machine's under another core, which saved it as its device's and
         // so never at all (a core move's rekey says so, `focus_from_herdr`).
@@ -2078,6 +2119,24 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
+        // A coordinator starts before its first path answer. An absent row
+        // while the saved pane's directory is still unknown is not evidence
+        // that its checkout disappeared. Unrelated unknown directories must
+        // not hold an already answered restore choice.
+        if self.catalog_from_coordinator
+            && restored_pane_exists
+            && self.snapshot.ui_state.focused_checkout_id.is_some()
+            && self
+                .snapshot
+                .ui_state
+                .selected_pane_id
+                .as_deref()
+                .and_then(|pane| Self::pane_cwd(payload, pane))
+                .is_some_and(|path| !self.catalog_paths.knows(&path))
+        {
+            return;
+        }
+        self.restore_hint_pending = false;
         let moved = std::mem::take(&mut self.snapshot.ui_state.focus_from_herdr);
         let restore_missed = moved
             || (self.snapshot.ui_state.selected_pane_id.is_some() && !restored_pane_exists)
@@ -2640,6 +2699,7 @@ impl Runtime {
                         })
                 };
                 let selected_pane_invalid_for_context = selected_pane_id.is_some()
+                    && !self.restore_hint_pending
                     && ((focused_checkout.is_some() && target_pane_id.is_none())
                         || (focused_checkout.is_none()
                             && self.snapshot.ui_state.focused_checkout_id.is_some()));
@@ -5572,6 +5632,7 @@ impl Runtime {
                 Ok(outcome.session),
                 Some(session_sync::PrecomputedCatalog {
                     registrations: self.snapshot.ui_state.workspace_registrations.clone(),
+                    worktrees: self.worktree_catalog.clone(),
                     workspaces: outcome.workspaces,
                     paths: outcome.paths,
                 }),

@@ -46,6 +46,7 @@ pub struct BackgroundRead<Q, A> {
     inflight: Option<(Q, Receiver<A>)>,
     settled: Option<(Q, Instant)>,
     worker: Option<std::thread::JoinHandle<()>>,
+    on_ready: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl<Q, A> BackgroundRead<Q, A>
@@ -65,6 +66,7 @@ where
             inflight: None,
             settled: None,
             worker: None,
+            on_ready: None,
         }
     }
 
@@ -79,6 +81,11 @@ where
     /// cadence depends on what it is read for.
     pub fn set_interval(&mut self, interval: Duration) {
         self.interval = Some(interval);
+    }
+
+    /// Wake the owner after the answer is available, without adding a poll.
+    pub(crate) fn on_ready(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        self.on_ready = Some(Arc::new(wake));
     }
 
     /// Returns an answer on the wake a worker's result arrives. `None` covers
@@ -114,6 +121,7 @@ where
             let (sender, receiver) = channel();
             let read = Arc::clone(&self.read);
             let worker_request = request.clone();
+            let on_ready = self.on_ready.clone();
             // A detached thread: the answer arrives on the channel or it does
             // not, and the coordinator never joins on it. Dropping the
             // receiver on shutdown makes the send fail, which the worker
@@ -121,7 +129,11 @@ where
             let spawned = std::thread::Builder::new()
                 .name("hide-reader".to_owned())
                 .spawn(move || {
-                    let _ = sender.send(read(&worker_request));
+                    if sender.send(read(&worker_request)).is_ok()
+                        && let Some(wake) = on_ready
+                    {
+                        wake();
+                    }
                 });
             match spawned {
                 Ok(worker) => {

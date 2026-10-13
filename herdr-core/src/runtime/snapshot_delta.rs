@@ -106,15 +106,15 @@ impl Runtime {
             self.delta.usage_edit = self.usage_edit;
             self.delta.last_usage = Some(Arc::new(self.snapshot.usage.clone()));
         }
-        if !self
-            .delta
-            .last_rest
-            .as_ref()
-            .is_some_and(|rest| rest.matches(&self.snapshot))
-        {
-            self.delta.revision += 1;
+        let rest = RestSections::capture(
+            &self.snapshot,
+            self.delta.last_rest.as_deref(),
+            self.delta.revision + 1,
+        );
+        if rest.revision() > self.delta.rest_revision {
+            self.delta.revision = rest.revision();
             self.delta.rest_revision = self.delta.revision;
-            self.delta.last_rest = Some(Arc::new(RestSections::capture(&self.snapshot)));
+            self.delta.last_rest = Some(Arc::new(rest));
         }
         if self.delta.last_editor.as_deref() != Some(&self.snapshot.editor) {
             self.delta.revision += 1;
@@ -195,6 +195,8 @@ impl Runtime {
         };
 
         SnapshotDeltaPayload {
+            have_revision,
+            current_rest: Arc::clone(self.delta.last_rest.as_ref().expect("rest is stamped")),
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
             usage: self

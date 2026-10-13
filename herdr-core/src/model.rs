@@ -5153,130 +5153,20 @@ impl PetSnapshot {
 /// per-event scalars, which now include find state.
 /// Owned copy retained by the runtime to stamp revisions by comparison, so
 /// no mutation site needs dirty-tracking discipline.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RestSections {
-    pub delivery_watches: Vec<crate::delivery::watch::View>,
-    pub navigator: NavigatorSnapshot,
-    pub sessions: SessionsSnapshot,
-    pub card: CheckoutCardSnapshot,
-    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
-    pub git_worktrees_loading: bool,
-    pub git_worktrees_remote: bool,
-    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
-    pub task_operation: Option<TaskOperationSnapshot>,
-    pub repository_clone: Option<RepositoryCloneSnapshot>,
-    pub explorer_operation: Option<ExplorerOperationSnapshot>,
-    pub issue_work: IssueWorkSnapshot,
-    pub pr_work: PrWorkSnapshot,
-    pub overlay: OverlaySnapshot,
-    pub tab: TabSnapshot,
-    pub connection: ConnectionSnapshot,
-    pub zoomed: Option<String>,
-    pub focused: FocusedSnapshot,
-    pub pane_layouts: Vec<PaneLayoutSnapshot>,
-    pub terminal_pane_id: Option<String>,
-    pub terminal_closed: bool,
-    pub terminal_exit_code: Option<i32>,
-    pub terminal_panes: Vec<TerminalPaneSnapshot>,
-    pub terminal_input_requests: Vec<InputRequestSnapshot>,
-    pub terminal_headers: BTreeMap<String, crate::agent_state::header::Header>,
-    pub ui_state: UiStateSnapshot,
-    pub ime: ImeSnapshot,
-    pub status: StatusSnapshot,
-    pub pet: PetSnapshot,
-    pub recent_closed: RecentClosedSnapshot,
-    pub workspace_view: Option<WorkspaceViewSnapshot>,
-    pub browser_views: Vec<BrowserViewInventoryRow>,
-    pub browser_scopes: Vec<BrowserAreaScopeRow>,
-    browser_views_revision: Option<u64>,
-}
-
-impl RestSections {
-    pub fn capture(snapshot: &Snapshot) -> Self {
-        Self {
-            delivery_watches: snapshot.delivery_watches.clone(),
-            navigator: snapshot.navigator.clone(),
-            sessions: snapshot.sessions.clone(),
-            card: snapshot.card.clone(),
-            git_worktrees: snapshot.git_worktrees.clone(),
-            git_worktrees_loading: snapshot.git_worktrees_loading,
-            git_worktrees_remote: snapshot.git_worktrees_remote,
-            worktree_removal: snapshot.worktree_removal.clone(),
-            task_operation: snapshot.task_operation.clone(),
-            repository_clone: snapshot.repository_clone.clone(),
-            explorer_operation: snapshot.explorer_operation.clone(),
-            issue_work: snapshot.issue_work.clone(),
-            pr_work: snapshot.pr_work.clone(),
-            overlay: snapshot.overlay.clone(),
-            tab: snapshot.tab.clone(),
-            connection: snapshot.connection.clone(),
-            zoomed: snapshot.zoomed.clone(),
-            focused: snapshot.focused.clone(),
-            pane_layouts: snapshot.pane_layouts.clone(),
-            terminal_pane_id: snapshot.terminal.pane_id.clone(),
-            terminal_closed: snapshot.terminal.closed,
-            terminal_exit_code: snapshot.terminal.exit_code,
-            terminal_panes: snapshot.terminal.panes.clone(),
-            terminal_input_requests: snapshot.terminal.input_requests.clone(),
-            terminal_headers: snapshot.terminal.headers.clone(),
-            ui_state: snapshot.ui_state.clone(),
-            ime: snapshot.ime.clone(),
-            status: snapshot.status.clone(),
-            pet: snapshot.pet.clone(),
-            recent_closed: snapshot.recent_closed.clone(),
-            workspace_view: snapshot.workspace_view.clone(),
-            browser_views: snapshot.browser_views.clone(),
-            browser_scopes: snapshot.browser_scopes.clone(),
-            browser_views_revision: snapshot.browser_views_revision,
-        }
-    }
-
-    /// Field-by-field equality against the live snapshot, so the unchanged
-    /// case costs a comparison instead of a clone.
-    pub fn matches(&self, snapshot: &Snapshot) -> bool {
-        self.delivery_watches == snapshot.delivery_watches
-            && self.navigator == snapshot.navigator
-            && self.sessions == snapshot.sessions
-            && self.card == snapshot.card
-            && self.git_worktrees == snapshot.git_worktrees
-            && self.git_worktrees_loading == snapshot.git_worktrees_loading
-            && self.git_worktrees_remote == snapshot.git_worktrees_remote
-            && self.worktree_removal == snapshot.worktree_removal
-            && self.task_operation == snapshot.task_operation
-            && self.repository_clone == snapshot.repository_clone
-            && self.explorer_operation == snapshot.explorer_operation
-            && self.issue_work == snapshot.issue_work
-            && self.pr_work == snapshot.pr_work
-            && self.overlay == snapshot.overlay
-            && self.tab == snapshot.tab
-            && self.connection == snapshot.connection
-            && self.zoomed == snapshot.zoomed
-            && self.focused == snapshot.focused
-            && self.pane_layouts == snapshot.pane_layouts
-            && self.terminal_pane_id == snapshot.terminal.pane_id
-            && self.terminal_closed == snapshot.terminal.closed
-            && self.terminal_exit_code == snapshot.terminal.exit_code
-            && self.terminal_panes == snapshot.terminal.panes
-            && self.terminal_input_requests == snapshot.terminal.input_requests
-            && self.terminal_headers == snapshot.terminal.headers
-            && self.ui_state == snapshot.ui_state
-            && self.ime == snapshot.ime
-            && self.status == snapshot.status
-            && self.pet == snapshot.pet
-            && self.recent_closed == snapshot.recent_closed
-            && self.workspace_view == snapshot.workspace_view
-            && self.browser_views_revision == snapshot.browser_views_revision
-    }
-}
+mod rest;
+pub use rest::{RestSections, RestWire};
 
 /// One delta response taken from the runtime, holding everything the wire
 /// needs and nothing that reaches back into the runtime.
 ///
 /// Taking a payload is what runs under the runtime lock; serializing it is
-/// what must not. The three large sections ride the reference-counted copies
-/// the runtime already retains for revision stamping, so taking one copies no
-/// section body - it bumps three refcounts.
+/// what must not. Sections ride the reference-counted copies the runtime
+/// already retains for revision stamping, so taking one copies no section body.
 pub struct SnapshotDeltaPayload {
+    /// Cursor normalized to zero on reset, for negotiated semantic deltas.
+    pub have_revision: u64,
+    /// Complete immutable state for typed internal projections.
+    pub current_rest: Arc<RestSections>,
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<Arc<RestSections>>,
@@ -5318,6 +5208,8 @@ pub struct DocumentsDelta {
 pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
     pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_format: Option<&'static str>,
     pub rest: Option<RestWire<'a>>,
     /// Usage-only changes never resend the navigator or unrelated UI state.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5359,11 +5251,28 @@ pub struct SnapshotDeltaWire<'a> {
 }
 
 impl<'a> SnapshotDeltaWire<'a> {
+    /// Only clients which negotiated this representation receive nested omissions.
+    pub fn granular(payload: &'a SnapshotDeltaPayload) -> Self {
+        let mut wire = Self::borrow(payload);
+        wire.rest_format = Some("semantic-rest-v1");
+        wire.rest = payload.rest.as_deref().map(|rest| RestWire {
+            rest,
+            have_revision: payload.have_revision,
+            legacy: false,
+        });
+        wire
+    }
+
     pub fn borrow(payload: &'a SnapshotDeltaPayload) -> Self {
         Self {
             schema_version: payload.schema_version,
             revision: payload.revision,
-            rest: payload.rest.as_deref().map(RestWire::borrow),
+            rest_format: None,
+            rest: payload.rest.as_deref().map(|rest| RestWire {
+                rest,
+                have_revision: 0,
+                legacy: true,
+            }),
             usage: payload.usage.as_deref(),
             editor: payload.editor.as_deref(),
             changes: payload.changes.as_deref(),
@@ -5397,91 +5306,6 @@ pub struct DocumentsWire<'a> {
 pub struct ChangedDocumentWire<'a> {
     pub tab_id: &'a str,
     pub document: &'a EditorDocumentSnapshot,
-}
-
-#[derive(Serialize)]
-pub struct RestWire<'a> {
-    pub delivery_watches: &'a [crate::delivery::watch::View],
-    pub navigator: &'a NavigatorSnapshot,
-    pub sessions: &'a SessionsSnapshot,
-    pub card: &'a CheckoutCardSnapshot,
-    pub git_worktrees: &'a Option<ProjectWorktreesSnapshot>,
-    pub git_worktrees_loading: bool,
-    pub git_worktrees_remote: bool,
-    pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
-    pub task_operation: &'a Option<TaskOperationSnapshot>,
-    pub repository_clone: &'a Option<RepositoryCloneSnapshot>,
-    pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
-    pub issue_work: &'a IssueWorkSnapshot,
-    pub pr_work: &'a PrWorkSnapshot,
-    pub overlay: &'a OverlaySnapshot,
-    pub tab: &'a TabSnapshot,
-    pub connection: &'a ConnectionSnapshot,
-    pub zoomed: &'a Option<String>,
-    pub focused: &'a FocusedSnapshot,
-    pub pane_layouts: &'a [PaneLayoutSnapshot],
-    pub terminal: TerminalMetaWire<'a>,
-    pub ui_state: &'a UiStateSnapshot,
-    pub ime: &'a ImeSnapshot,
-    pub status: &'a StatusSnapshot,
-    pub pet: &'a PetSnapshot,
-    pub recent_closed: &'a RecentClosedSnapshot,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
-    pub browser_views: &'a [BrowserViewInventoryRow],
-    pub browser_scopes: &'a [BrowserAreaScopeRow],
-}
-
-impl<'a> RestWire<'a> {
-    fn borrow(rest: &'a RestSections) -> Self {
-        Self {
-            delivery_watches: &rest.delivery_watches,
-            navigator: &rest.navigator,
-            sessions: &rest.sessions,
-            card: &rest.card,
-            git_worktrees: &rest.git_worktrees,
-            git_worktrees_loading: rest.git_worktrees_loading,
-            git_worktrees_remote: rest.git_worktrees_remote,
-            worktree_removal: &rest.worktree_removal,
-            task_operation: &rest.task_operation,
-            repository_clone: &rest.repository_clone,
-            explorer_operation: &rest.explorer_operation,
-            issue_work: &rest.issue_work,
-            pr_work: &rest.pr_work,
-            overlay: &rest.overlay,
-            tab: &rest.tab,
-            connection: &rest.connection,
-            zoomed: &rest.zoomed,
-            focused: &rest.focused,
-            pane_layouts: &rest.pane_layouts,
-            terminal: TerminalMetaWire {
-                pane_id: &rest.terminal_pane_id,
-                closed: rest.terminal_closed,
-                exit_code: rest.terminal_exit_code,
-                panes: &rest.terminal_panes,
-                input_requests: &rest.terminal_input_requests,
-                headers: &rest.terminal_headers,
-            },
-            ui_state: &rest.ui_state,
-            ime: &rest.ime,
-            status: &rest.status,
-            pet: &rest.pet,
-            recent_closed: &rest.recent_closed,
-            workspace_view: &rest.workspace_view,
-            browser_views: &rest.browser_views,
-            browser_scopes: &rest.browser_scopes,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct TerminalMetaWire<'a> {
-    pub pane_id: &'a Option<String>,
-    pub closed: bool,
-    pub exit_code: Option<i32>,
-    pub panes: &'a [TerminalPaneSnapshot],
-    pub input_requests: &'a [InputRequestSnapshot],
-    pub headers: &'a BTreeMap<String, crate::agent_state::header::Header>,
 }
 
 #[cfg(test)]

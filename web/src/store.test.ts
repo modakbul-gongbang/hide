@@ -68,6 +68,36 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().rest?.workspace_view).toBeUndefined();
   });
 
+  it("merges negotiated semantic fields, retains omitted lists and clears explicit values", () => {
+    const store = useShellStore.getState();
+    const view = { device_id: "local", path: "/fixture", views: true };
+    const workspaces = [{ id: "a", checkouts: [] }, { id: "b", checkouts: [] }];
+    const remote = [{ target_id: "device", session: { workspaces } }];
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest_format: "semantic-rest-v1", rest: {
+      workspace_view: view, navigator: { workspaces, agents: [], focused_checkout_id: "a" },
+      status: { remote, last_error: null }, terminal: { panes: [{ pane_id: "p1" }] },
+    } as never } });
+    const initial = useShellStore.getState().rest;
+    store.applyFrame({ type: "delta", payload: { revision: 2, rest_format: "semantic-rest-v1", rest: {
+      navigator: { focused_checkout_id: "b" }, terminal: { pane_id: "p1" },
+    } as never } });
+    const selected = useShellStore.getState().rest;
+    expect(selected?.navigator?.workspaces).toBe(initial?.navigator?.workspaces);
+    expect(selected?.status?.remote).toBe(initial?.status?.remote);
+    expect(selected?.terminal?.panes).toBe(initial?.terminal?.panes);
+    expect(selected?.workspace_view).toBe(initial?.workspace_view);
+    store.applyFrame({ type: "delta", payload: { revision: 3, rest_format: "semantic-rest-v1", rest: {
+      workspace_view: null, navigator: { workspaces: [workspaces[1], workspaces[0]] },
+      terminal: { panes: [] }, status: { remote: [] },
+    } as never } });
+    expect(useShellStore.getState().rest?.navigator?.workspaces?.map(row => row.id)).toEqual(["b", "a"]);
+    expect(useShellStore.getState().rest?.workspace_view).toBeNull();
+    expect(useShellStore.getState().rest?.terminal?.panes).toEqual([]);
+    expect(useShellStore.getState().rest?.status?.remote).toEqual([]);
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest_format: "semantic-rest-v1", rest: {} } });
+    expect(useShellStore.getState().rest?.navigator).toBeUndefined();
+  });
+
   it("keeps the named Project's sessions across a delta that does not carry them", () => {
     const store = useShellStore.getState();
     const sessions = { device_id: "local", workspace_id: "workspace:a", unavailable_reason: null, loading: false, failure: null, rows: [], detail: null };

@@ -108,6 +108,7 @@ fn tree_catalog() -> session_sync::PrecomputedCatalog {
         },
     ];
     session_sync::PrecomputedCatalog {
+        worktrees: no_worktrees(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),

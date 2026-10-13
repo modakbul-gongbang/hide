@@ -488,6 +488,9 @@ fn tab_strip_reorder_moves_a_file_tab_without_asking_herdr() {
 fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     let mut runtime = runtime();
     let checkout_path = "/tmp/hide-closed-selected-pane";
+    let paths = workspace::paths_here([checkout_path]);
+    let checkout_path = paths.comparison(checkout_path);
+    let checkout_path = checkout_path.as_str();
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
@@ -558,9 +561,12 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            paths: Default::default(),
+            // This fixture's checkout has answered facts; unknown paths are
+            // deliberately held apart by the asynchronous catalog contract.
+            paths: paths.into(),
         }),
     ));
     assert_eq!(

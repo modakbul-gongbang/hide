@@ -1788,7 +1788,7 @@ export type SnapshotRest = {
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;
   /** The front Workspace's layout and tools (S6 D-10); absent when no Workspace is in front. */
-  workspace_view?: import("./workspace").WorkspaceView;
+  workspace_view?: import("./workspace").WorkspaceView | null;
   /** All retained Browser Views, including those outside the front Workspace. */
   browser_views?: { device_id: string; path: string; view_id: string; area_id: string }[];
   /** Positive connected Workspace area authority from the core, including empty areas; incarnation changes on revoke/regrant. */
