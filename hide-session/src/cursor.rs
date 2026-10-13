@@ -48,28 +48,6 @@ fn capacity(resource: &'static str, limit: usize) -> SessionError {
     }
 }
 
-fn database_uri(path: &Path, wal: bool) -> Result<String> {
-    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-    const URI_PATH: &AsciiSet = &CONTROLS.add(b'%').add(b'?').add(b'#').add(b' ');
-    let spelling =
-        hide_platform::path::to_wire(path).map_err(|_| invalid("cursor_path_unconfirmed"))?;
-    // A local SQLite URI has no remote authority. Network shares are outside
-    // this local reader's contract, including on Windows.
-    if spelling.starts_with("//") {
-        return Err(invalid("cursor_path_unconfirmed"));
-    }
-    let leading = if spelling.starts_with('/') {
-        "file:"
-    } else {
-        "file:/"
-    };
-    let read_policy = if wal { "readonly_shm=1" } else { "immutable=1" };
-    Ok(format!(
-        "{leading}{}?mode=ro&{read_policy}",
-        utf8_percent_encode(&spelling, URI_PATH)
-    ))
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -320,9 +298,11 @@ impl Database {
         // With no WAL, an immutable connection reads the checkpointed main
         // without creating WAL/SHM companions. The source marks must remain
         // identical before and after: a concurrent native writer is refused.
-        let connection =
-            Connection::open_with_flags(database_uri(&path, before[2].is_some())?, flags)
-                .map_err(|_| invalid("cursor_database_unavailable"))?;
+        let connection = Connection::open_with_flags(
+            crate::sqlite::read_uri(&path, before[2].is_some()).map_err(invalid)?,
+            flags,
+        )
+        .map_err(|_| invalid("cursor_database_unavailable"))?;
         // This applies inside SQLite, before a builtin or a row can allocate
         // its result. A VM-instruction limit alone cannot bound randomblob.
         use rusqlite::limits::Limit;

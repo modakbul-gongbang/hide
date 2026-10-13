@@ -1,5 +1,5 @@
 import type { StoredBuffer } from "./buffers";
-import type { TerminalFrame } from "./generated/hided-ws";
+import type { TerminalFrame, UsageSnapshot } from "./generated/hided-ws";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import type { CoreLink, MoveView } from "./coreMove";
@@ -86,6 +86,7 @@ export type Frame = {
     terminal_sequence?: number;
     terminal_epoch?: string;
     rest?: SnapshotRest;
+    usage?: UsageSnapshot;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
     documents?: DocumentsSection | null;
@@ -143,6 +144,8 @@ type Store = {
   terminalEpoch: string | null;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
   rest: SnapshotRest | null;
+  /** Independently revisioned usage; history changes leave navigation untouched. */
+  usage: UsageSnapshot | null;
   /**
    * The core's editor section, one of the three sections the core revisions on
    * its own. A delta carries it only when it changed, so a null in a delta
@@ -312,6 +315,7 @@ export const useShellStore = create<Store>((set, get) => ({
   terminalSequence: null,
   terminalEpoch: null,
   rest: null,
+  usage: null,
   editor: null,
   changes: null,
   documents: NO_DOCUMENTS,
@@ -569,6 +573,9 @@ export const useShellStore = create<Store>((set, get) => ({
       return payload.chunks ?? [];
     }
     const cursors = {
+      usage: frame.type === "snapshot"
+        ? payload.usage ?? null
+        : payload.usage && (payload.revision ?? get().revision) >= get().revision ? share(get().usage, payload.usage) : get().usage,
       revision: frame.type === "snapshot" ? (payload.revision ?? get().revision) : Math.max(payload.revision ?? 0, get().revision),
       // A whole snapshot resets every terminal, so the old cursor names
       // output those terminals no longer hold.

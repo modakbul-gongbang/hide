@@ -33,11 +33,11 @@
       "weekly": "claude_usage_text",
       "scoped": "claude_usage_text",
       "monthly": "no_such_data",
-      "tokens": "not_built:3",
-      "cost": "not_built:3",
-      "models": "not_built:3",
-      "session": "not_built:3",
-      "project": "not_built:3"
+      "tokens": "claude_transcript",
+      "cost": "public_table",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {
@@ -74,11 +74,11 @@
       "weekly": "codex_usage",
       "scoped": "not_built:5",
       "monthly": "no_such_data",
-      "tokens": "not_built:3",
-      "cost": "not_built:3",
-      "models": "not_built:3",
-      "session": "not_built:3",
-      "project": "not_built:3"
+      "tokens": "codex_rollout",
+      "cost": "public_table",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {
@@ -111,11 +111,11 @@
       "weekly": "not_built:5",
       "scoped": "no_such_data",
       "monthly": "no_such_data",
-      "tokens": "not_built:4",
-      "cost": "not_built:4",
-      "models": "not_built:4",
-      "session": "not_built:4",
-      "project": "not_built:4"
+      "tokens": "grok_updates",
+      "cost": "recorded",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {
@@ -151,11 +151,11 @@
       "weekly": "excluded",
       "scoped": "excluded",
       "monthly": "excluded",
-      "tokens": "not_built:4",
-      "cost": "not_built:4",
-      "models": "not_built:4",
-      "session": "not_built:4",
-      "project": "not_built:4"
+      "tokens": "open_code_parts",
+      "cost": "recorded",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {
@@ -191,11 +191,11 @@
       "weekly": "no_such_data",
       "scoped": "no_such_data",
       "monthly": "no_such_data",
-      "tokens": "not_built:4",
-      "cost": "not_built:4",
-      "models": "not_built:4",
-      "session": "not_built:4",
-      "project": "not_built:4"
+      "tokens": "pi_session",
+      "cost": "recorded",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {
@@ -231,11 +231,11 @@
       "weekly": "no_such_data",
       "scoped": "no_such_data",
       "monthly": "no_such_data",
-      "tokens": "not_built:4",
-      "cost": "not_built:4",
-      "models": "not_built:4",
-      "session": "not_built:4",
-      "project": "not_built:4"
+      "tokens": "omp_session",
+      "cost": "recorded",
+      "models": "usage_record",
+      "session": "usage_record",
+      "project": "usage_record"
     }
   },
   {

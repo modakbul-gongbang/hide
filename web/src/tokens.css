@@ -289,6 +289,14 @@
   --size-agent-logo: 40px;
   --size-pane-parent-breakpoint: 640px;
   --size-pane-state-example: 144px;
+  --size-usage-cell: 10px;
+  --size-usage-year-cell: 11px;
+  --size-usage-cell-gap: 3px;
+  --opacity-usage-level-1: 0.3;
+  --opacity-usage-level-2: 0.48;
+  --opacity-usage-level-3: 0.66;
+  --opacity-usage-level-4: 0.88;
+  --size-usage-year: 800px;
 }
 
 .interface-scale-exempt {

@@ -24,6 +24,9 @@ pub fn serialize_snapshot_delta(
 pub(super) struct DeltaState {
     revision: u64,
     rest_revision: u64,
+    usage_revision: u64,
+    usage_edit: u64,
+    last_usage: Option<Arc<crate::usage::model::UsageSnapshot>>,
     editor_revision: u64,
     changes_revision: u64,
     project_sessions_revision: u64,
@@ -97,6 +100,12 @@ impl Runtime {
         // the nodes compare its next key with.
         self.sync_terminal_focus();
         self.note_snapshot_sent();
+        if self.delta.usage_edit != self.usage_edit {
+            self.delta.revision += 1;
+            self.delta.usage_revision = self.delta.revision;
+            self.delta.usage_edit = self.usage_edit;
+            self.delta.last_usage = Some(Arc::new(self.snapshot.usage.clone()));
+        }
         if !self
             .delta
             .last_rest
@@ -188,6 +197,12 @@ impl Runtime {
         SnapshotDeltaPayload {
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
+            usage: self
+                .delta
+                .last_usage
+                .as_ref()
+                .filter(|_| self.delta.usage_revision > have_revision)
+                .map(Arc::clone),
             // The retained copies were compared against the live snapshot
             // above and rebuilt where they differed, so each is the live
             // section and costs a refcount instead of a copy. All three are

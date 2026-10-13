@@ -145,6 +145,17 @@ test("the project row's menu lists the board's items, and Pin registers and pins
 // choice is the one the old Settings tab sent and the stored value comes back
 // as the checked item, by pointer and by keyboard.
 test("the project row's Issue source submenu shows the stored choice and changes it", async ({ page }) => {
+  // Hold real daemon frames across the reopen: the stored choice must update
+  // an already-open menu, regardless of when the acknowledgement arrives.
+  const held: (string | Buffer)[] = [];
+  let holding = false;
+  let deliver: (frame: string | Buffer) => void = () => { throw new Error("socket not connected"); };
+  await page.routeWebSocket(/\/ws$/, (socket) => {
+    const server = socket.connectToServer();
+    deliver = (frame) => socket.send(frame);
+    socket.onMessage((frame) => server.send(frame));
+    server.onMessage((frame) => { if (holding) held.push(frame); else deliver(frame); });
+  });
   const { projectRow, stop } = await startMenus(page);
   try {
     let menu = await openMenu(page, projectRow, "repo actions");
@@ -173,10 +184,14 @@ test("the project row's Issue source submenu shows the stored choice and changes
     const submenu = page.getByRole("menu", { name: "Issue source" });
     await expect(submenu).toBeVisible();
     await submenu.getByRole("menuitemradio", { name: /^Automatic/ }).focus();
+    holding = true;
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menu")).toHaveCount(0);
     menu = await openMenu(page, projectRow, "repo actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
+    holding = false;
+    for (const frame of held.splice(0)) deliver(frame);
     await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press("Escape");
   } finally { stop(); }

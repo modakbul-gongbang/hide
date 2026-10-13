@@ -78,10 +78,11 @@ pub(crate) fn database_path(home: &Path) -> PathBuf {
     home.join(".local/share/opencode/opencode.db")
 }
 
-/// A read-only transaction on OpenCode's database, with the busy wait and
-/// the SQL work cap every read shares. A linked database is refused: the
-/// file Hide reads is OpenCode's own, never one a link points elsewhere.
-pub(crate) fn open(home: &Path) -> Result<Connection, String> {
+/// One bounded read, buffered until its source and companions are proven
+/// unchanged. The VFS forbids writes even if the provider removes a WAL
+/// between admission and SQLite opening it. A checkpointed main is read
+/// without asking SQLite to create companions; a live WAL retains locking.
+pub(crate) fn with_read<T>(home: &Path, read: impl FnOnce(&Connection) -> T) -> Result<T, String> {
     let path = database_path(home);
     let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -96,9 +97,29 @@ pub(crate) fn open(home: &Path) -> Result<Connection, String> {
     if !metadata.is_file() {
         return Err("label_session_not_regular".to_owned());
     }
-    let connection = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    // Resolve OS aliases such as macOS /var before SQLite's NOFOLLOW check.
+    // The final database symlink was refused above.
+    let path = crate::native_file::checked_path_under(home, ".local/share/opencode", &path)
+        .map_err(|_| "opencode_db_unreadable".to_owned())?;
+    let gate = crate::sqlite::read_gate(&path).map_err(str::to_owned)?;
+    let _read_guard = gate.try_lock().map_err(|error| match error {
+        std::sync::TryLockError::WouldBlock => "opencode_db_busy".to_owned(),
+        std::sync::TryLockError::Poisoned(_) => "opencode_db_unreadable".to_owned(),
+    })?;
+    // Drop order matters: Source's raw handles close before this gate opens.
+    let source = crate::sqlite::Source::admit(home, &path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            "opencode_db_busy".to_owned()
+        } else {
+            "opencode_db_unreadable".to_owned()
+        }
+    })?;
+    let connection = crate::sqlite::open_readonly(
+        &crate::sqlite::read_uri(&path, !source.checkpointed_wal).map_err(str::to_owned)?,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::from_bits_retain(rusqlite::ffi::SQLITE_OPEN_NOFOLLOW),
     )
     .map_err(|error| refusal(&error))?;
     connection
@@ -108,7 +129,15 @@ pub(crate) fn open(home: &Path) -> Result<Connection, String> {
     connection
         .execute_batch("BEGIN")
         .map_err(|error| refusal(&error))?;
-    Ok(connection)
+    let result = read(&connection);
+    connection
+        .execute_batch("ROLLBACK")
+        .map_err(|error| refusal(&error))?;
+    connection.close().map_err(|(_, error)| refusal(&error))?;
+    source
+        .validate()
+        .map_err(|_| "opencode_db_changed".to_owned())?;
+    Ok(result)
 }
 
 /// Gives `connection` a fresh SQL work cap of [`SQL_STEPS_PER_READ`]: once
@@ -243,19 +272,20 @@ pub fn message_checkpoint(
     cwd: &str,
     index: u64,
 ) -> Result<(ConversationCheckpoint, ConfirmedLabelSession), String> {
-    let connection = open(home)?;
-    let proven = prove(&connection, id, Owner::Root { cwd: Some(cwd) })?;
-    if index > proven.messages {
-        return Err("label_session_read_changed".to_owned());
-    }
-    let previous = match index.checked_sub(1) {
-        Some(last) => message_at(&connection, id, last)?.map(|message| witness(&message)),
-        None => None,
-    };
-    Ok((
-        ConversationCheckpoint::at_message(index, proven.created, previous),
-        proven.confirmed(id)?,
-    ))
+    with_read(home, |connection| {
+        let proven = prove(connection, id, Owner::Root { cwd: Some(cwd) })?;
+        if index > proven.messages {
+            return Err("label_session_read_changed".to_owned());
+        }
+        let previous = match index.checked_sub(1) {
+            Some(last) => message_at(connection, id, last)?.map(|message| witness(&message)),
+            None => None,
+        };
+        Ok((
+            ConversationCheckpoint::at_message(index, proven.created, previous),
+            proven.confirmed(id)?,
+        ))
+    })?
 }
 
 /// Whether `checkpoint` still names the same messages of the root session
@@ -292,18 +322,19 @@ pub(crate) fn activity(
     {
         return Err("session_route_owner_changed".to_owned());
     }
-    let connection = open(home)?;
-    let proven = prove(
-        &connection,
-        id,
-        Owner::Root {
-            cwd: request.cwd.as_deref(),
-        },
-    )?;
-    Ok(crate::session_activity::SessionActivity {
-        modified_at_unix_ms: newest_write(&connection, id, &proven)?,
-        bytes: proven.messages,
-    })
+    with_read(home, |connection| {
+        let proven = prove(
+            connection,
+            id,
+            Owner::Root {
+                cwd: request.cwd.as_deref(),
+            },
+        )?;
+        Ok(crate::session_activity::SessionActivity {
+            modified_at_unix_ms: newest_write(connection, id, &proven)?,
+            bytes: proven.messages,
+        })
+    })?
 }
 
 /// When the session or any of its messages was last written.
@@ -324,13 +355,14 @@ fn newest_write(connection: &Connection, id: &str, proven: &Proven) -> Result<u6
 /// A proven root session's stamp for the search index: its creation, its
 /// message count and its newest write, read in one transaction.
 pub(crate) fn stamp(home: &Path, id: &str, cwd: &str) -> Result<String, String> {
-    let connection = open(home)?;
-    let proven = prove(&connection, id, Owner::Root { cwd: Some(cwd) })?;
-    let newest = newest_write(&connection, id, &proven)?;
-    Ok(format!(
-        "opencode:{}:{}:{newest}",
-        proven.created, proven.messages
-    ))
+    with_read(home, |connection| {
+        let proven = prove(connection, id, Owner::Root { cwd: Some(cwd) })?;
+        let newest = newest_write(connection, id, &proven)?;
+        Ok(format!(
+            "opencode:{}:{}:{newest}",
+            proven.created, proven.messages
+        ))
+    })?
 }
 
 /// The project's root OpenCode sessions, as the session catalog lists them:
@@ -358,12 +390,21 @@ pub(crate) fn catalog(
     {
         return Ok(Ok(Vec::new()));
     }
-    let connection = match open(home) {
-        Ok(connection) => connection,
-        Err(reason) => return Ok(Err(reason)),
-    };
+    with_read(home, |connection| {
+        catalog_connection(connection, device_id, project, visited, limit)
+    })
+    .unwrap_or_else(|reason| Ok(Err(reason)))
+}
+
+fn catalog_connection(
+    connection: &Connection,
+    device_id: &str,
+    project: &hide_project::ProjectIdentity,
+    visited: &mut usize,
+    limit: usize,
+) -> Result<Result<Vec<crate::ProjectSession>, String>, crate::SessionCatalogError> {
     let remaining = limit.saturating_sub(*visited);
-    let rows = match root_sessions(&connection, remaining) {
+    let rows = match root_sessions(connection, remaining) {
         Ok(rows) => rows,
         Err(reason) => return Ok(Err(reason)),
     };
@@ -386,15 +427,15 @@ pub(crate) fn catalog(
         if !same {
             continue;
         }
-        work_budget(&connection);
+        work_budget(connection);
         let read = prove(
-            &connection,
+            connection,
             &id,
             Owner::Root {
                 cwd: Some(&directory),
             },
         )
-        .and_then(|proven| Ok((first_request(&connection, &id)?, proven)));
+        .and_then(|proven| Ok((first_request(connection, &id)?, proven)));
         let mut session = crate::ProjectSession {
             locator: PathBuf::from(format!("{}{id}", crate::links::OPENCODE_PREFIX)),
             agent: crate::Agent::OpenCode,
@@ -518,12 +559,21 @@ pub(crate) fn read_as(
     request: &LabelTranscriptRequest,
     owner: Owner<'_>,
 ) -> Result<(LabelTranscript, Proven), String> {
+    with_read(home, |connection| {
+        read_connection(connection, request, owner)
+    })?
+}
+
+fn read_connection(
+    connection: &Connection,
+    request: &LabelTranscriptRequest,
+    owner: Owner<'_>,
+) -> Result<(LabelTranscript, Proven), String> {
     if request.reference_kind != "id" {
         return Err("session_kind_unsupported".to_owned());
     }
     let session_id = request.reference_value.as_str();
-    let connection = open(home)?;
-    let proven = prove(&connection, session_id, owner)?;
+    let proven = prove(connection, session_id, owner)?;
     let count = proven.messages;
     let mut start = request
         .checkpoint
@@ -541,7 +591,7 @@ pub(crate) fn read_as(
             .as_ref()
             .and_then(ConversationCheckpoint::message_witness)
         && (created != proven.created
-            || message_at(&connection, session_id, start - 1)?
+            || message_at(connection, session_id, start - 1)?
                 .as_deref()
                 .map(witness)
                 != Some(last))
@@ -745,7 +795,7 @@ pub(crate) fn read_as(
     // message folds again once OpenCode completes it.
     if let Some(message_id) = unfinished.as_deref() {
         match unfinished_questions(
-            &connection,
+            connection,
             message_id,
             READ_BUDGET_BYTES.saturating_sub(spent),
             &mut transcript,

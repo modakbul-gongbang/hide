@@ -25,6 +25,9 @@ On a high-frequency path such as keystroke ingress, added observational work is 
 It must not introduce lock waiting, disk access, a subprocess or large serialization into that path.
 The existing short Runtime admission is not permission to add another contended lock or blocking observer; pass owned data to an existing off-lock owner when work needs those resources.
 Snapshot capture takes owned data under the lock and serialization follows outside it (`runtime/snapshot_delta.rs`, `handle.rs::snapshot_delta`).
+Usage lives in its own top-level snapshot section, revisioned independently of navigation; later deltas carry it only when limits or ledger values change.
+An omitted usage section preserves the previous value; an empty `nodes` array clears it, and a future revision cursor resets to a full snapshot.
+The shell stores usage separately, so a usage-only delta preserves navigation identity and an unrelated menu or layout change neither serializes nor compares historical day arrays.
 Pane input never enters the coalesced persistence queue: it must not be dropped or merged to reduce observer cost.
 The save workers' pending flags bound the number of pending saves, not the byte size of the saved state; these stores have no general serialized-byte cap.
 `Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).
@@ -791,6 +794,58 @@ The runtime stamps that onto `CheckoutSnapshot.landed` (`runtime/links.rs`, `ass
 `hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]` is read-only and answers the panel's record as one JSON line (the target, the repository, each pull request with its state, issue links and sources, worktrees and whether each was removed, and each session with its ids, device, role, times, request, file path, whether the file is there, and parent).
 It answers through hided's own core without a renderer, scoped by default to the Project of the calling checkout: a target in another Project fails with `other_project` and a hint to pass `--all-projects`, a missing one with `not_found`, an unreadable record with `links_unavailable`, each with a non-zero exit.
 
+## Historical usage accounting
+
+`Call::UsageFiles` lists native candidates and `Call::UsageRead` returns one bounded, content-free usage step through the node boundary.
+Candidate and read paths use `hide_platform::path` wire spelling, converted to native paths only by the node that reads them.
+Both require the live link's independently advertised `ReaderFeature::Usage`; the node repeats that check before dispatch.
+This optional reader adds no protocol-version requirement: an older peer grants no usage reader and is refused before a call is sent.
+Cursor grants none, and protocol 24's frozen reader facts remain unchanged.
+
+The usage worker owns one writer and reads only its supplied own-node link, alternating agents so a large history cannot starve another.
+Each turn performs one bounded read and transaction, then rests for 20 ms; native JSONL parsing itself yields at 10 ms and never exceeds one MiB including its checkpoint witnesses.
+Two replaceable visibility flags control its work: without a window it rests; candidate discovery runs every 30 seconds, or 3 while usage is open, and changed reports publish every 30 or 5 seconds respectively.
+Its owner signals the condition variable and joins it on shutdown, including startup failure and an idle wait.
+Complete uncapped listings retire deleted file checkpoints without deleting their totals or recent dedup authority.
+
+`usage_ledger::store` owns `usage.sqlite3`, named by `hide_kit::layout::usage_store` under the core state directory.
+Normalized usage events contain native call identity, model, time, session, working folder, provider, tokens and recorded cost, with no conversation fields.
+An ingestion transaction adds a new call and its daily `(native node, agent, local day, model)` totals together with the file checkpoint; repeated calls add nothing, and changed completed calls keep the first accounting value and report a count-only conflict.
+Claude streaming records retain each token field's maximum for that native call, replacing its daily contribution and whole-call pricing band in the same transaction without another call.
+A persisted checkpoint distinguishes a yielded read from EOF, so a restart cannot freeze an unread suffix.
+Discarded capacity-overflow events leave a durable per-agent limited marker; a future timestamp is counted as skipped without poisoning its valid batch neighbours.
+The day is assigned in the core's time zone at first ingestion and stays assigned after the time zone changes or the core moves.
+New calls use the current core time zone.
+
+Each agent's first backfill may fill older days within the 400-day retention window, and its event keys stay until that backfill's durable completion marker is written.
+After completion, whole days before the 45-day event horizon are frozen: replayed or late calls before that boundary are counted as skipped and never change those totals.
+The boundary is retained as a monotonic instant so a clock rollback or time-zone change cannot admit a call whose dedup key already expired.
+Maintenance removes at most 512 expired events and 512 expired daily rows per turn; the event bound is one million per native node, the candidate bound 10,000 per agent, the daily-row bound 100,000, the native-node bound 32 and the database bound 512 MiB, with each refusal reported rather than silently growing storage.
+The store uses SQLite WAL and full synchronous commits, refuses a damaged or newer store without rebuilding it, and travels with `MOVES_WITH_CORE` through the existing consistent SQLite copy.
+Native physical node identities and their qualified source paths stay unchanged when the core's owner changes.
+
+The same store retains the public price cache and the last network-attempt time; that state moves with the ledger so a core move cannot bypass the daily fetch bound.
+Daily totals hold four fixed token-only context bands, not another table of call identities, preserving tier-aware repricing across event expiry within the existing row and database caps.
+The separately owned price-fetch thread asks the own node for `Call::UsagePriceFetch`, refused for devices.
+The node owns the bounded public HTTP read; the core parses the returned body and the ledger's sole writer persists the table before publishing it.
+Shutdown closes the own-node link before joining the ledger and price threads, so those joins do not wait for an in-flight HTTP answer.
+Closing also releases the node's label-generator locks, even while unfinished calls retain node references; a lock acquisition completing after close releases its file instead of retaining the role.
+The teardown-only `AiRelease` and `LabelUnlock` requests remain callable after close under the existing call cap and timeout, because their owners may drop later; closing does not wake or replace their cleanup answers.
+The node's unfinished HTTP work retains its capacity slot and five-second deadline until it ends.
+
+`usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
+Each range sends inclusive `calendar_start` and `calendar_end` civil dates and only days with recorded calls, including calls with zero new tokens.
+The mounted calendar fills omitted dates as level-zero cells, pending while that range is reading; it does not recalculate totals, prices, quartiles, streaks or recorded-day contributions.
+This keeps empty history from repeating hundreds of empty amount records on every attach or reconnect.
+Only the core's own native-node rows enter these calendars.
+New tokens include input, output and cache writes, never cache reads; reasoning is already part of output.
+Nonzero closed days determine nearest-rank quartiles, or quarter-of-maximum thresholds below seven active closed days, so today's unfinished spike cannot recolor history.
+The calendar starts on the first record's week, capped to the surface's week count, and stays anchored 45 days back during first backfill; agent selection preserves the calendar and the other agents' shares.
+Empty days during backfill remain pending, zero-call ranges remain no data, and cost reasons carry at most eight distinct unpriced model names plus the omitted count, together with price-loading, stale-price and incomplete-usage facts.
+Agent hover costs cover retained history even when its first days precede the displayed calendar.
+Provider provenance is bounded to 32 distinct native ids, and crossing that bound refuses the projection rather than omitting an id silently.
+Calendar arithmetic uses civil dates across daylight-saving transitions, and a current streak may include yesterday while today is still empty.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
@@ -885,6 +940,15 @@ Its generated goal remains title authority, optional recorded message times are 
 The adapters enable conversation, title, exact resume/fork and the common durable distinct sleeping-session lifecycle; omp uses `--resume <id>` and `--fork <id>`, Grok `--resume <id>` and `--resume <id> --fork-session`, and Cursor enables exact `--resume <id>` and Sleep without title or fork.
 Authenticated reader facts distinguish an intermediate Pi-only protocol25 helper from one implementing omp, Grok or Cursor; matching protocol numbers alone grant nothing, and protocol24 never gains these readers.
 OpenCode 1.18.30 is read from its own database through `hide-session::opencode`, with no session file: every read opens it read-only and proves, inside the read's one transaction, that the id names a root session (no `parent_id`) whose recorded `directory` is the exact checkout.
+All OpenCode reads, including link discovery and usage, share that guarded connection.
+Reads of the same canonical database path are serialized from admission through handle destruction, so closing a validation handle cannot release a peer SQLite connection's process locks; contention is refused as busy, and the gate registry retains at most 64 live paths.
+Its private SQLite VFS allows only existing main and WAL files opened read-only, refuses deletion and temporary or journal files, and keeps shared memory read-only; SQLite cannot create a missing WAL even if the provider removes it during admission.
+A nonempty WAL requires its existing shared-memory index and normal locking; a checkpointed WAL-mode main with absent or empty WAL uses an immutable read, with mmap disabled, while a rollback-mode database retains its normal locks.
+The reader holds the original source handles and records identities and change stamps for the main, companions and bounded ancestor chain; it closes the transaction and connection, validates every handle and name again, and only then returns the buffered result.
+A journal or concurrent source change refuses the read without repairing, copying or writing the provider's files.
+An OpenCode transaction or changing companion returns a typed pending read, which retains established session proof but clears current-turn authority.
+The label worker makes one reread after fifteen seconds; a second pending answer logs `read.retry_capped` and waits for a real state/reference change, while a successful read resets the allowance.
+Definitive invalid-source refusals still revoke proof, and a changed requested owner never inherits it.
 OpenCode is referenced by id only; a path reference is refused feature-locally, and no path is ever turned into an id.
 A subagent's child session is never cataloged, searched, read into the root conversation or titled as it; the link graph alone reads it, as its own line under its parent (`Owner::Recorded`).
 `SessionFormat::requires_native_proof` (every native-file reader, and OpenCode) is the one predicate the core's lifecycle gates read: launch confirmation, durable sleep and wake, the proven-id sidebar rule, the fork's route proof and current-execution check (for either placement), task resume scope and resume arguments; `proof_reference_kind` says whether that proof names a path (Pi, omp, Grok, Cursor) or an id (OpenCode).
@@ -1223,6 +1287,8 @@ The daemon owns the core's three observation flags, the Settings one (`ai_settin
 While Sessions is observed, the local coordinator's GitHub step asks the runtime once a minute (`Runtime::reread_pending_checks`) to raise the generation of each project a row's live pull request has running checks in, so the existing reader reads only those again and a finished run moves its row without a new turn (PRD overview-request-view D-32); with no observer or no running checks nothing is asked.
 `hide` owns lifecycle: instance lock, `~/.hide/state/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client once the daemon's Herdr server no longer answers (see The daemon lives with its Herdr), and `hide serve --keep-alive`.
 A stop ends the core before it releases the instance lock: dropping `RunningDaemon` joins the core's owner thread, whose `Core` drop joins the layout and state savers, so the last save is on disk before another daemon can start and before whoever owns the state folder can remove it.
+The instance uses the platform's explicit-unlock guard, so an inherited file description from a concurrent fork cannot retain the role after its owner ends; another live instance is still refused immediately.
+Both the default and legacy connect locks use that same guard, preserving their existing blocking serialization while releasing ownership explicitly.
 `hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names when it is this build, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response`/`other_build` with `detail`, `state_refused` with the `file`, `core_newer` and `update_failed` with the `machine`, `core` and `app` builds) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
 Daemon startup gets a bounded ten-second health wait, and the desktop host allows up to 25 seconds for the whole discovery command before showing a retryable failure.
 The daemon leads its own process group, so an interrupt to the terminal job or host that ran the CLI never reaches it.
@@ -1258,7 +1324,8 @@ Each connect holds `connect.lock` in the state folder from looking at the daemon
 A daemon that has ended counts as stopped before its starter reaps it, although Linux still lists an unreaped process's start time.
 Before any of that, a connect whose state folder is the default `~/.hide/state` moves the legacy default `~/.local/state/hide` into place once (PRD hide-home-layout D-05; `hided/src/state_move.rs`): under the legacy folder's own `connect.lock`, which an older `hide connect` takes too, it stops the daemon the legacy `hided.json` names, then renames the whole folder in one `rename(2)`, so there is never a copy in two places.
 That pid is signalled only once it is proven to be the daemon: a state that recorded its daemon's process start is proven by the kernel's answer for that pid, as `hide stop` judges it, so a daemon too busy to answer `/health` within its one-second request is still stopped and the folder still moves (issue 863); a state an earlier build wrote without a start (before v0.3.0) is proven only by `/health` answering as that pid, because liveness alone also passes a reused pid.
-The folder moves only while its `hided.lock` is free, taken without waiting and held across the rename: a process that holds it but was not proven to be that daemon is never signalled, and the connect answers `start_failed` naming the folder, because a pid alone can mislead but a running daemon always holds its lock.
+The folder moves only while its `hided.lock` is held across the rename: after stopping a proven daemon, the connect waits at most two seconds for that lock, because macOS can stop reporting a dying process's identity before its descriptors close.
+The platform lock helper owns this bounded wait and the acquired lock; an unproven holder is still refused immediately and never signalled, and a lock that stays held answers `start_failed` without moving anything.
 A legacy folder that is a link or not this account's is not moved, one other accounts can write to is refused with the `chmod go-w` that fixes it (only when it would move; beside an existing new folder it is just left), the moved folder is made 0700, `~/.hide` must be a private folder of this account, and a daemon that will not stop leaves both folders as they were and answers `start_failed`.
 `HIDE_STATE_DIR` naming `~/.hide/state` itself counts as the default, since that is the value `hide connect` hands the daemon it starts.
 When `~/.hide/state` already exists nothing is merged: the new folder is used, and each daemon start logs `state.legacy_left` with both paths while the legacy folder remains.
@@ -1301,6 +1368,9 @@ The core decides and keeps state; it never touches a machine (PRD core-host-node
 Every file, process, socket and session-file read is a node's, asked through one contract, `NodeLink` (`hide-node-link`), addressed by node id (`Runtime::node_link`): the core's own node answers today, and a device's helper answers for its machine.
 The contract crate sits below both sides, so the core holds only the trait and the wire types, and the machine side (`hide-node`, over `hide-host`) never depends on the core.
 The core's own node is `hide_node::Local`, which answers in hided's process through `hide_host::serve`; the core gets it in `Core::create`, with the Herdr connector the same node opens.
+Closing it refuses new calls and wakes pending callers with `Unknown` through their existing one-answer channels; it neither polls nor starts a cancellation thread.
+There are at most 64 admitted machine calls, and a timed-out or closed caller does not free its slot until the actual work ends.
+The weak answer-sender list is pruned on admission and bounded by those same slots; closing one node affects its clones, never another node.
 
 | The core's | The node's |
 | --- | --- |
@@ -1607,6 +1677,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   Text the agent itself writes on the person's side is no one's message: Claude Code's hook, meta and system prompts and its compaction summary (`isCompactSummary`, `isVisibleInTranscriptOnly`, which otherwise look like a typed prompt), and Codex's `compacted` record with the earlier requests it replays.
   Only tool output is scanned for addresses (`hide-session/src/sightings.rs`), on the records the read already decodes, at most eight per output; an address in a reply or a request is a mention.
   OpenCode keeps its sessions in `~/.local/share/opencode/opencode.db`, which the adapter opens read-only with a 50 ms busy wait: a locked database is a skipped read (`opencode_db_busy`) retried on the next state change, never a wait OpenCode feels, and an assistant message without `time.completed` is left for the next read.
+  The SQLite URI also sets `readonly_shm=1`, so a read never creates or updates OpenCode's WAL index; an unavailable index refuses the read while the live database retains its normal locking.
   `hide-session/tests/it/adapters.rs` is the contract every adapter passes, against a fixture in the agent's own format at the version it names (`hide-session/tests/fixtures/adapters/`); a format the adapter cannot read leaves that pane's row with Herdr's facts only and a diagnostic.
   `hide-session/src/envelope.rs` attributes only the first nonempty line's current `Hide letter <id> from <name> (<agent>) [<kind>]` header, preserving the first sender when several letters arrive together.
   `contracts/delivery-envelope.json` independently pins examples for both this reader and `delivery::mailbox::pull`; older delivery headers have no special sender interpretation.
@@ -2165,7 +2236,12 @@ Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 A snapshot section is declared there once the web reads it through the contract (`usageSnapshot`, `usagePreferences`, `uiStateUsageHints`); the type generator emits only what a frame reaches, so `web/scripts/gen-types.mjs` names each such `$def` to emit beside the frames.
 Usage has one node row for the core's own node and one agent row per declared adapter (`herdr-core/src/usage/model.rs`); each row separates limit and consumption cells.
 A cell is unsupported, loading, unavailable with a cause, or a reading with freshness and observation time; limit readings contain independently typed five-hour, weekly and scoped windows.
-Consumption is uninhabited in layers 1 and 2 and is published as unsupported.
+Consumption readings carry prepared popover and year ranges for that agent, plus retained totals and native provider ids.
+Each node also carries optional all-agent history and share rows; selecting a filter never makes the shell recompute totals.
+Limit and ledger publications update only their own cells, so neither worker can erase the other’s values.
+The core owns the ledger worker, feeds it only actual window visibility and usage-open hints, and joins it outside the runtime lock on shutdown.
+Worker publication builds shared range values before locking the runtime; snapshots clone those references, and serialization remains outside the lock.
+A failed start publishes unavailable consumption instead of leaving a loading cell forever.
 The UI preferences store pinned `(agent, window)` pairs (at most three) and hidden agents; `usage_pin_set` and `usage_hidden_set` are desired-state events, and a generic `ui_state_update` preserves these fields so a stale window cannot overwrite another window's choice.
 The core rejects undeclared windows and account windows reported as not offered; Hide preserves the agent's pins for Show.
 

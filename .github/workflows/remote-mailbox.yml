@@ -129,3 +129,39 @@ jobs:
             !agents/runs/rd-*/*/*/helper/**
             !agents/runs/rd-*/*/*/bin/**
           if-no-files-found: ignore
+      - name: Keep core move failure logs
+        # Core-move fixtures use short /tmp paths for Unix sockets, outside
+        # rd-*. Keep only logs, never their SSH keys, state or staged binaries.
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-core-move-logs-${{ inputs.runner }}
+          include-hidden-files: true
+          path: |
+            /tmp/hcm-*/**/*.log
+            /tmp/hcm-*/**/Logs/*.jsonl
+          if-no-files-found: ignore
+      - name: Summarize the stalled device connection
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          # Only the final bounded diagnostic records, never fixture keys,
+          # state, environment, or conversation contents.
+          for path in sorted(Path('/tmp').glob('hcm-*/m/s/Logs/core.jsonl'))[:100]:
+              with path.open('rb') as stream:
+                  stream.seek(0, 2)
+                  stream.seek(max(0, stream.tell() - 32768))
+                  tail = stream.read(32768).decode('utf-8', errors='replace')
+              rows = []
+              for line in tail.splitlines():
+                  try:
+                      row = json.loads(line)
+                  except ValueError:
+                      continue
+                  if row.get('kind') in ('host.establish_stage', 'host.upload_stage'):
+                      rows.append({key: row[key] for key in ('kind', 'stage', 'phase', 'upload_id', 'package', 'bytes', 'elapsed_ms') if key in row})
+              print(json.dumps({'fixture': path.parts[2], 'connection': rows[-16:]}))
+          PY
