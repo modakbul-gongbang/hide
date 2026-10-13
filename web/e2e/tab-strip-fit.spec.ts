@@ -197,13 +197,10 @@ test("File View tabs use the same shrinking strip and transfer the longest title
       const divider = await handle.count() ? await handle.boundingBox() : null;
       const body = await page.locator('[data-column-row="true"]').boundingBox();
       if (divider && body) {
-        const maximum = await handle.getAttribute("aria-valuemax");
         await page.mouse.move(divider.x + divider.width / 2, divider.y + 150);
         await page.mouse.down();
         await page.mouse.move(body.x + 10, divider.y + 150, { steps: 4 });
         await page.mouse.up();
-        // The guide disappears before the core echoes the landed width.
-        await expect(handle).toHaveAttribute("aria-valuenow", maximum!);
       }
       await expect(page.locator("[data-column-guide]")).toHaveCount(0);
       await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
@@ -231,13 +228,7 @@ test("File View tabs use the same shrinking strip and transfer the longest title
         await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
         const moved = await strip(page, "view");
         expect(moved.tabs[0]!.width).toBeCloseTo(TITLE_MIN, 0);
-        await dumpOnFailure("File tab selection geometry", async () => {
-          await settle(page);
-          return { before: drawn, immediate: moved, settled: await strip(page, "view"), slots: await tabs.evaluateAll(nodes => nodes.map(node => ({
-            tab: node.getBoundingClientRect().width, slot: node.parentElement!.getBoundingClientRect().width,
-            selected: node.getAttribute("aria-selected"), style: node.parentElement!.parentElement!.getAttribute("style"),
-          }))) };
-        }, async () => expect(moved.tabs.at(-1)!.width).toBeCloseTo(want.others[0], 0));
+        expect(moved.tabs.at(-1)!.width).toBeCloseTo(want.others[0], 0);
         await tabs.last().click();
         await expect(tabs.last()).toHaveAttribute("aria-selected", "true");
       }

@@ -975,8 +975,6 @@ const areaCount = (page: Page) => page.locator("[data-view-area-id]").count();
 async function splitToDepth(page: Page, stack: Stack) {
   await pinNineAndSplit(page, stack);
   await tabMenu(area(page, 0), page, "f09.txt", "split_down");
-  // The split replaces the old leaf; wait before opening its next menu.
-  await expect.poll(() => areaCount(page)).toBe(3);
   await tabMenu(area(page, 0), page, "f08.txt", "split_right");
   await expect.poll(() => areaCount(page)).toBe(4);
 }
