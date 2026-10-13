@@ -14,7 +14,9 @@ export const MISSED = "좁은 열에서 긴 한국어 요청의 줄바꿈을 확
 export function workFixture(herdr: HerdrFixture, uncertainCreate = false) {
   const cwd = path.join(herdr.root, "fixture");
   const git = (args: string[]) => execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd });
-  git(["init"]);
+  // Match the GitHub fixture's head branch on every system, regardless of
+  // the account's init.defaultBranch; its open PR keeps the session active.
+  git(["init", "--initial-branch=main"]);
   fs.writeFileSync(path.join(cwd, "README.md"), "# fixture\n");
   git(["add", "README.md"]);
   git(["commit", "-m", "initial"]);

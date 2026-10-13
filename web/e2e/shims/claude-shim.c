@@ -60,17 +60,31 @@ static void raw_terminal(void) {
 static char prompt[1 << 20];
 /* A provider answers in the shape `--json-schema` asks for: a turn start's
    schema has no `end`, so the label's `end` is left out of that answer. */
-static void fit_schema(char *label, int argc, char **argv) {
+static int fit_schema(char *label, int argc, char **argv) {
   const char *schema = NULL;
   for (int i = 1; i + 1 < argc; i++) if (strcmp(argv[i], "--json-schema") == 0) schema = argv[i + 1];
-  if (!schema || strstr(schema, "\"end\"")) return;
+  if (!schema) return 1;
+  if (strstr(schema, "\"end\"")) {
+    /* Recorded native-format fixtures retain their old label marker. This
+       controlled provider gives that unrelated reader journey no work judgment
+       under the current END schema, without rewriting the recorded blobs. */
+    if (strstr(schema, "\"work\"") && !strstr(label, ",\"work\":")) {
+      const char *work = ",\"work\":{\"task\":{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null}}";
+      size_t length = strlen(label);
+      size_t capacity = sizeof prompt - (size_t)(label - prompt);
+      if (!length || label[length - 1] != '}' || length - 1 + strlen(work) >= capacity) return 0;
+      memcpy(label + length - 1, work, strlen(work) + 1);
+    }
+    return 1;
+  }
   /* The optional work judgment is the last field of the fixture marker.
-     START still uses v8 and asks for neither work nor end. */
+     START asks for neither work nor end. */
   char *work = strstr(label, ",\"work\":");
   if (work) { work[0] = '}'; work[1] = 0; }
   char *field = strstr(label, ",\"end\":\"");
   char *close = field ? strchr(field + strlen(",\"end\":\""), '"') : NULL;
   if (close) memmove(field, close + 1, strlen(close + 1) + 1);
+  return 1;
 }
 static int provider(int argc, char **argv) {
   if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
@@ -121,7 +135,10 @@ static int provider(int argc, char **argv) {
   label += strlen("HIDE_E2E_LABEL ");
   char *end = strchr(label, '\n');
   if (end) *end = 0;
-  fit_schema(label, argc, argv);
+  if (!fit_schema(label, argc, argv)) {
+    puts("{\"type\":\"result\",\"is_error\":true,\"subtype\":\"error_during_execution\"}");
+    return 1;
+  }
   const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
   FILE *log = calls ? fopen(calls, "a") : NULL;
   if (log) { fprintf(log, "%s\n", label); fclose(log); }

@@ -1668,6 +1668,7 @@ A nonempty query also searches saved session goals, assigned task names and orig
 Enter on that group opens the record in Tools; the existing Agents group still opens the live agent.
 With summaries Off it searches saved raw requests only, without generated goal or task matches.
 The core's bounded local record search runs independently of other groups, drops an answer for an older query and makes no GitHub request while typing.
+The session group carries its current loading or failure state; a successful search with no session matches draws no group, preserving the palette's existing no-match state when no other kind matches.
 The creator-session action in an output panel opens the same record.
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.

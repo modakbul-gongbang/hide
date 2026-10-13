@@ -117,9 +117,10 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     const link = openUrlEntry(trimmed, unavailable, t);
     const found = [...(link ? [{ group: link.group, entries: [link] }] : []), ...groupEntries(filterEntries(entries, trimmed))];
     const records = sessionEntries(workSearch, trimmed);
-    const sessionGroup = { group: SESSIONS_GROUP, entries: records };
+    const pending = workSearch?.query === trimmed && (workSearch.loading || workSearch.failure);
+    const sessionGroups = records.length > 0 || pending ? [{ group: SESSIONS_GROUP, entries: records }] : [];
     const searched = answer?.phase === "ready" ? githubEntries(answer.results, entries, t) : [];
-    return [...found, sessionGroup, ...(searched.length > 0 ? [{ group: GITHUB_GROUP, entries: searched }] : [])];
+    return [...found, ...sessionGroups, ...(searched.length > 0 ? [{ group: GITHUB_GROUP, entries: searched }] : [])];
   }, [entries, trimmed, answer, workSearch, front, t]);
 
   const relatedRows = useMemo(() => (trimmed || !related ? [] : relationRows(related)), [trimmed, related]);
