@@ -16,6 +16,13 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::time::Duration;
+
+use hide_platform::fs::lock::{self, Lock, Mode, Waited};
+
+/// Process identity can disappear before its final descriptors close. Wait
+/// only after stopping a proven daemon, and still require the actual lock.
+const STOPPED_LOCK_WITHIN: Duration = Duration::from_secs(2);
 
 /// What the move did.
 #[derive(Debug, Eq, PartialEq)]
@@ -71,9 +78,21 @@ pub fn move_legacy(
     // The lock is the liveness test: a pid or a `/health` answer can be stale
     // or slow, but a running daemon always holds it. Held across the rename,
     // so no older daemon starts in the folder meanwhile.
-    let _instance = match instance_lock(legacy) {
+    let within = if stopped_pid.is_some() {
+        STOPPED_LOCK_WITHIN
+    } else {
+        Duration::ZERO
+    };
+    let _instance = match instance_lock(legacy, within) {
         Ok(lock) => lock,
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            if let Some(pid) = stopped_pid {
+                return Err(format!(
+                    "{} still holds its instance lock after daemon {pid} was stopped and {}s elapsed, so nothing was moved; connect again after the lock is released",
+                    legacy.display(),
+                    STOPPED_LOCK_WITHIN.as_secs()
+                ));
+            }
             return Err(format!(
                 "a hided still runs from {} and was not proven to be the one its state names, so nothing was moved; quit it and connect again",
                 legacy.display()
@@ -185,10 +204,9 @@ fn lock_in_folder(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// The legacy folder's instance lock, taken without waiting; a missing lock
-/// file means no daemon ever ran there and is created inside the folder.
-fn instance_lock(legacy: &Path) -> io::Result<File> {
-    use std::os::fd::AsRawFd;
+/// The legacy folder's instance lock, held through the rename. A missing
+/// lock file is created inside the folder, never a missing folder itself.
+fn instance_lock(legacy: &Path, within: Duration) -> io::Result<Lock> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -197,16 +215,10 @@ fn instance_lock(legacy: &Path) -> io::Result<File> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(crate::state_file::lock_path(legacy))?;
-    // SAFETY: flock on a descriptor `file` owns; dropping it releases.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = io::Error::last_os_error();
-        return Err(if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            io::Error::from(io::ErrorKind::WouldBlock)
-        } else {
-            error
-        });
+    match lock::lock_file(file, Mode::Exclusive, within, &|| false)? {
+        Waited::Locked(lock) => Ok(lock),
+        Waited::TimedOut | Waited::Cancelled => Err(io::ErrorKind::WouldBlock.into()),
     }
-    Ok(file)
 }
 
 fn euid() -> u32 {
@@ -287,6 +299,65 @@ mod tests {
             move_legacy(&legacy, &target, |_| Ok(None)).unwrap(),
             Moved::Moved { stopped_pid: None }
         );
+    }
+
+    #[test]
+    fn a_stopped_daemons_folder_waits_for_its_instance_lock_before_moving() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let home = tempfile::tempdir().unwrap();
+        let legacy = legacy_with(home.path());
+        let target = home.path().join(".hide/state");
+        let held = crate::state_file::acquire_lock(&legacy).unwrap();
+        let (stopped, stopping) = mpsc::channel();
+        let (finished, outcome) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let result = move_legacy(&legacy, &target, |_| {
+                    stopped.send(()).unwrap();
+                    Ok(Some(42))
+                });
+                finished.send(result).unwrap();
+            });
+            stopping.recv_timeout(Duration::from_secs(2)).unwrap();
+            // Process identity can disappear before the kernel closes its
+            // descriptors. The real lock, not the pid, permits the rename.
+            let before_release = outcome.recv_timeout(Duration::from_millis(50));
+            assert!(legacy.join("core-state.json").is_file());
+            assert!(!target.exists());
+            drop(held);
+            assert!(matches!(
+                before_release,
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            assert_eq!(
+                outcome
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap()
+                    .unwrap(),
+                Moved::Moved {
+                    stopped_pid: Some(42)
+                }
+            );
+            assert!(!legacy.exists());
+            assert_eq!(
+                std::fs::read_to_string(target.join("core-state.json")).unwrap(),
+                "{\"projects\":[1]}"
+            );
+        });
+    }
+
+    #[test]
+    fn a_stopped_daemons_lock_that_never_releases_leaves_the_folder_unmoved() {
+        let home = tempfile::tempdir().unwrap();
+        let legacy = legacy_with(home.path());
+        let target = home.path().join(".hide/state");
+        let _held = crate::state_file::acquire_lock(&legacy).unwrap();
+        let error = move_legacy(&legacy, &target, |_| Ok(Some(42))).unwrap_err();
+        assert!(error.contains("after daemon 42 was stopped"), "{error}");
+        assert!(legacy.join("core-state.json").is_file());
+        assert!(!target.exists());
     }
 
     #[test]
