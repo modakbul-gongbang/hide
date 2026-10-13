@@ -406,6 +406,41 @@ Every time is on the page's clock from the chord's first keydown (or the click):
 `MEASURE_HIDED_BIN` points the run at another hided, such as a baseline built from the merge base, so baseline and candidate share the fixture; run both headless (`--isolated-headless`) under the same scale and report the load beside each.
 Herdr's share and Hide's are read from the candidate's `pane_op.timing` lines in the run's `hide-state` diagnostic log (Drawn ahead of Herdr in [ARCHITECTURE.md](ARCHITECTURE.md#drawn-ahead-of-herdr)), which the baseline does not write.
 
+### Populated local and device catalog comparison
+
+The ignored Rust integration journey `responsive_state::connected_catalog_measurement` reuses the private SSH delivery fixture and the existing CDP topology, key echo, key count, resource and WebSocket drivers.
+Run it through `scripts/verify-cargo.sh test-scoped -p hided --test it responsive_state::connected_catalog_measurement -- --ignored --nocapture`.
+It requires `HIDE_E2E_HERDR_BIN`, an explicit worktree `target/release` directory in `HIDE_E2E_CLI_DIR`, that worktree's current `RESPONSIVE_BINARY_HEAD`, and fixed `RESPONSIVE_NODE_BIN` and `RESPONSIVE_CHROME_BIN` executables.
+`RESPONSIVE_MEASURE_LABEL` names a new local-only run directory; `RESPONSIVE_MEASURE_SCALE` chooses `small` or `operator`.
+The source and executed binaries are fingerprinted separately, because the owned SSH fixture strips and signs its staged copies; the record also includes the driver files, browser, local and remote Herdr, installed private helper, process identities and actual Herdr topology.
+Build the measured release binaries at the recorded source head before starting, freeze the driver files, and interleave baseline and candidate runs under the same scale, browser, viewport, DPR and host workload.
+
+Each project has forty branches, forty private fixture pull requests and a linked checkout, and one connected private device has a populated session.
+No real GitHub account is used: the fixture's `gh` answers those exact catalog commands and refuses other commands.
+The visible tab has five panes; operator scale has 43 workspaces, 62 tabs, 66 panes and thirty reported agents.
+Catalog preparation and all topology changes finish before the observation windows.
+Idle has no printers or agent churn, then separate windows observe echo, repeated zoom, eight agent status transitions, continuous output with zoom and echo, and a thousand ordered screen keys.
+Four split panes print in small scale and those four plus one offscreen pane print in operator scale, using one finite Python process per pane.
+Each window records one-second root and process-tree CPU deltas, RSS, host load and application WebSocket payload bytes by type and semantic section.
+JSON section sizes exclude their enclosing punctuation, and payload bytes exclude WebSocket framing and compression.
+The final window navigates the only page away, observes the daemon with zero screen clients, then reconnects it; Chrome remains alive on `about:blank`, so this is a screen-subscription check rather than native window retirement.
+The source-build record does not establish a native screenshot or physical key-to-paint latency.
+The page drivers retain their page-clock DOM, terminal grid and echo endpoints, and an owned native candidate is verified separately.
+
+After the page windows finish, the fixture ends its measured daemon before a separate observation-only core probe attaches to the same private Herdr.
+Build that probe with the pinned toolchain on PATH using `python3 scripts/web-shell-measure/build-core-cost.py <worktree> legacy` for the baseline and `typed` for the candidate.
+It links the measured worktree's existing release libraries; its identity records their hashes, source head, compiler and common driver hash without changing either product's source or Cargo configuration.
+The real Local node supplies the populated catalogs, and the adapter preserves its reader, progress, lifecycle and path identity behavior.
+One actual PathFacts call is held for the same 500 ms observation interval in both builds while Herdr confirms a zoom; the core observation and later convergence are recorded separately from page latency.
+A hundred sidebar state changes record the owner read and transport encode costs: the baseline owner read includes its first JSON encoding and the transport includes its parse and envelope encoding, while the typed candidate captures immutable data and encodes once at transport.
+These clocks exclude observation parsing, daemon owner-channel queueing, sockets, terminal drawing and native paint, so only their combined processing cost is directly comparable.
+
+The fixture owns its private home, state, sockets, SSH service, staged binaries and child processes, and ends them on success or failure.
+The page driver caps concurrent children at three and terminates each within three minutes; the outer journey allows at most ten minutes for that driver.
+Operator topology and catalog preparation each have an explicit three-minute fixture bound.
+These limits bound a test's resources, not a product acceptance latency.
+Failed setup or changed driver files invalidate a comparison; keep the run as diagnosis evidence and exclude it from performance results.
+
 ### Screen key echo, lost keys and the terminal path's cost
 
 `echo.mjs` puts bytes into the pane with `herdr pane send-text`, so it times only the output path; a change to how a key travels needs the key typed on the screen (PRD core-host-node-terminal D-07).

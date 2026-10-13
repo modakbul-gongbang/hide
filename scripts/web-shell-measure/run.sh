@@ -393,6 +393,7 @@ python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" > "
 
 if [[ "$scenario" == topology ]]; then
   if [[ "$scale" != none ]]; then
+    bash "$measure_dir/scale.sh" drive
     spawn_owned churn bash "$measure_dir/scale.sh" churn
   fi
   reset_fixture

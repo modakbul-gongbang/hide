@@ -8,25 +8,83 @@
 // follow the tab across navigations.
 import { connectPage } from "./cdp.mjs";
 
-const cdpPort = process.env.MEASURE_CDP_PORT;
-const seconds = Number(process.env.MEASURE_WS_COUNT_SECONDS ?? 0);
-if (!cdpPort || !(seconds > 0)) throw new Error("MEASURE_CDP_PORT and MEASURE_WS_COUNT_SECONDS are required");
+import { pathToFileURL } from "node:url";
 
-const page = await connectPage(cdpPort);
-const received = {};
-const sent = {};
-let fullRedrawsAsked = 0;
-const tally = (into, key, data) => {
-  const name = key.exec(data ?? "")?.[1] ?? "binary";
-  into[name] = (into[name] ?? 0) + 1;
-};
-page.on("Network.webSocketFrameReceived", ({ response }) => tally(received, /"type":"([a-z_]+)"/, response?.payloadData));
-page.on("Network.webSocketFrameSent", ({ response }) => {
-  const data = response?.payloadData ?? "";
-  tally(sent, /"kind":"([a-z_]+)"/, data);
-  if (data.includes('"kind":"terminal_viewport"') && data.includes('"new_view":true')) fullRedrawsAsked += 1;
-});
-await page.send("Network.enable");
-await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-page.close();
-console.log(JSON.stringify({ seconds, received_by_type: received, sent_by_kind: sent, full_redraws_asked: fullRedrawsAsked }));
+export function observeFrames(page) {
+  const received = {};
+  const sent = {};
+  const receivedBytes = {};
+  const sectionBytes = {};
+  let firstSnapshot = null;
+  let fullRedrawsAsked = 0;
+  const tally = (into, key, data) => {
+    const name = key.exec(data ?? "")?.[1] ?? "binary";
+    into[name] = (into[name] ?? 0) + 1;
+  };
+  page.on("Network.webSocketFrameReceived", ({ response }) => {
+    const data = response?.payloadData ?? "";
+    const bytes = response?.opcode === 2 ? Buffer.from(data, "base64").length : Buffer.byteLength(data);
+    const name = /"type":"([a-z_]+)"/.exec(data)?.[1] ?? "binary";
+    tally(received, /"type":"([a-z_]+)"/, data);
+    receivedBytes[name] = (receivedBytes[name] ?? 0) + bytes;
+    if (response?.opcode === 2) return;
+    let frame;
+    try { frame = JSON.parse(data); } catch { return; }
+    if (!["snapshot", "delta"].includes(frame.type)) return;
+    for (const [section, value] of Object.entries(frame.payload ?? {})) {
+      if (section !== "rest") {
+        const key = `${frame.type}.${section}`;
+        sectionBytes[key] = (sectionBytes[key] ?? 0) + Buffer.byteLength(JSON.stringify(value));
+        continue;
+      }
+      for (const [field, body] of Object.entries(value ?? {})) {
+        for (const [leaf, content] of ["navigator", "status", "terminal"].includes(field)
+          ? Object.entries(body ?? {}) : [["", body]]) {
+          const key = `${frame.type}.rest.${field}${leaf ? `.${leaf}` : ""}`;
+          sectionBytes[key] = (sectionBytes[key] ?? 0) + Buffer.byteLength(JSON.stringify(content));
+        }
+      }
+    }
+    if (frame.type === "snapshot" && !firstSnapshot) {
+      const rest = frame.payload?.rest ?? {};
+      const workspaces = rest.navigator?.workspaces ?? [];
+      const remote = rest.status?.remote ?? [];
+      firstSnapshot = {
+        bytes, workspaces: workspaces.length,
+        checkouts: workspaces.reduce((n, row) => n + (row.checkouts?.length ?? 0), 0),
+        branches: workspaces.reduce((n, row) => n + (row.branches?.length ?? 0), 0),
+        pull_requests: workspaces.reduce((n, row) => n + (row.pull_requests?.length ?? 0), 0),
+        agents: rest.navigator?.agents?.length ?? 0,
+        remote_sessions: remote.filter(row => row.session).length,
+        remote_workspaces: remote.reduce((n, row) => n + (row.session?.workspaces?.length ?? 0), 0),
+      };
+    }
+  });
+  page.on("Network.webSocketFrameSent", ({ response }) => {
+    const data = response?.payloadData ?? "";
+    tally(sent, /"kind":"([a-z_]+)"/, data);
+    if (data.includes('"kind":"terminal_viewport"') && data.includes('"new_view":true')) fullRedrawsAsked += 1;
+  });
+  return {
+    report: () => ({ received_by_type: { ...received }, received_bytes_by_type: { ...receivedBytes }, section_bytes: { ...sectionBytes }, first_snapshot: firstSnapshot,
+      sent_by_kind: { ...sent }, full_redraws_asked: fullRedrawsAsked }),
+    reset() {
+      for (const counter of [received, receivedBytes, sectionBytes, sent]) {
+        for (const key of Object.keys(counter)) delete counter[key];
+      }
+      fullRedrawsAsked = 0;
+    },
+  };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const cdpPort = process.env.MEASURE_CDP_PORT;
+  const seconds = Number(process.env.MEASURE_WS_COUNT_SECONDS ?? 0);
+  if (!cdpPort || !(seconds > 0)) throw new Error("MEASURE_CDP_PORT and MEASURE_WS_COUNT_SECONDS are required");
+  const page = await connectPage(cdpPort, process.env.MEASURE_WS_REQUIRE_PROBE !== "0");
+  const counter = observeFrames(page);
+  await page.send("Network.enable");
+  await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+  page.close();
+  console.log(JSON.stringify({ method: "Existing page socket via CDP; UTF-8 text/application binary payload bytes, excludes framing/compression; sections count JSON value bytes", seconds, ...counter.report() }));
+}
