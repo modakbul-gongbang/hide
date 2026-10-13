@@ -831,6 +831,8 @@ pub(super) struct GitWorktreeSetBasePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorktreePayload {
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
     /// The device that holds the repository; this machine when absent.
     #[serde(default)]
     pub(super) device_id: Option<String>,
@@ -1705,6 +1707,7 @@ impl Runtime {
             Event::CreateTab(payload) => payload.request_id.clone(),
             Event::CreatePane(payload) => payload.request_id.clone(),
             Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            Event::CreateWorktree(payload) => payload.request_id.clone(),
             Event::ForkPane(payload) => payload.request_id.clone(),
             _ => None,
         };

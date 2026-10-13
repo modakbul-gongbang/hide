@@ -11,6 +11,7 @@ use serde::Deserialize;
 pub(super) struct Pending {
     pub(super) record: ProjectSettings,
     request_id: String,
+    patch: settings::Patch,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,13 +114,54 @@ impl Runtime {
             {
                 return Err("project_settings_branch_unavailable");
             }
-            self.snapshot
+            let mut record = self
+                .snapshot
                 .ui_state
                 .project_settings
                 .get(&id)
                 .cloned()
                 .unwrap_or_else(|| ProjectSettings::new(&payload.device_id, &payload.root))
-                .patched(payload.patch)
+                .patched(payload.patch.clone())?;
+            if self
+                .snapshot
+                .ui_state
+                .project_settings
+                .get(&id)
+                .and_then(|record| record.repository.as_ref())
+                != record.repository.as_ref()
+            {
+                for checkout in &workspace.checkouts {
+                    let reference = checkout
+                        .issue
+                        .as_ref()
+                        .map(|link| link.issue.reference.clone())
+                        .or_else(|| {
+                            checkout
+                                .task_key
+                                .as_deref()
+                                .and_then(crate::tasks::parse_github_key)
+                        })
+                        .or_else(|| {
+                            self.issue_candidates
+                                .get(&checkout.id)
+                                .map(|candidate| candidate.reference.clone())
+                        });
+                    if let Some(reference) = reference {
+                        if !record.link_scopes.contains_key(&checkout.path)
+                            && record.link_scopes.len() >= crate::issues::ISSUE_LIMIT
+                        {
+                            return Err("project_settings_link_limit");
+                        }
+                        record.link_scopes.entry(checkout.path.clone()).or_insert(
+                            settings::LinkScope {
+                                branch: checkout.branch.clone(),
+                                reference,
+                            },
+                        );
+                    }
+                }
+            }
+            Ok(record)
         })();
         match result {
             Err(code) => {
@@ -132,17 +174,12 @@ impl Runtime {
                     return false;
                 }
                 self.push_diagnostic(code, "Project settings change refused");
-                self.settings_write_status(
-                    &id,
-                    &payload.request_id,
-                    WriteState::Failed,
-                    Some(code),
-                );
+                self.settings_write_status(&id, &payload, WriteState::Failed, Some(code));
                 true
             }
             Ok(record) => {
                 if self.snapshot.ui_state.project_settings.get(&id) == Some(&record) {
-                    self.settings_write_status(&id, &payload.request_id, WriteState::Saved, None);
+                    self.settings_write_status(&id, &payload, WriteState::Saved, None);
                     return true;
                 }
                 self.project_settings_pending.insert(
@@ -150,15 +187,16 @@ impl Runtime {
                     Pending {
                         record,
                         request_id: payload.request_id.clone(),
+                        patch: payload.patch.clone(),
                     },
                 );
-                self.settings_write_status(&id, &payload.request_id, WriteState::Pending, None);
+                self.settings_write_status(&id, &payload, WriteState::Pending, None);
                 if let Err(detail) = self.write_ui_state() {
                     self.push_diagnostic("project_settings.save_failed", detail);
                     self.project_settings_pending.remove(&id);
                     self.settings_write_status(
                         &id,
-                        &payload.request_id,
+                        &payload,
                         WriteState::Failed,
                         Some("project_settings_save_failed"),
                     );
@@ -171,7 +209,7 @@ impl Runtime {
     fn settings_write_status(
         &mut self,
         id: &str,
-        request: &str,
+        payload: &SetPayload,
         state: WriteState,
         error: Option<&str>,
     ) {
@@ -196,7 +234,10 @@ impl Runtime {
         statuses.insert(
             id.to_owned(),
             WriteStatus {
-                request_id: request.to_owned(),
+                device_id: payload.device_id.clone(),
+                root: payload.root.clone(),
+                request_id: payload.request_id.clone(),
+                patch: payload.patch.clone(),
                 state,
                 error: error.map(str::to_owned),
             },
@@ -228,12 +269,27 @@ impl Runtime {
                     .ui_state
                     .project_settings
                     .insert(id.clone(), pending.record.clone());
-                self.settings_write_status(&id, &pending.request_id, WriteState::Saved, None);
+                self.settings_write_status(
+                    &id,
+                    &SetPayload {
+                        device_id: pending.record.device_id.clone(),
+                        root: pending.record.root.clone(),
+                        request_id: pending.request_id.clone(),
+                        patch: pending.patch.clone(),
+                    },
+                    WriteState::Saved,
+                    None,
+                );
                 self.project_settings_changed(before.as_ref(), &pending.record);
             } else {
                 self.settings_write_status(
                     &id,
-                    &pending.request_id,
+                    &SetPayload {
+                        device_id: pending.record.device_id.clone(),
+                        root: pending.record.root.clone(),
+                        request_id: pending.request_id.clone(),
+                        patch: pending.patch.clone(),
+                    },
                     WriteState::Failed,
                     Some("project_settings_save_failed"),
                 );
@@ -251,6 +307,25 @@ impl Runtime {
             before.and_then(|record| record.repository.as_ref()) != after.repository.as_ref();
         let base_changed =
             before.and_then(|record| record.base_branch.as_ref()) != after.base_branch.as_ref();
+        if repository_changed {
+            // The one search slot spans repository targets. Keep its running
+            // worker bounded, but refuse its old answer and queued old intent.
+            self.github_search.pending = None;
+            if let Some(slot) = self.snapshot.issue_work.search.take() {
+                self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::failed(
+                    slot.request_id,
+                    slot.query,
+                    "Repository connection changed. Search again.",
+                ));
+            }
+            if let Some(slot) = self.snapshot.pr_work.feedback.as_mut() {
+                slot.phase = "failed".into();
+                slot.body = None;
+                slot.failed_checks.clear();
+                slot.change_requests.clear();
+                slot.message = Some("Repository connection changed. Read again.".into());
+            }
+        }
         if after.device_id == self.node.as_str() {
             if repository_changed {
                 self.github

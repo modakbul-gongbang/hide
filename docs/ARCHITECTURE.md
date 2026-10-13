@@ -1834,6 +1834,9 @@ The confirmed record and its consumers move only when that exact save acknowledg
 Records and transient receipts are bounded to 256 projects, receipts are not persisted, and unrelated `ui_state_update` echoes preserve both maps.
 An explicit repository is a private provider target, not a git remote or credential change.
 The existing GitHub reader separates its cached checks by repository as well as root and generation; changing the confirmed connection removes the previous screen data, moves the generation and rejects late remote answers for the old repository.
+Before a connection changes, the record retains up to 200 existing checkout issue references with their original repository and branch.
+Bare issue numbers on those unchanged branches keep that identity after restart, while an explicit owner/repository reference names its own target; prior issue creation and PR replies cannot attach to a different repository's same-number resource.
+This adds bounded map lookups to link projection and uses the existing readers and save queue, with no polling, subprocess or machine I/O under the runtime mutex.
 Tests in `herdr-core/src/runtime/tests/project_settings.rs` cover the save acknowledgment, failed save, fallback, identity and late-answer boundary.
 
 Interface language is a core-owned UI preference: `interface_language_set` alone changes `ui_state.interface_language`, and unrelated UI saves preserve it.

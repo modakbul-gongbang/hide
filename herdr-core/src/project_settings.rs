@@ -62,14 +62,28 @@ pub struct ProjectSettings {
     pub new_work: Option<NewWorkLocation>,
     #[serde(default)]
     pub base_branch: Option<BaseBranchChoice>,
+    /// Bare legacy issue tokens retain the repository they already named.
+    /// New explicit links carry their own owner/repo and need no binding.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub link_scopes: BTreeMap<String, LinkScope>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct LinkScope {
+    pub branch: Option<String>,
+    pub reference: crate::issues::IssueReference,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Patch {
+pub struct Patch {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository: Option<RepositoryConnection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub issue_source: Option<IssueSourceChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub new_work: Option<NewWorkLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<BaseBranchChoice>,
 }
 
@@ -83,6 +97,7 @@ impl ProjectSettings {
             issue_source: None,
             new_work: None,
             base_branch: None,
+            link_scopes: BTreeMap::new(),
         }
     }
 
@@ -114,9 +129,12 @@ impl ProjectSettings {
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WriteStatus {
+    pub device_id: String,
+    pub root: String,
     pub request_id: String,
     pub state: WriteState,
     pub error: Option<String>,
+    pub patch: Patch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]

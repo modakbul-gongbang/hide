@@ -65,6 +65,7 @@ export function branchProblem(name: string): MessageKey | null {
 export type MenuItem = {
   id:
     | "new_worktree"
+    | "project_settings"
     | "new_tab_primary"
     | "reveal_external"
     | "open_in_editor"
@@ -152,6 +153,7 @@ export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"
   const editor = folder ? editorItem(workspace, host, t, true) : [];
   const reveal = revealItem(workspace, host, t, editor.length === 0);
   return [
+    ...(!workspace.is_home ? [{ id: "project_settings" as const, label: t("projectSettings.title"), unavailable: null }] : []),
     { id: "new_worktree", label: t("workspace.menu.newWorktree"), unavailable: workspace.is_git === false ? t("workspace.unavailable.notGit") : null },
     {
       id: "new_tab_primary",

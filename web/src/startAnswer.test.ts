@@ -23,6 +23,12 @@ describe("the answer to one start request", () => {
     expect(startAnswer(rest(operation({ kind: "worktree_create", phase: "ready" })), "mine")).toEqual({ phase: "pending" });
   });
 
+  it("accepts a correlated worktree start only when that was the requested kind", () => {
+    const answer = rest(operation({ kind: "worktree_create", phase: "ready", pane_id: "tree-pane" }));
+    expect(startAnswer(answer, "mine", "worktree_create")).toMatchObject({ phase: "ready", paneId: "tree-pane" });
+    expect(startAnswer(answer, "another", "worktree_create")).toEqual({ phase: "pending" });
+  });
+
   it("carries a refusal's reason", () => {
     expect(startAnswer(rest(null, { kind: "home.conflict", message: "~/hide is not Hide's", request_id: "mine" }), "mine")).toEqual({ phase: "refused", message: "~/hide is not Hide's" });
   });

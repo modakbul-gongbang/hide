@@ -113,9 +113,13 @@ impl Runtime {
                     continue;
                 }
                 let repository = workspace.home_issues.repository.as_deref();
+                let scope =
+                    crate::project_settings::get(&settings, self.node.as_str(), &workspace.path)
+                        .and_then(|record| record.link_scopes.get(&checkout.path))
+                        .filter(|scope| scope.branch == checkout.branch);
                 let session = sessions.get(&checkout.id).map(String::as_str);
                 let candidate =
-                    match links.checkout_link(session, checkout, local_source, repository) {
+                    match links.checkout_link(session, checkout, local_source, repository, scope) {
                         // A Local project's link is the same chain read as a
                         // local id; it names no GitHub issue.
                         Some(ChainLink::Local(number)) => {
@@ -992,10 +996,11 @@ impl Runtime {
             Some(node) => self.device_github.get_mut(node),
         };
         if let Some(project) = github.and_then(|github| {
-            github
-                .projects
-                .iter_mut()
-                .find(|project| project.root_path == project_path)
+            github.projects.iter_mut().find(|project| {
+                project.root_path == project_path
+                    && project.issues.repository.as_deref()
+                        == Some(issue.reference.repository.as_str())
+            })
         }) {
             project
                 .issues
@@ -1641,24 +1646,32 @@ impl Runtime {
                     .as_ref()
                     .and_then(|branch| notes?.get(branch)?.issue.clone());
                 let owner = checkout.owner_workspace_id.as_deref();
-                checkout.issue = match links.checkout_link(owner, checkout, local, repository) {
-                    Some(ChainLink::Local(number)) => {
-                        local_links.insert(checkout.id.clone(), number);
-                        None
-                    }
-                    Some(ChainLink::Github(candidate)) => {
-                        linked.insert(candidate.reference.clone());
-                        issues
-                            .issues
-                            .iter()
-                            .find(|issue| issue.reference == candidate.reference)
-                            .map(|issue| IssueLinkSnapshot {
-                                issue: issue.clone(),
-                                source: candidate.source,
-                            })
-                    }
-                    None => None,
-                };
+                let scope = crate::project_settings::get(
+                    &self.snapshot.ui_state.project_settings,
+                    target,
+                    &workspace.path,
+                )
+                .and_then(|record| record.link_scopes.get(&checkout.path))
+                .filter(|scope| scope.branch == checkout.branch);
+                checkout.issue =
+                    match links.checkout_link(owner, checkout, local, repository, scope) {
+                        Some(ChainLink::Local(number)) => {
+                            local_links.insert(checkout.id.clone(), number);
+                            None
+                        }
+                        Some(ChainLink::Github(candidate)) => {
+                            linked.insert(candidate.reference.clone());
+                            issues
+                                .issues
+                                .iter()
+                                .find(|issue| issue.reference == candidate.reference)
+                                .map(|issue| IssueLinkSnapshot {
+                                    issue: issue.clone(),
+                                    source: candidate.source,
+                                })
+                        }
+                        None => None,
+                    };
             }
             // What the node's GitHub read brings beside the open list: the
             // linked issues it leaves out, closed or in another repository.
@@ -1724,6 +1737,7 @@ impl<'a> LinkTokens<'a> {
         checkout: &crate::model::CheckoutSnapshot,
         local: bool,
         repository: Option<&str>,
+        scope: Option<&crate::project_settings::LinkScope>,
     ) -> Option<ChainLink> {
         let manual = session.and_then(|id| {
             self.workspaces.get(id).filter(|value| {
@@ -1739,6 +1753,26 @@ impl<'a> LinkTokens<'a> {
             .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
             .collect();
         let pane = pane_token(&self.family, &physical);
+        let bare_number = match manual.or(pane).or(checkout.branch_issue.as_ref()) {
+            Some(value) => value
+                .strip_prefix('#')
+                .and_then(|number| number.parse::<u32>().ok()),
+            None if checkout
+                .pull_request
+                .as_ref()
+                .is_none_or(|pr| pr.closing_issues.is_empty()) =>
+            {
+                checkout
+                    .branch
+                    .as_deref()
+                    .and_then(crate::issues::branch_number)
+            }
+            None => None,
+        };
+        let repository = scope
+            .filter(|scope| bare_number == Some(scope.reference.number))
+            .map(|scope| scope.reference.repository.as_str())
+            .or(repository);
         chain_link(local, manual, pane, checkout, repository, self.invalid)
     }
 }

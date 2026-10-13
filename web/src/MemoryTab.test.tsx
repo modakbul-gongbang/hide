@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
+import { useMemoryProject } from "./MemoryTab";
 import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -97,6 +98,26 @@ describe("the Memory tab", () => {
     await render(memory({ questions: [{ kind: "failed", number: 7, title: "card 7", start_failure: null }] }), "explorer");
     expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
     expect(container.querySelector('[data-tool-dot="memory"]')).not.toBeNull();
+  });
+
+  it("gives Settings the only Memory read slot and restores Tools on close", async () => {
+    const actions = createActions((event) => { events.push(event); return true; });
+    function SettingsReader() { useMemoryProject(actions, "other-project"); return null; }
+    await render(memory());
+    events.length = 0;
+    await act(async () => {
+      useUiStore.setState({ overlay: "project_settings" });
+      root.render(<TooltipProvider><Tools tool="memory" actions={actions} /><SettingsReader /></TooltipProvider>);
+    });
+    expect(sent("memory_open")).toEqual([{ workspace_id: "other-project" }]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(sent("memory_open")).toEqual([{ workspace_id: "other-project" }, { workspace_id: "other-project" }]);
+    events.length = 0;
+    await act(async () => {
+      useUiStore.getState().closeOverlay("project_settings");
+      root.render(<TooltipProvider><Tools tool="memory" actions={actions} /></TooltipProvider>);
+    });
+    expect(sent("memory_open")).toEqual([{ workspace_id: "p" }]);
   });
 
   it("asks about a suggested card and a failed promotion, and sends the card's number", async () => {

@@ -50,7 +50,7 @@ const EXPANDED: ProjectMemory["expanded"] = {
   previous: { body: "0.9.132 미만 nextest는 macOS에서 가짜 LEAK를 낸다.", changed_at_unix_ms: Date.now() - 12 * MINUTE },
 };
 
-function project(state: MemorySceneState): ProjectMemory {
+export function memorySceneProject(state: MemorySceneState): ProjectMemory {
   const base: ProjectMemory = {
     workspace_id: "herdr-ide", unavailable: null, loading: false, enabled: true, capacity_reached: false,
     rows: ROWS, questions: [], analysis: "idle", consent_required: false, usable_cards: 2, checking_card: null, check_resume_at_unix_ms: null, forgotten: null, pending_action: null, expanded: null, search: null,
@@ -89,7 +89,7 @@ export function MemoryScene({ theme, state, width, language }: MemorySceneParams
     ui_state: { interface_language: language },
   }) as unknown as SnapshotRest, [state, language]);
   useLayoutEffect(() => {
-    useShellStore.setState({ rest, memory: { project: project(state) }, connection: "gone" });
+    useShellStore.setState({ rest, memory: { project: memorySceneProject(state) }, connection: "gone" });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
   }, [rest, state, theme]);

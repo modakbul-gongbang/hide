@@ -123,7 +123,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "sb-full-l-side"
+        "referenceNode": "psb-sidebar-l"
       },
       {
         "node": "psb-sidebar-d",
@@ -132,7 +132,7 @@
         "scale": 1,
         "content": "reference",
         "state": "rest",
-        "referenceNode": "sb-full-d-side"
+        "referenceNode": "psb-sidebar-d"
       }
     ],
     "conditions": {
@@ -153,7 +153,10 @@
       "rest": "No pointer on the list and no keyboard focus.",
       "hover-parent": "The pointer on the unfolded parent agent a1.",
       "focus-parent": "Keyboard focus on the unfolded parent agent a1.",
-      "checkout-closed": "main's agent rows closed with its chevron, so its status badge counts them."
+      "checkout-closed": "main's agent rows closed with its chevron, so its status badge counts them.",
+      "hover-project": "Project row actions show New work, Settings and More without moving the row.",
+      "focus-project": "Keyboard focus on the project row reveals the same action space.",
+      "settings-open": "The project gear opens its separate settings dialog."
     },
     "rules": {
       "rootsAligned": true,
@@ -167,7 +170,8 @@
       "Each reference, current Pen and actual trio: do spacing, weight, color and alignment carry the same intent?",
       "Every difference visible between Pen and the actual screen: acceptable renderer difference, or drift to fix in Pen or code?",
       "Long Korean titles at the narrow width: is what the truncation keeps still recognizable?",
-      "Hover and focus captures: is the feedback visible enough without moving anything?"
+      "Hover and focus captures: is the feedback visible enough without moving anything?",
+      "The gear joins New work and More for both Git projects and folders; Home has none and row geometry stays reserved."
     ]
   },
   "workspace-servers": {
@@ -1423,6 +1427,94 @@
     "judgment": [
       "Each board draws several states at once and the bundle pairs it with the scene at rest; the state sheets hold every state the scene draws. Do the built steps, the start panel, the empty Home and the Settings rows carry the spacing, weight, color and alignment of their boards in both themes?",
       "The startup and failure screen (board 09) and the Factory line (board 08) are not on this scene; they are checked against their boards from the desktop app and the Factory scene."
+    ]
+  },
+  "project-settings": {
+    "description": "Approved separate Project Settings dialog and its pages.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-project-settings",
+    "scene": "project-settings",
+    "selector": "[data-gallery-scene=\"project-settings\"]",
+    "frames": [
+      {
+        "node": "ps-settings-dark",
+        "referenceNode": "QdXlV",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-light",
+        "referenceNode": "UTLMs",
+        "theme": "light",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "connections"
+      },
+      {
+        "node": "ps-settings-work",
+        "referenceNode": "C6dPm",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "work"
+      },
+      {
+        "node": "ps-settings-memory",
+        "referenceNode": "WfAuD",
+        "theme": "dark",
+        "width": 1000,
+        "scale": 1,
+        "content": "reference",
+        "state": "memory"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1000,
+        720
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1,
+        1.3076923076923077
+      ]
+    },
+    "states": {
+      "connections": "Repository and issue source.",
+      "work": "Defaults and honest unsupported protection rows.",
+      "memory": "Confirmed memory and navigation."
+    },
+    "rules": {
+      "noSidewaysOverflow": true,
+      "noOverlap": true
+    },
+    "judgment": [
+      "880 by 640 dialog, 200 navigation and independent body scrolling follow the approved layout.",
+      "Future Linear and protection examples become disabled unsupported rows under sealed PRD D-08 and D-12.",
+      "Actual Korean, long mixed paths and large type remain readable."
+    ],
+    "readySelector": "[data-gallery-scene=\"project-settings\"][data-scene-ready]",
+    "measurement": "web/e2e/project-settings-geometry.mjs",
+    "urlStates": [
+      "connections",
+      "work",
+      "memory",
+      "memory-off",
+      "pending",
+      "failed",
+      "unavailable"
     ]
   }
 }

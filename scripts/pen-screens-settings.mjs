@@ -307,7 +307,7 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     }
   }
 
-  return {settingsFrame, settingsSheet, SHEET_W, NAV_W, PAD_X};
+  return {settingsFrame, settingsSheet, group, row, select, status, button, sw, paragraph: P, SHEET_W, NAV_W, PAD_X};
 }
 
 /** The `Screen / Settings` boards, each {id, name, spec, build(suffix)} returning its frames for one theme. */

@@ -59,6 +59,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
+import { projectIssueSource, settingsTarget } from "./projectSettings";
 import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
@@ -984,6 +985,11 @@ function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspac
             <PlusIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           </button>
         </Hint>
+        <Hint label={t("projectSettings.open", { project: workspace.label })}>
+          <button type="button" aria-label={t("projectSettings.open", { project: workspace.label })} data-row-settings={workspace.id} className={control} onClick={() => useUiStore.getState().openProjectSettings(settingsTarget(workspace))}>
+            <SettingsIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          </button>
+        </Hint>
         <EntryDropdown
           label={t("common.entryActions", { name: workspace.label })}
           items={items}
@@ -1048,7 +1054,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
     <li data-project={workspace.id} className={inset}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => projectMenu(workspace, menuHost(), t, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
+        items={() => projectMenu(workspace, menuHost(), t, projectIssueSource(useShellStore.getState().rest, workspace))}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1072,7 +1078,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           <RowActions
             workspace={workspace}
             badge={<ProjectBadge workspace={workspace} expanded={expanded} marks={marks} />}
-            items={() => projectMenu(workspace, menuHost(), t, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
+            items={() => projectMenu(workspace, menuHost(), t, projectIssueSource(useShellStore.getState().rest, workspace))}
             onSelect={(item) => runProjectItem(actions, workspace, item)}
           />
           {disclosure ? (
@@ -1342,7 +1348,7 @@ const FolderRowView = memo(function FolderRowView({
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
+        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, projectIssueSource(useShellStore.getState().rest, workspace))}
         onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1374,7 +1380,7 @@ const FolderRowView = memo(function FolderRowView({
               <RowActions
                 workspace={workspace}
                 badge={<ProjectBadge workspace={workspace} expanded={open} marks={marks} />}
-                items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
+                items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, projectIssueSource(useShellStore.getState().rest, workspace))}
                 onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
               />
               {foldable ? (
@@ -1641,6 +1647,8 @@ function menuHost(): MenuHost {
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
+    case "project_settings":
+      return useUiStore.getState().openProjectSettings(settingsTarget(workspace));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {
@@ -1659,7 +1667,7 @@ function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["
     case "issue_source_auto":
     case "issue_source_github":
     case "issue_source_local":
-      return actions.setIssueSource(workspace.path, item.slice("issue_source_".length) as "auto" | "github" | "local");
+      return actions.setProjectSettings(settingsTarget(workspace), { issue_source: item.slice("issue_source_".length) as "auto" | "github" | "local" }, crypto.randomUUID());
     case "remove_project":
       return useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
   }

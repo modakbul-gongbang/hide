@@ -3365,7 +3365,22 @@ impl Runtime {
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
-        self.start_worktree_task(payload, false)
+        let request_id = payload.request_id.clone();
+        let before_id = self.snapshot.task_operation.as_ref().map(|task| task.id);
+        let before_error = self.snapshot.status.last_error.clone();
+        let changed = self.start_worktree_task(payload, false);
+        if let Some(request_id) = request_id {
+            if let Some(operation) = self.snapshot.task_operation.as_mut()
+                && Some(operation.id) != before_id
+            {
+                operation.request_id = Some(request_id);
+            } else if self.snapshot.status.last_error != before_error
+                && let Some(error) = self.snapshot.status.last_error.as_mut()
+            {
+                error.request_id = Some(request_id);
+            }
+        }
+        changed
     }
 
     /// `create_worktree`, on a new branch or, `existing_branch`, on a branch

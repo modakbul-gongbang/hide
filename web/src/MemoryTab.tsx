@@ -1,4 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
+import { useUiStore } from "./ui";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentLogo } from "./components/agent-logo";
@@ -59,8 +60,10 @@ export function MemoryTab({ actions }: { actions: Actions }) {
  * when its window comes forward after another window named another one, so
  * two windows never take it from each other in a loop.
  */
-export function useMemoryProject(actions: Actions) {
-  const projectId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
+export function useMemoryProject(actions: Actions, requested?: string | null) {
+  const settingsOpen = useUiStore((state) => state.overlay === "project_settings");
+  const frontId = useShellStore((state) => frontCheckout(state.rest)?.workspace_id ?? null);
+  const projectId = requested !== undefined ? requested : settingsOpen ? null : frontId;
   const live = useShellStore((state) => state.connection === "live");
   const opened = useShellStore((state) => projectId !== null && state.memory?.project?.workspace_id === projectId);
   const openedRef = useRef(opened);
@@ -195,6 +198,14 @@ function Header({ project, actions, busy }: { project: ProjectMemory; actions: A
       </span>
     </div>
   );
+}
+
+/** Same action and consent as Tools; only the settings owner can claim this read slot. */
+export function MemorySettings({ project, actions, disabled }: { project: ProjectMemory; actions: Actions; disabled: boolean }) {
+  const { t } = useInterfaceTranslation();
+  if (project.unavailable) return <div className="flex flex-col items-start gap-sm"><p role="alert" className="text-body text-muted-foreground">{t(project.unavailable.reason === "unregistered" ? "memory.unregistered" : "memory.unreadable")}</p><Button size="sm" variant="ghost" disabled={disabled} onClick={() => actions.memoryOpen(project.workspace_id)}>{t("memory.readAgain")}</Button></div>;
+  if (project.loading) return <p role="status" className="text-body text-muted-foreground">{t("memory.reading")}</p>;
+  return <div className="flex min-w-0 flex-col gap-sm"><Header project={project} actions={actions} busy={disabled || project.pending_action !== null} />{!project.enabled ? <p className="break-keep text-body text-muted-foreground">{t("memory.disclosure")}</p> : null}{project.consent_required ? <p className="text-body text-muted-foreground">{t("memory.reconsent")}</p> : null}{project.pending_action !== null ? <p role="status" className="text-body text-muted-foreground">{t("projectSettings.pending")}</p> : null}</div>;
 }
 
 function Questions({ project, actions, busy }: { project: ProjectMemory; actions: Actions; busy: boolean }) {

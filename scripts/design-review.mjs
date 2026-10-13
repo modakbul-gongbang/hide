@@ -293,6 +293,9 @@ async function enterState(page, state, target) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement?.blur());
   if (state === 'hover-parent') await page.locator('nav[data-sidebar] li[data-pane="a1"]').first().hover();
+  if (state === 'hover-project') await page.locator('nav[data-sidebar] [data-project-row="hide"]').hover();
+  if (state === 'focus-project') await page.locator('nav[data-sidebar] [data-row-settings="hide"]').focus();
+  if (state === 'settings-open') await page.locator('nav[data-sidebar] [data-row-settings="hide"]').click();
   if (state === 'focus-parent') {
     await page.keyboard.press('Shift');
     await page.locator('nav[data-sidebar] [data-agent-open="a1"]').focus();

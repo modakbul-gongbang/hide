@@ -373,7 +373,10 @@ impl Runtime {
             created: true,
             ..link
         });
-        if let Ok((_, workspace, pull_request)) = &target {
+        if let Ok((_, workspace, pull_request)) = &target
+            && crate::links::repository_of(&pull_request.url).as_deref()
+                == Some(reference.repository.as_str())
+        {
             self.link_pr_branch(workspace, pull_request, &reference);
         }
         let written = written.unwrap_or_else(|| Err("PR 본문을 쓰지 않았습니다".to_owned()));
@@ -414,10 +417,11 @@ impl Runtime {
                 Some(node) => self.device_github.get_mut(node),
             };
             if let Some(project) = github.and_then(|github| {
-                github
-                    .projects
-                    .iter_mut()
-                    .find(|project| project.root_path == workspace.path)
+                github.projects.iter_mut().find(|project| {
+                    project.root_path == workspace.path
+                        && project.issues.repository.as_deref()
+                            == Some(reference.repository.as_str())
+                })
             }) {
                 for pull_request in &mut project.pull_requests {
                     if pull_request.number == link.pr_number
@@ -561,6 +565,7 @@ impl Runtime {
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {
+                    request_id: None,
                     device_id: machine,
                     repository_root: workspace.path.clone(),
                     branch: pull_request.head_branch.clone(),

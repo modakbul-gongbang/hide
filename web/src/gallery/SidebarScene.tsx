@@ -10,6 +10,7 @@ import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
 import { TitleRow } from "../TitleRow";
+import { SettingsGate } from "../SettingsSheet";
 import { useShellStore } from "../store";
 import { entryLens, useUiStore } from "../ui";
 import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
@@ -90,6 +91,7 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
           <Sidebar actions={actions} />
         </div>
       </div>
+      <SettingsGate actions={actions} />
     </TooltipProvider>
   );
 }

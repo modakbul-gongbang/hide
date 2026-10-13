@@ -1,4 +1,5 @@
-import { PlusIcon, SquareTerminalIcon } from "lucide-react";
+import { EllipsisIcon, PlusIcon, SquareTerminalIcon } from "lucide-react";
+import { EntryDropdown } from "./components/entry-menu";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Badge } from "./components/ui/badge";
@@ -65,6 +66,7 @@ export function OverviewTitleRow({
   onAllProjects,
   newAgent,
   newIssue,
+  openSettings,
 }: {
   name: string;
   path: string;
@@ -74,6 +76,7 @@ export function OverviewTitleRow({
   newAgent: { run: () => void; disabled: boolean };
   /** Null when the project cannot take issues. */
   newIssue: (() => void) | null;
+  openSettings?: () => void;
 }) {
   const { t } = useInterfaceTranslation();
   const row = useRef<HTMLDivElement>(null);
@@ -107,6 +110,7 @@ export function OverviewTitleRow({
             {name}
           </h1>
         </Hint>
+        {openSettings ? <EntryDropdown label={t("projectSettings.title")} items={() => [{ id: "project_settings", label: t("projectSettings.title"), unavailable: null }]} onSelect={openSettings} trigger={<Button variant="ghost" size="icon-sm" aria-label={t("projectSettings.title")}><EllipsisIcon /></Button>} /> : null}
         {remoteDevice ? <Badge variant="secondary" className="min-w-0 shrink">{remoteDevice}</Badge> : null}
       </nav>
       <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={iconOnly} button={{ onClick: newAgent.run, disabled: newAgent.disabled, "data-overview-new-agent": "true" }} />

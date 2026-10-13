@@ -1,3 +1,4 @@
+import { projectBaseBranch } from "./projectSettings";
 // The project and checkout management dialogs (PRD S5 B11-B17): a worktree
 // creation, a purpose edit and a worktree deletion. Each sends the one core
 // event that owns the change and then reads the core's own receipt for it
@@ -271,7 +272,8 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   const { t } = useInterfaceTranslation();
   const branches = workspace.branches ?? [];
   const [branch, setBranch] = useState("");
-  const [base, setBase] = useState(workspace.default_branch && branches.includes(workspace.default_branch) ? workspace.default_branch : (branches[0] ?? ""));
+  const [base, setBase] = useState(() => projectBaseBranch(useShellStore.getState().rest, workspace).branch);
+  const missingBase = projectBaseBranch(useShellStore((state) => state.rest), workspace).missing;
   // The remembered kind and model, not a terminal (PRD home-device-rail B36); Terminal only is the menu's first item.
   const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [purpose, setPurpose] = useState("");
@@ -323,6 +325,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
               <Input value={branch} disabled={working} autoComplete="off" spellCheck={false} placeholder="feature/name" className="mt-xxs" mono onChange={(event) => setBranch(event.target.value)} data-worktree-branch="true" />
             </label>
             {problem ? <Note tone="warn">{t(problem)}</Note> : null}
+            {missingBase ? <Note tone="warn">{t("projectSettings.branchMissing", { branch: missingBase, fallback: base })}</Note> : null}
             <label className="block text-body text-subtle-foreground">
               {t("workspace.base")}
               <Select value={base || undefined} disabled={working || branches.length === 0} onValueChange={(value) => setBase(value)}>

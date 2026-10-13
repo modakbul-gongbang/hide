@@ -158,6 +158,9 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 - Run `node scripts/gen-pen.mjs` and `node scripts/check-design-contract.mjs` against the result before committing; a transplant that leaves stale Foundations or an unrecognized sheet name fails the same checks a normal edit would.
 - Never resolve a `hide-screens.pen` conflict by hand-merging JSON; re-run the transplant with the correct `--sheet` list instead.
 
+For an owned screen regeneration, `node scripts/gen-screens.mjs --sheet <sheet-id>` generates the candidate and uses the same node-identity transplant internally, keeping every other sheet byte-for-byte and refreshing the shared local token variables.
+Omitting `--sheet` still regenerates all screens.
+
 ## Web screen list
 
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.

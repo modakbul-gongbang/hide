@@ -114,6 +114,13 @@ fn invalid_repository_and_failed_save_keep_last_confirmed_value() {
         Some("project_settings_save_failed")
     );
     assert!(runtime.project_settings_pending.is_empty());
+    assert_eq!(
+        runtime.snapshot.ui_state.project_settings_writes[&id]
+            .patch
+            .issue_source,
+        Some(IssueSourceChoice::Local),
+        "the refused intent remains available for Retry after the dialog closes"
+    );
 }
 
 #[test]
@@ -260,5 +267,115 @@ fn repository_change_clears_old_success_and_rejects_old_generation() {
             .home_issues
             .issues
             .is_empty()
+    );
+}
+
+#[test]
+fn repository_change_keeps_bare_legacy_links_scoped_after_restart() {
+    let mut runtime = fixture();
+    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .id
+        .clone();
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].branch = Some("7-task".into());
+    runtime.issue_candidates.insert(
+        checkout_id.clone(),
+        crate::issues::IssueCandidate {
+            reference: crate::issues::IssueReference {
+                repository: "example/first".into(),
+                number: 7,
+            },
+            source: "브랜치 이름".into(),
+        },
+    );
+    change(
+        &mut runtime,
+        "switch",
+        serde_json::json!({"repository": {"mode": "repository", "repository": "example/second"}}),
+    );
+    let (saved, _, _) = crate::persistence::load(&runtime.state_path);
+    runtime.snapshot.ui_state = saved;
+    runtime.issue_candidates.clear();
+    runtime.snapshot.navigator.workspaces[0]
+        .home_issues
+        .repository = Some("example/second".into());
+    runtime.sync_issues();
+    assert_eq!(
+        runtime.issue_candidates[&checkout_id].reference.repository,
+        "example/first"
+    );
+    // A new full reference is an explicit choice, even for the same number.
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].branch_issue =
+        Some("example/second#7".into());
+    runtime.sync_issues();
+    assert_eq!(
+        runtime.issue_candidates[&checkout_id].reference.repository,
+        "example/second"
+    );
+}
+
+#[test]
+fn old_pr_body_answer_cannot_link_same_number_in_new_repository() {
+    let mut runtime = fixture();
+    let root = "/fixture/project";
+    let reference = crate::issues::IssueReference {
+        repository: "example/first".into(),
+        number: 7,
+    };
+    runtime
+        .github
+        .projects
+        .push(crate::model::GithubProjectSnapshot {
+            root_path: root.into(),
+            issues: crate::issues::ProjectIssuesSnapshot {
+                repository: Some("example/second".into()),
+                ..Default::default()
+            },
+            pull_requests: vec![crate::model::PullRequestSnapshot {
+                number: 3,
+                url: "https://github.com/example/second/pull/3".into(),
+                head_branch: "7-task".into(),
+                base_branch: "main".into(),
+                title: "second PR".into(),
+                badge: crate::model::PullRequestBadge::Open,
+                checks: crate::model::PullRequestChecks::Passing,
+                review: None,
+                is_draft: false,
+                closing_issues: vec![],
+                merged_at_unix_ms: None,
+                updated_at_unix_ms: None,
+                created_at_unix_ms: None,
+                closed_at_unix_ms: None,
+                head_oid: None,
+                cross_repository: false,
+            }],
+            ..Default::default()
+        });
+    runtime.snapshot.pr_work.link = Some(crate::model::PrLinkSnapshot {
+        request_id: "old-intent".into(),
+        workspace_id: "visible-id".into(),
+        pr_number: 3,
+        step: "body".into(),
+        phase: "working".into(),
+        issue_key: Some(crate::tasks::github_key(&reference)),
+        issue_id: Some("#7".into()),
+        created: false,
+        message: None,
+    });
+    assert!(runtime.finish_pr_body("old-intent", &reference, Ok(true)));
+    assert!(
+        runtime.github.project(root).unwrap().pull_requests[0]
+            .closing_issues
+            .is_empty()
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .pr_work
+            .link
+            .as_ref()
+            .unwrap()
+            .issue_key
+            .as_deref(),
+        Some("github:example/first#7")
     );
 }

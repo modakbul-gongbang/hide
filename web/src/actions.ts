@@ -1484,6 +1484,16 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "memory_open", payload: { workspace_id: workspaceId } });
     },
 
+    setProjectSettings(target: import("./projectSettings").ProjectSettingsTarget, patch: import("./projectSettings").ProjectSettingsPatch, requestId: string) {
+      return dispatch({ schema_version: 2, kind: "project_settings_set", payload: { device_id: target.deviceId, root: target.root, request_id: requestId, patch } });
+    },
+
+    openProjectMemory(deviceId: string, workspaceId: string) {
+      this.openProjectById(deviceId, workspaceId);
+      this.memoryOpen(workspaceId);
+      setWorkspaceView({ tools: true, tool: "memory" });
+    },
+
     /** Shows one card of the opened Project in full; null folds it. */
     memoryExpand(workspaceId: string, number: number | null) {
       dispatch({ schema_version: 2, kind: "memory_expand", payload: { workspace_id: workspaceId, number } });
@@ -1617,6 +1627,7 @@ export function createActions(send: DispatchFn) {
 
     /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
     createWorktree(request: {
+      requestId?: string;
       deviceId: string;
       repositoryRoot: string;
       branch: string;
@@ -1631,6 +1642,7 @@ export function createActions(send: DispatchFn) {
         schema_version: 2,
         kind: "create_worktree",
         payload: {
+          ...(request.requestId ? { request_id: request.requestId } : {}),
           device_id: request.deviceId,
           repository_root: request.repositoryRoot,
           branch: request.branch,

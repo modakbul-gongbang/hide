@@ -3,6 +3,7 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { ProjectSettingsTarget } from "./projectSettings";
 import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
@@ -169,7 +170,7 @@ export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLen
  */
 export type TasksMode = "board" | "list" | "dependencies";
 
-export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings";
+export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings" | "project_settings";
 
 /**
  * A notice the operator can act on: `refreshable` offers `refresh_status`
@@ -289,6 +290,7 @@ type UiStore = {
   /** The trash confirmation the Explorer is showing, or null. */
   pendingTrash: PendingTrash | null;
   overlay: Overlay;
+  projectSettingsTarget: ProjectSettingsTarget | null;
   /** The tab the Settings sheet opens on. */
   settingsTab: SettingsTab;
   /** Settings was opened to add a device: the Devices tab opens its Add dialog once and clears this. */
@@ -368,6 +370,7 @@ type UiStore = {
   searchOver: Overlay;
   closeOverlay: (overlay?: Overlay) => void;
   openSettings: (tab: SettingsTab) => void;
+  openProjectSettings: (target: ProjectSettingsTarget) => void;
   /** Opens Settings on Devices with the Add device dialog in front. */
   openAddDevice: () => void;
   clearAddDeviceRequest: () => void;
@@ -418,6 +421,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
+  projectSettingsTarget: null,
   settingsTab: "general",
   addDeviceRequested: false,
   moveGiveUpRequested: false,
@@ -497,6 +501,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },
   openSettings: (settingsTab) => set({ overlay: "settings", settingsTab }),
+  openProjectSettings: (projectSettingsTarget) => set({ overlay: "project_settings", projectSettingsTarget }),
   openAddDevice: () => set({ overlay: "settings", settingsTab: "devices", addDeviceRequested: true }),
   clearAddDeviceRequest: () => set({ addDeviceRequested: false }),
   openMoveGiveUp: () => set({ overlay: "settings", settingsTab: "devices", moveGiveUpRequested: true }),

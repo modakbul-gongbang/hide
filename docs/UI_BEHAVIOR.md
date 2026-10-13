@@ -1702,6 +1702,38 @@ Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pres
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
+## Project settings
+
+A Git project or plain folder's gear, project menu and Overview title menu open the same Project settings dialog without selecting or folding that project.
+Home has no project settings entry.
+The gear shares the reserved action space with New work and More, appears on hover, keyboard focus or an open menu, and stays visible on devices without hover.
+Closing the dialog with Escape or its close button restores the opener's focus and leaves the screen, selected device and checkout unchanged.
+
+The dialog is 880 by 640 when the window permits it, with a fixed 200-wide navigation list for Connections, Working style and Memory; only the page scrolls.
+Choices are scoped to the owning device and canonical main-worktree root, shared by all of that project's checkouts.
+Each change saves immediately through the core's existing state writer, shows pending, saved or failed beside its row, and keeps the last confirmed value until durable acknowledgment.
+Closing does not cancel a save, and reopening preserves the failed intent's Retry.
+An unavailable device or missing project retains its last observed values read-only, with a retry at that surface; a newer settings version is also read-only with an update reason.
+
+Connections shows the actual GitHub repository or why none was detected, with automatic detection or an explicit owner/repository override, and the existing Auto, GitHub and Local issue choices.
+An invalid repository has an inline reason and is not saved.
+Changing the connection does not change Git remotes, account login or permissions; provider failures stay with the provider rather than silently switching to Local.
+Linear is a disabled Coming soon row.
+Previously linked issues and recorded issue, pull-request and session addresses keep their original repository identity, including an unchanged legacy bare issue token.
+
+Working style chooses the initial location for project-scoped New work: an existing checkout or a new worktree.
+A new-worktree start asks for its branch and actual base before starting and preserves the task, agent and model on failure.
+An explicit checkout, issue or pull-request start, CLI target, resume, wake, fork and running agent keep their existing behavior.
+The base branch is also the project's existing Git comparison and merge base; an absent saved branch falls back to an existing branch with a reason.
+Plain folders cannot select worktree creation or a Git base.
+Original-checkout branch protection and main file-write blocking are separate unsupported rows.
+
+Memory uses the existing consent, kit and confirmed/pending action controls; turning it off keeps existing cards.
+While the dialog is open its project owns the daemon's single Memory read slot, and the Tools project is restored when it closes.
+Open project Memory closes the dialog and opens that project's usable checkout and Memory tool; without a usable checkout it gives a local recovery reason.
+All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.
+`web/src/ProjectSettingsSheet.tsx` owns the dialog and `web/src/projectSettings.ts` reads its confirmed scoped choices.
+
 ## Settings: each machine's install kit
 
 Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
