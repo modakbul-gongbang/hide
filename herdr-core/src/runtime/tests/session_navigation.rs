@@ -3495,7 +3495,15 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
 #[test]
 fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let mut runtime = runtime();
-    let checkout_path = "/tmp/hide-selected-checkout";
+    let directory = scratch_dir("hide-selected-checkout-");
+    let path = directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let checkout_path = path.as_str();
+    runtime.test_dirs.push(directory);
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
@@ -3581,7 +3589,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        paths: Default::default(),
+        paths: Arc::new(workspace::paths_here([checkout_path])),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3701,6 +3709,57 @@ fn a_restored_selection_of_another_machine_opens_where_herdr_has_the_keyboard() 
     ] {
         restored_selection_opens_on_herdrs_focus(saved_pane, saved_checkout, moved);
     }
+}
+
+#[test]
+fn restored_checkout_waits_for_initial_path_facts() {
+    let (mut runtime, checkout, repository, _) = split_workspace_checkouts("restore-pending");
+    let repository = repository.to_string_lossy().into_owned();
+    let mut payload = split_workspace_payload(&[("w-order:t1", &repository)], "w-order:t1");
+    payload.focused_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w-order:t1:p".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout.clone());
+    runtime.snapshot.navigator.workspaces.clear();
+    runtime.restore_hint_pending = true;
+    runtime.catalog_paths = Default::default();
+    runtime.begin_catalog_coordinator();
+
+    runtime.ingest_session(Ok(payload.clone()));
+    assert!(
+        runtime.restore_hint_pending,
+        "unknown is not a missing checkout"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&checkout)
+    );
+    assert_eq!(runtime.snapshot.status.last_error, None);
+
+    let paths = runtime.ask_paths(BTreeSet::from([repository]));
+    let spaces = Runtime::session_spaces(&payload, &paths);
+    let catalog = session_sync::PrecomputedCatalog {
+        registrations: runtime.snapshot.ui_state.workspace_registrations.clone(),
+        worktrees: runtime.worktree_catalog(),
+        workspaces: workspace::build_catalog(
+            &runtime.node,
+            &runtime.snapshot.ui_state.workspace_registrations,
+            &spaces,
+            &runtime.worktree_catalog(),
+            &paths,
+        ),
+        paths,
+    };
+    runtime.ingest_session_with_catalog(Ok(payload), Some(catalog));
+    assert!(!runtime.restore_hint_pending);
+    assert_eq!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_ref(),
+        Some(&checkout)
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
 }
 
 fn restored_selection_opens_on_herdrs_focus(

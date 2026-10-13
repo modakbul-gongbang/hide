@@ -347,8 +347,12 @@ const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "u
  */
 export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "workspace" | "main" | null {
   if (!rest) return null;
-  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   const device = focusedRemoteDevice(rest);
+  // Herdr can connect before the asynchronous catalog and persisted View
+  // arrive. The core retains a saved choice until its path facts settle;
+  // absence during that restore must not choose Main permanently.
+  if (!device && rest.ui_state?.focused_checkout_id && !rest.workspace_view) return null;
+  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   if (!device) {
     const state = rest.status?.herdr?.state;
     return state && SETTLED_HERDR.has(state) ? "main" : null;

@@ -78,12 +78,12 @@ fn semantic_readers_converge_with_null_empty_reordering_and_future_reset() {
     let slow = runtime.snapshot_delta_payload(first.revision);
     assert_eq!(fast.revision, slow.revision);
     assert_eq!(
-        semantic(&fast)["rest"]["navigator"]["root_path"],
-        serde_json::Value::Null
+        semantic(&fast).pointer("/rest/navigator/root_path"),
+        Some(&serde_json::Value::Null)
     );
     assert_eq!(
-        semantic(&slow)["rest"]["status"]["last_error"],
-        serde_json::Value::Null
+        semantic(&slow).pointer("/rest/status/last_error"),
+        Some(&serde_json::Value::Null)
     );
     // Unchanged empty lists are omitted, not resent as a deletion.
     assert!(
@@ -102,8 +102,8 @@ fn semantic_readers_converge_with_null_empty_reordering_and_future_reset() {
         serde_json::json!([])
     );
     assert_eq!(
-        semantic(&reset)["rest"]["workspace_view"],
-        serde_json::Value::Null
+        semantic(&reset).pointer("/rest/workspace_view"),
+        Some(&serde_json::Value::Null)
     );
     assert!(runtime.snapshot_delta_payload(fast.revision).rest.is_none());
 }

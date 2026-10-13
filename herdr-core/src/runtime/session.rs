@@ -1392,6 +1392,15 @@ impl Runtime {
         }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
+                // A registered row can exist before the coordinator knows its
+                // path. Its empty tab list cannot prune a durable Agent layout
+                // or choose a replacement tab until that path is answered.
+                if self.catalog_from_coordinator
+                    && workspace.device_id == self.node.as_str()
+                    && !self.catalog_paths.knows(&checkout.path)
+                {
+                    continue;
+                }
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
@@ -2063,7 +2072,6 @@ impl Runtime {
         if !self.restore_hint_pending {
             return;
         }
-        self.restore_hint_pending = false;
         // A saved selection this session does not hold is gone, or was this
         // machine's under another core, which saved it as its device's and
         // so never at all (a core move's rekey says so, `focus_from_herdr`).
@@ -2111,6 +2119,21 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
+        // A coordinator starts before its first path answer. An absent row
+        // while one of its inputs is still unknown is not evidence that the
+        // saved checkout disappeared. Keep the restore hint until facts can
+        // settle that choice; a known missing path still consumes it.
+        if self.catalog_from_coordinator
+            && restored_pane_exists
+            && self.snapshot.ui_state.focused_checkout_id.is_some()
+            && self
+                .wanted_paths(payload)
+                .iter()
+                .any(|path| !self.catalog_paths.knows(path))
+        {
+            return;
+        }
+        self.restore_hint_pending = false;
         let moved = std::mem::take(&mut self.snapshot.ui_state.focus_from_herdr);
         let restore_missed = moved
             || (self.snapshot.ui_state.selected_pane_id.is_some() && !restored_pane_exists)
@@ -2673,6 +2696,7 @@ impl Runtime {
                         })
                 };
                 let selected_pane_invalid_for_context = selected_pane_id.is_some()
+                    && !self.restore_hint_pending
                     && ((focused_checkout.is_some() && target_pane_id.is_none())
                         || (focused_checkout.is_none()
                             && self.snapshot.ui_state.focused_checkout_id.is_some()));
