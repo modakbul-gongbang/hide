@@ -116,7 +116,7 @@ describe("the Memory tab", () => {
     const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: "AGENTS.md", github_failure: null };
     await render(memory({ rows: [row(3, { promotion: { ...promotion, state: "running", pr_number: null } }), row(7, { promotion })] }));
     expect(container.querySelector("[data-memory-questions] [data-memory-running='3']")).not.toBeNull();
-    expect(container.querySelector("[data-memory-questions] [data-memory-pr-group='72']")?.textContent).toContain("Review not read");
+    expect(container.querySelector("[data-memory-questions] [data-memory-pr-group='72']")?.textContent).toContain("m7");
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
     await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, review: "changes_requested" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Changes requested");

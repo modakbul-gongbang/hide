@@ -236,13 +236,16 @@ function Questions({ project, actions, busy }: { project: ProjectMemory; actions
           <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(project.workspace_id, "promote", null, selected)} data-memory-open-batch="true">{t("memory.batch.open")}</Button>
         </div>
       ) : null}
-      {groups.map((group) => (
+      {groups.map((group) => {
+        const review = reviewWord(pulls.find((pull) => pull.number === group.number)?.review);
+        return (
         <button key={group.number} type="button" className="flex min-w-0 items-center gap-sm rounded-xs py-sm text-left text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, group.number)} data-memory-pr-group={group.number}>
           <PrMark state="pending" compact />
           <span className="shrink-0">{t("memory.batch.inPr", { number: group.number })}</span>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">{group.cards.map(cardName).join(" · ")} · {t(reviewWord(pulls.find((pull) => pull.number === group.number)?.review)?.key ?? "memory.prReviewUnknown")}</span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{group.cards.map(cardName).join(" · ")}{review ? ` · ${t(review.key)}` : ""}</span>
         </button>
-      ))}
+        );
+      })}
     </section>
   );
 }
@@ -289,12 +292,16 @@ function Question({ question, project, actions, busy, last, selected, selecting,
   );
 }
 
+function DocumentName({ path }: { path: string }) {
+  return <span className="min-w-0 truncate font-mono" title={path} data-memory-document="true">{path.split("/").at(-1) || path}</span>;
+}
+
 function DocumentCompare({ comparison }: { comparison: NonNullable<MemoryCard["document_comparison"]> }) {
   const { t, i18n } = useInterfaceTranslation();
   const date = (at: number | null) => at === null ? t("memory.docs.unknownDate") : formatDateTime(requireInterfaceLanguage(i18n.language), at, { year:"numeric", month:"short", day:"numeric" });
   return (
     <div className="flex min-w-0 flex-col gap-sm border-l border-border pl-sm text-caption" data-memory-comparison="true">
-      <div><p className="break-words font-mono text-muted-foreground">{comparison.document} · {date(comparison.document_at_unix_ms)}</p><p className="whitespace-pre-wrap break-words text-subtle-foreground">{comparison.document_text}</p></div>
+      <div><p className="flex min-w-0 items-center gap-xs text-muted-foreground"><DocumentName path={comparison.document} /><span className="shrink-0 whitespace-nowrap">· {date(comparison.document_at_unix_ms)}</span></p><p className="whitespace-pre-wrap break-words text-subtle-foreground">{comparison.document_text}</p></div>
       <div><p className="text-muted-foreground">{t("memory.humanSource")} · {date(comparison.operator_at_unix_ms)}</p><p className="whitespace-pre-wrap break-words text-subtle-foreground">{comparison.operator_text || t("memory.docs.sourceUnavailable")}</p></div>
     </div>
   );
@@ -443,11 +450,11 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         </button>
         <span className="flex flex-wrap items-center gap-x-sm gap-y-xxs text-caption text-muted-foreground">
           <span className="rounded-xs bg-secondary px-xxs">{t(KIND[row.kind])}</span>
-          {outdated ? <span className="min-w-0 [overflow-wrap:anywhere]" data-memory-outdated={row.number}>{t("memory.docs.outdated")} · <span className="font-mono">{row.document_comparison!.document}</span>{row.document_comparison!.document_at_unix_ms ? ` · ${formatDateTime(language, row.document_comparison!.document_at_unix_ms, { year:"numeric", month:"short", day:"numeric" })}` : ""}</span> : null}
+          {outdated ? <span className="flex w-full min-w-0 items-center gap-xs" data-memory-outdated={row.number}><span className="shrink-0 whitespace-nowrap">{t("memory.docs.outdated")} ·</span><DocumentName path={row.document_comparison!.document} />{row.document_comparison!.document_at_unix_ms ? <span className="shrink-0 whitespace-nowrap">· {formatDateTime(language, row.document_comparison!.document_at_unix_ms, { year:"numeric", month:"short", day:"numeric" })}</span> : null}</span> : null}
           {merged ? (
             <>
               {row.promotion?.target_path ? (
-                <span className="min-w-0 rounded-xs bg-secondary px-xxs font-mono [overflow-wrap:anywhere]">{row.promotion.target_path}</span>
+                <span className="flex min-w-0 rounded-xs bg-secondary px-xxs"><DocumentName path={row.promotion.target_path} /></span>
               ) : row.promotion?.pr_number != null ? (
                 // No file was named: the pull request it went in by.
                 <PrMark state="merged" number={row.promotion.pr_number} />

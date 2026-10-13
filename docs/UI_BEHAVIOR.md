@@ -538,7 +538,7 @@ Eligible rows have checkboxes; selecting one to five shows `N selected · up to 
 The row's single-card action uses the same batch path.
 While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
 Promotion reasons omit zero counts and use short source-session counts.
-Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision, or a quiet unknown-review label until read.
+Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision when known.
 This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
@@ -550,6 +550,7 @@ Once merged, its ordinary card dims and shows the file it went into, or the merg
 A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
 Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
 An Outdated comparison dims its card and names the document and its date, asks nothing and is excluded from injection.
+Document references in card metadata and Compare headers show a single-line filename, truncated when needed, with the full path on hover and the date alongside.
 A card waiting to be checked against the repository again is dimmed; only the card the worker is checking shows `확인 중` in its existing status line, and a promotion keeps priority there.
 The waiting reason or exhausted checking budget is explained once above the list, without repeating it on every row.
 When no card is usable and cards await checks, the existing empty slot says why and that accepted cards return one by one.

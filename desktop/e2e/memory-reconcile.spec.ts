@@ -90,7 +90,9 @@ test("Memory compares sources, limits a batch and groups a confirmed PR", async 
       await expect.poll(() => tab.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await expect(tab.locator('[data-memory-pr-group="72"]')).toContainText("72");
       await tab.locator('[data-memory-cards] [data-memory-card="4"]').scrollIntoViewIfNeeded();
-      await expect(tab.locator('[data-memory-outdated="4"]')).toContainText("docs/");
+      await expect(tab.locator('[data-memory-outdated="4"]')).toContainText("repository-ownership-and-session-verification-guide.md");
+      await expect(tab.locator('[data-memory-outdated="4"] [data-memory-document]')).toHaveAttribute("title", "docs/architecture/repository-ownership-and-session-verification-guide.md");
+      await expect.poll(() => tab.locator('[data-memory-outdated="4"]').evaluate((element) => element.getBoundingClientRect().height <= Number.parseFloat(getComputedStyle(element).lineHeight))).toBe(true);
       await screenshot(page, `memory-minimum-${language}`);
       await tab.locator('[data-memory-compare="2"]').click();
       await expect(tab.locator("[data-memory-comparison]")).toBeVisible();
