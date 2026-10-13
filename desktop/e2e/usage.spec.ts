@@ -44,6 +44,12 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
       await page.locator('[data-settings-tab="usage"]').click();
       await expect(page.locator('[data-usage-settings]')).toBeVisible();
       await capture(`usage-settings-${language}-electron`);
+      const settings = page.locator('[data-usage-settings]');
+      await settings.getByText("Grok", { exact: true }).scrollIntoViewIfNeeded();
+      await capture(`usage-settings-unsupported-${language}-electron`);
+      await settings.getByText("Cursor", { exact: true }).scrollIntoViewIfNeeded();
+      expect(await settings.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await capture(`usage-settings-bottom-${language}-electron`);
       await page.keyboard.press("Escape");
       const chips = page.locator('[data-usage-chip]');
       await expect(chips).toHaveCount(3);

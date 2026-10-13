@@ -1687,6 +1687,7 @@ Usage follows Notifications in the App group, with a gauge mark and the localize
 The page walks the shared adapter declaration so all seven agents appear even before a read.
 An agent with limit support has one card: its mark and name with Hide, then a row for each declared account window with its current value and a pin switch.
 A window the account reports as not offered has no row or switch.
+When a fresh reading explicitly marks a window not offered or unreadable, the core removes its saved pin so an invisible row cannot hold a chip slot; loading, failed and retained readings preserve choices.
 The initial choices are the weekly window for Claude and Codex; the core stores the choices for every connected window and retains them across restart.
 At three pins, an unselected switch is disabled with “The sidebar shows at most three chips. Switch one off to pick this one.” beneath that row; removing a pin enables it again.
 Hide folds the card to its header, Hidden and Show, preserves the pins, and removes the agent from chips and the popover.

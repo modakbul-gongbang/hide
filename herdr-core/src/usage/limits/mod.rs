@@ -15,6 +15,14 @@ fn complete(
     mut windows: Vec<WindowReading>,
     now_s: u64,
 ) -> Result<LimitReading, Cause> {
+    if !windows.iter().any(|window| {
+        matches!(
+            window.outcome,
+            WindowOutcome::Open { .. } | WindowOutcome::NotStarted | WindowOutcome::Expired { .. }
+        )
+    }) {
+        return Err(Cause::FormatChanged);
+    }
     for kind in [WindowKind::FiveHour, WindowKind::Weekly] {
         if !windows
             .iter()

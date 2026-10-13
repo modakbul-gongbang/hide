@@ -101,6 +101,7 @@ struct SourceRead {
     source: LimitSource,
     worker: BackgroundRead<u64, Answer>,
     attempt: u64,
+    pending: bool,
     last_attempt: Option<Instant>,
     checked_at_ms: Option<u64>,
     success: Option<Success>,
@@ -184,6 +185,7 @@ impl SourceRead {
             source,
             worker,
             attempt: 0,
+            pending: false,
             last_attempt: None,
             checked_at_ms: None,
             success: None,
@@ -194,7 +196,8 @@ impl SourceRead {
         }
     }
     fn due(&self, now: Instant, active: bool, opened: bool) -> bool {
-        self.retry_at.is_none_or(|retry| now >= retry)
+        !self.pending
+            && self.retry_at.is_none_or(|retry| now >= retry)
             && self.last_attempt.is_none_or(|last| {
                 (active && now.duration_since(last) >= REFRESH_INTERVAL)
                     || (opened && now.duration_since(last) > POPOVER_REFRESH_AGE)
@@ -207,6 +210,7 @@ impl SourceRead {
         let Some(answer) = self.worker.poll(self.attempt) else {
             return;
         };
+        self.pending = false;
         self.checked_at_ms = Some(answer.checked_at_ms);
         self.last_attempt = Some(now);
         match answer.result {
@@ -234,6 +238,14 @@ impl SourceRead {
                 self.fallback = answer.fallback;
             }
         }
+    }
+    fn poll(&mut self, now: Instant, enabled: bool, active: bool, opened: bool) {
+        if enabled && self.due(now, active, opened) {
+            self.attempt += 1;
+            self.pending = true;
+            self.last_attempt = Some(now);
+        }
+        self.collect(now);
     }
     fn project(&self, now_ms: u64) -> Cell<LimitReading> {
         let reading = |success: &Success, freshness| {
@@ -319,14 +331,12 @@ impl UsageDriver {
             let visible = !activity.hidden.iter().any(|agent| agent == read.agent);
             let enabled = visible || required;
             let active = (visible && activity.window_visible) || required;
-            if enabled
-                && now.duration_since(self.started_at) >= INITIAL_DELAY
-                && read.due(now, active, opened && visible)
-            {
-                read.attempt += 1;
-                read.last_attempt = Some(now);
-            }
-            read.collect(now);
+            read.poll(
+                now,
+                enabled && now.duration_since(self.started_at) >= INITIAL_DELAY,
+                active,
+                opened && visible,
+            );
         }
         let mut next = AgentUsage::initial_rows();
         for row in &mut next {
@@ -393,6 +403,7 @@ mod tests {
             source: LimitSource::ClaudeUsageText,
             worker: BackgroundRead::on_change(Duration::ZERO, |_: &u64| unreachable!()),
             attempt: 0,
+            pending: false,
             last_attempt: None,
             checked_at_ms: Some(2000),
             success: Some(Success {
@@ -459,6 +470,58 @@ mod tests {
         source.retry_at = Some(now + Duration::from_secs(90));
         assert!(!source.due(now + Duration::from_secs(89), true, true));
         assert!(source.due(now + Duration::from_secs(90), true, true));
+    }
+    #[test]
+    fn reopening_during_a_read_cannot_queue_work_after_hide_or_bypass_backoff() {
+        use std::sync::{
+            Barrier,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(2));
+        let mut source = source();
+        let counted = calls.clone();
+        let worker_barrier = barrier.clone();
+        source.worker = BackgroundRead::on_change(Duration::ZERO, move |_: &u64| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                worker_barrier.wait();
+                worker_barrier.wait();
+            }
+            Answer {
+                checked_at_ms: 1000,
+                result: Err(Failure {
+                    cause: Cause::RateLimited,
+                    kind: "rate_limit".into(),
+                    status: Some(429),
+                    retry_after: Some(Duration::from_secs(300)),
+                }),
+                fallback: None,
+            }
+        });
+        let start = Instant::now();
+        source.poll(start, true, true, false);
+        barrier.wait();
+        let reopened = start + Duration::from_secs(61);
+        source.poll(reopened, true, false, true);
+        barrier.wait();
+        source.worker.join_pending();
+        source.poll(reopened, false, false, false);
+        source.worker.join_pending();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "Hide must not start a queued read"
+        );
+        source.poll(reopened + Duration::from_secs(299), true, true, true);
+        source.worker.join_pending();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "Retry-After still governs a reopened popover"
+        );
+        source.poll(reopened + Duration::from_secs(300), true, true, true);
+        source.worker.join_pending();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
     #[test]
     fn registry_has_all_agents_but_only_two_distinct_limit_reads() {

@@ -168,17 +168,24 @@ fn no_reset_distinguishes_not_started_from_unreadable() {
     ] {
         let read = parse(
             LimitSource::ClaudeUsageText,
-            &format!("Current session: {percent}% used\nCurrent week (all models): 0% used"),
+            &format!("Current session: {percent}% used\nCurrent week (all models): 24% used · resets Sep 24 at 1pm (Asia/Seoul)"),
             CAPTURED_AT,
         )
         .unwrap();
         assert_eq!(outcome(&read, WindowKind::FiveHour), &expected);
-        assert_eq!(
+        assert!(matches!(
             outcome(&read, WindowKind::Weekly),
-            &WindowOutcome::Unreadable {
-                cause: Cause::FormatChanged
-            }
-        );
+            WindowOutcome::Open { .. }
+        ));
+    }
+}
+#[test]
+fn entirely_unreadable_windows_are_a_whole_read_failure() {
+    for (source, body) in [
+        (LimitSource::ClaudeUsageText, "Current session: 12% used\nCurrent week (all models): 24% used".to_owned()),
+        (LimitSource::CodexUsage, json!({"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_at":"changed"},"secondary_window":{"used_percent":24,"limit_window_seconds":604800,"reset_at":"changed"}}}).to_string()),
+    ] {
+        assert_eq!(parse(source, &body, CAPTURED_AT), Err(Cause::FormatChanged));
     }
 }
 #[test]

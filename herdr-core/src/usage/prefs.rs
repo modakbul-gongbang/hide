@@ -29,6 +29,33 @@ impl Default for UsagePreferences {
     }
 }
 impl UsagePreferences {
+    /// An explicitly absent account window cannot keep an invisible chip slot.
+    /// Transient failures and retained readings keep the operator's choices.
+    pub fn reconcile(&mut self, usage: &UsageSnapshot) -> bool {
+        let before = self.pinned.len();
+        self.pinned.retain(|pin| {
+            let Some(row) = usage.own_agent(&pin.agent) else {
+                return true;
+            };
+            let Cell::Reading {
+                value,
+                freshness: super::model::Freshness::Fresh,
+                ..
+            } = &row.limits
+            else {
+                return true;
+            };
+            !value.windows.iter().any(|window| {
+                window.kind == pin.window
+                    && window.scope == Scope::All
+                    && matches!(
+                        window.outcome,
+                        WindowOutcome::NotOffered | WindowOutcome::Unreadable { .. }
+                    )
+            })
+        });
+        before != self.pinned.len()
+    }
     pub fn valid(&self) -> bool {
         self.pinned.len() <= MAX_PINS
             && self.hidden.len() <= hide_agent_adapter::ADAPTERS.len()

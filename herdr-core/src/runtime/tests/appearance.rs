@@ -465,3 +465,63 @@ fn usage_pins_are_bounded_shared_and_survive_restart_and_stale_saves() {
         "Show restores the chosen windows"
     );
 }
+
+#[test]
+fn an_absent_pin_frees_a_shared_slot_and_stays_removed_after_restart() {
+    use crate::usage::model::{
+        AgentUsage, Cell, Freshness, LimitReading, Scope, WindowKind, WindowOutcome, WindowReading,
+    };
+    for outcome in [
+        WindowOutcome::NotOffered,
+        WindowOutcome::Unreadable {
+            cause: crate::usage::model::Cause::FormatChanged,
+        },
+    ] {
+        let (_state, path) = state_path("usage-absent-pin");
+        let mut runtime = runtime_at(&path);
+        let pin = |agent: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind":"usage_pin_set",
+                "payload":{"agent":agent,"window":"five_hour","enabled":true},
+            }))
+            .unwrap()
+        };
+        assert!(runtime.dispatch_json(&pin("codex")));
+        let mut rows = AgentUsage::initial_rows();
+        let codex = rows.iter_mut().find(|row| row.agent == "codex").unwrap();
+        codex.limits = Cell::Reading {
+            value: LimitReading {
+                windows: vec![WindowReading {
+                    kind: WindowKind::FiveHour,
+                    scope: Scope::All,
+                    outcome,
+                }],
+            },
+            freshness: Freshness::Stale,
+            observed_at_ms: 1000,
+        };
+        runtime.ingest_usage(rows.clone());
+        assert_eq!(
+            runtime.snapshot.ui_state.usage.pinned.len(),
+            3,
+            "retained readings preserve the choice"
+        );
+        if let Cell::Reading { freshness, .. } = &mut rows
+            .iter_mut()
+            .find(|row| row.agent == "codex")
+            .unwrap()
+            .limits
+        {
+            *freshness = Freshness::Fresh;
+        }
+        runtime.ingest_usage(rows);
+        assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+        assert!(
+            runtime.dispatch_json(&pin("claude")),
+            "the newly freed slot is selectable"
+        );
+        let expected = runtime.snapshot.ui_state.usage.clone();
+        drop(runtime);
+        assert_eq!(runtime_at(&path).snapshot.ui_state.usage, expected);
+    }
+}

@@ -818,6 +818,14 @@ impl Runtime {
             return false;
         }
         self.snapshot.navigator.usage.nodes[0].agents = usage;
+        if self
+            .snapshot
+            .ui_state
+            .usage
+            .reconcile(&self.snapshot.navigator.usage)
+        {
+            self.persist_ui_state();
+        }
         self.refresh_background_ai();
         true
     }
