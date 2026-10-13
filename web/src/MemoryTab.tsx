@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
 import { useUiStore } from "./ui";
+import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentLogo } from "./components/agent-logo";
@@ -235,7 +236,7 @@ function Questions({ project, actions, busy }: { project: ProjectMemory; actions
           <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(project.workspace_id, "promote", null, selected)} data-memory-open-batch="true">{t("memory.batch.open")}</Button>
         </div>
       ) : null}
-      {groups.map((group) => <ProgressRow key={group.key} group={group} pull={pulls.find((pull) => pull.number === group.pr && pull.url === group.url)} agents={agents} project={project} actions={actions} />)}
+      {groups.map((group) => <ProgressRow key={group.key} group={group} pull={pulls.find((pull) => pull.number === group.pr && sameGithubPullRequest(pull.url, group.url))} agents={agents} project={project} actions={actions} />)}
     </section>
   );
 }

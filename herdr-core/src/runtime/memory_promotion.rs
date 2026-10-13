@@ -512,7 +512,15 @@ fn attempt_pull_request(
     let mut on_branch = project
         .pull_requests
         .iter()
-        .filter(|pull| pull.url == format!("https://github.com/{repository}/pull/{}", pull.number))
+        .filter(|pull| {
+            pull.url
+                .strip_prefix("https://github.com/")
+                .and_then(|path| path.split_once("/pull/"))
+                .is_some_and(|(actual_repository, number)| {
+                    actual_repository.eq_ignore_ascii_case(repository)
+                        && number == pull.number.to_string()
+                })
+        })
         .filter(|pull| !pull.cross_repository && pull.head_branch == branch)
         .filter(|pull| match promotion.pr_number {
             Some(number) => u64::from(pull.number) == number,
@@ -643,8 +651,11 @@ fn track_promotions(
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
                 let no_pull_request = pull.is_none() && attempt_gone(promotion, ended, now) && {
-                    let original_target = promotion.repository.is_some()
-                        && promotion.repository == guard.promotion_repository(node, root);
+                    let original_target = promotion
+                        .repository
+                        .as_deref()
+                        .zip(guard.promotion_repository(node, root).as_deref())
+                        .is_some_and(|(original, current)| original.eq_ignore_ascii_case(current));
                     let (verdict, changed) = if original_target {
                         guard.promotion_catalog_verdict(&key, node, root)
                     } else {
@@ -1195,6 +1206,7 @@ pub(super) fn start_promotion(
 ) -> Result<Option<(u32, PromotionStart)>, String> {
     let repository = start.repository.as_deref().ok_or("The promotion repository has not been confirmed; check the project connection before starting")?;
     crate::issues::IssueReference::parse(&format!("{repository}#1"), None)?;
+    start.repository = Some(repository.to_ascii_lowercase());
     let mut numbers = numbers.to_vec();
     numbers.sort_unstable();
     numbers.dedup();
@@ -1254,7 +1266,11 @@ pub(super) fn start_promotion(
     if !reused.is_empty()
         && previous.iter().any(|(_, promotion)| {
             promotion.branch.as_ref() == Some(&branch)
-                && (promotion.repository.is_none() || promotion.repository != start.repository)
+                && !promotion
+                    .repository
+                    .as_deref()
+                    .zip(start.repository.as_deref())
+                    .is_some_and(|(original, current)| original.eq_ignore_ascii_case(current))
         })
     {
         return Err("The original promotion repository is unavailable; restore its connection before retrying".into());
@@ -1724,6 +1740,24 @@ mod tests {
             ..promotion.clone()
         };
         catalog.pull_requests[0].url = "https://github.com/acme/project/pull/7".into();
+        let mixed_case = Promotion {
+            repository: Some("Acme/Project".into()),
+            ..promotion.clone()
+        };
+        assert_eq!(
+            attempt_pull_request(&catalog, &mixed_case).map(|pull| pull.number),
+            Some(7)
+        );
+        for wrong in [
+            "https://elsewhere.invalid/acme/project/pull/7",
+            "https://github.com/acme/project/issues/7",
+            "https://github.com/acme/project/Pull/7",
+            "https://github.com/acme/project/pull/8",
+        ] {
+            catalog.pull_requests[0].url = wrong.into();
+            assert_eq!(attempt_pull_request(&catalog, &mixed_case), None);
+        }
+        catalog.pull_requests[0].url = "https://github.com/acme/project/pull/7".into();
         assert_eq!(attempt_pull_request(&catalog, &legacy), None);
         assert_eq!(
             next_promotion(
@@ -1777,7 +1811,7 @@ mod tests {
                 device_id: node.as_str().into(),
                 root: repo.into(),
                 repository: Some(crate::project_settings::RepositoryConnection::Repository {
-                    repository: "acme/project".into(),
+                    repository: "Acme/Project".into(),
                 }),
                 issue_source: None,
                 new_work: None,
@@ -2031,7 +2065,7 @@ mod tests {
                 .unwrap()
                 .promotion_start(&crate::node::test_node(), "/checkouts/fixture")
                 .unwrap();
-            start.repository = Some("acme/project".into());
+            start.repository = Some("Acme/Project".into());
             start
         };
         // A node's Project's agent starts on that node, never here (PRD

@@ -142,7 +142,7 @@ describe("the Memory tab", () => {
     ]);
   });
 
-  it("keeps running and legacy open promotions in To ask until merged or closed", async () => {
+  it("keeps running and bound open promotions in To ask until merged or closed", async () => {
     const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, pr_url: "https://github.com/acme/one/pull/72", target_path: "AGENTS.md", github_failure: null };
     await render(memory({ rows: [row(3, { promotion: { ...promotion, state: "running", pr_number: null } }), row(7, { promotion })] }));
     expect(container.querySelector("[data-memory-questions] [data-memory-running='3']")).not.toBeNull();
@@ -172,13 +172,17 @@ describe("the Memory tab", () => {
   });
 
   it("retains the original promotion URL after Connections changes to a same-number PR", async () => {
-    const original = "https://github.com/acme/one/pull/72";
+    const original = "https://github.com/Acme/One/pull/72";
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, pr_url: original, target_path: null, github_failure: null } })] }));
     await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/two/pull/72", state: "merged", checks: "failed" }] }] } } as unknown as SnapshotRest }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).not.toContain("Merged");
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).not.toContain("Checks failed");
     await click("[data-memory-open-pr='72']");
     expect(window.open).toHaveBeenCalledWith(original, "_blank", "noopener,noreferrer");
+    await act(async () => useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...rest.navigator!.workspaces![0], pull_requests: [{ number: 72, url: "https://github.com/acme/one/pull/72", state: "merged" }] }] } } as unknown as SnapshotRest }));
+    expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Merged");
+    await click("[data-memory-open-pr='72']");
+    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 72, focus: 72 } });
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 72, target_path: null, github_failure: null } })] }));
     expect(container.querySelector("[data-memory-pr-group='72']")?.textContent).toContain("Couldn't check for a PR");
     expect(container.querySelector<HTMLButtonElement>("[data-memory-open-pr='72']")?.disabled).toBe(true);

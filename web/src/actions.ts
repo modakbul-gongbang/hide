@@ -1,4 +1,5 @@
 import { projectCheckout } from "./projects";
+import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { deviceConnected } from "./devices";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
@@ -1402,8 +1403,8 @@ export function createActions(send: DispatchFn) {
     /** A session link retains repository identity even when its maker moved projects. */
     openSessionPullRequest(pull: {workspace_id: string | null; url: string; number: number}) {
       const projects = catalogWorkspaces(rest());
-      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.url === pull.url))
-        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.url === pull.url));
+      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)))
+        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)));
       if (project) this.openPullRequestRow(project.id, pull.number);
       else this.openLink(pull.url, false);
     },

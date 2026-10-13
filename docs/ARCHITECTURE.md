@@ -266,6 +266,7 @@ At most three new promotion suggestions are open; document corrections for rule,
 `memory_action` `promote` takes one card or up to five selected card numbers through one path.
 The store reserves every card atomically before starting one agent in one worktree, with Hide's `hide:memory` identity as its origin and no parent or watch.
 The reserved attempt durably captures its repository from the confirmed connection and node-owned Git facts.
+Repository owner/name comparisons follow GitHub's case-insensitive identity; the URL host, `pull` path kind and PR number stay exact.
 Its PR number, branch and repository-qualified URL must match before a catalog result can settle it; a changed connection cannot fail or settle the old attempt from another repository.
 Schema 14 adds nullable `card_promotions.repository`; legacy unknown provenance stays unknown, keeps its card state and is shown as unconfirmed with its PR link disabled.
 A failed batch retry preserves that original target and refuses a different or unknown connection; restoring the original connection asks for a fresh catalog before deciding absence.

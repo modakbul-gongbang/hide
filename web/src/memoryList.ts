@@ -1,6 +1,7 @@
 import { formatRelativeTime } from "./i18n/format";
 import type { InterfaceLanguage } from "./i18n/locale";
 import type { AgentRow, MemoryRow, ProjectMemory, PullRequest } from "./snapshot";
+import { githubPullRequestIdentity, sameGithubPullRequest } from "./pullRequestIdentity";
 import type { MessageKey } from "./i18n/catalogs";
 
 /** How many cards the list shows before `그 외 N` (design v7). */
@@ -80,8 +81,9 @@ export function memoryProgress(project: ProjectMemory): MemoryProgress[] {
     const promotion = row.promotion;
     if (!promotion || !["running", "unconfirmed", "pr_open"].includes(promotion.state)) continue;
     const pr = promotion.state === "pr_open" ? promotion.pr_number : null;
-    const url = pr !== null ? promotion.pr_url ?? null : null;
-    const key = url !== null ? `pr:${url}` : promotion.state === "running" && promotion.agent?.pane_id ? `agent:${promotion.agent.pane_id}:${promotion.started_at_unix_ms ?? row.number}` : `card:${row.number}`;
+    const identity = pr !== null ? githubPullRequestIdentity(promotion.pr_url) : null;
+    const url = identity !== null ? promotion.pr_url! : null;
+    const key = identity !== null ? `pr:${identity}` : promotion.state === "running" && promotion.agent?.pane_id ? `agent:${promotion.agent.pane_id}:${promotion.started_at_unix_ms ?? row.number}` : `card:${row.number}`;
     const group = groups.get(key);
     if (group) group.cards.push(row);
     else groups.set(key, { key, pr, url, cards: [row] });
@@ -95,17 +97,17 @@ export function memoryProgressAgent(group: MemoryProgress, pull: PullRequest | u
     const pane = group.cards[0].promotion?.agent?.pane_id;
     return pane ? agents.find((agent) => agent.pane_id === pane) : undefined;
   }
-  if (!pull?.url || pull.url !== group.url) return undefined;
+  if (!pull?.url || !sameGithubPullRequest(pull.url, group.url)) return undefined;
   return agents.find((agent) => {
     const task = agent.hide_ai?.task;
     return task?.kind === "memory_promote"
-      && agent.request?.pull_requests.some((row) => row.number === pull.number && row.url === pull.url && row.live && (row.created || row.duty));
+      && agent.request?.pull_requests.some((row) => row.number === pull.number && sameGithubPullRequest(row.url, pull.url) && row.live && (row.created || row.duty));
   });
 }
 
 export function memoryProgressStatus(group: MemoryProgress, pull: PullRequest | undefined, agent: AgentRow | undefined): { key: MessageKey; tone: string; agentLink: boolean } {
   if (group.pr !== null && !group.url) return { key: "memory.unconfirmed", tone: "text-muted-foreground", agentLink: false };
-  pull = pull?.url === group.url ? pull : undefined;
+  pull = sameGithubPullRequest(pull?.url, group.url) ? pull : undefined;
   if (pull?.state === "merged" || pull?.state === "closed") return { key: pull.state === "merged" ? "agentSessions.pr.merged" : "agentSessions.pr.closed", tone: "text-muted-foreground", agentLink: false };
   if (pull?.checks === "failed") return { key: "agentSessions.pr.failed", tone: "text-destructive", agentLink: true };
   if (pull?.review === "changes_requested") return { key: "board.review.changes", tone: "text-warning", agentLink: true };
