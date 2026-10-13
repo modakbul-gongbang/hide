@@ -1263,8 +1263,9 @@ impl Runtime {
         self.sync_active_editor_document();
     }
 
-    /// Forgets a closed tab's place; a save still running settles into
-    /// nothing when it answers.
+    /// Forgets a retired buffer's place; a save still running settles into
+    /// nothing when it answers. Admitted GUI destinations own their read
+    /// independently and remain until completion or their owner is pruned.
     pub(super) fn forget_document(&mut self, tab_id: &str) {
         self.document_places.remove(tab_id);
         if let Some(slot) = self.document_saves.get(tab_id)
@@ -1273,7 +1274,12 @@ impl Runtime {
         {
             self.document_saves.remove(tab_id);
         }
-        if self.document_opens.remove(tab_id).is_some() {
+        if self
+            .document_opens
+            .get(tab_id)
+            .is_some_and(|open| open.placements.is_empty())
+        {
+            self.document_opens.remove(tab_id);
             self.sync_opening_snapshot();
         }
     }

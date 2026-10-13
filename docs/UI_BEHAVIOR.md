@@ -84,6 +84,7 @@ A file read opens File Views when its document is ready, in the Agent tab that r
 Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
+Closing that buffer's last current display does not cancel another tab's pending GUI open.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
 Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
 

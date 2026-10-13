@@ -2090,6 +2090,91 @@ fn a_coalesced_gui_read_refuses_a_sixty_fifth_destination() {
     assert!(runtime.editor_documents.is_empty());
 }
 
+/// B1/B11/B22: retiring B's clean buffer cannot cancel A's still-admitted
+/// GUI destination, even when B closed the last actual display of the file.
+#[test]
+fn a_gui_read_survives_another_tabs_clean_buffer_retirement() {
+    let f = Fixture::new();
+    let views_dir = f.runtime_dir("hide-gui-retired-read-");
+    let root = {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        helper_ready(&mut runtime, &f.device);
+        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+        checkout.tabs = ["tab-a", "tab-b"]
+            .into_iter()
+            .map(|id| {
+                let mut held = tab(WORKSPACE, &f.checkout, None);
+                held.id = Some(id.to_owned());
+                held
+            })
+            .collect();
+        checkout.active_tab_id = Some("tab-a".to_owned());
+        runtime.workspace_views =
+            Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
+        runtime.sync_workspace_view();
+        runtime.document_root(WORKSPACE, &f.checkout).unwrap()
+    };
+    f.device.hold_read("a.txt");
+    f.open("a.txt");
+    f.wait("the held node read", |_| f.device.waiting() > 0);
+    let (document, place) =
+        files::open_document(FakeDevice::new().as_ref(), &root, &f.path("a.txt")).unwrap();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
+            Some("tab-b".to_owned());
+        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
+        runtime.sync_workspace_view();
+        let tab_id = runtime.new_file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
+        runtime.insert_file_tab(
+            super::super::editor::PreparedFileTab::Read {
+                tab_id,
+                document: Box::new(document),
+                place,
+            },
+            WORKSPACE,
+            &f.checkout,
+            &f.path("a.txt"),
+            false,
+        );
+    }
+    f.open("a.txt");
+    let id = {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.sync_workspace_view();
+        let ViewNodeSnapshot::Area(area) = &runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .layout
+            .root
+        else {
+            panic!("one area")
+        };
+        area.active.clone().unwrap()
+    };
+    f.dispatch("view_layout", serde_json::json!({"workspace": {"device_id": DEVICE, "path": f.root.to_string_lossy()}, "action": "close", "display_id": id}));
+    f.device.release_read("a.txt");
+    f.wait("the original GUI read completion", |runtime| {
+        runtime.snapshot.editor.opening.is_empty()
+    });
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    assert!(
+        !runtime.snapshot.workspace_view.as_ref().unwrap().views,
+        "B stays closed"
+    );
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
+    runtime.choose_remote_view_presentation(DEVICE, "tab-a");
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert!(view.views, "A still owns its accepted GUI open");
+    assert_eq!(view.layout.display_count, 1);
+    assert_eq!(runtime.snapshot.editor.tabs.len(), 1);
+}
+
 /// S7 B23: this machine and a device can hold a checkout at the same path,
 /// and each is its own Workspace: the file opened in each is two documents,
 /// each shown by its own Workspace's view, so a draft in one leaves the
