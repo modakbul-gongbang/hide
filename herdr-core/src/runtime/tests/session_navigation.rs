@@ -3578,6 +3578,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     }))
     .expect("overlapping cwd session payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
         paths: Default::default(),
@@ -3661,6 +3662,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     }))
     .expect("missing selected pane payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
         paths: Default::default(),
@@ -3823,6 +3825,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: Vec::new(),
             workspaces: Vec::new(),
             paths: Default::default(),

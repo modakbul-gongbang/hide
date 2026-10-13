@@ -173,6 +173,50 @@ pub fn device_target(value: &Value, node: &str) -> Option<Target> {
     Some(Target::of(device, root, &expanded))
 }
 
+/// Reads the same watch scope from retained typed state, independently of
+/// which semantic fields were included on another reader's transport frame.
+pub fn device_target_from_rest(rest: &herdr_core::RestSections, node: &str) -> Option<Target> {
+    let device = rest
+        .navigator
+        .focused_device_id
+        .as_deref()
+        .filter(|device| *device != node)?;
+    let ui = &rest.ui_state;
+    if !ui.right_panel_visible || ui.right_panel_section != herdr_core::RightPanelSection::Explorer
+    {
+        return None;
+    }
+    if rest
+        .navigator
+        .devices
+        .iter()
+        .find(|row| row.id == device)?
+        .host
+        .state
+        != "ready"
+    {
+        return None;
+    }
+    let session = rest
+        .status
+        .remote
+        .iter()
+        .find(|remote| remote.target_id == device)?
+        .session
+        .as_ref()?;
+    let checkout = session
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|checkout| Some(&checkout.id) == session.focused_checkout_id.as_ref())?;
+    let expanded = ui
+        .device_expanded_paths
+        .get(device)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    Some(Target::of(device, checkout.path.clone(), expanded))
+}
+
 fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }

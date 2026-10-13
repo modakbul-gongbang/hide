@@ -4,10 +4,10 @@ use crate::reader::BackgroundRead;
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Request {
+    // Facts depend on paths and the connection, not mutable agent/PR display
+    // metadata. Publication separately fences the current catalog inputs.
     pub connection: u64,
     pub paths: BTreeSet<String>,
-    pub registrations: Vec<WorkspaceRegistration>,
-    pub worktrees: crate::model::WorktreeCatalogSnapshot,
 }
 
 type Answer = (Request, Result<workspace::PathIndex, String>);

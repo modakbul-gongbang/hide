@@ -86,6 +86,7 @@ export type Frame = {
     terminal_sequence?: number;
     terminal_epoch?: string;
     rest?: SnapshotRest;
+    rest_format?: "semantic-rest-v1";
     usage?: UsageSnapshot;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
@@ -585,12 +586,21 @@ export const useShellStore = create<Store>((set, get) => ({
     };
     if (frame.type === "snapshot" || payload.rest) {
       const previous = get().rest;
-      // The core leaves `workspace_view` out of the frame when no Workspace
-      // is in front, so a delta that carries rest without it clears it.
+      // Negotiated semantic frames retain omitted nested fields. Legacy
+      // schema-2 frames carry complete nested sections and omitted Workspace
+      // still clears it, including when connecting to an older daemon.
       const incoming =
         frame.type === "snapshot"
           ? payload.rest ?? {}
-          : { ...previous, ...payload.rest, workspace_view: payload.rest?.workspace_view };
+          : payload.rest_format === "semantic-rest-v1"
+            ? {
+                ...previous,
+                ...payload.rest,
+                ...(payload.rest?.navigator ? { navigator: { ...previous?.navigator, ...payload.rest.navigator } } : {}),
+                ...(payload.rest?.terminal ? { terminal: { ...previous?.terminal, ...payload.rest.terminal } } : {}),
+                ...(payload.rest?.status ? { status: { ...previous?.status, ...payload.rest.status } } : {}),
+              }
+            : { ...previous, ...payload.rest, workspace_view: payload.rest?.workspace_view };
       const rest = share(previous, incoming);
       const diagnostics: string[] = [];
       const agents =

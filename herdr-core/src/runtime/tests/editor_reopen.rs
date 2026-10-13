@@ -558,6 +558,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
             paths: Default::default(),

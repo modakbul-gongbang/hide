@@ -304,9 +304,10 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   Extend `PrecomputedCatalog`, `CatalogCache`, and `PathIndex` (`herdr-core/src/session_sync.rs`, `herdr-core/src/workspace.rs`) rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
   The catalog's `BackgroundRead` worker asks the core's own node about every path in bounded `Call::PathFacts` chunks (at most `PATH_FACTS_LIMIT` paths and `PATH_FACTS_ANSWER_LIMIT`, 16 MiB, per answer; a larger answer is refused and records `catalog.path_facts_failed`).
   One read runs and changed inputs coalesce to the latest request; a completion wakes the existing republish channel, with no additional timer.
-  The current connection, registrations, worktrees and wanted paths fence acceptance, and the current replica is then applied with accepted facts, so no delayed answer replays old topology.
+  The current connection and wanted paths fence fact acceptance; registrations and worktrees independently fence the prepared catalog at final application, so display metadata changes do not starve path facts and no delayed answer replays old topology.
   Identical facts keep their pointer and changed topology while a refresh runs repeats no catalog build when its catalog inputs are unchanged.
   Cancellation is checked between chunks; shutdown joins the current node call outside Runtime, whose ten-second deadline bounds that call, rather than claiming the whole multi-chunk read ends in ten seconds.
+  The collected facts and request set remain proportional to the registered/session paths; the chunk byte bound is not a whole-request byte bound.
 - Keep the session-sync thread that applies Herdr's events free of blocking work (PRD instant-pane-topology D-13).
   A socket read that opens its own connection goes to the sync-read worker (`session_sync/sync_reads.rs`, one read of each kind in flight), a subprocess, a node read that runs one or an HTTP request to a `BackgroundRead` reader (`herdr-core/src/reader.rs`), and a file write that ends in an fsync to its store's own thread (the label store); the work's output and interval stay what they were.
   An event that arrives while one of them runs is applied at once, which the topology scenario's churning agents exercise.

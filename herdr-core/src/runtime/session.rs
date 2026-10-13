@@ -365,7 +365,7 @@ impl Runtime {
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog reads what the core's own node says of its paths, so
         // the sync coordinator asks and builds it before taking the runtime
-        // lock. A precomputation whose registrations no longer match current
+        // lock. A precomputation whose registrations or worktrees no longer match current
         // state is stale; the last accepted catalog stands in for it and the
         // next publish, a second away, brings a fresh one. Nothing is asked
         // here once the coordinator feeds this runtime: one `git rev-parse`
@@ -376,7 +376,8 @@ impl Runtime {
         // fixture and test path, asks its node inline.
         let (mut workspaces, paths) = match precomputed {
             Some(catalog)
-                if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
+                if catalog.registrations == self.snapshot.ui_state.workspace_registrations
+                    && catalog.worktrees == self.worktree_catalog =>
             {
                 self.last_session_spaces = Self::session_spaces(payload, &catalog.paths);
                 self.last_accepted_catalog = Some(catalog.workspaces.clone());
@@ -387,7 +388,7 @@ impl Runtime {
             Some(_) if self.last_accepted_catalog.is_some() => {
                 self.push_diagnostic(
                     "catalog.precomputed_stale",
-                    "The precomputed workspace catalog no longer matches the registrations; the last accepted catalog stands until the next publish".to_owned(),
+                    "The precomputed workspace catalog no longer matches its inputs; the last accepted catalog stands until the next publish".to_owned(),
                 );
                 self.last_session_spaces = Self::session_spaces(payload, &self.catalog_paths);
                 (
@@ -5604,6 +5605,7 @@ impl Runtime {
                 Ok(outcome.session),
                 Some(session_sync::PrecomputedCatalog {
                     registrations: self.snapshot.ui_state.workspace_registrations.clone(),
+                    worktrees: self.worktree_catalog.clone(),
                     workspaces: outcome.workspaces,
                     paths: outcome.paths,
                 }),

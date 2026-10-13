@@ -24,7 +24,9 @@ An off-lock store remains core-owned and must name its scope, freshness rule, re
 On a high-frequency path such as keystroke ingress, added observational work is limited to bounded in-memory writes.
 It must not introduce lock waiting, disk access, a subprocess or large serialization into that path.
 The existing short Runtime admission is not permission to add another contended lock or blocking observer; pass owned data to an existing off-lock owner when work needs those resources.
-Snapshot capture takes owned data under the lock and serialization follows outside it (`runtime/snapshot_delta.rs`, `handle.rs::snapshot_delta`).
+Snapshot capture takes immutable typed sections under the lock and `handle.rs::snapshot_delta_payload` transfers them out of the core owner thread.
+The WebSocket transport encodes the selected sections and its envelope once on a blocking transport worker; internal roots and phone followers use the retained typed state without decoding transport bytes.
+Each rest field has its own revision and `Arc`, with navigator selection and lists, terminal metadata fields and status fields stamped independently; an unchanged value keeps its allocation and a changed value alone is copied.
 Usage lives in its own top-level snapshot section, revisioned independently of navigation; later deltas carry it only when limits or ledger values change.
 An omitted usage section preserves the previous value; an empty `nodes` array clears it, and a future revision cursor resets to a full snapshot.
 The shell stores usage separately, so a usage-only delta preserves navigation identity and an unrelated menu or layout change neither serializes nor compares historical day arrays.
@@ -1181,13 +1183,16 @@ A bump also compares the release's own PowerShell prompt wrapper (`WINDOWS_POWER
 `hided` is the product daemon that owns one `herdr-core::Core` on its creating thread.
 Axum workers send dispatch and snapshot commands over a channel; they never call `Core::create`, `dispatch_bytes`, `snapshot_delta`, `on_change` or drop the handle from another thread.
 It binds `127.0.0.1` only.
-The WebSocket handshake is the client's first JSON frame `{token, schema_version, have_revision?, have_terminal_sequence?, have_terminal_epoch?}`.
+The WebSocket handshake is the client's first JSON frame `{token, schema_version, snapshot_format?, have_revision?, have_terminal_sequence?, have_terminal_epoch?}`.
+Schema 2 clients that request `snapshot_format: "semantic-rest-v1"` receive `rest_format: "semantic-rest-v1"` on snapshot payloads: a delta replaces only fields it carries, merging navigator, terminal and status by their direct fields, while arrays replace as complete ordered lists.
+Omission retains a value, `null` clears an optional value and an empty array or map clears a collection; `workspace_view` is explicitly null when absent in this format.
+Without the capability, schema 2 keeps the supported complete-rest delta, including the omitted absent `workspace_view`; an unknown format is refused with `schema_mismatch` before snapshot delivery.
 A mismatched token, Origin, or schema version, or a ninth concurrent client, is closed with a reason code (`invalid_token`, `origin_not_allowed`, `schema_mismatch`, `client_limit`) and a diagnostic log line.
-After a valid handshake the daemon reads from the revision the client sent (`have_revision`, the one cursor `Core::snapshot_delta` takes), and then one delta frame per core notification burst.
+After a valid handshake the daemon reads from the revision the client sent (`have_revision`, the cursor `Core::snapshot_delta_payload` takes), and then one delta frame per core notification burst.
 A client with cursor 0 gets a self-contained `snapshot`; a reconnecting client resumes with a `delta` that carries only what changed while it was away.
 When the core cannot serve the cursor, because the client's revision is ahead of the core's after a daemon restart, the daemon re-reads from zero and sends a `snapshot` (`server::classify_frame` owns that rule).
 Terminal output comes beside those frames from the hub (see The terminal path): a client given a delta resumes every pane from `have_terminal_sequence` when `have_terminal_epoch` names this hub, or, naming none or another hub's, has every pane drawn again; a client given a whole snapshot resets its terminals and is told its new cursor in a `terminal` frame with no chunks.
-A frame the daemon cannot produce at all (the core owner thread gone, an empty read, bytes that do not decode) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
+A frame the daemon cannot produce at all (the core owner thread gone or a transport encoding failure) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 The Workspace CLI uses the same `/ws` for checkout-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
@@ -1991,7 +1996,8 @@ A pull request is tied to a checkout in one place, `github::pull_request_for_che
 Until that reader first answers, and for a checkout it never lists, the commit `Repository::head_oid` read from Git's own files stands in (`CheckoutSnapshot::head_oid`, core only), so a merged pull request restored from the saved answer reattaches in the first frame instead of after the reader's first pass; the reader's value wins as soon as it exists, because it reruns on a moved HEAD or ref while the file value is only as new as the row's last build.
 `head_oid` is read by the core's own node with the catalog's other path facts (`Call::PathFacts`, `hide_host::catalog::path_facts`), which the coordinator asks off the lock before it builds the catalog, so `build_catalog` and the reconcile under the lock compare names and read no folder; a runtime the coordinator does not feed (a fixture, startup before Herdr answers) asks its own node before it takes anything from the session, and the `packed-refs` read behind it is streamed and capped at 8 MiB, with no process.
 The coordinator establishes catalog ownership before its first ingest and runs path facts on a `BackgroundRead` worker, so neither the first answer nor a refresh holds topology publication.
-There is one active read; changed inputs coalesce to the latest request, whose connection, registrations, worktree catalog and wanted paths fence the answer.
+There is one active read; changed paths coalesce to the latest request, whose connection and wanted paths fence the answer.
+Agent and PR display metadata cannot invalidate path facts when the wanted paths are unchanged; current registrations and the worktree catalog independently fence the prepared catalog at its final Runtime application.
 A completed answer wakes the existing coalesced republish channel, and the catalog is built from the current replica rather than a captured session.
 Until facts arrive, an existing tab retains its confirmed checkout and a new directory creates no project row; failure retains accepted facts and goes to diagnostics.
 The reader checks owner cancellation between bounded path chunks and joins its current finite node call when the coordinator ends.

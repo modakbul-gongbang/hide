@@ -1371,8 +1371,6 @@ fn publish_replica(
     let answer = reader.poll(path_facts::Request {
         connection: catalog_cache.connection,
         paths: wanted.clone(),
-        registrations: registrations.clone(),
-        worktrees: worktrees.clone(),
     });
     let mut built_at = catalog_cache
         .as_ref()
@@ -1486,6 +1484,7 @@ fn publish_replica(
     }
     let precomputed = PrecomputedCatalog {
         registrations,
+        worktrees: cache.worktrees.clone(),
         workspaces: cache.workspaces.clone(),
         paths: Arc::clone(&cache.paths),
     };
@@ -2235,6 +2234,7 @@ mod worktree_observer_tests {
             );
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
+                worktrees: runtime.worktree_catalog(),
                 workspaces: workspace::build_catalog(
                     &crate::node::test_node(),
                     &[],
@@ -2601,6 +2601,62 @@ mod focus_readback_order_tests {
 
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
     /// to say go, after telling it the question has arrived.
+    #[test]
+    fn path_reader_discards_old_connection_and_starts_only_latest_paths() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let herdr = FakeHerdr::start("path-reader-fence", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let request = |connection, path: &str| path_facts::Request {
+            connection,
+            paths: BTreeSet::from([path.to_owned()]),
+        };
+        assert!(reader.poll(request(1, "/fixture/old")).is_none());
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        for path in ["/fixture/middle", "/fixture/latest"] {
+            assert!(reader.poll(request(2, path)).is_none());
+        }
+        assert!(asked.try_recv().is_err(), "only one active node call");
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(
+                reader.poll(request(2, "/fixture/latest")).is_none(),
+                "old facts are fenced"
+            );
+            if asked.try_recv().is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        release.send(()).unwrap();
+        let facts = loop {
+            if let Some(facts) = reader.poll(request(2, "/fixture/latest")) {
+                break facts.unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        };
+        assert!(facts.knows("/fixture/latest"));
+        assert!(!facts.knows("/fixture/old"));
+        assert!(!facts.knows("/fixture/middle"));
+        assert!(
+            asked.try_recv().is_err(),
+            "no unchanged read follows acceptance"
+        );
+    }
+
     fn holding_herdr(
         focused: &'static str,
     ) -> (

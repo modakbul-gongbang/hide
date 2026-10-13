@@ -88,6 +88,7 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 /// registrations it came from so Runtime can reject a stale computation.
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
+    pub worktrees: crate::model::WorktreeCatalogSnapshot,
     pub workspaces: Vec<WorkspaceSnapshot>,
     /// What the core's own node said about every path the catalog and the
     /// reconcile read, so neither reads a folder under the runtime lock.
@@ -109,6 +110,7 @@ impl PrecomputedCatalog {
         let paths = workspace::paths_here(wanted);
         let spaces = Runtime::session_spaces(payload, &paths);
         Self {
+            worktrees: worktrees.clone(),
             workspaces: workspace::build_catalog(&node, &registrations, &spaces, worktrees, &paths),
             registrations,
             paths: Arc::new(paths),

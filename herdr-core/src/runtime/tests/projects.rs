@@ -401,6 +401,7 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
         &workspace::paths_here(Runtime::session_cwds(&payload)),
     );
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: no_worktrees(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -501,6 +502,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         &workspace::paths_here(Runtime::session_cwds(&payload())),
     );
     let fresh = session_sync::PrecomputedCatalog {
+        worktrees: no_worktrees(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -522,6 +524,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
     assert!(!accepted.is_empty(), "the first catalog was accepted");
 
     let stale = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![WorkspaceRegistration {
             primary_checkout_id: None,
             id: "workspace:stale".to_owned(),
@@ -549,6 +552,25 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         runtime.snapshot().navigator.workspaces,
         accepted,
         "the last accepted catalog stands until the next publish"
+    );
+    let mut old_worktrees = runtime.worktree_catalog();
+    old_worktrees.projects.push(Default::default());
+    let stale = session_sync::PrecomputedCatalog {
+        registrations: runtime.snapshot().ui_state.workspace_registrations.clone(),
+        worktrees: old_worktrees,
+        workspaces: Vec::new(),
+        paths: Default::default(),
+    };
+    runtime.ingest_session_with_catalog(Ok(payload()), Some(stale));
+    assert_eq!(
+        runtime.snapshot().navigator.workspaces,
+        accepted,
+        "a worktree change between preparation and apply fences the old catalog too"
+    );
+    assert_eq!(
+        node.calls(),
+        after,
+        "a stale worktree answer does not read under the lock"
     );
     assert!(
         runtime
@@ -2326,6 +2348,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     }))
     .expect("second directory pane payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2442,6 +2465,7 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     }))
     .expect("two workspace layout payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2556,6 +2580,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     }))
     .expect("occupied payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
             &crate::node::test_node(),
@@ -2684,6 +2709,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
             paths: Default::default(),
@@ -2776,6 +2802,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: vec![registration],
             workspaces: vec![current_workspace],
             paths: Default::default(),
@@ -2853,6 +2880,7 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     assert!(runtime.ingest_session_with_catalog(
         Ok(payload),
         Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
             registrations: Vec::new(),
             workspaces: Vec::new(),
             paths: Default::default(),

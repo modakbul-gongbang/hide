@@ -1528,6 +1528,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
     }))
     .expect("local session payload");
     let catalog = session_sync::PrecomputedCatalog {
+        worktrees: runtime.worktree_catalog(),
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
         paths: Default::default(),
