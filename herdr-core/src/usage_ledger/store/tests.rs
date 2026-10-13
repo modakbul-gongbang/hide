@@ -36,6 +36,85 @@ fn source() -> Candidate {
     }
 }
 
+#[test]
+fn claude_streaming_maxima_replace_one_call_and_its_context_band() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let zone = jiff::tz::TimeZone::UTC;
+    let now = instant("2026-10-01");
+    let mut old = call(1, "2026-10-01");
+    old.recorded_cost_micro_usd = None;
+    old.tokens.input = 190_000;
+    let mut next = old.clone();
+    next.tokens.input = 210_000;
+    next.tokens.output = 28;
+    let mut store = Store::open(&path).unwrap();
+    store
+        .ingest(
+            "node-a",
+            Agent::Claude,
+            &source(),
+            &step(vec![old.clone(), next.clone(), old.clone()]),
+            now,
+            &zone,
+        )
+        .unwrap();
+    drop(store);
+    let mut store = Store::open(&path).unwrap();
+    store
+        .ingest(
+            "node-a",
+            Agent::Claude,
+            &source(),
+            &step(vec![next]),
+            now,
+            &zone,
+        )
+        .unwrap();
+    let totals = &store.daily().unwrap()[0].totals;
+    assert_eq!(
+        (
+            totals.calls,
+            totals.tokens.input,
+            totals.tokens.output,
+            totals.missing_cost_calls
+        ),
+        (1, 210_000, 28, 1)
+    );
+    assert_eq!(totals.price_bands[1].input, 0);
+    assert_eq!(totals.price_bands[2].input, 210_000);
+}
+
+#[test]
+fn a_future_record_is_counted_as_skipped_without_poisoning_the_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&hide_kit::layout::usage_store(dir.path())).unwrap();
+    let zone = jiff::tz::TimeZone::UTC;
+    let now = instant("2026-10-01");
+    let result = store
+        .ingest(
+            "node-a",
+            Agent::Pi,
+            &source(),
+            &step(vec![
+                call(1, "2026-10-01"),
+                call(2, "2099-01-01"),
+                call(3, "2026-10-01"),
+            ]),
+            now,
+            &zone,
+        )
+        .unwrap();
+    assert_eq!((result.added, result.invalid), (2, 1));
+    assert_eq!(store.daily().unwrap()[0].totals.calls, 2);
+    assert!(
+        store
+            .checkpoint("node-a", Agent::Pi, &source().path)
+            .unwrap()
+            .is_some()
+    );
+}
+
 fn step(events: Vec<Event>) -> Step {
     Step {
         events,
@@ -139,7 +218,7 @@ fn price_cache_upgrade_preserves_existing_ledger_and_does_not_fetch() {
     let before = store.daily().unwrap();
     store
         .connection
-        .execute_batch("DROP TABLE price_cache; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE price_cache; ALTER TABLE backfills DROP COLUMN limited; PRAGMA user_version=1;")
         .unwrap();
     drop(store);
     let store = Store::open(&path).unwrap();
@@ -358,6 +437,21 @@ fn batch_failure_rolls_back_totals_and_checkpoint_and_capacity_reports_a_limit()
         .unwrap();
     assert_eq!(outcome.limited, 1);
     assert!(store.daily().unwrap().is_empty());
+    assert!(store.limited("node-a", Agent::Claude).unwrap());
+    drop(store);
+    let mut reopened = Store::open(&hide_kit::layout::usage_store(dir.path())).unwrap();
+    reopened
+        .ingest(
+            "node-a",
+            Agent::Claude,
+            &source(),
+            &step(vec![]),
+            now,
+            &zone,
+        )
+        .unwrap();
+    assert!(reopened.limited("node-a", Agent::Claude).unwrap());
+    assert!(reopened.daily().unwrap().is_empty());
 }
 
 #[test]

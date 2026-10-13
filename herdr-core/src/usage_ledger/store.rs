@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{DAILY_DAYS, DAILY_LIMIT, DAY_MS, EVENT_DAYS, EVENT_LIMIT, local_day};
+mod stream;
 
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 const DEVICE_LIMIT: usize = 32;
 const BATCH_LIMIT: usize = 8192;
 const CHECKPOINT_BYTES: usize = 16 * 1024;
@@ -27,6 +28,7 @@ CREATE TABLE events(device TEXT NOT NULL, agent TEXT NOT NULL, key TEXT NOT NULL
 CREATE INDEX events_at ON events(at);
 CREATE TABLE backfills(device TEXT NOT NULL, agent TEXT NOT NULL,
     completed INTEGER NOT NULL DEFAULT 0, frozen_at INTEGER NOT NULL DEFAULT 0,
+    limited INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(device,agent));
 CREATE TABLE daily(device TEXT NOT NULL, agent TEXT NOT NULL, day TEXT NOT NULL,
     model TEXT NOT NULL, totals TEXT NOT NULL, PRIMARY KEY(device,agent,day,model));
@@ -35,7 +37,7 @@ CREATE TABLE cursors(device TEXT NOT NULL, agent TEXT NOT NULL, path TEXT NOT NU
     stamp TEXT NOT NULL, checkpoint TEXT NOT NULL, PRIMARY KEY(device,agent,path));
 CREATE TABLE devices(device TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE price_cache(slot INTEGER PRIMARY KEY CHECK(slot=1), value TEXT NOT NULL);
-PRAGMA user_version=2;
+PRAGMA user_version=3;
 ";
 
 /// No error returned by this boundary includes source content or paths.
@@ -135,6 +137,8 @@ pub struct Ingested {
     pub added: usize,
     pub repeated: usize,
     pub changed: usize,
+    pub updated: usize,
+    pub invalid: usize,
     pub expired: usize,
     pub limited: usize,
 }
@@ -186,6 +190,9 @@ impl Store {
         } else if version == 1 {
             store.connection.execute_batch("BEGIN; CREATE TABLE price_cache(slot INTEGER PRIMARY KEY CHECK(slot=1), value TEXT NOT NULL); PRAGMA user_version=2; COMMIT;").map_err(failed)?;
         }
+        if version == 1 || version == 2 {
+            store.connection.execute_batch("BEGIN; ALTER TABLE backfills ADD COLUMN limited INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3; COMMIT;").map_err(failed)?;
+        }
         Ok(store)
     }
 
@@ -224,6 +231,21 @@ impl Store {
         self.budget();
         self.connection.execute("INSERT INTO price_cache VALUES(1,?1) ON CONFLICT(slot) DO UPDATE SET value=excluded.value", [value]).map_err(failed)?;
         Ok(())
+    }
+
+    /// A discarded event cannot be recovered from an advanced cursor. Keep
+    /// that loss visible across discovery and restart, with the same commit.
+    pub fn limited(&self, device: &str, agent: Agent) -> Result<bool, &'static str> {
+        self.budget();
+        self.connection
+            .query_row(
+                "SELECT limited FROM backfills WHERE device=?1 AND agent=?2",
+                params![device, agent.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|v| v.unwrap_or(false))
+            .map_err(failed)
     }
 
     pub fn checkpoint(
@@ -386,17 +408,25 @@ impl Store {
         for event in &step.events {
             validate(event)?;
             let fingerprint = fingerprint(event)?;
-            let previous: Option<Vec<u8>> = tx
+            if event.at_ms > now.saturating_add(DAY_MS) {
+                outcome.invalid += 1;
+                continue;
+            }
+            let previous: Option<(Vec<u8>, String)> = tx
                 .query_row(
-                    "SELECT fingerprint FROM events WHERE device=?1 AND agent=?2 AND key=?3",
+                    "SELECT fingerprint,event FROM events WHERE device=?1 AND agent=?2 AND key=?3",
                     params![device, agent.as_str(), event.key],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()
                 .map_err(failed)?;
-            if let Some(previous) = previous {
+            if let Some((previous, original)) = previous {
                 if previous == fingerprint {
                     outcome.repeated += 1;
+                } else if agent == Agent::Claude
+                    && stream::merge(&tx, device, &decode(&original)?, event, frozen_at)?
+                {
+                    outcome.updated += 1;
                 } else {
                     outcome.changed += 1;
                 }
@@ -406,9 +436,6 @@ impl Store {
             if day < oldest || event.at_ms < frozen_at {
                 outcome.expired += 1;
                 continue;
-            }
-            if event.at_ms > now.saturating_add(DAY_MS) {
-                return Err("usage_timestamp_future");
             }
             if calls >= EVENT_LIMIT {
                 outcome.limited += 1;
@@ -456,6 +483,13 @@ impl Store {
             params![device, calls],
         )
         .map_err(failed)?;
+        if outcome.limited > 0 {
+            tx.execute(
+                "UPDATE backfills SET limited=1 WHERE device=?1 AND agent=?2",
+                params![device, agent.as_str()],
+            )
+            .map_err(failed)?;
+        }
         tx.execute("INSERT INTO cursors VALUES(?1,?2,?3,?4,?5) ON CONFLICT(device,agent,path) DO UPDATE SET stamp=excluded.stamp,checkpoint=excluded.checkpoint",
             params![device,agent.as_str(),path,stamp,checkpoint]).map_err(failed)?;
         tx.commit().map_err(failed)?;
@@ -499,7 +533,7 @@ impl Store {
     ) -> Result<(), &'static str> {
         valid_name(device, 128)?;
         self.budget();
-        self.connection.execute("INSERT INTO backfills VALUES(?1,?2,1,?3) ON CONFLICT(device,agent) DO UPDATE SET completed=1,frozen_at=max(frozen_at,excluded.frozen_at)", params![device,agent.as_str(),freeze_at(now,zone)?]).map_err(failed)?;
+        self.connection.execute("INSERT INTO backfills(device,agent,completed,frozen_at) VALUES(?1,?2,1,?3) ON CONFLICT(device,agent) DO UPDATE SET completed=1,frozen_at=max(frozen_at,excluded.frozen_at)", params![device,agent.as_str(),freeze_at(now,zone)?]).map_err(failed)?;
         self.prune(now, zone).map(|_| ())
     }
 

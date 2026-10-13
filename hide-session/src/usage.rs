@@ -21,7 +21,7 @@ const DISCOVERY_ENTRY_LIMIT: usize = 100_000;
 const DISCOVERY_DEPTH_LIMIT: usize = 16;
 const PATH_BYTES_LIMIT: usize = 4096;
 pub const PARSER_VERSION: u32 = 3;
-const STEP_TIME: Duration = Duration::from_millis(20);
+const STEP_TIME: Duration = Duration::from_millis(10);
 const STEP_EVENTS: usize = 8192;
 const WITNESS_BYTES: u64 = 256;
 
@@ -96,6 +96,8 @@ pub struct Checkpoint {
     database: opencode::Cursor,
     #[serde(default)]
     witness: Option<Witness>,
+    #[serde(default)]
+    finished: bool,
 }
 
 /// Hashes only, never source bytes. The prefix and last consumed bytes catch
@@ -108,8 +110,8 @@ struct Witness {
 }
 
 impl Checkpoint {
-    pub fn is_current(&self) -> bool {
-        self.parser_version == PARSER_VERSION
+    pub fn is_finished(&self) -> bool {
+        self.parser_version == PARSER_VERSION && self.finished
     }
 }
 
@@ -324,6 +326,7 @@ pub fn read(
     checkpoint.parser_version = PARSER_VERSION;
     if summary.as_ref().is_some_and(|s| s.is_child()) {
         checkpoint.offset = size;
+        checkpoint.finished = true;
         return Ok(Step {
             events: Vec::new(),
             checkpoint,
@@ -386,6 +389,7 @@ pub fn read(
     step.checkpoint.witness = Some(current);
     step.has_more =
         step.checkpoint.offset < size && (yielded || bytes.len() as u64 == payload_budget);
+    step.checkpoint.finished = !step.has_more;
     Ok(step)
 }
 

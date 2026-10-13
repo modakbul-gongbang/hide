@@ -762,7 +762,7 @@ This optional reader adds no protocol-version requirement: an older peer grants 
 Cursor grants none, and protocol 24's frozen reader facts remain unchanged.
 
 The usage worker owns one writer and reads only its supplied own-node link, alternating agents so a large history cannot starve another.
-Each turn performs one bounded read and transaction, then rests for 20 ms; native JSONL parsing itself yields at 20 ms and never exceeds one MiB including its checkpoint witnesses.
+Each turn performs one bounded read and transaction, then rests for 20 ms; native JSONL parsing itself yields at 10 ms and never exceeds one MiB including its checkpoint witnesses.
 Two replaceable visibility flags control its work: without a window it rests; candidate discovery runs every 30 seconds, or 3 while usage is open, and changed reports publish every 30 or 5 seconds respectively.
 Its owner signals the condition variable and joins it on shutdown, including startup failure and an idle wait.
 Complete uncapped listings retire deleted file checkpoints without deleting their totals or recent dedup authority.
@@ -770,6 +770,9 @@ Complete uncapped listings retire deleted file checkpoints without deleting thei
 `usage_ledger::store` owns `usage.sqlite3`, named by `hide_kit::layout::usage_store` under the core state directory.
 Normalized usage events contain native call identity, model, time, session, working folder, provider, tokens and recorded cost, with no conversation fields.
 An ingestion transaction adds a new call and its daily `(native node, agent, local day, model)` totals together with the file checkpoint; repeated calls add nothing, and changed completed calls keep the first accounting value and report a count-only conflict.
+Claude streaming records retain each token field's maximum for that native call, replacing its daily contribution and whole-call pricing band in the same transaction without another call.
+A persisted checkpoint distinguishes a yielded read from EOF, so a restart cannot freeze an unread suffix.
+Discarded capacity-overflow events leave a durable per-agent limited marker; a future timestamp is counted as skipped without poisoning its valid batch neighbours.
 The day is assigned in the core's time zone at first ingestion and stays assigned after the time zone changes or the core moves.
 New calls use the current core time zone.
 
@@ -1590,6 +1593,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   Text the agent itself writes on the person's side is no one's message: Claude Code's hook, meta and system prompts and its compaction summary (`isCompactSummary`, `isVisibleInTranscriptOnly`, which otherwise look like a typed prompt), and Codex's `compacted` record with the earlier requests it replays.
   Only tool output is scanned for addresses (`hide-session/src/sightings.rs`), on the records the read already decodes, at most eight per output; an address in a reply or a request is a mention.
   OpenCode keeps its sessions in `~/.local/share/opencode/opencode.db`, which the adapter opens read-only with a 50 ms busy wait: a locked database is a skipped read (`opencode_db_busy`) retried on the next state change, never a wait OpenCode feels, and an assistant message without `time.completed` is left for the next read.
+  The SQLite URI also sets `readonly_shm=1`, so a read never creates or updates OpenCode's WAL index; an unavailable index refuses the read while the live database retains its normal locking.
   `hide-session/tests/it/adapters.rs` is the contract every adapter passes, against a fixture in the agent's own format at the version it names (`hide-session/tests/fixtures/adapters/`); a format the adapter cannot read leaves that pane's row with Herdr's facts only and a diagnostic.
   `hide-session/src/envelope.rs` attributes only the first nonempty line's current `Hide letter <id> from <name> (<agent>) [<kind>]` header, preserving the first sender when several letters arrive together.
   `contracts/delivery-envelope.json` independently pins examples for both this reader and `delivery::mailbox::pull`; older delivery headers have no special sender interpretation.

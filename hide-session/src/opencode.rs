@@ -96,9 +96,18 @@ pub(crate) fn open(home: &Path) -> Result<Connection, String> {
     if !metadata.is_file() {
         return Err("label_session_not_regular".to_owned());
     }
+    // Resolve OS aliases such as macOS /var before SQLite's NOFOLLOW check.
+    // The final database symlink was refused above.
+    let path = hide_platform::fs::identity::canonical(&path)
+        .map_err(|_| "opencode_db_unreadable".to_owned())?;
     let connection = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        // Always retain locking for this live database. If a WAL index is
+        // absent, fail closed rather than creating it or ignoring a writer.
+        crate::sqlite::read_uri(&path, true).map_err(str::to_owned)?,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::from_bits_retain(rusqlite::ffi::SQLITE_OPEN_NOFOLLOW),
     )
     .map_err(|error| refusal(&error))?;
     connection

@@ -2,7 +2,7 @@
 //! replaces those tokens on each step while accumulating message.cost.
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -163,6 +163,10 @@ fn active(
 pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refusal> {
     let started = Instant::now();
     let db = crate::opencode::open(home).map_err(|_| Refusal::Database)?;
+    db.set_limit(
+        rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
+        READ_BYTES as i32,
+    );
     let id = hide_platform::fs::identity::file_id(&crate::opencode::database_path(home))
         .map_err(|_| Refusal::Unreadable)?;
     // VACUUM changes schema_version even when it retains the same file id.
@@ -197,16 +201,14 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
         return Ok(step);
     };
     for _ in 0..ROWS {
-        if started.elapsed() >= Duration::from_millis(20)
-            || step.read_bytes + ROW_BYTES > READ_BYTES
-        {
+        if started.elapsed() >= super::STEP_TIME || step.read_bytes + ROW_BYTES + 256 > READ_BYTES {
             step.has_more = true;
             break;
         }
         if let Some(active) = &mut step.checkpoint.database.active {
             let row: Option<(String, u64, Option<String>)> = db
                 .query_row(
-                    "SELECT id,length(CAST(data AS BLOB)),
+                    "SELECT CASE WHEN length(CAST(id AS BLOB))<=128 THEN id END,length(CAST(data AS BLOB)),
                  CASE WHEN length(CAST(data AS BLOB))<=?3 THEN data END
                  FROM part WHERE message_id=?1 AND id>?2 ORDER BY id LIMIT 1",
                     params![active.id, active.part_after, ROW_BYTES],
@@ -219,7 +221,7 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
                     return Err(Refusal::Database);
                 }
                 active.part_after = id.clone();
-                step.read_bytes += data.as_ref().map_or(0, |s| s.len() as u64);
+                step.read_bytes += id.len() as u64 + data.as_ref().map_or(0, |s| s.len() as u64);
                 let result = data
                     .as_deref()
                     .ok_or(if length > ROW_BYTES {
@@ -243,7 +245,8 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
         let cursor = &step.checkpoint.database;
         let row: Option<(String, u64, String, Option<String>)> = db
             .query_row(
-                "SELECT id,time_updated,session_id,
+                "SELECT CASE WHEN length(CAST(id AS BLOB))<=128 THEN id END,time_updated,
+             CASE WHEN length(CAST(session_id AS BLOB))<=128 THEN session_id END,
              CASE WHEN length(CAST(data AS BLOB))<=?4 THEN data END
              FROM message WHERE (time_updated>?1 OR (time_updated=?1 AND id>?2))
              AND time_updated<=?3 ORDER BY time_updated,id LIMIT 1",
@@ -264,7 +267,8 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
         if id.len() > 128 || session.len() > 128 {
             return Err(Refusal::Database);
         }
-        step.read_bytes += data.as_ref().map_or(0, |s| s.len() as u64);
+        step.read_bytes +=
+            (id.len() + session.len()) as u64 + data.as_ref().map_or(0, |s| s.len() as u64);
         step.checkpoint.database.after_time = updated;
         step.checkpoint.database.after_id = id.clone();
         match data

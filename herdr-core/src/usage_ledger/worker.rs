@@ -208,7 +208,7 @@ impl Engine {
                         reading: !store.backfill_complete(&device, agent)?,
                         files_done: 0,
                         files_total: 0,
-                        limited: false,
+                        limited: store.limited(&device, agent)?,
                         skipped: 0,
                         failure: None,
                     },
@@ -348,7 +348,13 @@ impl Engine {
                     }
                     work.progress.files_done = 0;
                     work.progress.files_total = listed.files.len();
-                    work.progress.limited = listed.capped;
+                    work.progress.limited = match self.store.limited(&self.device, agent) {
+                        Ok(limited) => listed.capped || limited,
+                        Err(code) => {
+                            work.fail(code);
+                            return;
+                        }
+                    };
                     work.progress.skipped = listed.skipped;
                     work.progress.failure = None;
                     work.failed = listed.capped || listed.skipped > 0;
@@ -383,7 +389,7 @@ impl Engine {
                 Ok(saved) => {
                     if agent != Agent::OpenCode
                         && saved.as_ref().is_some_and(|(stamp, checkpoint)| {
-                            stamp == &candidate && checkpoint.is_current()
+                            stamp == &candidate && checkpoint.is_finished()
                         })
                     {
                         work.progress.files_done += 1;
@@ -416,7 +422,7 @@ impl Engine {
                 .ingest(&self.device, agent, candidate, &step, now, &zone)
             {
                 Ok(ingested) => {
-                    self.dirty |= ingested.added > 0;
+                    self.dirty |= ingested.added > 0 || ingested.updated > 0;
                     work.progress.limited |= ingested.limited > 0;
                     let skipped = step
                         .skipped
@@ -424,6 +430,7 @@ impl Engine {
                         .copied()
                         .sum::<u64>()
                         .saturating_add(ingested.changed as u64)
+                        .saturating_add(ingested.invalid as u64)
                         .saturating_add(ingested.expired as u64);
                     work.progress.skipped = work.progress.skipped.saturating_add(skipped);
                     if skipped > 0 {

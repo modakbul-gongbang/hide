@@ -11,6 +11,183 @@ const CLAUDE: &str = concat!(
 );
 
 #[test]
+fn declared_usage_sources_have_native_accounting_contracts() {
+    use hide_agent_adapter::usage::{Support, TokenSource};
+    for agent in Agent::supported() {
+        let row = agent.format().adapter();
+        let Support::Supported(source) = row.usage.tokens else {
+            continue;
+        };
+        assert_eq!(source.format(), agent.format());
+        assert!(matches!(row.usage.cost, Support::Supported(_)));
+        // An added declaration must choose an actual fixture here. These
+        // assertions read each source through the public usage boundary.
+        match source {
+            TokenSource::ClaudeTranscript => {
+                usage_native_identity_survives_file_copy_and_streaming_updates()
+            }
+            TokenSource::CodexRollout => usage_codex_cache_and_reasoning_are_not_added_twice(),
+            TokenSource::GrokUpdates => {
+                usage_grok_parent_includes_children_and_partial_cost_is_unknown()
+            }
+            TokenSource::OpenCodeParts => {
+                usage_opencode_reads_steps_not_overwritten_message_tokens_or_accumulated_cost()
+            }
+            TokenSource::PiSession | TokenSource::OmpSession => pi_or_omp_usage(agent),
+        }
+    }
+}
+
+fn pi_or_omp_usage(agent: Agent) {
+    let home = tempfile::tempdir().unwrap();
+    let root = hide_session::session_root(home.path(), agent).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("session.jsonl");
+    fs::write(&file, concat!(
+        "{\"type\":\"session\",\"id\":\"native-session\",\"cwd\":\"/work/app\"}\n",
+        "{\"type\":\"message\",\"id\":\"native-message\",\"timestamp\":\"2026-10-01T12:00:00Z\",\"message\":{\"role\":\"assistant\",\"model\":\"native-model\",\"provider\":\"openai-codex\",\"usage\":{\"input\":10,\"output\":20,\"cacheRead\":900,\"cacheWrite\":30,\"cost\":{\"total\":0.25}}}}\n"
+    )).unwrap();
+    let first = usage::read(home.path(), agent, &file, None).unwrap();
+    assert_eq!(first.events.len(), 1);
+    let event = &first.events[0];
+    assert_eq!(
+        (
+            event.tokens.input,
+            event.tokens.output,
+            event.tokens.cache_write,
+            event.tokens.cache_read
+        ),
+        (10, 20, 30, 900)
+    );
+    assert_eq!(event.recorded_cost_micro_usd, Some(250_000));
+    assert_eq!(event.provider.as_deref(), Some("openai-codex"));
+    let copy = root.join("copy.jsonl");
+    fs::copy(&file, &copy).unwrap();
+    assert_eq!(
+        usage::read(home.path(), agent, &copy, None).unwrap().events[0].key,
+        event.key
+    );
+    assert!(
+        usage::read(home.path(), agent, &file, Some(first.checkpoint))
+            .unwrap()
+            .events
+            .is_empty()
+    );
+}
+
+#[test]
+fn usage_opencode_refuses_oversized_identifiers_before_materializing_them() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_fixture(home.path());
+    opencode_message(&db, &"x".repeat(129), true, 100);
+    assert!(matches!(
+        usage::read(home.path(), Agent::OpenCode, &path, None),
+        Err(usage::Refusal::Database)
+    ));
+    db.execute("DELETE FROM message", []).unwrap();
+    opencode_message(&db, "valid", true, 100);
+    db.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+    db.execute("UPDATE message SET session_id=?1", ["s".repeat(129)])
+        .unwrap();
+    assert!(matches!(
+        usage::read(home.path(), Agent::OpenCode, &path, None),
+        Err(usage::Refusal::Database)
+    ));
+    db.execute(
+        "UPDATE message SET session_id='ses_0a1b2c3d4e5f60718293a4b5c6'",
+        [],
+    )
+    .unwrap();
+    opencode_part(&db, &"p".repeat(129), "valid", Some(0.1));
+    assert!(matches!(
+        usage::read(home.path(), Agent::OpenCode, &path, None),
+        Err(usage::Refusal::Database)
+    ));
+}
+
+#[test]
+fn usage_opencode_wal_reader_does_not_write_database_or_sidecars() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_fixture(home.path());
+    db.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+    opencode_message(&db, "msg-a", true, 100);
+    opencode_part(&db, "part-a", "msg-a", Some(0.1));
+    let files = || {
+        fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|row| {
+                let row = row.unwrap();
+                (row.file_name(), fs::read(row.path()).unwrap())
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let before = files();
+    // Separate process, like the native writer: same-process SQLite shares
+    // its writable WAL mapping and would not exercise readonly_shm.
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "usage::usage_opencode_wal_reader_role",
+            "--nocapture",
+        ])
+        .env("USAGE_WAL_FIXTURE", home.path());
+    let result = hide_platform::process::run_to_end(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(result.code, Some(0), "{} {}", result.stdout, result.stderr);
+    assert!(result.stdout.contains("usage WAL read completed"));
+    assert_eq!(files(), before);
+    let missing = tempfile::tempdir().unwrap();
+    let folder = missing.path().join(".local/share/opencode");
+    fs::create_dir_all(&folder).unwrap();
+    for (name, bytes) in &before {
+        if !name.to_string_lossy().ends_with("-shm") {
+            fs::write(folder.join(name), bytes).unwrap();
+        }
+    }
+    command.env("USAGE_WAL_FIXTURE", missing.path());
+    let result = hide_platform::process::run_to_end(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(result.code, Some(0), "{} {}", result.stdout, result.stderr);
+    assert_eq!(fs::read_dir(&folder).unwrap().count(), 2);
+    for entry in fs::read_dir(folder).unwrap() {
+        let entry = entry.unwrap();
+        assert_eq!(
+            &fs::read(entry.path()).unwrap(),
+            &before[&entry.file_name()]
+        );
+    }
+}
+
+#[test]
+fn usage_opencode_wal_reader_role() {
+    let Some(root) = std::env::var_os("USAGE_WAL_FIXTURE") else {
+        return;
+    };
+    let home = std::path::PathBuf::from(root);
+    let path = home.join(".local/share/opencode/opencode.db");
+    if !path.with_extension("db-shm").exists() {
+        assert!(matches!(
+            usage::read(&home, Agent::OpenCode, &path, None),
+            Err(usage::Refusal::Database)
+        ));
+        return;
+    }
+    let (events, _) = opencode_drain(&home, &path, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].recorded_cost_micro_usd, Some(100_000));
+    println!("usage WAL read completed");
+}
+
+#[test]
 fn usage_rewritten_file_rescans_and_large_batches_resume_without_loss() {
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join(hide_session::CLAUDE_SESSIONS);

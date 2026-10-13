@@ -67,6 +67,85 @@ fn finish(engine: &mut Engine, node: &OwnNode) -> Report {
 }
 
 #[test]
+fn usage_worker_resumes_a_partly_read_unchanged_file_after_restart() {
+    let home = tempfile::tempdir().unwrap();
+    let source = fixture(home.path(), "first");
+    let template: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&source).unwrap()).unwrap();
+    let mut body = String::new();
+    for i in 0..5000 {
+        let mut line = template.clone();
+        line["requestId"] = format!("request-{i}").into();
+        line["message"]["id"] = format!("message-{i}").into();
+        body.push_str(&line.to_string());
+        body.push('\n');
+    }
+    std::fs::write(&source, body).unwrap();
+    let path = home.path().join("ledger.sqlite3");
+    let node = OwnNode::new(home.path());
+    let mut first = Engine::open(&path, "physical-device".into()).unwrap();
+    for _ in 0..100 {
+        first.step(
+            &node,
+            Activity {
+                visible: true,
+                open: true,
+            },
+        );
+        if first.agents.iter().any(|work| {
+            work.active
+                .as_ref()
+                .is_some_and(|(_, saved)| saved.is_some())
+        }) {
+            break;
+        }
+    }
+    let partial = first
+        .store
+        .daily()
+        .unwrap()
+        .iter()
+        .map(|row| row.totals.calls)
+        .sum::<u64>();
+    assert!(partial > 0 && partial < 5000);
+    drop(first);
+    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    // A transient refusal after that persisted partial read must not turn
+    // its unchanged stamp into an EOF proof either.
+    node.fail_read.store(true, Ordering::SeqCst);
+    for _ in 0..100 {
+        restarted.step(
+            &node,
+            Activity {
+                visible: true,
+                open: true,
+            },
+        );
+        if restarted
+            .agents
+            .iter()
+            .any(|work| work.progress.failure.is_some())
+        {
+            break;
+        }
+    }
+    assert!(restarted.agents.iter().any(|work| work.progress.reading && work.progress.failure == Some("usage_read_failed")));
+    drop(restarted);
+    node.fail_read.store(false, Ordering::SeqCst);
+    let mut restarted = Engine::open(&path, "physical-device".into()).unwrap();
+    assert_eq!(
+        finish(&mut restarted, &node)
+            .projection
+            .unwrap()
+            .year
+            .all
+            .amount
+            .calls,
+        5000
+    );
+}
+
+#[test]
 fn usage_worker_keeps_totals_after_restart_copy_and_source_deletion() {
     let home = tempfile::tempdir().unwrap();
     let source = fixture(home.path(), "first");
