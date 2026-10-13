@@ -3045,7 +3045,6 @@ fn migrate(
     diagnostic: &mut dyn FnMut(serde_json::Value),
 ) -> Result<(), MemoryError> {
     let mut version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    let legacy_verified = version <= 11;
     if version == 0 {
         connection.execute_batch("BEGIN IMMEDIATE")?;
         if let Err(error) = connection
@@ -3116,17 +3115,9 @@ COMMIT;"#,
     }
     if version == 11 {
         back_up(connection, path, version)?;
-        let transaction = connection.unchecked_transaction()?;
-        let current: u32 =
-            transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if current == 11 {
-            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); PRAGMA user_version=12;")?;
-        }
-        transaction.commit()?;
-        version = 12;
     }
-    if version == 12 {
-        if let Some(warning) = migrate_version_twelve(connection, path, legacy_verified)? {
+    if matches!(version, 11 | 12) {
+        if let Some(warning) = migrate_version_thirteen(connection, path)? {
             diagnostic(warning);
         }
         version = 13;
@@ -3140,22 +3131,33 @@ COMMIT;"#,
     Ok(())
 }
 
-fn migrate_version_twelve(
+fn migrate_version_thirteen(
     connection: &Connection,
     path: &Path,
-    legacy_verified: bool,
 ) -> Result<Option<serde_json::Value>, MemoryError> {
     let transaction = connection.unchecked_transaction()?;
     let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version != 12 {
+    if version == SCHEMA_VERSION {
         transaction.commit()?;
         return Ok(None);
+    }
+    if !matches!(version, 11 | 12) {
+        return Err(MemoryError::WrongSchema {
+            found: version,
+            expected: SCHEMA_VERSION,
+        });
+    }
+    // Keep the v11 table transition and first-comparison queue in the same
+    // transaction: a failed upgrade must retry as v11, never as a v12 store
+    // whose preserved verified dates look like a completed creation check.
+    if version == 11 {
+        transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch));")?;
     }
     // New revisions already pass the creation check. Only legacy verified
     // revisions and dates restored from the pre-v12 backup need this queue.
     transaction.execute_batch("ALTER TABLE memory_revisions ADD COLUMN docs_compared INTEGER NOT NULL DEFAULT 1 CHECK(docs_compared IN (0,1));")?;
     let mut warning = None;
-    if legacy_verified {
+    if version == 11 {
         transaction.execute(
             "UPDATE memory_revisions SET docs_compared=0 WHERE verified_at_ms IS NOT NULL \
              AND EXISTS(SELECT 1 FROM memory_items i WHERE i.id=item_id AND i.current_revision=revision) \
@@ -4739,6 +4741,61 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         // The shipped v12 step, including its destructive update.
         connection.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL; PRAGMA user_version=12;").unwrap();
         fixture
+    }
+
+    #[test]
+    fn version_eleven_migration_failure_retries_without_losing_the_first_comparison() {
+        let (_temp, path, project) = version_eleven_fixture();
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch("CREATE TRIGGER refuse_queue BEFORE UPDATE OF reverify_at_ms ON memory_items WHEN NEW.reverify_at_ms IS NULL BEGIN SELECT RAISE(ABORT,'fixture queue failure'); END;").unwrap();
+        drop(connection);
+        assert!(MemoryStore::open(&path).is_err());
+        let connection = Connection::open(&path).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            11
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='card_comparisons'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_table_info('memory_revisions') WHERE name='docs_compared'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        connection
+            .execute_batch("DROP TRIGGER refuse_queue;")
+            .unwrap();
+        drop(connection);
+        let store = MemoryStore::open(&path).unwrap();
+        assert!(
+            !store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(
+            store
+                .item_by_number(&project, 2)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert_eq!(
+            store
+                .pending_cards(&project, 1000, 4)
+                .unwrap()
+                .iter()
+                .map(|card| card.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
     }
 
     #[test]

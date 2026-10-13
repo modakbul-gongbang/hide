@@ -174,6 +174,7 @@ An unverified card is read again in the background, at most four a pass and one 
 An already verified revision awaiting its first document comparison shares that queue and its caps, while remaining indexed, retrievable and eligible for suggestions until a comparison withholds it.
 `memory_revisions.docs_compared` records the first comparison independently of `verified_at_ms`; a new creation check already supplies it.
 The v11 upgrade preserves verified dates and queues current verified revisions once, clearing their old check cooldown rather than withholding them.
+Its table transition and comparison queue commit together, so a failed upgrade retries from v11 without losing the first comparison.
 Schema 13 repairs the destructive v12 upgrade atomically: current unverified revisions with no current comparison recover only the exact verified date stored under their revision id in the adjacent `.v11-backup`, then enter that same queue.
 The backup is opened read-only and retained unchanged; if absent or unreadable, dates remain unchanged and the writer records one `migration.verification_restore_unavailable` diagnostic after committing the migration.
 Schema 11 counts checks separately from total calls in `analysis_calls.checks`, with atomic admission in `MemoryStore::admit_memory_call` and policy in `hide-memory/src/budget.rs`.
