@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use hide_platform::fs::lock::{Lock, Mode, Waited, lock_file};
+use hide_platform::fs::lock::{Lock, Mode, Waited, lock_file, lock_file_blocking};
 use hide_platform::fs::{Access, atomic, private};
 use serde::{Deserialize, Serialize};
 
@@ -86,11 +86,10 @@ pub fn forget_daemon(dir: &Path, pid: u32) {
 /// Serializes `hide connect`s on one state folder: held from looking at the
 /// running daemon until the one to attach to answers. The file persists;
 /// the lock is released with the returned handle.
-pub fn lock_connect(dir: &Path) -> io::Result<File> {
+pub fn lock_connect(dir: &Path) -> io::Result<Lock> {
     create_private_dir(dir)?;
     let file = private::open_own_file(&dir.join("connect.lock"), true)?;
-    file.lock()?;
-    Ok(file)
+    lock_file_blocking(file, Mode::Exclusive)
 }
 
 pub fn new_token() -> String {

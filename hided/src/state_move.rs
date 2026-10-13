@@ -12,7 +12,7 @@
 //! old folder stays as it is and the daemon's boot logs both paths
 //! (`log_left_behind`). Every later run finds no old folder and does nothing.
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -187,8 +187,7 @@ fn private_parent(parent: &Path) -> Result<(), String> {
 
 /// Locks `path`, making the file inside its existing folder but never the
 /// folder: a missing folder is `NotFound`.
-fn lock_in_folder(path: &Path) -> io::Result<File> {
-    use std::os::fd::AsRawFd;
+fn lock_in_folder(path: &Path) -> io::Result<Lock> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -197,11 +196,7 @@ fn lock_in_folder(path: &Path) -> io::Result<File> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
-    // SAFETY: flock on a descriptor `file` owns; dropping it releases.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(file)
+    lock::lock_file_blocking(file, Mode::Exclusive)
 }
 
 /// The legacy folder's instance lock, held through the rename. A missing
