@@ -509,7 +509,14 @@ mod tests {
                     files: Vec::new(),
                     missing: Vec::new(),
                 };
-                super::super::install(&raw, "~/.hide/host-helper", &payload, projects, &locations)
+                super::super::install(
+                    &raw,
+                    "~/.hide/host-helper",
+                    &payload,
+                    projects,
+                    &locations,
+                    |_| {},
+                )
                     .await
                     .map(|_| ())
             } else {
