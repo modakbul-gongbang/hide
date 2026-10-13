@@ -380,10 +380,19 @@ mod tests {
         assert_eq!(held["held"], true);
         let caller = node.clone();
         let cwd = directory.path().to_string_lossy().into_owned();
+        // Keep cmd.exe's command line free of a second shell's quoting.
+        // The marker/release handshake is the same on every system.
+        if cfg!(windows) {
+            std::fs::write(
+                directory.path().join("wait.cmd"),
+                "@echo off\r\necho ready>started\r\n:wait\r\nif exist release exit /b 0\r\nping -n 2 127.0.0.1 >nul\r\ngoto wait\r\n",
+            )
+            .unwrap();
+        }
         let (finished, outcome) = mpsc::channel();
         let pending = std::thread::spawn(move || {
             let text = if cfg!(windows) {
-                "powershell -NoProfile -Command \"Set-Content started ready; while (!(Test-Path release)) { Start-Sleep -Milliseconds 20 }\""
+                "wait.cmd"
             } else {
                 "printf ready > started; while [ ! -f release ]; do sleep 0.02; done"
             };
@@ -419,7 +428,10 @@ mod tests {
         while node.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(admitted, "the private host command never started");
+        assert!(
+            admitted,
+            "the private host command never started; answer: {closed:?}"
+        );
         assert!(
             matches!(closed, Ok(Err(LinkError::Unknown(_)))),
             "{closed:?}"
