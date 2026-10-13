@@ -1,4 +1,23 @@
 {
+  "session-record": {
+    "description": "The approved Sessions work record, summaries off, missed-work issue preview and search states.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-session-record",
+    "scene": "session-record",
+    "selector": "[data-gallery-scene=session-record]",
+    "measurement": "web/e2e/session-record-geometry.mjs",
+    "frames": [
+      { "node": "swr-record-l", "theme": "light", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-record-d", "theme": "dark", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-off-l", "theme": "light", "width": 360, "scale": 1, "content": "reference", "state": "off" },
+      { "node": "swr-off-d", "theme": "dark", "width": 360, "scale": 1, "content": "reference", "state": "off" }
+    ],
+    "conditions": { "themes": ["light", "dark"], "widths": [420, 300], "contents": ["reference", "long"], "scales": [1, 1.3076923076923077] },
+    "states": { "rest": "Approved record at rest", "off": "Native title and raw requests only", "loading": "First read skeleton", "failed": "Read failure and retry", "draft": "Editable issue draft", "ended": "Folded missed-work group", "search": "Separate session search group" },
+    "urlStates": ["off", "loading", "failed", "draft", "ended", "search"],
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
+    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow Tools column? Native behavior is verified separately."]
+  },
   "session-panel": {
     "description": "The approved Pen round 2 Sessions panel (agent-hierarchy-screens D-44): Needs You, Working, Done, Idle and Resolved, one tree level, own PR chips and the folded descendant mark.",
     "file": "design/hide-screens.pen",

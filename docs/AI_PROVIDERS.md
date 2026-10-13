@@ -2,6 +2,7 @@
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
 Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, the Software Factory's judgments (see [The Factory's judgments](#the-factorys-judgments)), and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
+The Sessions missed-work preview is another consumer, owned by `herdr-core/src/ai.rs` and `runtime/session_work.rs`.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -12,6 +13,15 @@ There is no output token ceiling in the request, because no provider contract ho
 
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
+
+The session label START request retains v8, while the existing END request uses `context_label.v9` with a work judgment: new, continued or no assigned work, at most three short missed items, resolved item ids and one output-task choice.
+There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
+END waits for a known ledger context instead of treating missing parent authority or open work as empty.
+
+An explicit `이슈로` press submits the separate `session_issue_draft` feature, whose schema requires an editable title and body.
+The caller redacts the missed text, original witnessed request and assistant answer, and repository templates before submission; it caps the input and answer and owns cancellation and generation fencing.
+Its provider runs in the same read-only boundary as other features, cannot create an issue or wake an agent, and only the operator's later Create invokes GitHub.
+An unavailable provider, authentication or usage allowance keeps an editable title-only preview with an empty body and a reason.
 
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 

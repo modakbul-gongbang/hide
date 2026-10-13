@@ -700,6 +700,24 @@ The existing runtime tick advances that window without adding a timer or per-sna
 Closing a pane prunes its resolution and input record.
 Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
 
+### The Sessions work record
+
+Sessions rows keep their live group and navigation and add a record action and a warning-coloured flag for open missed work.
+The record's title follows the same summary/native/manual rules, with the current status, own task verdict, created outputs, missed work, own chapters and expandable children in that order.
+An assigned task is Done only after its last END is Done and all assigned PRs are merged; review, failed CI, unfinished, blocked and question remain distinct states, while waiting uses Doing.
+Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
+Children show three visual indentation levels, five siblings initially and a More action for the rest.
+
+Missed items are durable Open, Resolved, Issue or Dismissed records.
+Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
+The Sessions top group includes only open missed work from removed or resolved sessions that have been inactive for 24 hours, within the project's Copied history window (90 days by default).
+It is folded by default, scoped with the visible checkout, project or Home, and renewed live activity returns the item to its live session row.
+
+With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request newest first.
+It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
+This record does not change the phone surface or the live Sessions grouping rules.
+Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, and the isolated session-work-ledger browser and desktop flows.
+
 ### Delegated escalation
 
 `agent_state/escalation.rs` reads the existing doorbell and watch decisions rather than adding delivery clocks.
