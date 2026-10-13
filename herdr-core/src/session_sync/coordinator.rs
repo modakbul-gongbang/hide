@@ -1376,10 +1376,6 @@ fn publish_replica(
         .as_ref()
         .map(|cache| cache.built_at)
         .unwrap_or_else(Instant::now);
-    let mut asked = catalog_cache
-        .as_ref()
-        .map(|cache| cache.asked.clone())
-        .unwrap_or_default();
     let previous = catalog_cache
         .as_ref()
         .map(|cache| Arc::clone(&cache.paths))
@@ -1387,7 +1383,6 @@ fn publish_replica(
     let paths = match answer {
         Some(Ok(paths)) => {
             built_at = Instant::now();
-            asked = wanted;
             if *previous == paths {
                 previous
             } else {
@@ -1460,14 +1455,12 @@ fn publish_replica(
             spaces,
             worktrees,
             workspaces,
-            asked,
             paths,
             built_at,
             purposes_synced: None,
         });
     } else if let Some(cache) = catalog_cache.as_mut() {
         cache.built_at = built_at;
-        cache.asked = asked;
     }
     let cache = catalog_cache
         .as_mut()

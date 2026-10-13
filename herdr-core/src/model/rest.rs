@@ -6,20 +6,34 @@ use serde::ser::SerializeMap;
 pub struct Retained<T> {
     pub value: Arc<T>,
     pub revision: u64,
+    generation: Option<u64>,
 }
 
 impl<T: Clone + PartialEq> Retained<T> {
-    fn capture(value: &T, previous: Option<&Self>, revision: u64) -> Self {
+    fn capture(value: &T, previous: Option<&Self>, revision: u64, generation: Option<u64>) -> Self {
         if let Some(previous) = previous
-            && previous.value.as_ref() == value
+            && (generation.is_some() && previous.generation == generation
+                || generation.is_none()
+                    && previous.generation.is_none()
+                    && previous.value.as_ref() == value)
         {
             return previous.clone();
         }
         Self {
             value: Arc::new(value.clone()),
             revision,
+            generation,
         }
     }
+}
+
+macro_rules! generation {
+    () => {
+        None
+    };
+    ($value:expr) => {
+        $value
+    };
 }
 
 impl<T> std::ops::Deref for Retained<T> {
@@ -39,7 +53,7 @@ impl<T: Serialize> Serialize for Retained<T> {
 /// projection of the supported snapshot, not a row-patch protocol.
 macro_rules! section {
     ($name:ident, $source:ty, $s:ident,
-     { $($field:ident: $ty:ty => $value:expr),* $(,)? },
+     { $($field:ident: $ty:ty => $value:expr $(; generation $generation:expr)?),* $(,)? },
      { $($group:ident: $group_ty:ident => $group_source:expr),* $(,)? }) => {
         #[derive(Clone, Debug)]
         pub struct $name {
@@ -49,7 +63,7 @@ macro_rules! section {
         impl $name {
             pub fn capture($s: &$source, previous: Option<&Self>, revision: u64) -> Self {
                 Self {
-                    $($field: Retained::capture(&$value, previous.map(|old| &old.$field), revision),)*
+                    $($field: Retained::capture(&$value, previous.map(|old| &old.$field), revision, generation!($($generation)?)),)*
                     $($group: $group_ty::capture(&$group_source, previous.map(|old| &old.$group), revision),)*
                 }
             }
@@ -157,8 +171,8 @@ section!(RestSections, Snapshot, s, {
     pet: PetSnapshot => s.pet,
     recent_closed: RecentClosedSnapshot => s.recent_closed,
     workspace_view: Option<WorkspaceViewSnapshot> => s.workspace_view,
-    browser_views: Vec<BrowserViewInventoryRow> => s.browser_views,
-    browser_scopes: Vec<BrowserAreaScopeRow> => s.browser_scopes,
+    browser_views: Vec<BrowserViewInventoryRow> => s.browser_views; generation s.browser_views_revision,
+    browser_scopes: Vec<BrowserAreaScopeRow> => s.browser_scopes; generation s.browser_views_revision,
 }, {
     navigator: NavigatorSections => s.navigator,
     terminal: TerminalSections => s.terminal,

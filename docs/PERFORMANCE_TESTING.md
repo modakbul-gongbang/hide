@@ -306,7 +306,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   One read runs and changed inputs coalesce to the latest request; a completion wakes the existing republish channel, with no additional timer.
   The current connection and wanted paths fence fact acceptance; registrations and worktrees independently fence the prepared catalog at final application, so display metadata changes do not starve path facts and no delayed answer replays old topology.
   Identical facts keep their pointer and changed topology while a refresh runs repeats no catalog build when its catalog inputs are unchanged.
-  Cancellation is checked between chunks; shutdown joins the current node call outside Runtime, whose ten-second deadline bounds that call, rather than claiming the whole multi-chunk read ends in ten seconds.
+  Cancellation is checked between chunks; shutdown joins the current reader call outside Runtime, whose ten-second deadline bounds its wait, rather than claiming the whole multi-chunk read ends in ten seconds.
+  The existing local node implementation can retain its detached host work and capacity slot after that wait times out; cancelling the reader does not interrupt that underlying host operation.
   The collected facts and request set remain proportional to the registered/session paths; the chunk byte bound is not a whole-request byte bound.
 - Keep the session-sync thread that applies Herdr's events free of blocking work (PRD instant-pane-topology D-13).
   A socket read that opens its own connection goes to the sync-read worker (`session_sync/sync_reads.rs`, one read of each kind in flight), a subprocess, a node read that runs one or an HTTP request to a `BackgroundRead` reader (`herdr-core/src/reader.rs`), and a file write that ends in an fsync to its store's own thread (the label store); the work's output and interval stay what they were.

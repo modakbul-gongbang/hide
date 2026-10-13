@@ -260,7 +260,6 @@ pub(crate) struct CatalogCache {
     workspaces: Vec<WorkspaceSnapshot>,
     /// The paths `paths` answered, so a publish asking the same ones within
     /// `CATALOG_REFRESH_INTERVAL` reuses the answer; empty after a failed ask.
-    asked: BTreeSet<String>,
     paths: Arc<workspace::PathIndex>,
     built_at: Instant,
     /// The unconfirmed created purposes the purpose mirror last synced this

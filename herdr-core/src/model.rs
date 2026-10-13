@@ -5155,9 +5155,8 @@ pub use rest::{RestSections, RestWire};
 /// needs and nothing that reaches back into the runtime.
 ///
 /// Taking a payload is what runs under the runtime lock; serializing it is
-/// what must not. The three large sections ride the reference-counted copies
-/// the runtime already retains for revision stamping, so taking one copies no
-/// section body - it bumps three refcounts.
+/// what must not. Sections ride the reference-counted copies the runtime
+/// already retains for revision stamping, so taking one copies no section body.
 pub struct SnapshotDeltaPayload {
     /// Cursor normalized to zero on reset, for negotiated semantic deltas.
     pub have_revision: u64,

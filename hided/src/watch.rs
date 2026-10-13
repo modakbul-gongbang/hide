@@ -39,7 +39,6 @@ use std::time::{Duration, Instant};
 
 use hide_node_link::protocol::{Call, RootOpened, RootRef};
 use hide_node_link::{ErrorCode, LinkError, NodeLink, RootIdentity, call_as};
-use serde_json::Value;
 use tokio::sync::{Notify, broadcast};
 
 use crate::core::CoreHandle;
@@ -117,62 +116,6 @@ impl Target {
     }
 }
 
-/// What a snapshot asks the device watch to stamp, or `None` when no device
-/// Explorer is showing on a ready helper. `node` is the core's own machine,
-/// whose Explorer the other watcher covers.
-pub fn device_target(value: &Value, node: &str) -> Option<Target> {
-    let device = value
-        .pointer("/rest/navigator/focused_device_id")
-        .and_then(Value::as_str)
-        .filter(|device| *device != node)?;
-    let ui = value.pointer("/rest/ui_state")?;
-    if ui.get("right_panel_visible").and_then(Value::as_bool) != Some(true)
-        || ui.get("right_panel_section").and_then(Value::as_str) != Some("explorer")
-    {
-        return None;
-    }
-    let ready = value
-        .pointer("/rest/navigator/devices")
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|row| row.get("id").and_then(Value::as_str) == Some(device))?
-        .pointer("/host/state")
-        .and_then(Value::as_str)
-        == Some("ready");
-    if !ready {
-        return None;
-    }
-    let session = value
-        .pointer("/rest/status/remote")
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|remote| remote.get("target_id").and_then(Value::as_str) == Some(device))?
-        .get("session")?;
-    let checkout_id = session.get("focused_checkout_id").and_then(Value::as_str)?;
-    let root = session
-        .get("workspaces")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(|workspace| workspace.get("checkouts").and_then(Value::as_array))
-        .flatten()
-        .find(|checkout| checkout.get("id").and_then(Value::as_str) == Some(checkout_id))?
-        .get("path")
-        .and_then(Value::as_str)?
-        .to_owned();
-    let expanded: Vec<String> = ui
-        .pointer(&format!("/device_expanded_paths/{}", pointer_token(device)))
-        .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Target::of(device, root, &expanded))
-}
-
 /// Reads the same watch scope from retained typed state, independently of
 /// which semantic fields were included on another reader's transport frame.
 pub fn device_target_from_rest(rest: &herdr_core::RestSections, node: &str) -> Option<Target> {
@@ -215,10 +158,6 @@ pub fn device_target_from_rest(rest: &herdr_core::RestSections, node: &str) -> O
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     Some(Target::of(device, checkout.path.clone(), expanded))
-}
-
-fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
 }
 
 /// The daemon's watch service: this machine's Explorer, the selected
@@ -582,7 +521,7 @@ async fn run(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn paths(values: &[&str]) -> Vec<String> {
@@ -631,50 +570,138 @@ mod tests {
         );
     }
 
-    fn snapshot(section: &str, host_state: &str) -> Value {
-        serde_json::json!({"rest": {
-            "navigator": {
-                "focused_device_id": "mac",
-                "devices": [{"id": "local"}, {"id": "mac", "host": {"state": host_state}}],
-            },
-            "ui_state": {
-                "right_panel_visible": true,
-                "right_panel_section": section,
-                "expanded_paths": ["/here/src"],
-                "device_expanded_paths": {"mac": ["/r/src", "/elsewhere/x", "/r/src/deep"]},
-            },
-            "status": {"remote": [{"target_id": "mac", "session": {
-                "focused_checkout_id": "remote:mac:checkout:w1",
-                "workspaces": [{"checkouts": [{"id": "remote:mac:checkout:w1", "path": "/r"}]}],
-            }}]},
-        }})
+    pub(crate) fn remote_snapshot() -> herdr_core::Snapshot {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let options = serde_json::from_value(serde_json::json!({
+            "schema_version": 2, "node_id": "test-node", "app_state_path": ""
+        }))
+        .unwrap();
+        let mut snapshot = herdr_core::Snapshot::initial(&options);
+        let index = herdr_core::workspace::PathIndex::ask(
+            &hide_node::Local::of_process(),
+            std::collections::BTreeSet::from([path.clone()]),
+        )
+        .unwrap();
+        let mut workspaces = herdr_core::workspace::build_catalog(
+            &herdr_core::node::NodeId::parse("test-node").unwrap(),
+            &[],
+            &[herdr_core::workspace::SessionSpace {
+                id: "fixture".into(),
+                label: "fixture".into(),
+                cwds: vec![path],
+                purpose: None,
+            }],
+            &Default::default(),
+            &index,
+        );
+        workspaces[0].device_id = "mac".into();
+        workspaces[0].remote_target_id = Some("mac".into());
+        workspaces[0].checkouts[0].path = "/r".into();
+        let mut device = snapshot.navigator.devices[0].clone();
+        device.id = "mac".into();
+        device.host.state = "ready".into();
+        snapshot.navigator.devices.push(device);
+        snapshot.navigator.focused_device_id = Some("mac".into());
+        snapshot.ui_state.right_panel_visible = true;
+        snapshot.ui_state.right_panel_section = herdr_core::RightPanelSection::Explorer;
+        snapshot.ui_state.device_expanded_paths.insert(
+            "mac".into(),
+            paths(&["/r/src", "/elsewhere/x", "/r/src/deep"]),
+        );
+        snapshot
+            .status
+            .remote
+            .push(herdr_core::RemoteStatusSnapshot {
+                target_id: "mac".into(),
+                state: "connected".into(),
+                message: None,
+                herdr_version: None,
+                session: Some(herdr_core::RemoteSessionSnapshot {
+                    focused_checkout_id: Some(workspaces[0].checkouts[0].id.clone()),
+                    workspaces,
+                    agents: Vec::new(),
+                    active_tab_ids: Default::default(),
+                    focused_workspace_id: None,
+                    focused_tab_id: None,
+                    focused_pane_id: None,
+                    pane_layouts: Vec::new(),
+                    pane_hook_tokens: Default::default(),
+                    issue_tokens: Default::default(),
+                    issue_links: Default::default(),
+                }),
+                files: herdr_core::RemoteFileListSnapshot::idle(),
+                catalog: Default::default(),
+            });
+        snapshot
     }
 
-    /// Only a showing device Explorer on a ready helper is watched, and only
-    /// that device's folders under its front checkout.
+    /// Each independently retained revision must enforce the current watch
+    /// target while a slower reader's immutable state remains unchanged.
     #[test]
     fn a_device_explorer_is_watched_only_while_it_shows_on_a_ready_helper() {
-        assert_eq!(
-            device_target(&snapshot("explorer", "ready"), "local"),
-            Some(Target {
-                node: "mac".to_owned(),
-                root: "/r".to_owned(),
-                folders: vec![
-                    "/r".to_owned(),
-                    "/r/src".to_owned(),
-                    "/r/src/deep".to_owned()
-                ],
-                pinned: None,
-            })
+        let original = remote_snapshot();
+        let initial = herdr_core::RestSections::capture(&original, None, 1);
+        let target = Some(Target {
+            node: "mac".into(),
+            root: "/r".into(),
+            folders: paths(&["/r", "/r/src", "/r/src/deep"]),
+            pinned: None,
+        });
+        assert_eq!(device_target_from_rest(&initial, "test-node"), target);
+        let mut transitions: Vec<herdr_core::Snapshot> = Vec::new();
+        macro_rules! refusal {
+            ($change:expr) => {{
+                let mut s = original.clone();
+                ($change)(&mut s);
+                transitions.push(s);
+            }};
+        }
+        refusal!(
+            |s: &mut herdr_core::Snapshot| s.ui_state.right_panel_section =
+                herdr_core::RightPanelSection::Changes
         );
-        assert_eq!(device_target(&snapshot("changes", "ready"), "local"), None);
-        assert_eq!(
-            device_target(&snapshot("explorer", "connecting"), "local"),
-            None
+        refusal!(|s: &mut herdr_core::Snapshot| s.ui_state.right_panel_visible = false);
+        refusal!(
+            |s: &mut herdr_core::Snapshot| s.navigator.devices[1].host.state = "connecting".into()
         );
-        let mut local = snapshot("explorer", "ready");
-        local["rest"]["navigator"]["focused_device_id"] = "local".into();
-        assert_eq!(device_target(&local, "local"), None);
+        refusal!(|s: &mut herdr_core::Snapshot| {
+            s.navigator.devices.pop();
+        });
+        refusal!(
+            |s: &mut herdr_core::Snapshot| s.navigator.focused_device_id = Some("test-node".into())
+        );
+        refusal!(|s: &mut herdr_core::Snapshot| s.navigator.focused_device_id = None);
+        refusal!(|s: &mut herdr_core::Snapshot| s.status.remote.clear());
+        refusal!(|s: &mut herdr_core::Snapshot| s.status.remote[0].session = None);
+        refusal!(|s: &mut herdr_core::Snapshot| s.status.remote[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .focused_checkout_id = None);
+        refusal!(|s: &mut herdr_core::Snapshot| s.status.remote[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .workspaces
+            .clear());
+        for (n, snapshot) in transitions.iter().enumerate() {
+            let current = herdr_core::RestSections::capture(snapshot, Some(&initial), n as u64 + 2);
+            assert_eq!(
+                device_target_from_rest(&current, "test-node"),
+                None,
+                "transition {n}"
+            );
+            assert_eq!(device_target_from_rest(&initial, "test-node"), target);
+            let restored =
+                herdr_core::RestSections::capture(&original, Some(&current), n as u64 + 20);
+            assert_eq!(device_target_from_rest(&restored, "test-node"), target);
+        }
     }
 
     #[test]

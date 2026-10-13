@@ -804,18 +804,21 @@ impl RootFollower {
         *cursor = reply.revision;
         let rest = &reply.current_rest;
         let have = reply.have_revision;
-        if rest.navigator.workspaces.revision <= have
-            && rest.status.remote.revision <= have
-            && rest.navigator.root_path.revision <= have
-            && rest.navigator.focused_device_id.revision <= have
-            && rest.navigator.devices.revision <= have
-            && rest.ui_state.revision <= have
-        {
+        if !roots_changed(rest, have) {
             return Ok(false);
         }
         apply_snapshot(rest, &self.core, &self.boundary, &self.watch, &self.index);
         Ok(true)
     }
+}
+
+fn roots_changed(rest: &herdr_core::RestSections, have: u64) -> bool {
+    rest.navigator.workspaces.revision > have
+        || rest.status.remote.revision > have
+        || rest.navigator.root_path.revision > have
+        || rest.navigator.focused_device_id.revision > have
+        || rest.navigator.devices.revision > have
+        || rest.ui_state.revision > have
 }
 
 /// The one line a failed root read leaves.
@@ -871,15 +874,6 @@ fn spawn_root_refresh(roots: Arc<RootFollower>, clients: Arc<AtomicUsize>) {
     });
 }
 
-/// Whether a snapshot value carries the sections this reader needs: a `rest`
-/// object with a navigator. A delta that changed something else carries
-/// no `rest` at all, or a null, and reading it would clear the roots.
-#[cfg(test)]
-fn carries_roots(value: &Value) -> bool {
-    value.get("rest").is_some_and(Value::is_object)
-        && value.pointer("/rest/navigator/workspaces").is_some()
-}
-
 /// One snapshot value's roots, watch folders and registered index roots.
 fn apply_snapshot(
     rest: &herdr_core::RestSections,
@@ -929,65 +923,6 @@ fn apply_snapshot(
         rest,
         boundary.node().as_str(),
     ));
-}
-
-/// The checkouts a snapshot carries that the Explorer may work in: every local
-/// workspace, and the checkouts in it that exist on disk. A remote workspace's
-/// paths name another machine and are not this boundary's to read. The tests
-/// read it from bytes; production reads the value the notify path already
-/// decoded.
-#[cfg(test)]
-fn roots_from_snapshot(bytes: &[u8]) -> Vec<Root> {
-    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
-        return Vec::new();
-    };
-    roots_from_value(&value)
-}
-
-#[cfg(test)]
-fn roots_from_value(value: &Value) -> Vec<Root> {
-    let Some(workspaces) = value
-        .pointer("/rest/navigator/workspaces")
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    let mut roots = Vec::new();
-    for workspace in workspaces {
-        if workspace
-            .get("remote_target_id")
-            .is_some_and(|target| !target.is_null())
-        {
-            continue;
-        }
-        let Some(workspace_id) = workspace.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(checkouts) = workspace.get("checkouts").and_then(Value::as_array) else {
-            continue;
-        };
-        for checkout in checkouts {
-            let Some(id) = checkout.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(path) = checkout.get("path").and_then(Value::as_str) else {
-                continue;
-            };
-            if !checkout
-                .get("exists")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            roots.push(Root {
-                workspace_id: workspace_id.to_owned(),
-                checkout_id: id.to_owned(),
-                path: std::path::PathBuf::from(path),
-            });
-        }
-    }
-    roots
 }
 
 fn roots_from_rest(rest: &herdr_core::RestSections) -> Vec<Root> {
@@ -1040,21 +975,6 @@ fn device_roots_from_rest(
 mod tests {
     use super::env::{HOME, REGISTRY};
     use super::*;
-
-    #[test]
-    fn only_a_snapshot_with_a_navigator_can_move_the_roots() {
-        let full = serde_json::json!({"revision": 3, "rest": {"navigator": {"root_path": "/repo", "workspaces": []}}});
-        assert!(carries_roots(&full));
-        // A delta that changed something else: no rest, or a null, must
-        // never be read as an empty root set.
-        assert!(!carries_roots(&serde_json::json!({"revision": 4})));
-        assert!(!carries_roots(
-            &serde_json::json!({"revision": 4, "rest": serde_json::Value::Null})
-        ));
-        assert!(!carries_roots(
-            &serde_json::json!({"revision": 5, "rest": {"status": {}}})
-        ));
-    }
 
     #[test]
     fn env_registry_lists_home_as_required() {
@@ -1130,51 +1050,47 @@ mod tests {
     }
 
     #[test]
-    fn roots_come_from_the_local_checkouts_a_snapshot_carries() {
-        let snapshot = serde_json::json!({
-            "schema_version": 2,
-            "revision": 4,
-            "rest": {
-                "navigator": {
-                    "workspaces": [
-                        {
-                            "id": "w1",
-                            "remote_target_id": null,
-                            "checkouts": [
-                                {"id": "c1", "path": "/tmp/repo", "exists": true},
-                                {"id": "c2", "path": "/tmp/gone", "exists": false},
-                            ],
-                        },
-                        {
-                            "id": "w2",
-                            "remote_target_id": "device-1",
-                            "checkouts": [{"id": "c3", "path": "/srv/repo", "exists": true}],
-                        },
-                    ],
-                },
-            },
-        });
-        let bytes = serde_json::to_vec(&snapshot).unwrap();
+    fn root_follower_detects_remote_session_changes_for_independent_and_reset_cursors() {
+        let mut snapshot = watch::tests::remote_snapshot();
+        let initial = herdr_core::RestSections::capture(&snapshot, None, 1);
         assert_eq!(
-            roots_from_snapshot(&bytes),
-            vec![Root {
-                workspace_id: "w1".to_owned(),
-                checkout_id: "c1".to_owned(),
-                path: std::path::PathBuf::from("/tmp/repo"),
-            }],
-            "a remote workspace and a checkout that is gone are not roots"
+            device_roots_from_rest(&initial, "test-node"),
+            vec![boundary::DeviceRoot {
+                device_id: "mac".into(),
+                path: "/r".into(),
+            }]
         );
-    }
-
-    #[test]
-    fn a_snapshot_without_rest_or_checkouts_yields_no_roots() {
-        for snapshot in [
-            serde_json::json!({"schema_version": 2, "revision": 1}),
-            serde_json::json!({"revision": 1, "rest": {"navigator": {"workspaces": []}}}),
-        ] {
-            let bytes = serde_json::to_vec(&snapshot).unwrap();
-            assert!(roots_from_snapshot(&bytes).is_empty());
-        }
-        assert!(roots_from_snapshot(b"not json").is_empty());
+        assert!(roots_changed(&initial, 0));
+        assert!(!roots_changed(&initial, 1));
+        snapshot.zoomed = Some("fixture:p1".into());
+        let zoom = herdr_core::RestSections::capture(&snapshot, Some(&initial), 2);
+        assert!(
+            !roots_changed(&zoom, 1),
+            "another reader's zoom does not renew roots"
+        );
+        snapshot.status.remote[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .workspaces[0]
+            .checkouts[0]
+            .path = "/r/new".into();
+        let moved = herdr_core::RestSections::capture(&snapshot, Some(&zoom), 3);
+        assert!(roots_changed(&moved, 2));
+        assert!(roots_changed(&moved, 1));
+        assert_eq!(
+            device_roots_from_rest(&moved, "test-node")[0].path,
+            "/r/new"
+        );
+        snapshot.status.remote.clear();
+        let removed = herdr_core::RestSections::capture(&snapshot, Some(&moved), 4);
+        assert!(roots_changed(&removed, 3));
+        assert!(roots_changed(&removed, 1));
+        assert!(
+            roots_changed(&removed, 0),
+            "normalized reset re-applies complete authority"
+        );
+        assert!(device_roots_from_rest(&removed, "test-node").is_empty());
+        assert_eq!(device_roots_from_rest(&initial, "test-node")[0].path, "/r");
     }
 }

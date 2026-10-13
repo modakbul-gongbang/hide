@@ -40,6 +40,13 @@ use projection::{AgentKey, Projection};
 use store::{MobileSettings, Notifications, PhoneRecord, PushMode, PushSubscription, ServeRecord};
 use tailscale::{Checklist, CliSource, CommandFailure, Ownership, StepState};
 
+fn projection_failed(stage: &str, message: &str) {
+    eprintln!(
+        "{}",
+        json!({"component": "hided", "kind": "mobile.projection_failed", "stage": stage, "message": message})
+    );
+}
+
 /// How often the checklist is read again while Settings > Mobile is open.
 const OBSERVE_INTERVAL: Duration = Duration::from_secs(3);
 /// How often the seven-day sweep runs.
@@ -1577,7 +1584,7 @@ impl Mobile {
                 Ok(Ok(payload)) => payload,
                 Ok(Err(_)) => return,
                 Err(error) => {
-                    crate::roots_failed(&format!("mobile snapshot worker: {error}"));
+                    projection_failed("snapshot_worker", &error.to_string());
                     return;
                 }
             };
@@ -1585,7 +1592,7 @@ impl Mobile {
             match projection::update_inputs(&mut rest, &payload.current_rest, payload.have_revision)
             {
                 Err(error) => {
-                    crate::roots_failed(&format!("mobile projection: {error}"));
+                    projection_failed("inputs", &error.to_string());
                     return;
                 }
                 Ok(true) => {

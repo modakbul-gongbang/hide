@@ -7,27 +7,6 @@
 pub use herdr_core::agent_state::phone::{AgentKey, PhoneAgent, Projection, project};
 use serde_json::Value;
 
-/// Lays a snapshot frame's `rest` over the one kept so far: a snapshot
-/// replaces it, a delta replaces only the top-level sections it carries,
-/// the same merge the web store does.
-#[cfg(test)]
-pub fn merge_rest(kept: &mut Value, frame: &Value, full: bool) -> bool {
-    let Some(rest) = frame.get("rest").filter(|rest| rest.is_object()) else {
-        return false;
-    };
-    if full || !kept.is_object() {
-        *kept = rest.clone();
-        return true;
-    }
-    let (Some(kept), Some(incoming)) = (kept.as_object_mut(), rest.as_object()) else {
-        return false;
-    };
-    for (key, value) in incoming {
-        kept.insert(key.clone(), value.clone());
-    }
-    true
-}
-
 /// Materialize only the phone/start projection's changed inputs. Immutable
 /// typed sections arrive directly from the owner; transport bytes and the
 /// unrelated editor, layouts and terminal state never enter this follower.
@@ -347,23 +326,5 @@ mod tests {
             Some("zh-CN"),
             "the string is not validated here"
         );
-    }
-
-    #[test]
-    fn a_delta_replaces_only_the_sections_it_carries() {
-        let mut kept = json!(null);
-        assert!(merge_rest(
-            &mut kept,
-            &json!({"rest": {"navigator": {"agents": []}, "status": {"remote": []}}}),
-            true
-        ));
-        assert!(!merge_rest(&mut kept, &json!({"revision": 3}), false));
-        assert!(merge_rest(
-            &mut kept,
-            &json!({"rest": {"navigator": {"agents": [agent("w1:p1", "done", json!({}))]}}}),
-            false
-        ));
-        assert_eq!(kept["status"], json!({"remote": []}));
-        assert_eq!(project(&kept, "local").groups[0].group, "done");
     }
 }
