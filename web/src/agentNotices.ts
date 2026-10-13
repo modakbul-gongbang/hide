@@ -5,7 +5,7 @@
 // the interface language and hands it to the desktop host, which drops it
 // while a Hide window has the keyboard. A click opens that agent's pane, and
 // an agent the operator has seen takes its notification back. The app icon
-// counts the root agents that need the operator under the same switch.
+// counts the root agents that need the operator under the Needs You switch.
 
 import { useEffect } from "react";
 import type { Actions } from "./actions";
@@ -51,16 +51,16 @@ export function needsYouCount(rest: SnapshotRest | null): number {
 }
 
 /**
- * Shows agent notifications through the desktop host while the switch is on,
- * opens what a click names, and keeps the app icon's count, which the switch
- * also governs, so turning it off makes Hide quiet.
+ * Shows each group through the desktop host while its own switch is on,
+ * opens what a click names, and keeps the Needs You app icon count.
  */
 export function useAgentNotifications(actions: Actions) {
   const { t } = useInterfaceTranslation();
   const bridge = hostBridge();
   const live = useShellStore((s) => s.connection === "live");
-  const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
-  const wanted = bridge !== null && live && enabled;
+  const needsYouEnabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
+  const doneEnabled = useShellStore((s) => (s.rest?.ui_state?.desktop_notifications_done ?? s.rest?.ui_state?.desktop_notifications) === true);
+  const wanted = bridge !== null && live && (needsYouEnabled || doneEnabled);
   // Null until the page is live: the first count is also the host's sign that a click can be opened here.
   const badge = useShellStore((s) => (s.connection !== "live" ? null : s.rest?.ui_state?.desktop_notifications === true ? needsYouCount(s.rest) : 0));
   useEffect(() => {
@@ -77,6 +77,7 @@ export function useAgentNotifications(actions: Actions) {
     const listener: Listener = ({ notices, clear }) => {
       if (clear.length > 0) bridge.withdrawNotifications(clear.map((tag) => `${AGENT_NOTICE_PREFIX}${tag}`));
       for (const notice of notices) {
+        if (!(notice.state === "needs_you" ? needsYouEnabled : doneEnabled)) continue;
         const fallback = notice.state === "needs_you" ? t("firstRun.notice.needsYou") : t("firstRun.notice.done");
         const state = notice.detail ? [notice.status_code ? statusText(t, notice.status_code) : fallback, notice.detail].join(" · ") : fallback;
         const body = notice.place ? t("firstRun.notice.body", { state, project: notice.place }) : state;
@@ -87,7 +88,7 @@ export function useAgentNotifications(actions: Actions) {
     return () => {
       listeners.delete(listener);
     };
-  }, [bridge, wanted, t]);
+  }, [bridge, wanted, needsYouEnabled, doneEnabled, t]);
   useEffect(() => {
     if (!bridge) return undefined;
     return bridge.onNotificationOpen((id) => {

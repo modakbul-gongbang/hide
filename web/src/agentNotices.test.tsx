@@ -113,6 +113,44 @@ it("counts every device's Needs You group for the app icon, not Done", () => {
   expect(needsYouCount({ navigator: { devices: [device("node", 5, 2), device("mini", 1, 0), device("box", 0, 0)] } } as never)).toBe(8);
 });
 
+it.each([
+  [false, false, [], 0, false],
+  [true, false, ["Needs you · my-app"], 2, true],
+  [false, true, ["Done · my-app"], 0, true],
+  [true, true, ["Needs you · my-app", "Done · my-app"], 2, true],
+] as const)("with Needs You=%s and Done=%s sends only the chosen groups and counts Needs You", async (needsYou, done, bodies, badge, wanted) => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const shown: string[] = [];
+  const reported: number[] = [];
+  window.hideHost = {
+    kind: "electron", platform: "linux",
+    notify: (_id: string, _title: string, body: string) => shown.push(body),
+    reportBadge: (count: number) => reported.push(count),
+    withdrawNotifications: () => undefined,
+    onNotificationOpen: () => () => undefined,
+  } as never;
+  const events: Parameters<DispatchFn>[0][] = [];
+  const actions = createActions((event) => { events.push(event); return true; });
+  const saved = useShellStore.getState();
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  try {
+    await act(async () => {
+      useShellStore.setState({ connection: "live", rest: { ui_state: { desktop_notifications: needsYou, desktop_notifications_done: done }, navigator: { devices: [device("node", 2, 0)] } } } as never);
+      root.render(<Probe actions={actions} />);
+    });
+    await act(async () => receiveAgentNotice({ notices: [
+      { tag: "node|w1:p1", device_id: "node", pane_id: "w1:p1", title: "One", state: "needs_you", place: "my-app" },
+      { tag: "node|w1:p2", device_id: "node", pane_id: "w1:p2", title: "Two", state: "done", place: "my-app" },
+    ], clear: [] }));
+    expect(shown).toEqual(bodies);
+    expect(reported).toEqual([badge]);
+    expect(events.filter((event) => event.kind === "desktop_notices").map((event) => event.payload)).toEqual(wanted ? [{ wanted: true }] : []);
+  } finally {
+    await act(async () => root.unmount());
+    useShellStore.setState(saved, true);
+  }
+});
+
 it("reports the app icon's count once the page is live, on each change, and none while the switch is off", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const reported: number[] = [];

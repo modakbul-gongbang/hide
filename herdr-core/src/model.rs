@@ -3107,11 +3107,13 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub first_run: Option<FirstRun>,
     /// Whether the desktop app shows an OS notification when a root agent
-    /// newly needs the operator or finishes (Settings > Notifications, PRD
-    /// first-run-onboarding D-21). Off until the operator turns it on, so an
-    /// existing install starts without it (D-08).
+    /// newly needs the operator (Settings > Notifications).
     #[serde(default)]
     pub desktop_notifications: bool,
+    /// Done notifications are independent of Needs You; a fresh install
+    /// leaves them off. Persistence migrates the former shared switch.
+    #[serde(default)]
+    pub desktop_notifications_done: bool,
     /// The screens whose one-line introduction was shown once (B43).
     #[serde(default)]
     pub screen_intros_seen: BTreeSet<ScreenIntro>,
@@ -3609,6 +3611,7 @@ impl Default for UiStateSnapshot {
             agent_onboarding_agents: Vec::new(),
             first_run: None,
             desktop_notifications: false,
+            desktop_notifications_done: false,
             screen_intros_seen: BTreeSet::new(),
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),

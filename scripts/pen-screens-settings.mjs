@@ -26,7 +26,7 @@ const COPY = {
     settings: 'Settings', groups: {app: 'App', machine: 'This Mac'}, about: 'About',
     nav: {general: 'General', notifications: 'Notifications', usage: 'Usage', devices: 'Devices', shortcuts: 'Shortcuts', agents: 'Agents', hideAi: 'Hide AI', mobile: 'Mobile', github: 'GitHub'},
     general: {appearance: 'Appearance', language: 'Language', languageValue: 'Use system language', theme: 'Theme', themes: ['System', 'Light', 'Dark'], accent: 'Accent', interfaceText: 'Interface text', density: 'Terminal and editor text keep their own size (⌘= and ⌘- in a pane or document).', pt: '13 pt'},
-    notifications: {desktop: 'This Mac', notify: 'Notify me when an agent needs me', permission: 'macOS permission', allowed: 'Allowed', blocked: 'Blocked by macOS', openSystem: 'Open System Settings', testRow: 'Test notification', test: 'Send a test', sentWhen: 'Sent only while no Hide window is in front; the app icon marks agents that need you.', noService: 'This desktop has no notification service, so Hide can’t show notifications here.', phone: 'Phone', pushTo: 'Push to phone', pushValue: 'Only when the app is closed', pushDetail: "Send to your phone only while desktop hide isn't connected, and only when an agent needs your attention or finishes."},
+    notifications: {desktop: 'This Mac', notify: 'Notify me when an agent needs me', done: 'Notify me when an agent finishes', permission: 'macOS permission', allowed: 'Allowed', blocked: 'Blocked by macOS', openSystem: 'Open System Settings', testRow: 'Test notification', test: 'Send a test', sentWhen: 'Sent only while no Hide window is in front. With Needs You on, the app icon counts agents that need you.', noService: 'This desktop has no notification service, so Hide can’t show notifications here.', phone: 'Phone', pushTo: 'Push to phone', pushValue: 'Only when the app is closed', pushDetail: "Send to your phone only while desktop hide isn't connected, and only when an agent needs your attention or finishes."},
     agents: {machines: ['This Mac', 'Mac mini'], installed: 'Installed 4', checkAgain: 'Check again', sessions: '2 sessions', ready: 'Ready', basic: 'Basic', notInstalled: 'Not installed 3', idle: 'Idle agents', sleepAfter: 'Sleep after', sleepValue: '3 days', sleeping: '4 sleeping now. Working, unread and on-screen agents never sleep.', starting: 'Starting work', link: 'Link the issue in pull requests'},
     hideAi: {use: 'Use Hide AI', useDesc: "Off: Hide makes no AI calls. Agent titles show each session's own text, and you name worktrees yourself.", runsOn: 'Runs on', runsOnNote: 'Uses your own login. Hide never asks for an API key.', agent: 'Agent', model: 'Model', signedIn: 'Signed in', modelValue: 'sonnet', fallbackTitle: "If Claude Code can't answer", fallbackNote: 'Tried in this order when Claude Code is signed out, out of usage or unavailable. None added: Hide AI waits for Claude Code.', cliDefault: 'CLI default', addAgent: 'Add agent', features: 'Features', summaries: 'Agent summaries', summariesDesc: 'A title and a one-line status for each agent', worktree: 'Worktree names', worktreeDesc: 'Suggested from the issue title when you start work'},
     github: {name: 'GitHub', description: 'Issues and pull requests through the gh CLI', connected: 'Connected'},
@@ -197,12 +197,19 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
    * on, off, blocked (macOS), pc-on, pc-off (Windows and Linux) and no-service (Linux).
    */
   function desktopRows(p, inner, C, state) {
-    const on = state !== 'off' && state !== 'pc-off' && state !== 'no-service';
+    const on = state !== 'off' && state !== 'pc-off' && state !== 'no-service' && state !== 'done-only';
+    const done = state === 'done-only' || state === 'both';
     if (state === 'no-service') {
-      return [row(`${p}-notify`, inner, {label: C.notify, detail: status(`${p}-nsv`, 'muted', C.noService), controls: [{...sw(`${p}-nsw`, false), opacity: num(tokens, '--opacity-disabled')}], controlsWidth: 28})];
+      return [
+        row(`${p}-notify`, inner, {label: C.notify, detail: status(`${p}-nsv`, 'muted', C.noService), controls: [{...sw(`${p}-nsw`, false), opacity: num(tokens, '--opacity-disabled')}], controlsWidth: 28}),
+        row(`${p}-done`, inner, {label: C.done, controls: [{...sw(`${p}-dsw`, false), opacity: num(tokens, '--opacity-disabled')}], controlsWidth: 28}),
+      ];
     }
-    const rows = [row(`${p}-notify`, inner, {label: C.notify, controls: [sw(`${p}-nsw`, on)], controlsWidth: 28})];
-    if (state === 'on') rows.push(row(`${p}-perm`, inner, {label: C.permission, controls: [status(`${p}-ps`, 'ok', C.allowed), button(`${p}-test`, C.test, {variant: 'secondary'})], controlsWidth: 180}));
+    const rows = [
+      row(`${p}-notify`, inner, {label: C.notify, controls: [sw(`${p}-nsw`, on)], controlsWidth: 28}),
+      row(`${p}-done`, inner, {label: C.done, controls: [sw(`${p}-dsw`, done)], controlsWidth: 28}),
+    ];
+    if (state === 'on' || state === 'done-only' || state === 'both') rows.push(row(`${p}-perm`, inner, {label: C.permission, controls: [status(`${p}-ps`, 'ok', C.allowed), button(`${p}-test`, C.test, {variant: 'secondary'})], controlsWidth: 180}));
     if (state === 'blocked') rows.push(row(`${p}-perm`, inner, {label: C.permission, controls: [status(`${p}-ps`, 'warn', C.blocked), button(`${p}-open`, C.openSystem, {variant: 'secondary'})], controlsWidth: 260}));
     if (state === 'pc-on') rows.push(row(`${p}-tr`, inner, {label: C.testRow, controls: [button(`${p}-test`, C.test, {variant: 'secondary'})], controlsWidth: 100}));
     return rows;
@@ -232,7 +239,7 @@ export function settingsParts(tokens, root, {themedXref, screenIconButton, scree
     },
     notifications: (p, _L, inner, {notify = 'on', machine}) => {
       const C = COPY.en.notifications;
-      const sends = notify === 'on' || notify === 'blocked' || notify === 'pc-on';
+      const sends = notify === 'on' || notify === 'blocked' || notify === 'pc-on' || notify === 'done-only' || notify === 'both';
       return [
         group(`${p}-desk`, inner, {title: machine ?? C.desktop, note: sends ? C.sentWhen : null, rows: desktopRows(p, inner, C, notify)}),
         group(`${p}-phone`, inner, {title: C.phone, rows: [
@@ -336,6 +343,9 @@ export function settingsBoards(tokens, root, helpers) {
         ])),
         ...(s === 'l' ? [cell(`set-c-ko-${s}`, 'Hide AI · 한국어 · interface text 17/13', settingsSheet(`set-ko-${s}`, {page: 'hideAi', theme: s, lang: 'ko', height: 800, scale: 17 / 13}))] : []),
       ]),
+    ]},
+    {id: 'set-notification-choices', name: 'Notification choices', spec: 'Needs You and Done are independent choices in the existing desktop group. The permission/test row appears while either is on; the phone keeps its own settings.', build: s => [
+      hstack(`set-nchoices-${s}`, ['off', 'on', 'done-only', 'both'].map(state => cell(`set-nchoice-${state}-${s}`, state, settingsSheet(`set-notification-${state}-${s}`, {page: 'notifications', theme: s, notify: state})))),
     ]},
   ];
 }

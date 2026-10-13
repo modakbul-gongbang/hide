@@ -47,6 +47,8 @@ export const ONBOARDING_STATES = [
   "settings-on",
   "settings-off",
   "settings-blocked",
+  "settings-done-only",
+  "settings-both",
 ] as const;
 
 export type OnboardingState = (typeof ONBOARDING_STATES)[number];
@@ -56,7 +58,7 @@ export type OnboardingSceneParams = {
   theme: "light" | "dark";
   state: OnboardingState;
   system: OnboardingSystem;
-  language: "en" | "ko";
+  language: "en" | "ko" | "ja" | "zh-CN";
   /** The interface text scale Appearance's font size sets (`--interface-scale`); the largest is 17/13 (B41). */
   scale: number;
   /** The Settings page a `settings-*` state opens (PRD settings-left-nav); Notifications unless the query names another. */
@@ -69,7 +71,8 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   const system = params.get("system") ?? "mac";
   if (system !== "mac" && system !== "windows" && system !== "linux") throw new Error(`Unknown onboarding scene system ${system}`);
   // The long content is the Korean copy, the longest of the four languages (B41).
-  const language = params.get("lang") === "ko" || params.get("content") === "long" ? "ko" : "en";
+  const requestedLanguage = params.get("lang");
+  const language = requestedLanguage === "ko" || requestedLanguage === "ja" || requestedLanguage === "zh-CN" ? requestedLanguage : params.get("content") === "long" ? "ko" : "en";
   const scale = Number(params.get("scale") ?? "1");
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
   const page = params.get("page") ?? "notifications";
@@ -137,7 +140,7 @@ function providers(): AiProvider[] {
 function permissionOf(state: OnboardingState, system: OnboardingSystem): NotificationPermission {
   if (state === "notifications-no-service") return "no_service";
   if (system !== "mac") return "unsupported";
-  if (state === "notifications-on" || state === "settings-on") return "granted";
+  if (state === "notifications-on" || state === "settings-on" || state === "settings-done-only" || state === "settings-both") return "granted";
   if (state === "notifications-blocked" || state === "settings-blocked") return "denied";
   if (state === "notifications-unreadable") return "unknown";
   return "not_determined";
@@ -174,7 +177,7 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
   // Help's walk is the page's own, over a first run that ended (B45).
   const step = state === "agents-setup" ? "done" : state.startsWith("agents") ? "agents" : state.startsWith("notifications") ? "notifications" : state === "project" ? "project" : "done";
   // The switch is on once Turn on was pressed; macOS's answer is the host's (`permissionOf`).
-  const enabled = (state.startsWith("notifications-") && state !== "notifications-no-service") || state === "settings-on" || state === "settings-blocked";
+  const enabled = (state.startsWith("notifications-") && state !== "notifications-no-service") || state === "settings-on" || state === "settings-blocked" || state === "settings-both";
   const agents = kitAgents(state, system).map((agent) => (step === "agents" || agent.availability !== "available" ? agent : { ...agent, enabled: true, chosen: true }));
   return {
     revision: 1,
@@ -192,6 +195,7 @@ function sceneRest(state: OnboardingState, system: OnboardingSystem): SnapshotRe
       first_run: { version: 1, step },
       agent_onboarding: step === "agents" ? "pending" : "done",
       desktop_notifications: enabled,
+      desktop_notifications_done: state === "settings-done-only" || state === "settings-both",
       workspace_registrations: [{ id: "home", label: "hide", path: `${HOME}/hide`, device_id: "local", pinned: false, home: true }, ...projects.map((row) => ({ id: row.id, label: row.label, path: row.path, device_id: "local", pinned: false }))],
     },
     status: { background_ai: { enabled: true, provider: "claude", chosen: true, providers: providers(), unavailable_reason: null } },
