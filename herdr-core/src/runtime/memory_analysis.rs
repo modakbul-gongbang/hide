@@ -115,6 +115,8 @@ pub(super) struct MemoryWork {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ProjectMemoryWork {
     pub(super) analysis: MemoryAnalysisState,
+    pub(super) checking_card: Option<u64>,
+    pub(super) check_resume_at_unix_ms: Option<u64>,
     /// The card the last forget took away, which the Memory tab offers to
     /// bring back (B24).
     pub(super) forgotten: Option<u64>,
@@ -125,6 +127,11 @@ pub(super) struct ProjectMemoryWork {
 
 /// What a pass tells the runtime about one Project while it runs.
 enum PassReport {
+    CheckState {
+        project_id: String,
+        state: MemoryAnalysisState,
+        card: Option<u64>,
+    },
     Analyzing {
         project_id: String,
     },
@@ -149,6 +156,9 @@ enum PassReport {
 /// What a whole pass tells the runtime when it ends.
 #[derive(Debug, Default, PartialEq)]
 struct PassOutcome {
+    /// Only holds confirmed by this pass survive its end, including passes
+    /// with no router while the usage limit pauses every agent.
+    check_budget_exhausted: BTreeSet<String>,
     /// Closed sessions with nothing left to analyze, or no longer in any
     /// Memory-enabled Project.
     settled: BTreeSet<MemorySession>,
@@ -490,9 +500,16 @@ impl Runtime {
             work.usage_wanted_until_unix_ms = now_ms().saturating_add(USAGE_WANTED_MS);
         }
         let mut changed = false;
-        for project in work.projects.values_mut() {
-            if project.analysis == MemoryAnalysisState::Analyzing {
+        for (project_id, project) in &mut work.projects {
+            if matches!(
+                project.analysis,
+                MemoryAnalysisState::Analyzing | MemoryAnalysisState::Checking
+            ) || (project.analysis == MemoryAnalysisState::CheckBudgetExhausted
+                && !outcome.check_budget_exhausted.contains(project_id))
+            {
                 project.analysis = MemoryAnalysisState::Idle;
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 changed = true;
             }
         }
@@ -551,11 +568,12 @@ impl Runtime {
         }
         let mut changed = false;
         for project in self.memory_work.projects.values_mut() {
-            if project.retry_at_unix_ms != 0 || project.analysis == MemoryAnalysisState::AiNotReady
+            if project.retry_at_unix_ms != 0
+                || matches!(project.analysis, MemoryAnalysisState::AiNotReady)
             {
                 project.retry_at_unix_ms = 0;
                 project.failures = 0;
-                if project.analysis == MemoryAnalysisState::AiNotReady {
+                if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
                     project.analysis = MemoryAnalysisState::Idle;
                 }
                 changed = true;
@@ -577,7 +595,7 @@ impl Runtime {
             .or_default();
         project.retry_at_unix_ms = 0;
         project.failures = 0;
-        if project.analysis == MemoryAnalysisState::AiNotReady {
+        if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
             project.analysis = MemoryAnalysisState::Idle;
         }
         self.memory_work.next_pass_unix_ms = 0;
@@ -618,6 +636,7 @@ impl Runtime {
         let now = now_ms();
         let project_id = match &report {
             PassReport::Analyzing { project_id }
+            | PassReport::CheckState { project_id, .. }
             | PassReport::Analyzed { project_id, .. }
             | PassReport::Checked { project_id, .. } => project_id.clone(),
         };
@@ -629,11 +648,11 @@ impl Runtime {
                 && let Some(project) = self.memory_work.projects.get_mut(&project_id)
                 && (project.failures > 0
                     || project.retry_at_unix_ms != 0
-                    || project.analysis == MemoryAnalysisState::AiNotReady)
+                    || matches!(project.analysis, MemoryAnalysisState::AiNotReady))
             {
                 project.failures = 0;
                 project.retry_at_unix_ms = 0;
-                if project.analysis == MemoryAnalysisState::AiNotReady {
+                if matches!(project.analysis, MemoryAnalysisState::AiNotReady) {
                     project.analysis = MemoryAnalysisState::Idle;
                 }
                 recovered = true;
@@ -648,10 +667,42 @@ impl Runtime {
         }
         let before = self.memory_work.projects.get(&project_id).cloned();
         match report {
+            PassReport::CheckState {
+                project_id,
+                state,
+                card,
+            } => {
+                // An empty queue can release an earlier budget hold. It does
+                // not create idle work or erase a provider's failure state.
+                if state == MemoryAnalysisState::Idle
+                    && card.is_none()
+                    && !self
+                        .memory_work
+                        .projects
+                        .get(&project_id)
+                        .is_some_and(|work| {
+                            matches!(
+                                work.analysis,
+                                MemoryAnalysisState::Checking
+                                    | MemoryAnalysisState::CheckBudgetExhausted
+                            )
+                        })
+                {
+                    return false;
+                }
+                let project = self.memory_work.projects.entry(project_id).or_default();
+                project.analysis = state;
+                project.checking_card = card;
+                project.check_resume_at_unix_ms = (state
+                    == MemoryAnalysisState::CheckBudgetExhausted)
+                    .then(|| hide_memory::memory_call_reset_at(now));
+            }
             PassReport::Checked { .. } => return false,
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
                 project.analysis = MemoryAnalysisState::Analyzing;
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
             }
             PassReport::Analyzed {
                 project_id,
@@ -668,6 +719,8 @@ impl Runtime {
                     }));
                 }
                 let project = self.memory_work.projects.entry(project_id).or_default();
+                project.checking_card = None;
+                project.check_resume_at_unix_ms = None;
                 match &error {
                     Some(error) => {
                         project.failures = project.failures.saturating_add(1);
@@ -887,14 +940,27 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcom
         // would otherwise ask again at once.
         if tally.analyzing || tally.error.is_some() {
             report(PassReport::Analyzed {
-                project_id,
+                project_id: project_id.clone(),
                 learned: tally.learned,
                 error: tally.error,
             });
         } else if tally.checked || tally.answered {
             report(PassReport::Checked {
-                project_id,
+                project_id: project_id.clone(),
                 answered: tally.answered,
+            });
+        }
+        if let Some(state) = tally
+            .waiting
+            .or_else(|| deferred.and_then(visible_deferral))
+        {
+            if state == MemoryAnalysisState::CheckBudgetExhausted {
+                outcome.check_budget_exhausted.insert(project_id.clone());
+            }
+            report(PassReport::CheckState {
+                project_id,
+                state,
+                card: None,
             });
         }
     }
@@ -920,6 +986,7 @@ const ANALYSIS_FAILED: &str = "analysis.session_failed";
 /// What one Project's walk analyzed.
 #[derive(Default)]
 struct ProjectTally {
+    waiting: Option<MemoryAnalysisState>,
     analyzing: bool,
     /// A card was checked against the repository and changed state.
     checked: bool,
@@ -1124,13 +1191,14 @@ fn walk_project(
         deferred,
         tally,
         outcome,
+        report,
     );
     Ok(())
 }
 
 /// Re-verifies the Project's unverified cards and checks the ones about to
 /// be suggested (D-07, D-11), after its sessions were analyzed, under the
-/// same call cap, weekly deferral and provider-failure stop. Quiet: the
+/// same call cap, router usage limit and provider-failure stop. Quiet: the
 /// Project never turns "analyzing" for it (D-13).
 #[allow(clippy::too_many_arguments)] // one Project's pass input, store, evidence facts and tallies
 fn maintain_cards(
@@ -1144,11 +1212,12 @@ fn maintain_cards(
     deferred: &mut Option<&'static str>,
     tally: &mut ProjectTally,
     outcome: &mut PassOutcome,
+    report: &mut dyn FnMut(PassReport),
 ) {
     let Some(router) = input.router.as_ref() else {
         return;
     };
-    if deferred.is_some()
+    if deferred.is_some_and(|reason| reason != "reserved_for_checks")
         || input.held.contains(project_id)
         || tally.error.is_some()
         || input.cancel.is_cancelled()
@@ -1157,26 +1226,42 @@ fn maintain_cards(
     }
     // The usage reader runs for a pass only when there is a card to ask
     // about, as it does for a session.
-    let due = store
-        .pending_cards(project_id, now_ms(), 1)
-        .map(|cards| !cards.is_empty())
-        .unwrap_or(false)
-        || store
-            .promotion_unchecked(project_id, now_ms(), 1)
-            .map(|cards| !cards.is_empty())
-            .unwrap_or(false);
-    if !due {
+    let due = store.due_checks(Some(project_id), now_ms(), 1);
+    let due = match due {
+        Ok(due) => due,
+        Err(error) => {
+            crate::diagnostic!(
+                json!({"component":"memory", "kind":"verification.queue_unreadable", "project_id":project_id, "message":error.to_string()})
+            );
+            return;
+        }
+    };
+    if due == 0 {
+        report(PassReport::CheckState {
+            project_id: project_id.to_owned(),
+            state: MemoryAnalysisState::Idle,
+            card: None,
+        });
         return;
     }
     outcome.wants_usage = true;
-    let mut admit = |store: &MemoryStore| {
-        let calls = store
-            .analysis_calls(now_ms())
-            .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-        if calls >= hide_memory::MAINTENANCE_CALL_LIMIT {
-            return Err(AnalysisFailure::Deferred("daily_cap_for_checks"));
+    let mut admit = |store: &MemoryStore| admit_budget(store, hide_memory::MemoryCallKind::Check);
+    let mut progress = |card: Option<u64>| {
+        if card.is_none() {
+            report(PassReport::Checked {
+                project_id: project_id.to_owned(),
+                answered: true,
+            });
         }
-        admit_call(store)
+        report(PassReport::CheckState {
+            project_id: project_id.to_owned(),
+            state: if card.is_some() {
+                MemoryAnalysisState::Checking
+            } else {
+                MemoryAnalysisState::Idle
+            },
+            card,
+        });
     };
     let reverified = reverify_pending(
         store,
@@ -1187,6 +1272,7 @@ fn maintain_cards(
         root,
         &input.cancel,
         &mut admit,
+        &mut progress,
     );
     let suggested = match reverified {
         Ok(first) => check_before_suggestion(
@@ -1199,6 +1285,7 @@ fn maintain_cards(
             home,
             &input.cancel,
             &mut admit,
+            &mut progress,
         )
         .map(|second| {
             (
@@ -1216,12 +1303,15 @@ fn maintain_cards(
         Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
         // A check held back never holds the Projects after this one: it is
         // a call analysis would not need, and the next pass asks again.
-        Err(AnalysisFailure::Deferred(reason)) => crate::diagnostic!(json!({
-            "component": "memory",
-            "kind": "verification.deferred",
-            "project_id": project_id,
-            "reason": reason,
-        })),
+        Err(AnalysisFailure::Deferred(reason)) => {
+            tally.waiting = visible_deferral(reason);
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "verification.deferred",
+                "project_id": project_id,
+                "reason": reason,
+            }));
+        }
         Err(AnalysisFailure::Cancelled | AnalysisFailure::Disabled) => {}
         Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
             "component": "memory",
@@ -1232,17 +1322,38 @@ fn maintain_cards(
     }
 }
 
+fn visible_deferral(reason: &str) -> Option<MemoryAnalysisState> {
+    match reason {
+        "daily_cap" | "daily_cap_for_checks" => Some(MemoryAnalysisState::CheckBudgetExhausted),
+        _ => None,
+    }
+}
+
+fn admit_budget(
+    store: &MemoryStore,
+    kind: hide_memory::MemoryCallKind,
+) -> Result<(), AnalysisFailure> {
+    use hide_memory::MemoryCallDeferral;
+    match store
+        .admit_memory_call(now_ms(), kind)
+        .map_err(|error| AnalysisFailure::Local(error.to_string()))?
+    {
+        None => Ok(()),
+        Some(reason) => Err(AnalysisFailure::Deferred(match reason {
+            MemoryCallDeferral::DailyCap => "daily_cap",
+            MemoryCallDeferral::CheckShareSpent => "daily_cap_for_checks",
+            MemoryCallDeferral::ReservedForChecks => "reserved_for_checks",
+        })),
+    }
+}
+
 /// Admits one analysis call against the machine's daily cap and counts it.
-/// The usage limit is not judged here: it is the router's, which moves a
-/// request off an agent past it (PRD hide-ai-usage-limit D-04).
+/// The usage limit is the router's, which moves a request off an agent past it.
 pub(crate) fn admit_call(store: &MemoryStore) -> Result<(), AnalysisFailure> {
     if let Some(reason) = deferral(store).map_err(AnalysisFailure::Local)? {
         return Err(AnalysisFailure::Deferred(reason));
     }
-    store
-        .count_analysis_call(now_ms())
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    Ok(())
+    admit_budget(store, hide_memory::MemoryCallKind::Analysis)
 }
 
 /// Why a call would be held back now, if it would: the machine's calls
@@ -2158,6 +2269,7 @@ mod tests {
         node: Arc<dyn NodeLink>,
         /// What the last pass remembered, as the runtime keeps it.
         failed_reads: std::cell::RefCell<FailedReads>,
+        check_states: std::cell::RefCell<Vec<(MemoryAnalysisState, Option<u64>)>>,
     }
 
     const SESSION: &str = "claude-memory-pass";
@@ -2252,6 +2364,7 @@ mod tests {
                 }),
                 node,
                 failed_reads: Default::default(),
+                check_states: Default::default(),
             };
             fixture.write(&fixture.lines);
             fixture
@@ -2365,13 +2478,23 @@ mod tests {
             };
             let mut reports = Vec::new();
             let outcome = run_pass(&input, &mut |report| {
-                reports.push(match report {
+                // Existing assertions describe session outcomes; check transitions
+                // have their own assertions below, and refreshes may coalesce.
+                if let PassReport::CheckState { state, card, .. } = report {
+                    self.check_states.borrow_mut().push((state, card));
+                    return;
+                }
+                let result = match report {
+                    PassReport::CheckState { .. } => unreachable!(),
                     PassReport::Analyzing { .. } => "analyzing",
                     PassReport::Checked { .. } => "checked",
                     PassReport::Analyzed { error: Some(_), .. } => "failed",
                     PassReport::Analyzed { learned: 1, .. } => "learned one",
                     PassReport::Analyzed { .. } => "analyzed",
-                })
+                };
+                if reports.last() != Some(&result) {
+                    reports.push(result);
+                }
             });
             *self.failed_reads.borrow_mut() = outcome.failed_reads.clone();
             (reports, outcome)
@@ -2639,7 +2762,12 @@ mod tests {
         fixture.answer(&[]);
         let store = fixture.store();
         for _ in 0..hide_memory::DAILY_ANALYSIS_CALL_LIMIT {
-            store.count_analysis_call(now_ms()).unwrap();
+            assert_eq!(
+                store
+                    .admit_memory_call(now_ms(), hide_memory::MemoryCallKind::Analysis)
+                    .unwrap(),
+                None
+            );
         }
         drop(store);
         assert!(
@@ -2864,6 +2992,174 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(seeded.provided_session_count, 0);
+    }
+
+    #[test]
+    fn waiting_checks_report_the_check_budget_without_a_provider_call() {
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let card = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&card.id, 1).unwrap();
+        drop(store);
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,500)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        fixture.pass(true, false);
+        assert_eq!(fixture.calls(), 0);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [(MemoryAnalysisState::CheckBudgetExhausted, None)]
+        );
+        assert!(
+            fixture
+                .store()
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        // The last attempt's per-card cooldown outlives a UTC reset. With
+        // no check due, the earlier daily hold must stop saying "today".
+        fixture
+            .store()
+            .begin_verification(&card.id, now_ms())
+            .unwrap();
+        fixture.check_states.borrow_mut().clear();
+        fixture.pass(true, false);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [(MemoryAnalysisState::Idle, None)]
+        );
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    #[test]
+    fn a_utc_reset_during_a_usage_pause_releases_the_previous_check_budget_hold() {
+        let fixture = Fixture::new();
+        let yesterday = now_ms() / 86_400_000 - 1;
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,1000,500)",
+                [yesterday],
+            )
+            .unwrap();
+        assert_eq!(fixture.store().analysis_calls(now_ms()).unwrap(), 0);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.memory_work.projects.insert(
+            fixture.project_id.clone(),
+            ProjectMemoryWork {
+                analysis: MemoryAnalysisState::CheckBudgetExhausted,
+                check_resume_at_unix_ms: Some((yesterday + 1) * 86_400_000),
+                ..ProjectMemoryWork::default()
+            },
+        );
+        // A weekly usage pause makes the pass carry no router, just as
+        // start_memory_pass does while every agent is past the limit.
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], false);
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::Idle
+        );
+        assert_eq!(fixture.calls(), 0);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn a_check_budget_hold_confirmed_by_this_pass_keeps_its_reset_time() {
+        let fixture = Fixture::new();
+        let card = fixture
+            .store()
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        fixture.store().mark_unverified(&card.id, 1).unwrap();
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,500)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        let (_, outcome) = fixture.run(("claude", SESSION.to_owned()), true, false, &[], true);
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.apply_memory_report(PassReport::CheckState {
+            project_id: fixture.project_id.clone(),
+            state: MemoryAnalysisState::CheckBudgetExhausted,
+            card: None,
+        });
+        let resume = runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms;
+        assert_eq!(resume, Some((now_ms() / 86_400_000 + 1) * 86_400_000));
+        runtime.finish_memory_pass(outcome);
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].analysis,
+            MemoryAnalysisState::CheckBudgetExhausted
+        );
+        assert_eq!(
+            runtime.memory_work.projects[&fixture.project_id].check_resume_at_unix_ms,
+            resume
+        );
+        assert_eq!(fixture.calls(), 0);
+    }
+
+    #[test]
+    fn analysis_spending_595_calls_does_not_stop_a_check_and_its_card_recovers() {
+        let fixture = Fixture::new();
+        let mut store = fixture.store();
+        let card = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        store.mark_unverified(&card.id, 1).unwrap();
+        drop(store);
+        rusqlite::Connection::open(&fixture.database)
+            .unwrap()
+            .execute(
+                "INSERT INTO analysis_calls(day,calls,checks) VALUES(?1,595,0)",
+                [now_ms() / 86_400_000],
+            )
+            .unwrap();
+        fixture.backend.answers.lock().unwrap().push(json!({
+            "verdict": "valid", "text": null, "title": null, "aliases": [], "document": null,
+        }));
+        fixture.pass(true, false);
+        assert_eq!(fixture.calls(), 1);
+        assert_eq!(
+            *fixture.check_states.borrow(),
+            [
+                (MemoryAnalysisState::Checking, Some(1)),
+                (MemoryAnalysisState::Idle, None)
+            ]
+        );
+        let store = fixture.store();
+        assert_eq!(store.analysis_calls(now_ms()).unwrap(), 596);
+        assert!(
+            !store
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(
+            !store
+                .retrieve(&hide_memory::RetrievalQuery::session_start(
+                    &fixture.project_id
+                ))
+                .unwrap()
+                .items
+                .is_empty()
+        );
     }
 
     #[test]

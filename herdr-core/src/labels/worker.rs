@@ -919,6 +919,7 @@ impl LabelWorker {
             self.log_failure(pane_id, "read.refused", "label_session_id_mismatch");
             return self.invalidate_turn_read(pane_id);
         }
+        let pi_name = pane.agent == hide_session::Agent::Pi;
         let target = self.target.clone();
         let record = self
             .records
@@ -1005,11 +1006,29 @@ impl LabelWorker {
             pane.claimed_submit = None;
         }
         let submits = self.input.submits(&target, pane_id);
+        // Migrate Pi names written by older readers before applying the next
+        // name (including an explicit clear). Older remote helpers use that
+        // same source-less custom slot, so their reads are demoted too.
+        if pi_name && let Some(name) = record.facts.custom_title.take() {
+            record.facts.title = Some(name);
+            changed = true;
+        }
         changed |= record.facts.fold(
             ReadFacts {
                 events: &transcript.events,
-                title: transcript.title.as_deref(),
-                custom_title: transcript.custom_title.as_deref(),
+                title: if pi_name {
+                    transcript
+                        .title
+                        .as_deref()
+                        .or(transcript.custom_title.as_deref())
+                } else {
+                    transcript.title.as_deref()
+                },
+                custom_title: if pi_name {
+                    None
+                } else {
+                    transcript.custom_title.as_deref()
+                },
                 sightings: &transcript.pr_sightings,
                 subagents: &transcript.subagents,
                 from_beginning: from_beginning || transcript.rescanned.is_some(),

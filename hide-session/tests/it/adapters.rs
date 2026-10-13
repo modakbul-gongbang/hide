@@ -1929,6 +1929,10 @@ mod grok {
     fn current_titles_come_from_the_summary_and_a_cleared_rename_revokes_them() {
         let mut native = Native::new();
         let first = native.read().unwrap();
+        assert_eq!(
+            (first.title.as_deref(), first.custom_title.as_deref()),
+            (Some("요청 보기 만들기"), Some(""))
+        );
         native.resume(&first);
         native.summary(|summary| {
             summary["generated_title"] = json!("새 이름");
@@ -1948,6 +1952,20 @@ mod grok {
         assert_eq!(
             (cleared.title.as_deref(), cleared.custom_title.as_deref()),
             (Some(""), Some(""))
+        );
+        native.resume(&cleared);
+        native.summary(|summary| {
+            summary["generated_title"] = json!("자동 이름");
+            summary["title_is_manual"] = json!(false);
+        });
+        let automatic = native.read().unwrap();
+        assert!(automatic.events.is_empty());
+        assert_eq!(
+            (
+                automatic.title.as_deref(),
+                automatic.custom_title.as_deref()
+            ),
+            (Some("자동 이름"), Some(""))
         );
     }
 
@@ -2255,7 +2273,11 @@ mod pi {
     fn native_history_has_the_shared_conversation_facts_and_only_recorded_capabilities() {
         let native = Native::new();
         let transcript = native.read().unwrap();
-        assert_eq!(transcript.custom_title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        assert!(
+            transcript.custom_title.is_none(),
+            "Pi records no title source"
+        );
         let people: Vec<_> = transcript
             .events
             .iter()
@@ -2350,12 +2372,13 @@ mod pi {
         native.resume(&first);
         native.append(json!({"type":"session_info","id":"renamed","parentId":"a000000b","timestamp":"2026-10-03T01:03:00Z","name":"새 이름"}));
         let renamed = native.read().unwrap();
-        assert_eq!(renamed.custom_title.as_deref(), Some("새 이름"));
+        assert_eq!(renamed.title.as_deref(), Some("새 이름"));
+        assert!(renamed.custom_title.is_none());
         assert!(renamed.events.is_empty());
         native.resume(&renamed);
         native.append(json!({"type":"session_info","id":"cleared","parentId":"renamed","timestamp":"2026-10-03T01:03:01Z","name":""}));
         let cleared = native.read().unwrap();
-        assert_eq!(cleared.custom_title.as_deref(), Some(""));
+        assert_eq!(cleared.title.as_deref(), Some(""));
         native.resume(&cleared);
         assert!(native.read().unwrap().events.is_empty());
         let body = fs::read_to_string(&native.path).unwrap();
@@ -2830,6 +2853,76 @@ fn what_only_one_agent_records_is_read_from_it() {
     let codex_home = home(Agent::Codex);
     let codex = read_whole(codex_home.path(), Agent::Codex);
     assert_eq!(sighted(&codex, 14).unwrap().at_unix_ms, START + 40_000);
+}
+
+/// Task identity: only a native record with manual provenance gets step one.
+#[test]
+fn claude_titles_keep_the_manual_rename_separate_from_the_automatic_name() {
+    let native = home(Agent::Claude);
+    let transcript = read_whole(native.path(), Agent::Claude);
+    assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+    assert_eq!(transcript.custom_title.as_deref(), Some("운영자 이름"));
+    let id = request(Agent::Claude).reference_value;
+    let file = native
+        .path()
+        .join(".claude/projects/-work-app")
+        .join(format!("{id}.jsonl"));
+    append(
+        &file,
+        &[serde_json::json!({"type":"custom-title", "customTitle":"", "sessionId":id})],
+    );
+    let cleared = read_whole(native.path(), Agent::Claude);
+    assert_eq!(cleared.title.as_deref(), Some("요청 보기 만들기"));
+    assert_eq!(cleared.custom_title.as_deref(), Some(""));
+    append(
+        &file,
+        &[serde_json::json!({"type":"ai-title", "aiTitle":"", "sessionId":id})],
+    );
+    assert_eq!(
+        read_whole(native.path(), Agent::Claude).title.as_deref(),
+        Some("")
+    );
+}
+
+#[test]
+fn codex_thread_names_without_source_are_automatic_even_after_a_rename() {
+    let native = home(Agent::Codex);
+    let transcript = read_whole(native.path(), Agent::Codex);
+    assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(transcript.custom_title.is_none());
+    use std::io::Write;
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(native.path().join(".codex/session_index.jsonl"))
+            .unwrap(),
+        "{}",
+        serde_json::json!({"id":request(Agent::Codex).reference_value,
+        "thread_name":"운영자 이름", "updated_at":"2026-10-03T01:03:00.000Z"})
+    )
+    .unwrap();
+    let renamed = read_whole(native.path(), Agent::Codex);
+    assert_eq!(renamed.title.as_deref(), Some("운영자 이름"));
+    assert!(renamed.custom_title.is_none());
+}
+
+#[test]
+fn opencode_root_titles_without_source_are_automatic_even_after_a_rename() {
+    let native = home(Agent::OpenCode);
+    let first = read_whole(native.path(), Agent::OpenCode);
+    assert_eq!(first.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(first.custom_title.is_none());
+    let db = rusqlite::Connection::open(native.path().join(".local/share/opencode/opencode.db"))
+        .unwrap();
+    db.execute(
+        "UPDATE session SET title = ?1 WHERE id = ?2",
+        rusqlite::params!["운영자 이름", request(Agent::OpenCode).reference_value],
+    )
+    .unwrap();
+    drop(db);
+    let renamed = read_whole(native.path(), Agent::OpenCode);
+    assert_eq!(renamed.title.as_deref(), Some("운영자 이름"));
+    assert!(renamed.custom_title.is_none());
 }
 
 #[test]

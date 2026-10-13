@@ -156,6 +156,16 @@ impl LabelOverlay {
                 continue;
             }
             let mut facts = label.facts.clone();
+            // Older stores/helpers classified Pi's source-less name as manual.
+            // Its /name command and extensions write the same native record.
+            if agent
+                .agent
+                .as_deref()
+                .and_then(hide_session::Agent::from_kind)
+                == Some(hide_session::Agent::Pi)
+            {
+                facts.native_title = facts.native_custom_title.take().or(facts.native_title);
+            }
             facts.native_session_id = label
                 .native_session_id
                 .as_ref()
@@ -236,7 +246,8 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
     RowFacts {
         native_reference: None,
         native_session_id: None,
-        native_title: facts.custom_title.clone().or_else(|| facts.title.clone()),
+        native_title: facts.title.clone(),
+        native_custom_title: facts.custom_title.clone(),
         operator_request: facts.operator_request.clone(),
         other_request: facts.other_request.clone(),
         reply: facts.reply.clone(),

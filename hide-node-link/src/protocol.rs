@@ -114,7 +114,9 @@ use crate::error::HostError;
 /// and reinstalled.
 /// 30: subscription sources use one credential-free `usage_limit_fetch`
 /// call. Old helpers must not be asked for credentials by a newer core.
-pub const PROTOCOL_VERSION: u32 = 30;
+/// 31: pane proofs may carry one typed hook read and answer it directly.
+/// Older peers cannot decode the hook answer and are refused at Hello.
+pub const PROTOCOL_VERSION: u32 = 31;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and

@@ -1,6 +1,6 @@
 // Synthetic native-format writers on actual pinned Herdr and hided.
 // Installed CLI measurements remain a separate acceptance boundary.
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -21,6 +21,17 @@ import type { AgentRow } from "../src/snapshot";
 type QuestionRow = AgentRow & { user_turn?: { kind: string; content: { text: string; choices: string[]; truncated: boolean } | null } };
 
 test.describe.configure({ timeout: 150_000 });
+
+async function disableAgentSummaries(page: Page): Promise<void> {
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="hideAi"]').click();
+  const summaries = page.locator("[data-ai-agent-summary]");
+  await expect(summaries).toHaveAttribute("data-ai-agent-summary", "true");
+  await summaries.click();
+  await expect(summaries).toHaveAttribute("data-ai-agent-summary", "false");
+  await page.locator("[data-settings-close]").click();
+  await expect(page.locator("[data-settings]")).toHaveCount(0);
+}
 
 for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"], ["grok", GROK_ID, GROK_TITLE, "--resume"], ["cursor", CURSOR_ID, CURSOR_GOAL, "--resume"]] as const) {
 test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durable sleep wake the exact conversation in a fresh pane`, async ({ page }) => {
@@ -43,6 +54,10 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator("[data-checkout]").first().click();
     const row = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${sourcePane}"]`);
+    // status-model.md, Task identity: an automatic/source-less name follows the goal.
+    const selected = kind === "pi" ? "Generated Pi goal" : kind === "grok" ? "Generated Grok goal" : initialTitle;
+    await expect(row).toContainText(selected, { timeout: 30_000 });
+    if (kind === "pi" || kind === "grok") await disableAgentSummaries(page);
     await expect(row).toContainText(initialTitle, { timeout: 30_000 });
     await screenshot(page, `${kind}-native-title`);
     let title: string = initialTitle;
@@ -236,6 +251,9 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator("[data-checkout]").first().click();
     const row = page.locator(`nav[data-sidebar] [data-pane="${sourcePane}"]`);
+    // OpenCode records no manual source: goal first, native title with summaries off.
+    await expect(row).toContainText("Generated OpenCode goal", { timeout: 30_000 });
+    await disableAgentSummaries(page);
     await expect(row).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
     await expect(page.locator("nav[data-sidebar]")).not.toContainText(OPENCODE_CHILD_TITLE);
     await screenshot(page, "opencode-native-title");

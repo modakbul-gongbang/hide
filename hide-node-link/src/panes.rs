@@ -7,6 +7,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Recovery advice shared by local and device pane refusals.
+pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
+pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
+
+pub fn refusal_next_action(reason: &str) -> &'static str {
+    match reason {
+        "checkout_not_registered" | "caller_unavailable" => CHECKOUT_NEXT_ACTION,
+        _ => PANE_NEXT_ACTION,
+    }
+}
+
 /// Streams one link carries at once.
 pub const MAX_STREAMS: usize = 8;
 /// The most bytes of a stream one message carries.
@@ -35,6 +46,46 @@ pub struct PaneIdentity {
     pub shell_started: u64,
 }
 
+/// The only commands admitted by a hook's proof-and-answer exchange.
+/// Keeping this separate from Workspace commands prevents this transport
+/// from acquiring dispatch, browser, or letter-confirmation authority.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HookCommand {
+    WorkspaceInfo {},
+    LetterPull {
+        prompt_digest: Option<String>,
+        session: Option<String>,
+    },
+    Memory {
+        event: String,
+        runtime: String,
+        session: String,
+        #[serde(default)]
+        prompt: String,
+    },
+}
+
+impl HookCommand {
+    /// Only session guidance keeps a reference for the commands it advertises.
+    pub fn one_shot(&self) -> bool {
+        !matches!(self, Self::WorkspaceInfo {})
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookRequest {
+    pub request_id: String,
+    pub command: HookCommand,
+    /// A named reference constrains the fresh proof; it never substitutes
+    /// for the node's kernel check of the caller.
+    pub token: Option<String>,
+}
+
+pub const HOOK_REQUEST_LIMIT: usize = 16 * 1024;
+pub const HOOK_RESPONSE_LIMIT: usize = 64 * 1024;
+
 /// What a node tells the core without being asked: one JSON line with an
 /// `event` field and no `id`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -50,6 +101,8 @@ pub enum NodeEvent {
         identity: PaneIdentity,
         nonce: String,
         one_shot: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<HookRequest>,
     },
     /// A process that is in no pane the node can prove asked for a
     /// credential, and the node's kernel says its working directory is
@@ -62,6 +115,8 @@ pub enum NodeEvent {
         path: String,
         nonce: String,
         one_shot: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<HookRequest>,
     },
     /// A credential the node handed out is no longer held: its reference
     /// expired, was removed, or its holder ended.
@@ -99,7 +154,7 @@ pub enum NodeEvent {
 }
 
 /// Who opened a stream, as the node proved it when the stream opened: the
-/// process holding a one-shot credential the node issued for `pane_id`,
+/// process using a credential the node issued for `pane_id`,
 /// descended from that pane's shell, whose identity the node read from its
 /// Herdr then. The core checks the stream's command against it rather than
 /// asking [`crate::protocol::Call::PaneInspect`], and only for a credential
@@ -115,6 +170,14 @@ pub struct StreamCaller {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ProofAnswer {
+    WorkspaceInfo {
+        token: String,
+        issued_new: bool,
+        answer: serde_json::Value,
+    },
+    Hook {
+        answer: serde_json::Value,
+    },
     Issued {
         token: String,
         /// The token was made for this proof; one already held by the pane
@@ -123,6 +186,7 @@ pub enum ProofAnswer {
     },
     Refused {
         reason: String,
+        next_action: String,
     },
 }
 
