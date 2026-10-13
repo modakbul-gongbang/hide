@@ -9,6 +9,41 @@ use crate::model::{PullRequestBadge, PullRequestChecks, PullRequestSnapshot};
 
 const CREATED: u64 = 1_790_000_000_000;
 
+#[test]
+fn rejecting_a_child_missed_action_keeps_the_displayed_parent_record_and_retry_target() {
+    use crate::links::ledger::{MissedStatus, SessionIdentity, SessionRecordSnapshot};
+    let mut runtime = runtime();
+    runtime.ai_settings = Some(hide_ai::settings::AiSettings {
+        enabled: true,
+        agent_summary: true,
+        ..Default::default()
+    });
+    let parent = SessionIdentity {
+        device_id: "local".into(),
+        agent: "claude".into(),
+        session_id: "parent".into(),
+    };
+    runtime.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot {
+        session: Some(parent.clone()),
+        ..Default::default()
+    }));
+    runtime.links_work.client = Some(crate::links::worker::LinkClient::full_mailbox_for_test());
+    assert!(
+        runtime.set_missed_status(crate::runtime::links::MissedStatusPayload {
+            session: SessionIdentity {
+                session_id: "child".into(),
+                ..parent.clone()
+            },
+            id: "missed-child".into(),
+            status: MissedStatus::Dismissed
+        })
+    );
+    let answer = runtime.snapshot.session_record.as_ref().unwrap();
+    assert_eq!(answer.session.as_ref(), Some(&parent));
+    assert_eq!(answer.failure.as_deref(), Some("ledger_queue_capacity"));
+    assert!(!answer.loading);
+}
+
 fn pull_request(number: u32, branch: &str, closes: &[u32]) -> PullRequestSnapshot {
     PullRequestSnapshot {
         closing_issues: closes

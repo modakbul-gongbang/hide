@@ -655,3 +655,166 @@ fn delegated_raw_records_accept_only_the_initial_and_parents_work_requests() {
             .all(|r| r.author == WorkAuthor::Parent)
     );
 }
+
+#[test]
+fn late_parent_retracts_judgments_and_refuses_in_flight_operator_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "initial parent prompt");
+    chapter(&mut store);
+    end(
+        &mut store,
+        1,
+        TurnJudgment {
+            task: TaskDecision::New {
+                name: "parent work".into(),
+            },
+            missed: vec![NewMissedWork {
+                kind: MissedKind::Problem,
+                text: "parent follow-up".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    request(&mut store, 2, "operator continuation");
+    store
+        .apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: session(),
+            offset: 2,
+            at_unix_ms: 2500,
+            end: LabelEnd::Blocked,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                task: TaskDecision::Continue {
+                    ids: vec!["task-1".into()],
+                },
+                resolved: vec![ResolvedMissedWork {
+                    id: "missed-1-0".into(),
+                    issue_number: None,
+                }],
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    request(&mut store, 3, "operator new work");
+    end(
+        &mut store,
+        3,
+        TurnJudgment {
+            task: TaskDecision::New {
+                name: "invalid work".into(),
+            },
+            missed: vec![NewMissedWork {
+                kind: MissedKind::Problem,
+                text: "invalid follow-up".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    store
+        .apply_parents(&[crate::links::ParentFact {
+            device_id: session().device_id,
+            agent: session().agent,
+            session_id: session().session_id,
+            parent_device_id: "device-b".into(),
+            parent_agent: "claude".into(),
+            parent_session_id: "parent".into(),
+            parent_name: "lead".into(),
+        }])
+        .unwrap();
+    // An END and a raw request captured before lineage arrived settle later.
+    request(&mut store, 3, "stale captured operator request");
+    end(
+        &mut store,
+        3,
+        TurnJudgment {
+            task: TaskDecision::New {
+                name: "stale in-flight work".into(),
+            },
+            ..Default::default()
+        },
+    );
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(record.requests.len(), 1);
+    assert_eq!(record.tasks.len(), 1);
+    assert_eq!(record.tasks[0].name, "parent work");
+    assert_eq!(record.tasks[0].end, LabelEnd::Done);
+    assert_eq!(record.last_end, Some(LabelEnd::Done));
+    assert_eq!(record.missed.len(), 1);
+    assert_eq!(record.missed[0].status, MissedStatus::Open);
+    // A root-context verdict queued before the parent must not blacklist
+    // a canonical request discovered after the cache recovers.
+    store
+        .apply_ledger_update(&LedgerUpdate::ExcludeRequests {
+            session: session(),
+            parent_name: None,
+            offsets: vec![4],
+        })
+        .unwrap();
+    let facts = hide_session::links::LinkFacts {
+        requests: vec![hide_session::links::RequestMark {
+            offset: 4,
+            at_unix_ms: 4000,
+            text: "real parent request".into(),
+            sender: Some("lead".into()),
+            letter_kind: Some("request".into()),
+        }],
+        ..Default::default()
+    };
+    let tx = store.connection.transaction().unwrap();
+    apply_reader(&tx, "device-a", "codex", "session-a", &facts).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(
+        store.ledger_record(&session()).unwrap().requests[0].text,
+        "real parent request"
+    );
+}
+
+#[test]
+fn nested_repository_ownership_uses_the_deepest_path_on_the_sessions_device() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "inner work");
+    store
+        .connection
+        .execute("UPDATE sessions SET cwd='/repo/tool/task'", [])
+        .unwrap();
+    for (key, device, root, repo) in [
+        ("a-outer", "device-a", "/repo", "owner/outer"),
+        ("b-inner", "device-a", "/repo/tool", "owner/inner"),
+        ("c-other", "device-b", "/repo/tool/task", "owner/other"),
+    ] {
+        store
+            .connection
+            .execute(
+                "INSERT INTO projects VALUES(?1,?2,?3,?4,?4,1000)",
+                params![key, device, root, repo],
+            )
+            .unwrap();
+    }
+    let record = store.ledger_record(&session()).unwrap();
+    assert_eq!(record.project.as_deref(), Some("/repo/tool"));
+    assert_eq!(record.repository.as_deref(), Some("owner/inner"));
+    // The inner task worktree has disappeared; its learned path still
+    // belongs to the inner repository for surviving-checkout fallback.
+    store
+        .connection
+        .execute("UPDATE sessions SET cwd='/elsewhere/old-task'", [])
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO worktrees VALUES('b-inner','/elsewhere/old-task','task',1000,2000)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .ledger_record(&session())
+            .unwrap()
+            .repository
+            .as_deref(),
+        Some("owner/inner")
+    );
+}

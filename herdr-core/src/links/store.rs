@@ -833,6 +833,14 @@ impl LinkStore {
                 ],
             )
             .map_err(failed)?;
+            ledger::retract_operator_work(
+                &tx,
+                &crate::links::ledger::SessionIdentity {
+                    device_id: parent.device_id.clone(),
+                    agent: parent.agent.clone(),
+                    session_id: parent.session_id.clone(),
+                },
+            )?;
             tx.execute(
                 "DELETE FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND author=?4",
                 params![

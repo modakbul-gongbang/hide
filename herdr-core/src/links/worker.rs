@@ -121,6 +121,20 @@ pub struct LinkClient(
 );
 
 impl LinkClient {
+    #[cfg(test)]
+    pub(crate) fn full_mailbox_for_test() -> Self {
+        Self(
+            Arc::new((
+                Mutex::new(Mailbox {
+                    ledger_pending: LEDGER_QUEUE_LIMIT,
+                    ..Default::default()
+                }),
+                Condvar::new(),
+            )),
+            Arc::default(),
+            Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+        )
+    }
     /// Only a background worker may wait for a reply. Admission is bounded
     /// and every mutation is committed before its acknowledgement.
     pub fn call(&self, call: LedgerCall) -> Result<LedgerAnswer, String> {

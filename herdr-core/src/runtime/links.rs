@@ -227,7 +227,11 @@ impl Runtime {
             status: payload.status,
         }) {
             self.snapshot.session_record = Some(Arc::new(SessionRecordSnapshot {
-                session: Some(payload.session),
+                session: self
+                    .snapshot
+                    .session_record
+                    .as_ref()
+                    .and_then(|held| held.session.clone()),
                 failure: Some(code),
                 ..Default::default()
             }));

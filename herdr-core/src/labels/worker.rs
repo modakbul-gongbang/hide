@@ -1038,12 +1038,15 @@ impl LabelWorker {
                 agent: pane.agent.as_str().to_owned(),
                 session_id: native_id,
             };
-            let parent = self
+            let context = self
                 .ledger
                 .lock()
                 .ok()
-                .and_then(|client| client.as_ref().and_then(|client| client.context(&session)))
-                .and_then(|context| context.parent_name);
+                .and_then(|client| client.as_ref().and_then(|client| client.context(&session)));
+            // A missing or evicted context is unknown lineage, not a root.
+            let parent = context
+                .as_ref()
+                .and_then(|context| context.parent_name.clone());
             let requests = transcript
                 .events
                 .iter()
@@ -1071,6 +1074,7 @@ impl LabelWorker {
                 .iter()
                 .filter(|event| {
                     event.kind == LabelEventKind::Human
+                        && context.is_some()
                         && !record.facts.feeds_work(event, parent.as_deref())
                 })
                 .map(|event| event.offset)
@@ -1092,6 +1096,7 @@ impl LabelWorker {
                     },
                     LedgerUpdate::ExcludeRequests {
                         session: session.clone(),
+                        parent_name: parent.clone(),
                         offsets: excluded,
                     },
                     LedgerUpdate::Unjudged {
@@ -1329,19 +1334,17 @@ impl LabelWorker {
             agent: pane.agent.as_str().to_owned(),
             session_id: id.clone(),
         });
-        let ledger = ledger_session
-            .as_ref()
-            .and_then(|session| {
-                self.ledger
-                    .lock()
-                    .ok()
-                    .and_then(|client| client.as_ref().and_then(|client| client.context(session)))
-            })
-            .unwrap_or_default();
+        let ledger = ledger_session.as_ref().and_then(|session| {
+            self.ledger
+                .lock()
+                .ok()
+                .and_then(|client| client.as_ref().and_then(|client| client.context(session)))
+        });
+        let ledger = ledger.unwrap_or_default();
         let work_author = events
-            .iter()
-            .rfind(|event| event.kind == LabelEventKind::Human)
-            .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
+                .iter()
+                .rfind(|event| event.kind == LabelEventKind::Human)
+                .is_some_and(|event| facts.feeds_work(event, ledger.parent_name.as_deref()));
         let turn_witness = events
             .iter()
             .rfind(|event| event.kind == LabelEventKind::Human)
@@ -1487,13 +1490,7 @@ impl LabelWorker {
                         && let Some(offset) = outcome.offset
                         && let Some(judgment) = analysis.work.clone()
                         && let Err(code) = client.ledger(LedgerUpdate::TurnEnd {
-                            session,
-                            offset,
-                            at_unix_ms: outcome.at_unix_ms,
-                            end: analysis.end,
-                            work_author: outcome.work_author,
-                            turn_witness: outcome.turn_witness.clone(),
-                            judgment,
+                            session,offset,at_unix_ms:outcome.at_unix_ms,end:analysis.end,work_author:outcome.work_author,turn_witness:outcome.turn_witness.clone(),judgment,
                         })
                     {
                         crate::diagnostic!(

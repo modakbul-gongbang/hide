@@ -189,6 +189,7 @@ pub enum LedgerUpdate {
     },
     ExcludeRequests {
         session: SessionIdentity,
+        parent_name: Option<String>,
         offsets: Vec<u64>,
     },
     Title {

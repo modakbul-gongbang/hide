@@ -71,6 +71,63 @@ fn identity(key: &SessionKey) -> SessionIdentity {
     }
 }
 
+/// A late delegation changes the authority of past requests. Retract their
+/// judgments atomically; an already acknowledged external intent is retained.
+pub(super) fn retract_operator_work(
+    tx: &Transaction<'_>,
+    session: &SessionIdentity,
+) -> Result<(), String> {
+    let invalid: Vec<u64> = tx.prepare("SELECT offset FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3 AND author='\"operator\"'")
+        .map_err(failed)?.query_map(params![session.device_id,session.agent,session.session_id],|r|r.get(0)).map_err(failed)?.collect::<Result<_,_>>().map_err(failed)?;
+    for offset in &invalid {
+        tx.execute("UPDATE ledger_missed SET status='\"open\"',issue_repo=NULL,issue_number=NULL,resolved_issue_number=NULL,resolved_turn_offset=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND resolved_turn_offset=?4 AND NOT EXISTS(SELECT 1 FROM ledger_issue_attempts a WHERE a.device=ledger_missed.device AND a.agent=ledger_missed.agent AND a.id=ledger_missed.id AND a.missed=ledger_missed.missed)",params![session.device_id,session.agent,session.session_id,*offset as i64]).map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_missed WHERE device=?1 AND agent=?2 AND id=?3 AND turn_offset=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                *offset as i64
+            ],
+        )
+        .map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_turns WHERE device=?1 AND agent=?2 AND id=?3 AND offset=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                *offset as i64
+            ],
+        )
+        .map_err(failed)?;
+        tx.execute(
+            "DELETE FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4",
+            params![
+                session.device_id,
+                session.agent,
+                session.session_id,
+                format!("task-{offset}")
+            ],
+        )
+        .map_err(failed)?;
+    }
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    // Remove references to retracted tasks, including later continuations.
+    for table in ["ledger_turns", "ledger_requests"] {
+        tx.execute(&format!("UPDATE {table} SET task_ids=(SELECT json_group_array(j.value) FROM json_each({table}.task_ids) j WHERE EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device={table}.device AND t.agent={table}.agent AND t.id={table}.id AND t.task=j.value)) WHERE device=?1 AND agent=?2 AND id=?3"),params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    }
+    tx.execute("UPDATE ledger_tasks SET (end,last_at)=(SELECT t.end,t.end_at FROM ledger_turns t,json_each(t.task_ids) j WHERE t.device=ledger_tasks.device AND t.agent=ledger_tasks.agent AND t.id=ledger_tasks.id AND j.value=ledger_tasks.task ORDER BY t.end_at DESC,t.offset DESC LIMIT 1) WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    tx.execute("UPDATE ledger_outputs SET task=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND NOT EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device=ledger_outputs.device AND t.agent=ledger_outputs.agent AND t.id=ledger_outputs.id AND t.task=ledger_outputs.task)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    tx.execute("UPDATE ledger_turns SET output_task=NULL WHERE device=?1 AND agent=?2 AND id=?3 AND NOT EXISTS(SELECT 1 FROM ledger_tasks t WHERE t.device=ledger_turns.device AND t.agent=ledger_turns.agent AND t.id=ledger_turns.id AND t.task=ledger_turns.output_task)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
+    crate::diagnostic!(
+        serde_json::json!({"component":"links","kind":"ledger.lineage_retracted","device_id":session.device_id,"session_id":session.session_id,"count":invalid.len()})
+    );
+    Ok(())
+}
+
 fn key(session: &SessionIdentity) -> SessionKey {
     SessionKey {
         device: session.device_id.clone(),
@@ -349,7 +406,15 @@ impl LinkStore {
                 }
                 cap(&tx, session, "ledger_unjudged", REQUEST_LIMIT)?;
             }
-            LedgerUpdate::ExcludeRequests { session, offsets } => {
+            LedgerUpdate::ExcludeRequests {
+                session,
+                parent_name,
+                offsets,
+            } => {
+                let current_parent: Option<String> = tx.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| r.get(0)).optional().map_err(failed)?;
+                if &current_parent != parent_name {
+                    return Ok(());
+                }
                 if offsets.len() > REQUEST_LIMIT {
                     return Err("ledger_request_capacity".into());
                 }
@@ -403,6 +468,19 @@ impl LinkStore {
                     ON CONFLICT(device,agent,id) DO UPDATE SET cwd=COALESCE(excluded.cwd,cwd),path=COALESCE(excluded.path,path)",
                     params![session.device_id,session.agent,session.session_id,path,cwd]).map_err(failed)?;
                 for request in requests {
+                    let parent: Option<String> = tx.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id],|r|r.get(0)).optional().map_err(failed)?;
+                    let first: Option<u64> = tx.query_row("SELECT MIN(offset) FROM ledger_requests WHERE device=?1 AND agent=?2 AND id=?3",params![session.device_id,session.agent,session.session_id],|r|r.get(0)).map_err(failed)?;
+                    if parent.is_some()
+                        && request.author == WorkAuthor::Operator
+                        && first.is_some_and(|first| first != request.offset)
+                    {
+                        continue;
+                    }
+                    let author = if parent.is_some() {
+                        WorkAuthor::Parent
+                    } else {
+                        request.author.clone()
+                    };
                     let text = hide_session::links::cut(&request.text);
                     tx.execute(
                         "INSERT INTO ledger_requests(device,agent,id,offset,at,text,author) \
@@ -416,7 +494,7 @@ impl LinkStore {
                             request.offset as i64,
                             request.at_unix_ms as i64,
                             text,
-                            encoded(&request.author)?
+                            encoded(&author)?
                         ],
                     )
                     .map_err(failed)?;
@@ -508,6 +586,14 @@ impl LinkStore {
                     .optional()
                     .map_err(failed)?;
                 let mut tasks = Vec::new();
+                // Lineage may have arrived while END was in flight. A
+                // request removed by its current owner cannot create work.
+                if *work_author && start.is_none() {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"links","kind":"ledger.work_request_unavailable","device_id":session.device_id,"session_id":session.session_id,"offset":offset})
+                    );
+                    return Ok(());
+                }
                 if *work_author {
                     match &judgment.task {
                         TaskDecision::New { name } => {
@@ -698,12 +784,31 @@ impl LinkStore {
         if projects.len() > LEDGER_QUEUE_LIMIT {
             return Err("ledger_project_capacity".into());
         }
+        let mut owner = None;
         for project in projects {
-            if row.inside(&self.project_paths(&project)?) {
-                record.project = Some(project.root);
-                record.repository = project.name;
-                break;
+            let specificity = self
+                .project_paths(&project)?
+                .iter()
+                .filter(|(device, path)| {
+                    *device == row.key.device
+                        && row
+                            .cwd
+                            .as_deref()
+                            .is_some_and(|cwd| super::within(cwd, path))
+                })
+                .map(|(_, path)| path.len())
+                .max();
+            if let Some(specificity) = specificity
+                && owner
+                    .as_ref()
+                    .is_none_or(|(length, _)| specificity > *length)
+            {
+                owner = Some((specificity, project));
             }
+        }
+        if let Some((_, project)) = owner {
+            record.project = Some(project.root);
+            record.repository = project.name;
         }
         Ok(record)
     }

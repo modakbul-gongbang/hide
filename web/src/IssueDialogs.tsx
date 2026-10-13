@@ -132,7 +132,7 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
   }, [answer, request, onClose]);
 
   const submit = () => {
-    if (working || !project || !title.trim()) return;
+    if (working || !project || !title.trim() || draft && !draft.repository) return;
     setRequest({ after: create?.id ?? 0, at: Date.now(), start: thenStart, projectId: project.id });
     actions.createIssue(project.id, title.trim(), body, draft?.source);
   };
