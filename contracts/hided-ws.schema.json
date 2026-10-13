@@ -144,7 +144,15 @@
       "required": ["type", "payload"],
       "properties": {
         "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "terminal", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result", "clone_target", "core_move", "core_link", "agent_notice"] },
-        "payload": { "type": "object" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "usage": {
+              "description": "The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.",
+              "$ref": "#/$defs/usageSnapshot"
+            }
+          }
+        },
         "message": { "type": "string" }
       }
     },

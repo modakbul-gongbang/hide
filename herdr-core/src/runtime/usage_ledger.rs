@@ -32,9 +32,11 @@ pub(crate) fn spawn_worker(
         if let Some(runtime) = weak.upgrade()
             && let Ok(mut guard) = runtime.lock()
         {
-            guard.ingest_ledger(value);
+            let changed = guard.ingest_ledger(value);
             drop(guard);
-            notifier.notify();
+            if changed {
+                notifier.notify();
+            }
         }
     })?;
     let mut guard = runtime.lock().map_err(|_| "usage_runtime_unavailable")?;
@@ -53,13 +55,19 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn ingest_ledger(&mut self, value: Publication) {
-        let own = &mut self.snapshot.navigator.usage.nodes[0];
+    pub(crate) fn ingest_ledger(&mut self, value: Publication) -> bool {
+        let own = &mut self.snapshot.usage.nodes[0];
+        let mut changed = own.history != value.history;
         own.history = value.history;
         for (name, consumption) in value.agents {
             if let Some(row) = own.agents.iter_mut().find(|row| row.agent == name) {
+                changed |= row.consumption != consumption;
                 row.consumption = consumption;
             }
         }
+        if changed {
+            self.usage_edit += 1;
+        }
+        changed
     }
 }

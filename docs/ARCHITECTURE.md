@@ -25,6 +25,9 @@ On a high-frequency path such as keystroke ingress, added observational work is 
 It must not introduce lock waiting, disk access, a subprocess or large serialization into that path.
 The existing short Runtime admission is not permission to add another contended lock or blocking observer; pass owned data to an existing off-lock owner when work needs those resources.
 Snapshot capture takes owned data under the lock and serialization follows outside it (`runtime/snapshot_delta.rs`, `handle.rs::snapshot_delta`).
+Usage lives in its own top-level snapshot section, revisioned independently of navigation; later deltas carry it only when limits or ledger values change.
+An omitted usage section preserves the previous value; an empty `nodes` array clears it, and a future revision cursor resets to a full snapshot.
+The shell stores usage separately, so a usage-only delta preserves navigation identity and an unrelated menu or layout change neither serializes nor compares historical day arrays.
 Pane input never enters the coalesced persistence queue: it must not be dropped or merged to reduce observer cost.
 The save workers' pending flags bound the number of pending saves, not the byte size of the saved state; these stores have no general serialized-byte cap.
 `Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).

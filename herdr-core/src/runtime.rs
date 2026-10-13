@@ -1738,6 +1738,8 @@ pub struct Runtime {
     next_explorer_operation_id: u64,
     explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
+    /// Usage publications have their own wire revision, independent of navigation.
+    usage_edit: u64,
     agent_scope_cache: crate::agent_state::ScopeCache,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
@@ -2191,6 +2193,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
+            usage_edit: 1,
             agent_scope_cache: crate::agent_state::ScopeCache::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),

@@ -1523,7 +1523,7 @@ Settings > Agents > Starting work has no default agent of its own.
 ## Usage
 
 Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/UsageOverview.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
-The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
 The footer draws up to three pinned account windows, followed by Help and Settings.

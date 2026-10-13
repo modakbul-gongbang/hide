@@ -32,9 +32,9 @@ export function useUsageWindowHint(actions: Actions) {
 
 export function Usage({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rows = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]?.agents ?? NO_ROWS);
+  const rows = useShellStore((s) => s.usage?.nodes[0]?.agents ?? NO_ROWS);
   const prefs = useShellStore((s) => s.rest?.ui_state?.usage ?? NO_PREFS);
-  const node = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]);
+  const node = useShellStore((s) => s.usage?.nodes[0]);
   const [outline, setOutline] = useState<UsageOutline>(null);
   const [open, setOpen] = useState(false);
   // No closed-popover minute clock. Core snapshots expire chip readings.

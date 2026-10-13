@@ -816,7 +816,7 @@ impl Runtime {
     pub fn ingest_usage(&mut self, usage: Vec<crate::usage::model::AgentUsage>) -> bool {
         let mut changed = false;
         for reading in usage {
-            if let Some(row) = self.snapshot.navigator.usage.nodes[0]
+            if let Some(row) = self.snapshot.usage.nodes[0]
                 .agents
                 .iter_mut()
                 .find(|row| row.agent == reading.agent)
@@ -829,12 +829,8 @@ impl Runtime {
         if !changed {
             return false;
         }
-        if self
-            .snapshot
-            .ui_state
-            .usage
-            .reconcile(&self.snapshot.navigator.usage)
-        {
+        self.usage_edit += 1;
+        if self.snapshot.ui_state.usage.reconcile(&self.snapshot.usage) {
             self.persist_ui_state();
         }
         self.refresh_background_ai();

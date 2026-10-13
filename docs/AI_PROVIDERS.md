@@ -413,7 +413,7 @@ The judgment is a request-time check against a shared `UsageLimits` cell, not a 
 The routers for what the operator waits on (worktree names, issue intake review), `hide memory add` and the Factory's judgments are built without the cell, so the limit never delays them (PRD hide-ai-usage-limit D-03).
 `statuses()` and `availability()` stay ungated, so Settings still lists a past-limit agent as signed in; only `active` in `provider_state()` skips it.
 
-The figures are the weekly rows the toolbar's usage read already produces (`navigator.usage` through `weekly_reading()`, the seven-day account window with a percent and a future reset); no new read command exists.
+The figures are the weekly rows the toolbar's usage read already produces (`usage` through `weekly_reading()`, the seven-day account window with a percent and a future reset); no new read command exists.
 With no window attached the same reader also runs while a limit is set and Hide AI is on and either the order is paused (only a fresh figure can lift it) or an agent worked in the last 30 minutes, so labels are not judged by a figure that is days old; that is at most one read per agent every five minutes and none while nothing runs.
 Until the first read lands (one second after launch) an agent has no figure and is not limited.
 An agent with no figure, or whose reading belongs to a window that has already reset, is never past the limit, and No limit judges nothing.

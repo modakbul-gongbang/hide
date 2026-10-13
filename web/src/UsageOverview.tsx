@@ -13,7 +13,7 @@ import { compactTokens, usageProvider } from "./usageHistory";
 export function UsageOverview({ actions }: { actions: Actions }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
-  const node = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]);
+  const node = useShellStore((s) => s.usage?.nodes[0]);
   const [outline, setOutline] = useState<UsageOutline>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

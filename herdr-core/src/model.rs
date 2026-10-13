@@ -61,6 +61,7 @@ pub struct CoreOptions {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
+    pub usage: crate::usage::model::UsageSnapshot,
     pub schema_version: u32,
     pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
@@ -543,7 +544,6 @@ pub struct NavigatorSnapshot {
     pub hide_ai_checkouts: Vec<HideAiCheckoutSnapshot>,
     /// Durable absent-pane sessions are not live agents or pane addresses.
     pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
-    pub usage: crate::usage::model::UsageSnapshot,
 }
 
 /// Hide AI started this agent, read from the coordination ledger's record of
@@ -4947,6 +4947,7 @@ impl Snapshot {
 
         Self {
             schema_version: SCHEMA_VERSION,
+            usage: crate::usage::model::UsageSnapshot::initial(options.node_id.as_str()),
             delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
                 agent_scope: Default::default(),
@@ -4965,7 +4966,6 @@ impl Snapshot {
                 agents: Vec::new(),
                 hide_ai_checkouts: Vec::new(),
                 sleeping_sessions: Vec::new(),
-                usage: crate::usage::model::UsageSnapshot::initial(options.node_id.as_str()),
             },
             overlay: OverlaySnapshot {
                 kind: None,
@@ -5227,6 +5227,7 @@ pub struct SnapshotDeltaPayload {
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<Arc<RestSections>>,
+    pub usage: Option<Arc<crate::usage::model::UsageSnapshot>>,
     pub editor: Option<Arc<EditorSnapshot>>,
     pub changes: Option<Arc<ChangesSnapshot>>,
     /// The visible View documents (PRD S7 contract 3.1); always `None` in a
@@ -5265,6 +5266,9 @@ pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<RestWire<'a>>,
+    /// Usage-only changes never resend the navigator or unrelated UI state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<&'a crate::usage::model::UsageSnapshot>,
     pub editor: Option<&'a EditorSnapshot>,
     pub changes: Option<&'a ChangesSnapshot>,
     /// Absent unless a visible View document changed for this reader, and
@@ -5307,6 +5311,7 @@ impl<'a> SnapshotDeltaWire<'a> {
             schema_version: payload.schema_version,
             revision: payload.revision,
             rest: payload.rest.as_deref().map(RestWire::borrow),
+            usage: payload.usage.as_deref(),
             editor: payload.editor.as_deref(),
             changes: payload.changes.as_deref(),
             documents: payload.documents.as_ref().map(|documents| DocumentsWire {

@@ -13,6 +13,8 @@ pub struct SnapshotDeltaDocument {
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<serde_json::Value>,
     pub editor: Option<serde_json::Value>,
     pub changes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

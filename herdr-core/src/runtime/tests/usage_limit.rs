@@ -318,6 +318,7 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
     .unwrap()
     .unwrap();
     runtime.ingest_usage(vec![weekly("claude", Some(93.0), next_week_ms())]);
+    let before = runtime.snapshot_delta_payload(0);
     runtime.ingest_ledger(Publication::prepare(
         Report {
             projection: Some(std::sync::Arc::new(projection)),
@@ -327,8 +328,38 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
         },
         now,
     ));
-    let usage = &runtime.snapshot.navigator.usage;
+    let usage = &runtime.snapshot.usage;
     let published = serde_json::to_value(usage).unwrap();
+    let history = runtime.snapshot_delta_payload(before.revision);
+    assert!(
+        history.rest.is_none(),
+        "ledger publication must not resend navigation"
+    );
+    let bytes = serialize_snapshot_delta(&history).unwrap();
+    let delta: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(delta["usage"], published);
+    assert_eq!(
+        serialize_snapshot_delta(&runtime.snapshot_delta_payload(before.revision)).unwrap(),
+        bytes
+    );
+    let fresh: serde_json::Value = serde_json::from_slice(
+        &serialize_snapshot_delta(&runtime.snapshot_delta_payload(u64::MAX)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fresh["usage"], published);
+    assert!(fresh["rest"]["navigator"].get("usage").is_none());
+    runtime.snapshot.ui_state.sidebar_width += 1;
+    let menu = runtime.snapshot_delta_payload(history.revision);
+    let menu_bytes = serialize_snapshot_delta(&menu).unwrap();
+    let menu_wire: serde_json::Value = serde_json::from_slice(&menu_bytes).unwrap();
+    assert!(menu_wire["rest"]["navigator"].get("usage").is_none());
+    assert!(menu_wire.get("usage").is_none());
+    assert!(
+        menu_bytes.len() < bytes.len() / 2,
+        "unrelated UI echo must omit the historical arrays"
+    );
+    let unchanged = runtime.snapshot_delta_payload(menu.revision);
+    assert!(unchanged.rest.is_none() && unchanged.usage.is_none());
     assert_eq!(
         published["nodes"][0]["history"]["popover"]["range"]["amount"]["new_tokens"],
         60
@@ -339,7 +370,13 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
     );
     assert!(row(&runtime, "claude").past_limit);
     runtime.ingest_usage(vec![weekly("claude", Some(20.0), next_week_ms())]);
-    let updated = serde_json::to_value(&runtime.snapshot.navigator.usage).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&serialize_snapshot_delta(&history).unwrap())
+            .unwrap(),
+        delta,
+        "a retained payload must not change when limits move"
+    );
+    let updated = serde_json::to_value(&runtime.snapshot.usage).unwrap();
     assert_eq!(
         published["nodes"][0]["history"],
         updated["nodes"][0]["history"]
@@ -349,4 +386,37 @@ fn limits_and_ledger_publications_preserve_each_others_values() {
         updated["nodes"][0]["agents"][0]["consumption"]
     );
     assert!(!row(&runtime, "claude").past_limit);
+    let current = runtime.snapshot_delta_payload(menu.revision);
+    let same_limits = runtime.snapshot.usage.nodes[0].agents.clone();
+    assert!(!runtime.ingest_usage(same_limits));
+    let own = &runtime.snapshot.usage.nodes[0];
+    assert!(
+        !runtime.ingest_ledger(Publication {
+            history: own.history.clone(),
+            agents: own
+                .agents
+                .iter()
+                .map(|row| (row.agent.clone(), row.consumption.clone()))
+                .collect(),
+        })
+    );
+    assert!(
+        runtime
+            .snapshot_delta_payload(current.revision)
+            .usage
+            .is_none()
+    );
+    assert!(runtime.ingest_ledger(Publication {
+        history: None,
+        agents: vec![(
+            "claude".into(),
+            crate::usage::model::Cell::Unavailable {
+                cause: crate::usage::model::Cause::SignedOut,
+                last_checked_at_ms: None,
+            },
+        )],
+    }));
+    let cleared = runtime.snapshot_delta_payload(current.revision);
+    assert!(cleared.usage.as_ref().unwrap().nodes[0].history.is_none());
+    assert!(cleared.rest.is_none());
 }

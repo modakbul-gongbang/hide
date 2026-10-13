@@ -12,6 +12,7 @@ describe("snapshot merge", () => {
       terminalSequence: null,
       terminalEpoch: null,
       rest: null,
+      usage: null,
       agents: [],
       focusedPaneId: null,
       herdrState: null,
@@ -23,6 +24,26 @@ describe("snapshot merge", () => {
       viewGeneration: 0,
       refused: false,
     });
+  });
+
+  it("revisions usage independently and resets it on a fresh snapshot", () => {
+    const store = useShellStore.getState();
+    const usage = { nodes: [{ node: "local", agents: [], history: null }] };
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, usage, rest: { ui_state: { sidebar_width: 292 } } } });
+    expect(useShellStore.getState().usage).toBe(usage);
+    const rest = useShellStore.getState().rest;
+    const changed = { nodes: [{ node: "changed", agents: [], history: null }] };
+    store.applyFrame({ type: "delta", payload: { revision: 2, usage: changed } });
+    expect(useShellStore.getState().rest).toBe(rest);
+    const retained = useShellStore.getState().usage;
+    store.applyFrame({ type: "delta", payload: { revision: 2, usage: structuredClone(changed) } });
+    expect(useShellStore.getState().usage).toBe(retained);
+    store.applyFrame({ type: "delta", payload: { revision: 3, rest: { ui_state: { sidebar_width: 300 } } } });
+    expect(useShellStore.getState().usage).toBe(retained);
+    store.applyFrame({ type: "delta", payload: { revision: 4, usage: { nodes: [] } } });
+    expect(useShellStore.getState().usage?.nodes).toEqual([]);
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+    expect(useShellStore.getState().usage).toBeNull();
   });
 
   it("advances the view generation only on a self-contained snapshot", () => {

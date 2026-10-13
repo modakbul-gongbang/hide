@@ -825,7 +825,7 @@ impl Runtime {
     /// When `provider`'s usage limit resets, while the usage rows show a
     /// window used up (B58).
     pub(crate) fn factory_usage_limit(&self, provider: &str, now_unix_ms: u64) -> Option<u64> {
-        usage_limit(&self.snapshot.navigator.usage, provider, now_unix_ms)
+        usage_limit(&self.snapshot.usage, provider, now_unix_ms)
     }
 
     /// The operator's explicit interface language, `None` when the choice is

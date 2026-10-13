@@ -17,7 +17,7 @@ import { hasLimits } from "../usage";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 
 export function UsageScene({ params }: { params: URLSearchParams }) {
-  const historyNode = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]);
+  const historyNode = useShellStore((s) => s.usage?.nodes[0]);
   const mainView = useUiStore((s) => s.mainView);
   const state = params.get("state") ?? "default";
   const actions = useMemo(() => createActions((event) => {
@@ -57,7 +57,7 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
     const scene = sidebarScene("reference", REFERENCE_FOLDS, now, "one");
     const usage: UsagePreferences = { pinned: [{ agent: "claude", window: "weekly" }, { agent: "codex", window: "weekly" }], hidden: state === "hidden" ? ["claude"] : [] };
     if (["full", "not-started", "expired"].includes(state)) usage.pinned.push({ agent: "claude", window: "five_hour" });
-    useShellStore.setState({ connection: "live", rest: { ...scene.rest, navigator: { ...scene.rest.navigator, usage: { nodes: [params.has("history") ? ledgerScene({ node: "local", agents, history: null }, params.get("history") ?? "reference") : { node: "local", agents, history: null }] } }, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
+    useShellStore.setState({ connection: "live", usage: { nodes: [params.has("history") ? ledgerScene({ node: "local", agents, history: null }, params.get("history") ?? "reference") : { node: "local", agents, history: null }] }, rest: { ...scene.rest, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
     if (params.get("surface") === "history-year") useUiStore.setState({ screen: { kind: "main" } });
     else if (params.get("surface") === "overview") useUiStore.setState({ screen: { kind: "main" }, mainView: "usage", overviewProjectId: null });
     else if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");

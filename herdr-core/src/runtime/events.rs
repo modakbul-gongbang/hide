@@ -3594,7 +3594,7 @@ impl Runtime {
                         window: payload.window,
                     },
                     payload.enabled,
-                    &self.snapshot.navigator.usage,
+                    &self.snapshot.usage,
                 ) {
                     Ok(false) => false,
                     Ok(true) => {
