@@ -122,6 +122,8 @@ try {
   await waitFor("document.querySelectorAll('[data-pane-view]').length === 5");
   await sleep(1000);
   write("reconnect-wire.json", counter.report());
+  const reconnect = counter.report().first_snapshot;
+  if (!reconnect?.remote_sessions) throw new Error("reconnect lacked a complete remote session");
   write("completed.json", { success: true, client_count: 1, method: "one actual product page socket; page keydown to DOM RAF / xterm grid and echoed terminal buffer; no native click-to-paint claim" });
 } catch (error) {
   write("failed-page.json", await page.evaluate("({ title:document.title, text:document.body.innerText, panes:document.querySelectorAll('[data-pane-view]').length, attached:window.__hideProbe?.attachedPanes(), focused:window.__hideProbe?.paneId() })").catch(() => ({ unavailable: true })));

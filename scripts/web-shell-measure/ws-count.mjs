@@ -73,6 +73,7 @@ export function observeFrames(page) {
         for (const key of Object.keys(counter)) delete counter[key];
       }
       fullRedrawsAsked = 0;
+      firstSnapshot = null;
     },
   };
 }
