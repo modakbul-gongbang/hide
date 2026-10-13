@@ -2650,6 +2650,138 @@ mod focus_readback_order_tests {
         );
     }
 
+    struct FailedPaths(&'static str);
+
+    impl crate::node_access::NodeLink for FailedPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            assert!(matches!(
+                call,
+                hide_node_link::protocol::Call::PathFacts { .. }
+            ));
+            Err(crate::node_access::LinkError::Unknown(self.0.to_owned()))
+        }
+    }
+
+    #[test]
+    fn failed_and_timed_out_paths_keep_accepted_catalog_without_a_new_revision() {
+        for failure in [
+            "node disconnected during read",
+            "node path facts deadline reached",
+        ] {
+            let mut replica =
+                SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+            let runtime = runtime_with(&replica);
+            let before = runtime
+                .lock()
+                .unwrap()
+                .snapshot()
+                .navigator
+                .workspaces
+                .clone();
+            let herdr = FakeHerdr::start("failed-path-catalog", |method, _| {
+                panic!("unexpected {method}")
+            });
+            let mut context = context_for(&runtime, &herdr);
+            context.node = Some(Arc::new(FailedPaths(failure)));
+            let (sender, ready) = channel();
+            let mut cache = CatalogState::default();
+            cache.wake = Some(RepublishWaker {
+                sender,
+                pending: Arc::new(AtomicBool::new(false)),
+            });
+            let publish = |replica: &mut SessionReplica, cache: &mut CatalogState| {
+                assert!(publish_replica(
+                    &context,
+                    replica,
+                    cache,
+                    &mut None,
+                    &mut None,
+                    &mut Vec::new()
+                ));
+            };
+            publish(&mut replica, &mut cache);
+            ready.recv_timeout(Duration::from_secs(30)).unwrap();
+            let revision = runtime.lock().unwrap().snapshot_delta_payload(0).revision;
+            // Consume the actual worker's refused/timed-out answer. The
+            // accepted catalog and small selection remain its caller's state.
+            publish(&mut replica, &mut cache);
+            let mut guard = runtime.lock().unwrap();
+            assert_eq!(guard.snapshot().navigator.workspaces, before);
+            assert_eq!(guard.snapshot().terminal.pane_id.as_deref(), Some("w1:p1"));
+            assert_eq!(guard.snapshot_delta_payload(revision).revision, revision);
+        }
+    }
+
+    struct HeldChunk {
+        started: std::sync::mpsc::Sender<usize>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl crate::node_access::NodeLink for HeldChunk {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            let hide_node_link::protocol::Call::PathFacts { paths } = call else {
+                panic!("unexpected node call");
+            };
+            self.started.send(paths.len()).unwrap();
+            if paths.len() == hide_node_link::catalog::PATH_FACTS_LIMIT {
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            Ok(crate::node_access::LinkAnswer::Parsed(json!(
+                hide_node_link::catalog::PathFacts::default()
+            )))
+        }
+    }
+
+    #[test]
+    fn ending_catalog_owner_cancels_remaining_chunks_and_joins_the_read() {
+        let replica = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&replica);
+        let herdr = FakeHerdr::start("chunked-path-owner", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldChunk {
+            started,
+            release: Mutex::new(held),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let limit = hide_node_link::catalog::PATH_FACTS_LIMIT;
+        assert!(
+            reader
+                .poll(path_facts::Request {
+                    connection: 1,
+                    paths: (0..limit + 1)
+                        .map(|n| format!("/fixture/chunk-{n:05}"))
+                        .collect(),
+                })
+                .is_none()
+        );
+        assert_eq!(asked.recv_timeout(Duration::from_secs(30)).unwrap(), limit);
+        // The first bounded node call may finish; there is no second call
+        // after the owner ends, and dropping the reader reclaims its worker.
+        drop(runtime);
+        release.send(()).unwrap();
+        drop(reader);
+        assert!(
+            asked.try_recv().is_err(),
+            "no remaining chunk escaped its owner"
+        );
+    }
+
     fn holding_herdr(
         focused: &'static str,
     ) -> (
