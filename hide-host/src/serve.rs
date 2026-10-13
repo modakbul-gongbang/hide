@@ -1044,6 +1044,7 @@ pub fn handle_with_progress(
             env.ai.release(instance);
             to_value(())
         }
+        Call::UsagePriceFetch => to_value(crate::usage::fetch_prices()),
         Call::UsageLimitFetch { source, root } => {
             let root = absolute(&root)?;
             to_value(crate::usage::fetch(source, &root, &mut || {

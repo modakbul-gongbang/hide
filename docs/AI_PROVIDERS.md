@@ -365,6 +365,7 @@ An unknown model, new unsupported context threshold, missing nonzero token-categ
 The worker fetches one constant URL, with no credentials, usage payload, model query or redirects, and a five-second global timeout and 16 MiB response cap.
 It records the attempt in the ledger before starting the request, including failed attempts, so restart cannot exceed one attempt per day.
 The retained table is capped at 2 MiB and 2,048 models and is stale after 60 days; a failed refresh keeps the last table, and an offline first run leaves tokens available while cost waits for a table.
+The price worker asks only the own node for the fixed public URL; devices refuse this call and the core has no HTTP client.
 The price worker is joined on shutdown, and diagnostics contain fixed codes and counts rather than source paths or response bodies.
 
 ## Selection and fallback

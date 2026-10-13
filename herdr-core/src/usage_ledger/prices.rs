@@ -6,9 +6,7 @@ use hide_session::usage::Tokens;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const URL: &str =
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-pub const SOURCE_LIMIT: usize = 16 * 1024 * 1024;
+pub const SOURCE_LIMIT: usize = hide_node_link::usage::PRICE_BODY_LIMIT;
 pub const CACHE_LIMIT: usize = 2 * 1024 * 1024;
 const MODEL_LIMIT: usize = 2048;
 pub const STALE_MS: u64 = 60 * DAY_MS;
@@ -91,10 +89,12 @@ impl Cache {
 pub(crate) struct Fetch(Option<std::thread::JoinHandle<Result<Table, &'static str>>>);
 
 impl Fetch {
-    pub(crate) fn start() -> Result<Self, &'static str> {
+    pub(crate) fn start(
+        own: std::sync::Arc<dyn hide_node_link::NodeLink>,
+    ) -> Result<Self, &'static str> {
         let join = std::thread::Builder::new()
             .name("hide-usage-prices".into())
-            .spawn(download)
+            .spawn(move || download(own.as_ref()))
             .map_err(|_| "usage_prices_start_failed")?;
         Ok(Self(Some(join)))
     }
@@ -120,24 +120,23 @@ impl Drop for Fetch {
     }
 }
 
-fn download() -> Result<Table, &'static str> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(5)))
-        .max_redirects(0)
-        .build()
-        .into();
-    let mut answer = agent
-        .get(URL)
-        .header("Accept", "application/json")
-        .call()
-        .map_err(|_| "usage_prices_fetch_failed")?;
-    let bytes = answer
-        .body_mut()
-        .with_config()
-        .limit(SOURCE_LIMIT as u64)
-        .read_to_vec()
-        .map_err(|_| "usage_prices_body_failed")?;
-    Table::parse(&bytes, crate::links::now_ms())
+fn download(own: &dyn hide_node_link::NodeLink) -> Result<Table, &'static str> {
+    use hide_node_link::{
+        call_as,
+        protocol::Call,
+        usage::{PriceFailure, PriceFetch},
+    };
+    let body = call_as::<PriceFetch>(
+        own,
+        Call::UsagePriceFetch,
+        std::time::Duration::from_secs(6),
+    )
+    .map_err(|_| "usage_prices_node_failed")?
+    .map_err(|failure| match failure {
+        PriceFailure::Fetch => "usage_prices_fetch_failed",
+        PriceFailure::Body => "usage_prices_body_failed",
+    })?;
+    Table::parse(body.as_bytes(), crate::links::now_ms())
 }
 
 impl Table {

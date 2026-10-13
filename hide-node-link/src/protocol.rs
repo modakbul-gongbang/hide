@@ -424,6 +424,9 @@ pub enum Call {
         source: crate::usage::LimitSource,
         root: String,
     },
+    /// One bounded public price-table read (`usage::PriceFetch`).
+    /// No caller-selected URL or payload; devices refuse it.
+    UsagePriceFetch,
     /// Reads files the operator picked to attach to a terminal
     /// (`attachments::ReadFile`, in order), reporting before each file; a
     /// report answered with false ends the read as cancelled.
@@ -804,6 +807,7 @@ impl Call {
             | Self::AiRestart { .. }
             | Self::AiRelease { .. }
             | Self::UsageLimitFetch { .. }
+            | Self::UsagePriceFetch
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
             | Self::RemoveClipboard { .. }

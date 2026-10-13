@@ -104,7 +104,7 @@ impl Worker {
                             let mut published = None;
                             loop {
                                 if activity.visible {
-                                    engine.prices_step();
+                                    engine.prices_step(&own);
                                     engine.step(own.as_ref(), activity);
                                 }
                                 let interval =
@@ -245,7 +245,7 @@ impl Engine {
         })
     }
 
-    fn prices_step(&mut self) {
+    fn prices_step(&mut self, own: &Arc<dyn NodeLink>) {
         if let Some(outcome) = self.price_fetch.as_mut().and_then(Fetch::take) {
             self.price_fetch = None;
             let outcome = outcome.and_then(|table| {
@@ -274,7 +274,7 @@ impl Engine {
         match self.store.save_prices(&attempted) {
             Ok(()) => {
                 self.prices = attempted;
-                match Fetch::start() {
+                match Fetch::start(Arc::clone(own)) {
                     Ok(fetch) => self.price_fetch = Some(fetch),
                     Err(code) => {
                         self.price_failure = Some(code);

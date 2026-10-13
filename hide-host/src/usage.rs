@@ -38,6 +38,28 @@ pub fn fetch(source: LimitSource, root: &Path, report: &mut dyn FnMut() -> bool)
     }
 }
 
+/// Fixed public endpoint, no credentials, query or usage payload. The core
+/// owns the daily attempt budget; this node bounds each network operation.
+pub fn fetch_prices() -> hide_node_link::usage::PriceFetch {
+    use hide_node_link::usage::{PRICE_BODY_LIMIT, PriceFailure};
+    const URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .max_redirects(0)
+        .build()
+        .into();
+    agent
+        .get(URL)
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|_| PriceFailure::Fetch)?
+        .body_mut()
+        .with_config()
+        .limit(PRICE_BODY_LIMIT as u64)
+        .read_to_string()
+        .map_err(|_| PriceFailure::Body)
+}
+
 /// Deliberately private and not serializable or printable.
 struct CodexCredentials {
     access_token: String,
@@ -292,6 +314,7 @@ mod tests {
     }
     #[test]
     fn device_commands_cannot_fetch_subscription_credentials_or_limits() {
+        assert!(!hide_node_link::protocol::Call::UsagePriceFetch.answered_by_device());
         for source in LimitSource::ALL {
             let call = hide_node_link::protocol::Call::UsageLimitFetch {
                 source,

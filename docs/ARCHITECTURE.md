@@ -782,7 +782,8 @@ Native physical node identities and their qualified source paths stay unchanged 
 
 The same store retains the public price cache and the last network-attempt time; that state moves with the ledger so a core move cannot bypass the daily fetch bound.
 Daily totals hold four fixed token-only context bands, not another table of call identities, preserving tier-aware repricing across event expiry within the existing row and database caps.
-The separately owned price-fetch thread returns a bounded table to the ledger's sole writer, which persists it before publishing it.
+The separately owned price-fetch thread asks the own node for `Call::UsagePriceFetch`, refused for devices.
+The node owns the bounded public HTTP read; the core parses the returned body and the ledger's sole writer persists the table before publishing it.
 
 `usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
 Only the core's own native-node rows enter these calendars.

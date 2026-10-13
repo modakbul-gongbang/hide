@@ -1198,7 +1198,6 @@ dependencies = [
  "tokio",
  "typify",
  "unicode-normalization",
- "ureq",
  "workspace-hack",
 ]
 

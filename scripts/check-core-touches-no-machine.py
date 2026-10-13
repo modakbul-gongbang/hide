@@ -27,6 +27,8 @@ def scanned() -> list:
 
 # What reaching a machine looks like, with what to do instead.
 BANNED = [
+    (r"\b(ureq|reqwest|hyper|attohttpc|isahc|curl)\b",
+     "uses an HTTP client; ask the core own node instead"),
     (r"\bstd::process\b(?!::id\(\))|\bCommand::new\b|\bprocess::Command\b",
      "starts a process; ask a node (`Call::*`) instead"),
     (r"\bstd::fs\b|(?<![\w:])fs::|\bFile::(open|create)\b|\bOpenOptions\b",
