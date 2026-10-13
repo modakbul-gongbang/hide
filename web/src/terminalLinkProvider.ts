@@ -22,7 +22,7 @@ import { screenDeviceId } from "./screenMachine";
 import { bufferRow, type CellRow } from "./selection";
 import { catalogWorkspaces, localDeviceId, type Checkout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
-import { JOIN_ROWS, linkCandidates, osc8Target, type LinkCandidate, type LinkTarget } from "./terminalLinks";
+import { absolutePathRoot, JOIN_ROWS, linkCandidates, osc8Target, type LinkCandidate, type LinkTarget } from "./terminalLinks";
 
 /** A path the host found: its physical spelling and kind. */
 export type FoundPath = NonNullable<ProbedPath>;
@@ -98,22 +98,24 @@ export function clearProbeCache(): void {
   cache.clear();
 }
 
-/** `.` and `..` resolved in an absolute POSIX path, the way the host would read it. */
+/** `.` and `..` resolved while keeping the wire path's drive, share or POSIX root. */
 export function normalize(path: string): string {
+  const root = absolutePathRoot(path);
+  if (!root) throw new Error("terminal link: normalization needs an absolute wire path");
   const parts: string[] = [];
-  for (const part of path.split("/")) {
+  for (const part of path.slice(root.length).split("/")) {
     if (part === "" || part === ".") continue;
     if (part === "..") parts.pop();
     else parts.push(part);
   }
-  return `/${parts.join("/")}`;
+  return `${root}${parts.join("/")}`;
 }
 
 /** The spellings to look a written path up under, in order: as written when absolute, else under the pane's folder and then the checkout's root. */
 export function pathLookups(written: string, cwd: string | null, root: string | null): string[] {
-  if (written.startsWith("/")) return [normalize(written)];
+  if (absolutePathRoot(written)) return [normalize(written)];
   if (written.startsWith("~/")) return [written];
-  const bases = [cwd, root].filter((base): base is string => !!base && base.startsWith("/"));
+  const bases = [cwd, root].filter((base): base is string => !!base && absolutePathRoot(base) !== null);
   return [...new Set(bases.map((base) => normalize(`${base}/${written}`)))];
 }
 

@@ -300,10 +300,22 @@ function parseTarget(text: string): LinkTarget | null {
   return { kind: "path", path, line: line && line > 0 ? line : null, column: column && column > 0 ? column : null };
 }
 
+/** The root kept by the wire spelling: a POSIX root, Windows drive or share. */
+export function absolutePathRoot(path: string): string | null {
+  const drive = /^[A-Za-z]:\//u.exec(path);
+  if (drive) return drive[0];
+  if (path.startsWith("//")) {
+    const [server, share] = path.slice(2).split("/");
+    return server && share ? `//${server}/${share}/` : null;
+  }
+  return path.startsWith("/") ? "/" : null;
+}
+
 function pathShaped(path: string): boolean {
-  if (path.length > 1024 || path.includes("…") || path.includes(":") || /\p{Cc}/u.test(path)) return false;
-  if (path === "/" || path.startsWith("//")) return false;
-  if (path.startsWith("/") || path.startsWith("~/") || path.startsWith("./") || path.startsWith("../")) return true;
+  const root = absolutePathRoot(path);
+  if (path.length > 1024 || path.includes("…") || path.slice(root?.length ?? 0).includes(":") || /\p{Cc}/u.test(path)) return false;
+  if (path === "/" || (path.startsWith("//") && !root)) return false;
+  if (root || path.startsWith("~/") || path.startsWith("./") || path.startsWith("../")) return true;
   if (path.includes("/")) return /[\p{L}]/u.test(path);
   return DOTFILE.test(path) || (BARE_NAME.test(path) && /\p{L}/u.test(path.slice(0, path.lastIndexOf("."))));
 }
@@ -344,9 +356,11 @@ function uriTarget(text: string): LinkTarget | null | undefined {
   } else {
     return undefined;
   }
+  const drive = rest.slice(1);
+  if (!drive.startsWith("/") && absolutePathRoot(drive)) rest = drive;
   const location = LOCATION.exec(rest);
   const path = location ? location[1]! : rest;
-  if (!path.startsWith("/") || path.includes("\0")) return null;
+  if (!absolutePathRoot(path) || path.includes("\0")) return null;
   const line = location ? Number(location[2] ?? location[4] ?? location[5]) : null;
   const column = location && (location[3] ?? location[6]) ? Number(location[3] ?? location[6]) : null;
   return { kind: "path", path, line: line && line > 0 ? line : null, column: column && column > 0 ? column : null };
