@@ -2588,6 +2588,9 @@ pub struct MemoryRowSnapshot {
     pub number: u64,
     pub title: String,
     pub kind: MemoryCardKind,
+    /// Bounded text for each card in an active promotion's disclosure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_preview: Option<String>,
     /// Sources that are the operator's own words.
     pub human_source_count: usize,
     /// Distinct sessions given the card in full (D-18).
@@ -2609,6 +2612,8 @@ pub struct MemoryRowSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryPromotionSnapshot {
     pub state: MemoryPromotionState,
+    /// The durable attempt's start, never the time the shell first saw it.
+    pub started_at_unix_ms: u64,
     /// The agent putting the card in the repository, while it runs.
     pub agent: Option<MemoryPromotionAgentSnapshot>,
     pub pr_number: Option<u64>,

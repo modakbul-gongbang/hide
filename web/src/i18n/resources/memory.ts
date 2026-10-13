@@ -3,6 +3,12 @@ import type { Catalog, Catalogs } from "../schema";
 // Card titles, bodies, file paths, agent and device names are caller data.
 
 export const memoryEnglish = {
+  "memory.progress.pr": "PR {{number}}",
+  "memory.progress.inPr": "In PR",
+  "memory.progress.writing": "Writing PR",
+  "memory.progress.asking": "Asking you",
+  "memory.progress.agent": "Agent ↗",
+  "memory.progress.openAgent": "Open agent",
   "memory.batch.selected": "{{count}} selected · up to 5 per PR",
   "memory.batch.clear": "Clear",
   "memory.batch.open": "Open one PR",
@@ -100,6 +106,12 @@ export const memoryEnglish = {
 type Messages = Catalog<typeof memoryEnglish>;
 
 const ko: Messages = {
+  "memory.progress.pr": "PR {{number}}",
+  "memory.progress.inPr": "PR에 포함",
+  "memory.progress.writing": "PR 작성 중",
+  "memory.progress.asking": "나에게 질문",
+  "memory.progress.agent": "Agent ↗",
+  "memory.progress.openAgent": "에이전트 열기",
   "memory.batch.selected": "{{count}}개 선택 · PR당 최대 5개",
   "memory.batch.clear": "해제",
   "memory.batch.open": "PR 하나로 열기",
@@ -195,6 +207,12 @@ const ko: Messages = {
 };
 
 const zhCN: Messages = {
+  "memory.progress.pr": "PR {{number}}",
+  "memory.progress.inPr": "已加入 PR",
+  "memory.progress.writing": "正在编写 PR",
+  "memory.progress.asking": "等待您回答",
+  "memory.progress.agent": "Agent ↗",
+  "memory.progress.openAgent": "打开代理",
   "memory.batch.selected": "已选 {{count}} 张 · 每个 PR 最多 5 张",
   "memory.batch.clear": "清除",
   "memory.batch.open": "打开一个 PR",
@@ -290,6 +308,12 @@ const zhCN: Messages = {
 };
 
 const ja: Messages = {
+  "memory.progress.pr": "PR {{number}}",
+  "memory.progress.inPr": "PR に含む",
+  "memory.progress.writing": "PR 作成中",
+  "memory.progress.asking": "回答待ち",
+  "memory.progress.agent": "Agent ↗",
+  "memory.progress.openAgent": "エージェントを開く",
   "memory.batch.selected": "{{count}}件選択 · PRごとに最大5件",
   "memory.batch.clear": "解除",
   "memory.batch.open": "1つのPRを開く",

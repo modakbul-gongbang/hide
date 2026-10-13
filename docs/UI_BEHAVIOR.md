@@ -554,15 +554,23 @@ Eligible rows have checkboxes; selecting one to five shows `N selected · up to 
 The row's single-card action uses the same batch path.
 While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
 Promotion reasons omit zero counts and use short source-session counts.
-Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision when known.
-This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
-PR numbers are identifiers rendered as plain digits in all four languages, including the row and its accessible name (`In PR 1050`).
+Started single or batch promotions remain in To ask, in the same two-line format as the questions: a PR mark in the checkbox slot, card numbers, the first title and `+N` for additional cards, then the status and links.
+Before a PR exists the row says Writing PR with the durable attempt's elapsed time; cards bound to the same running agent and attempt share a row.
+After confirmation, cards with the same PR number share a row, and `PR <number>` opens the existing PR panel.
+The catalog's failed checks use destructive text, requested changes and an agent asking the operator use warning text, and writing or awaiting review is neutral.
+`Agent ↗` appears only while writing or needing attention and only when a real pane is known; a quiet review row keeps only its disclosure indicator.
+After PR creation the agent link requires a Hide AI promotion origin and that agent's live PR association with the catalog's full repository-qualified URL, rather than a name or branch guess.
+This applies equally to promotions already open before upgrade; PR numbers remain plain identifier digits in all four languages.
+Every To ask row expands from its title, reason or empty space, or its single disclosure button with Enter or Space; the chevron only indicates expansion.
+Checkboxes, links and action buttons perform only their own actions.
+An ordinary question opens its current body, cited files and sources below its action buttons, while a document disagreement opens Compare content.
+A progress row opens each card's title and a two-line body preview, followed by Open PR and Open agent where their real targets are available.
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
 A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
-An expanded or searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears.
+A searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears; expanding a progress row does not duplicate it in Cards.
 Once merged, its ordinary card dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`.
 A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
 Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
