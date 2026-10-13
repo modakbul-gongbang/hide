@@ -84,9 +84,12 @@ impl Runtime {
             .snapshot
             .ui_state
             .project_settings_writes
-            .get(&id)
-            .is_some_and(|status| {
-                status.request_id == payload.request_id && status.state != WriteState::Failed
+            .values()
+            .any(|status| {
+                status.device_id == payload.device_id
+                    && status.root == payload.root
+                    && status.request_id == payload.request_id
+                    && status.state != WriteState::Failed
             })
         {
             return false;

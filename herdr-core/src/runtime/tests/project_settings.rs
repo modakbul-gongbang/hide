@@ -86,7 +86,7 @@ fn coalesced_writes_keep_each_callers_completed_receipt() {
     change(
         &mut runtime,
         "second-window",
-        serde_json::json!({"new_work": "worktree"}),
+        serde_json::json!({"issue_source": "github", "new_work": "worktree"}),
     );
     // A caller can first observe the snapshot only after both saves completed.
     for request in ["first-window", "second-window"] {
@@ -99,6 +99,19 @@ fn coalesced_writes_keep_each_callers_completed_receipt() {
             .expect("each caller receives its outcome");
         assert_eq!(receipt.state, WriteState::Saved);
     }
+    assert!(
+        !change(
+            &mut runtime,
+            "first-window",
+            serde_json::json!({"issue_source": "local"})
+        ),
+        "an archived completed intent cannot be replayed as a new write"
+    );
+    let id = crate::project_settings::key(crate::node::TEST_NODE, "/fixture/project");
+    assert_eq!(
+        runtime.snapshot.ui_state.project_settings[&id].issue_source,
+        Some(IssueSourceChoice::Github)
+    );
 }
 
 #[test]
