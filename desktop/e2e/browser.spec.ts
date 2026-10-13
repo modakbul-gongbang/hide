@@ -141,11 +141,19 @@ async function slotBounds(page: Page, displayId: string): Promise<View["bounds"]
 const WINDOW = { width: 1024, height: 640 };
 
 /** The window as macOS draws it, page views included, captured by window id without focusing it. */
-async function windowShot(name: string): Promise<void> {
+async function windowShot(name: string, requireNative = false): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (!dir) return;
   const source = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
   const shot = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
+  if (requireNative) {
+    expect(shot.status, shot.stderr).toBe(0);
+    fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({
+      candidate: "worktree desktop/dist/main.js", pid: app!.process().pid,
+      window: source.split(":")[1], daemonPid: run.daemonPid(),
+      method: "screencapture exact background window", collectedAt: new Date().toISOString(),
+    }, null, 2));
+  }
   if (shot.status !== 0) {
     const png = await app!.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.capturePage()).toPNG().toString("base64"));
     fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
@@ -240,12 +248,12 @@ test("browser: Agent tabs retain independent same-URL pages through a background
     await page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`).click();
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
     expect(await mark(pageB.id, "[window.marker, document.getElementById('q').value]")).toEqual(["B", "B 한글 입력"]);
-    await windowShot("background-tab-B-retained");
+    await windowShot("background-tab-B-retained", process.platform === "darwin");
     expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
-    await windowShot("background-tab-A-revealed");
+    await windowShot("background-tab-A-revealed", process.platform === "darwin");
   } finally {
     herdr.run(["tab", "close", other]);
   }
