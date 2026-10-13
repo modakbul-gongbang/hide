@@ -343,6 +343,28 @@ export interface AgentNotice {
     title: string;
     state: "needs_you" | "done";
     place: string;
+    /**
+     * The root row's status word code. Optional for older frames.
+     */
+    status_code?:
+      | "error"
+      | "question"
+      | "approval"
+      | "working"
+      | "done"
+      | "idle"
+      | "unknown"
+      | "waiting"
+      | "stopped"
+      | "attached"
+      | "sleeping"
+      | "waking"
+      | "sleep_failed"
+      | null;
+    /**
+     * The core's chosen row detail, untranslated; absent or null means the original state-and-project body.
+     */
+    detail?: string | null;
   }[];
   clear: string[];
 }

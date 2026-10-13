@@ -583,14 +583,37 @@ The workspace inspector uses the canonical representative agent and disconnected
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
 The provider fallback reads the shared adapter's sidebar label or canonical Herdr kind after common alias normalization, preserving a raw unknown kind and `Agent` for no kind.
-`sidebar.rs` applies the shared adapter's title priority: Claude Code and Codex keep generated `goal`, then proven native title, then provider.
-Grok, OpenCode, Pi and omp use proven native/manual title, then generated goal, then provider.
-Cursor has no native title authority and uses generated goal, then provider.
+`sidebar.rs` chooses the first nonempty, sanitized value in one order for every agent:
+
+1. a proven manual title,
+2. Hide AI's generated task name (`goal`),
+3. the proven native automatic title, including a name whose source cannot be distinguished,
+4. the provider.
+
+With Agent summaries off there is no goal, so the order is manual title, native automatic title, provider.
+A title is manual only when its native record distinguishes a manual rename from automatic naming; a rename command alone is not that proof.
+Claude's explicit empty `ai-title` or `custom-title` clears its stored slot; an absent record preserves it during an incremental read.
+Readers preserve the two title slots through the label overlay instead of combining them before projection.
+No reader capability is granted by the order, and an agent without a native title reader has neither native step.
+The same chosen title reaches the default Agent tab label, phone list and desktop/phone notification title as well as the surfaces above.
+An explicitly renamed Herdr tab keeps its separate tab-label authority ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#agent-areas)).
+
+| Agent and format read | Manual slot | Automatic or source-less slot | Native source inspected |
+| --- | --- | --- | --- |
+| Claude Code 2.1.288 | `custom-title.customTitle` from `/rename` | `ai-title.aiTitle`; summary/compaction records grant no manual name | [Automatic record, line 2](../hide-session/tests/fixtures/adapters/claude-2.1.288/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl#L2) and [manual record, line 10](../hide-session/tests/fixtures/adapters/claude-2.1.288/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl#L10); `hide-session/src/lib.rs::parse_claude_line` reads the two distinct records. |
+| Codex CLI 0.160.0 | None provable from the index | Newest `session_index.jsonl.thread_name`, including a renamed name | [SessionIndexEntry and append_thread_name, lines 24-50](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/rollout/src/session_index.rs#L24-L50) record only id, name and update time, with no manual/automatic source. |
+| Grok 1.0.46 | `summary.json.generated_title` when `title_is_manual` is true | The same title when false or absent | [Native-format summary, line 16](../hide-session/tests/fixtures/adapters/grok-1.0.46/summary.json#L16); `hide-session/src/grok.rs::summary` reads the flag separately from the title. |
+| OpenCode 1.18.30 | None provable from the session row | Root session `title`, including a renamed title | [SessionTable, lines 22-60](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/session/sql.ts#L22-L60) has one title column and no title source. |
+| Pi 1.0.4 | None provable from a name record | `session_info.name`, including `/name` and extension-written names | [SessionInfoEntry, lines 141-145](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/src/core/session-manager.ts#L141-L145) and [appendSessionInfo, lines 1303-1315](https://github.com/earendil-works/pi/blob/v1.0.4/packages/coding-agent/src/core/session-manager.ts#L1303-L1315) record a name without its source; the CLI and extensions share `AgentSession.setSessionName`. |
+| omp 18.7.0 | First title-v1 slot `source: user`, or legacy first header `titleSource: user` | `source: auto`, or a missing source | [Title slot source parsing, lines 61-79](https://github.com/can1357/oh-my-pi/blob/e0fc1cf4ea354b445a359b37fa5eb58deaa85598/packages/coding-agent/src/session/session-title-slot.ts#L61-L79); `hide-session/src/native_file.rs::title_snapshot` reads the slot or legacy header. |
+| Cursor | No native title reader | No native title reader | `hide-session/src/cursor.rs` and [its native fixture contract](../hide-session/tests/it/cursor.rs) explicitly exclude the sidecar title and database name. |
+
+Codex, OpenCode and Pi therefore show Hide AI's goal ahead of even a renamed native name while summaries are on, because their read format cannot prove a manual source.
+Pi names previously stored as manual, or returned by an older helper that did so, are projected as automatic under the same current session proof.
+Cursor uses generated goal, then provider.
 Its ordinary SQLite chat graph supplies recorded human and assistant text under the same native ID and checkout proof, while its sidecar title and database name remain outside that authority.
 Injected native user records, tool output, shell turns and child graphs supply no root request, structured wait or PR sighting; absent event times stay unknown and recorded times have minute precision.
-A declared priority grants no reader capability; a build that cannot read that provider receives no native title.
-The session adapter gives a manual title priority over the native automatic title.
-Pi 1.0.4's `session_info.name` is a proven native/manual title, and its latest explicit empty name clears the old native name before the generated-goal/provider fallback is applied.
+Pi 1.0.4's latest explicit empty `session_info.name` clears the old native name before the goal/provider fallback is applied.
 Its recorded user/assistant messages feed the existing label worker, while tool output supplies PR sightings and injected extension/compaction context supplies no human request.
 Pi records no structured question/plan wait or child identity, so no `UserTurnFact`, structured content or subagent relationship is inferred from text or `parentSession`.
 omp 18.7.0 takes its current automatic/manual title from the physical first title slot or legacy first session header, with explicit empty values clearing stale names and `title_change` remaining audit history.
@@ -616,7 +639,8 @@ There is no "unsure means done": a turn that did not report its work finished is
 A turn that started or handed off work that still runs is `waiting`, even when the turn itself only reported progress or answered something, unless it asks the operator; its line says what it waits for.
 A turn is the person's message that began it, known by its time and its words, so a request that repeats the last one word for word is a new turn and is asked again.
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise, which for a block is its cause), `question` (a question end on an agent that is not running) and `blocked` (a block end on an agent that is not running), and `sidebar.rs::project_agent` reads those five.
-With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
+With Settings › Hide AI › Features › Agent summaries off nothing of the generated label is laid: the row uses manual title, proven native automatic title, then provider, and has no generated sentence or inferred plain-text question (D-11).
+Native questions and plan waits are still read, and a pending native question still supplies its own first line.
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
@@ -716,7 +740,8 @@ Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test
 ### The second line
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
-The sentences come from the agent's label line (at most 40 characters): `expected_reply` when the turn ended on a question, the one action the operator is asked for; `progress` otherwise, what the agent is doing, has done or waits for. A row carries one or the other, never both.
+The sentences come from the agent's label: `expected_reply` (at most 40 characters) when the turn ended on a question, the one action the operator is asked for; `progress` (at most 80 characters) otherwise, what the agent is doing, has done or waits for.
+A row carries one or the other, never both.
 A native question waiting now (`user_turn` of kind `question` with content, from any of the five sources above) is the third source, the `question` below: the first non-empty line of its text, one line, cut on a character boundary to the 40 characters of an `expected_reply` and ending in `…` when cut (`native_question_line` in `herdr-core/src/agent_state/turn.rs`).
 It is the agent's own words, so it is shown untranslated, and it needs no Hide AI.
 It stands in for an `expected_reply` and comes before `progress`, because a question asked in the middle of a turn has no reply sentence yet: the label worker's verdict on a turn's end runs only once the agent has written something after the operator's message, so a Claude `AskUserQuestion` with no text before it leaves the turn start's `progress` on the label for the whole wait, and that line describes the work, not what is asked.
@@ -796,6 +821,45 @@ A read root question clears the server’s effective push state, while the phone
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
 The desktop app's agent notifications run the same transitions on their own ledger (`hided/src/desktop_notices.rs`, PRD first-run-onboarding D-09), so a desktop notification and a phone push agree on what is new without either one's seed or mode moving the other.
+
+### With and without Hide AI
+
+Here “on” means Agent summaries is enabled and the current session has a proven label.
+Before a proven label exists, an unavailable provider or failed analysis adds no generated title or sentence; an existing proven label can remain while an analysis is unavailable.
+“Off” means Agent summaries is disabled, including Hide AI being off; native session facts, Herdr lifecycle, lineage, read state and notification settings still apply.
+The table describes operator-owned roots; delegated rows and the six escalation causes keep their ownership rules above.
+Sentences keep their original language in every mode.
+
+| Surface or condition | Hide AI on | Hide AI off |
+| --- | --- | --- |
+| Row title | Every adapter: manual title, then Hide AI goal, then proven native automatic title, then provider. See [Task identity](#task-identity). | Every adapter: manual title, then proven native automatic title, then provider. No Herdr workspace label or control name becomes a title. See [Task identity](#task-identity). |
+| Pending native question | `?`, Question, Needs You until answered, including after reading. Second line: turn-end `expected_reply`, otherwise the question's first non-empty line (40 characters including a truncation ellipsis), otherwise `progress`. | The same native `?`, Question and Needs You until answered; its first non-empty line supplies the second line without an AI call. With no question text the status word stands in. |
+| Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: `?`, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no `?` and no Needs You. A stopped, unread Herdr `done` is Done with `✓` and no sentence. A Herdr `idle` is Seen, not Done. |
+| Approval / Herdr blocked pane / native plan wait | `!`, Approval, Needs You until answered, including after reading. The second line follows `expected_reply`, native question, then `progress`; a plan document's heading is never extracted as a sentence. | The same `!`, Approval and Needs You; without a native question sentence the word Approval stands in, including for a plan document. |
+| AI-identified error or block with a named cause, without a native wait | `▲`, Blocked, Needs You while unread; the second line is the cause in `progress`. Reading leaves the dimmed mark and cause in Seen unless it is running. | No cause is inferred from plain text and no Blocked mark is invented. Herdr's own lifecycle decides the group: an unread `done` is Done with no sentence, an `idle` is Seen. A native blocked pane still uses Approval above. |
+| Working second line | `progress`; with an unresolved demand, `expected_reply`, native question, then `progress`. A quiet working row's display can hide its sentence until hover or selection. | No generated progress; Working stands in when there is no sentence. A working row with a native question still carries that question. Proven background tasks, children and awaited replies still supply Waiting independently of AI. |
+| Done (unread) second line | `expected_reply`, otherwise `progress`. An unfinished verdict draws Stopped `◐` instead of a check while keeping the lifecycle's group. | No generated sentence; Done stands in for an unread completion. No inferred unfinished verdict; proven waits still prevent a premature Done. |
+| Seen second line | A read unresolved demand keeps its sentence; a read completion, idle or unknown row has none. | A native unresolved question keeps its question; ordinary read completion, idle and unknown rows have no sentence. |
+| Whether a root enters Needs You | Native question/approval/block, an unread AI question or named block, or one of the explicit delegated escalations. Working and Done alone do not enter it. | Native question/approval/block and the same explicit escalations; a plain-text end question alone does not enter it. |
+| App icon count | Number of root Needs You rows across devices while the desktop Needs You switch is on; Done contributes zero. | The same count rule, with fewer inferred demands. macOS uses the Dock, Linux a supported launcher, Windows a taskbar dot with the count in its description. |
+| Desktop notification title | The root's row title, capped by the host at 120 characters. | The root's row title by the off priority above, with the same cap. |
+| Desktop notification body | With `detail`: translated row `status_code` word ` · ` exact `detail` ` · ` project. Examples: `Question · Choose staging? · my-app`, `Approval · Review the plan · my-app`, `Blocked · Login required · my-app`, `Done · Build fixed · my-app`, `Stopped · Three tests remain · my-app`. Without `detail`: exactly the existing `Needs you · my-app` or `Done · my-app`. | The same composition. Native question: `Question · Choose staging? · my-app`. Approval without a sentence: `Needs you · my-app`. Plain-text end question on an unread completed turn: `Done · my-app`. |
+| Phone push title and body | Title is the same root row title. With `detail`, the phone language's row status word, exact sentence and project use the desktop format. Without `detail`, retain the phone's existing translated group word and project (`내 확인 대기 · my-app` or `끝 · my-app` in Korean). | The same composition from native facts only. Native question in Korean: `질문 · Choose staging? · my-app`; approval without text: `내 확인 대기 · my-app`; a plain-text question on an unread completed turn: `끝 · my-app`. |
+
+The status prefix is the row's translated `status_code`, not a new classification: English uses Question, Approval, Blocked, Done and Stopped; Korean uses 질문, 승인 대기, 막힘, 완료 and 멈춤.
+An empty project omits its separator, and the desktop host's existing 400-character body cap still applies.
+Both transports copy the root's published `detail`, even when the phone's compact row hides that detail; neither recomputes a sentence or takes a descendant's text as its root's.
+Each desktop group has its own switch: Needs You enables demands and its icon count, Done enables completions, and either enables the permission/test row; the phone keeps its independent push mode.
+Only a transition into an enabled group announces anything: a sentence changing by itself sends no second notification, and replacement tags, withdrawal, the desktop backlog of 16 and each channel's existing mode and focus rules are unchanged.
+
+This is the operator-approved reversal (2026-10-13) of mobile-companion's “never a sentence” rule: a phone lock-screen preview can now show the agent's or generated sentence, according to the phone's preview setting.
+First-run-onboarding D-11 changes with it: both channels use the same status/sentence/project order, while their existing no-sentence translations remain intact.
+The payload is encrypted, terminal content is still excluded, and neither transport logs the sentence.
+The phone's serialized JSON is limited to 3,993 bytes before encryption; the 86-byte aes128gcm header, one-byte delimiter and 16-byte authentication tag make the largest accepted HTTP body exactly 4,096 bytes.
+An oversized payload, including project, identifiers and the existing `clear` list, fails delivery before any POST with a fixed size-limit diagnostic; the sentence is never silently shortened to fit.
+The status and sentence fields are additive: a cached old worker ignores them and keeps the previous body; a new worker with an older page's cached words falls back to that page's group word, and with no stored words it can show only the sentence and project.
+Human delivery notices keep their existing words and carry no row sentence.
+Regression owners: `hided/src/desktop_notices.rs`, `hided/src/mobile/push.rs`, `web/src/agentNotices.test.tsx`, `web/src/mobile/language.test.tsx` and `web/src/mobile/serviceWorker.test.ts`.
 
 ### Scope projections
 

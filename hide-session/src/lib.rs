@@ -574,7 +574,9 @@ pub struct ParsedSession {
     /// Claude Code writes an `ai-title` record once it has named the
     /// conversation and repeats it on later turns; the last one in the
     /// chunk wins. It is a property of the session rather than an event, so
-    /// it never enters `events`. Codex has no such record and leaves `None`.
+    /// it never enters `events`. A native name with no manual/automatic
+    /// provenance (Pi's `session_info.name`) also belongs here.
+    /// Codex has no such rollout record and leaves `None`.
     pub title: Option<String>,
     /// The name the operator gave the session (Claude Code's `/rename`, a
     /// `custom-title` record), which wins over `title`.
@@ -1478,7 +1480,6 @@ fn parse_claude_line(item: &Value) -> LineResult {
         item.get(key)
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|title| !title.is_empty())
             .map(str::to_owned)
     };
     let role = match item.get("type").and_then(Value::as_str) {
@@ -2081,7 +2082,7 @@ mod tests {
     }
 
     /// Claude's `ai-title` record is the session's own name: the last one
-    /// wins, it is not an event, and an empty one is nothing.
+    /// wins, it is not an event, and an empty one clears a stored title.
     #[test]
     fn claude_ai_title_is_the_session_title_and_not_an_event() {
         let chunk = concat!(

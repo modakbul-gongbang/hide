@@ -626,7 +626,8 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
     match item["type"].as_str() {
         Some("session_info") if agent == Agent::Pi => {
             return item["name"].as_str().map_or(LineResult::Ignore, |name| {
-                LineResult::CustomTitle(name.to_owned())
+                // /name and extensions share this slot without a source flag.
+                LineResult::Title(name.to_owned())
             });
         }
         Some("message") => (),

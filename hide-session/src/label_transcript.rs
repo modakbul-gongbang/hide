@@ -148,8 +148,9 @@ pub struct LabelTranscript {
     /// Code's `ai-title`, Codex's `thread_name`, OpenCode's session title.
     #[serde(default)]
     pub title: Option<String>,
-    /// The name the operator gave the session (Claude Code's `/rename`),
-    /// which wins over `title`.
+    /// A name with explicit manual provenance (Claude Code's `custom-title`,
+    /// Grok's `title_is_manual`, omp's `source: user`). A source-less native
+    /// name stays in `title`, even when a rename can write it.
     #[serde(default)]
     pub custom_title: Option<String>,
     /// Pull request addresses the session's tools printed in what this read

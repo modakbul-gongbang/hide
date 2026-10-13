@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { memo, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { forkLabel, markTone } from "./agentRow";
@@ -18,7 +18,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
 import type { LensAgent } from "./overviewLens";
 import { checkoutPathOfPane, childBranch, sessionTreeLines } from "./sessionTree";
-import { sidebarFocusPane } from "./sidebarFocus";
+import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
 import type { AgentRow, SessionGroup } from "./snapshot";
 import { useShellStore } from "./store";
@@ -84,6 +84,19 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
     const drawn = new Set(sections.flatMap(({ trees }) => trees.flatMap(({ lines }) => lines.flatMap((line) => (line.kind === "agent" ? [line.row.agent.pane_id] : [])))));
     return sidebarFocusPane(focusedPane, model.agents, drawn);
   }, [sections, focusedPane, model.agents]);
+  // The selected row is brought into view, by the sidebar's rule, when the row
+  // standing for the focus changes, and never while it stays the one revealed:
+  // not through a snapshot, a group move or another screen in front, so a list
+  // the operator scrolled stays where they left it.
+  const list = useRef<HTMLDivElement>(null);
+  const revealed = useRef<string | null>(null);
+  // The whole row is brought in, both lines, not only the title's button.
+  useLayoutEffect(() => {
+    const row = list.current?.querySelector<HTMLElement>('[data-selected="true"]');
+    if (selected === null || selected === revealed.current || !list.current || !row) return;
+    revealed.current = selected;
+    revealRow(list.current, [row], row);
+  }, [selected]);
   const showAll = (parent: string) => setShownAll((before) => new Set(before).add(parent));
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-panel="true">
@@ -95,7 +108,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
         </div> : null}
       </header>
       {!model.available ? <p className="px-md py-sm text-caption text-muted-foreground" role="status">{model.reason ?? t("devices.rail.notConnected")}</p> : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-sm pb-md" onKeyDown={moveFocus}>
+      <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-sm pb-md" data-session-list="true" onKeyDown={moveFocus}>
         {groups.length === 0 ? <p className="px-xs py-md text-caption text-muted-foreground" data-sessions-empty="true">{t("requests.nothingToDo")}</p> : null}
         {sections.map(({ group, count, trees }) => {
           const collapsible = group === "resolved";
@@ -157,7 +170,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
   const needsYou = session.group === "needs_you";
   const open_ = () => { if (model.available) actions.openAgent(agent.pane_id); };
   // The chevron lane spans the row so an opened row's rail runs on to its children.
-  return <li className={cn("group/session relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-secondary" : "hover:bg-accent focus-within:bg-accent")}
+  return <li className={cn("group/session relative flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
     data-session-row={agent.pane_id} data-selected={selected ? "true" : undefined} onClick={open_}>
     <TreeChevron name={agent.identity_label} open={open} onToggle={() => actions.toggleSessionTree(agent.pane_id)} hangs={false} disabled={!model.available} data-session-chevron={agent.pane_id} />
     <div className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
@@ -194,7 +207,7 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
   const toggle = () => actions.toggleSessionTree(child.pane_id);
   // The sidebar's title rule: a delegated title is quiet unless it asks or is selected.
   const titleTone = child.state.title_emphasized || (selected && child.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  return <li className={cn("flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-secondary" : "hover:bg-accent focus-within:bg-accent")}
+  return <li className={cn("flex min-w-0 items-stretch rounded-xs pr-xs", selected ? "bg-selected" : "hover:bg-accent focus-within:bg-accent")}
     data-session-child={child.pane_id} data-depth={depth} data-selected={selected ? "true" : undefined} onClick={go}>
     <TreeRails place={place} />
     <TreeChevron name={child.identity_label} open={open} onToggle={toggle} hangs chain={place.chain} disabled={!model.available} data-session-chevron={child.pane_id} />
