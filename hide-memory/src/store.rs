@@ -5733,6 +5733,8 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                  ALTER TABLE session_cursors DROP COLUMN operator_events;
                  ALTER TABLE receipt_cursors DROP COLUMN operator_events;
                  DROP TABLE memory_evidence;
+                 DROP TABLE card_comparisons;
+                 DROP TABLE promotion_batches;
                  CREATE TABLE cp8(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
                  INSERT INTO cp8 SELECT item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms FROM card_promotions;
                  DROP TABLE card_promotions;
@@ -7261,7 +7263,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     fn check_share_is_counted_separately_and_preserves_the_migrated_total() {
         use crate::{MemoryCallDeferral as Wait, MemoryCallKind as Kind};
         let (temp, store, _project) = store();
-        store.connection.execute_batch("ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
+        store.connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
         drop(store);
         let store = MemoryStore::open(&temp.path().join("memory.sqlite3")).unwrap();
         assert_eq!(store.analysis_calls(100).unwrap(), 595);
@@ -7606,7 +7608,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection.execute_batch(SCHEMA).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
+                "DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
             )
             .unwrap();
         let scratch = tempfile::tempdir().unwrap();
