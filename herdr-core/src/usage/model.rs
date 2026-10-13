@@ -1,5 +1,6 @@
 //! Shared typed usage projection. Reading decisions belong to the core;
 //! wording and formatting belong to the shell.
+pub use super::consumption::{Consumption, History};
 use hide_agent_adapter::usage::Support;
 pub use hide_agent_adapter::usage::WindowKind;
 use serde::Serialize;
@@ -12,6 +13,7 @@ pub struct UsageSnapshot {
 pub struct NodeUsage {
     pub node: String,
     pub agents: Vec<AgentUsage>,
+    pub history: Option<History>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AgentUsage {
@@ -19,10 +21,6 @@ pub struct AgentUsage {
     pub limits: Cell<LimitReading>,
     pub consumption: Cell<Consumption>,
 }
-/// The ledger layer supplies the value type; this layer cannot manufacture
-/// consumption numbers.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub enum Consumption {}
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Cell<T> {
@@ -55,6 +53,7 @@ pub enum Cause {
     RateLimited,
     FormatChanged,
     Capped,
+    NoRecords,
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LimitReading {
@@ -101,7 +100,7 @@ impl AgentUsage {
                 },
                 consumption: match row.usage.tokens {
                     Support::Unsupported(_) => Cell::Unsupported,
-                    Support::Supported(source) => match source {},
+                    Support::Supported(_) => Cell::Loading,
                 },
             })
             .collect()
@@ -113,6 +112,7 @@ impl UsageSnapshot {
             nodes: vec![NodeUsage {
                 node: node.into(),
                 agents: AgentUsage::initial_rows(),
+                history: None,
             }],
         }
     }

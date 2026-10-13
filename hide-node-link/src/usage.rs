@@ -56,3 +56,14 @@ impl LimitFailure {
         Self::new(disposition, kind)
     }
 }
+
+/// The own node fetches one public dataset; the core parses and caches it.
+pub const PRICE_BODY_LIMIT: usize = 16 * 1024 * 1024;
+pub type PriceFetch = Result<String, PriceFailure>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PriceFailure {
+    Fetch,
+    Body,
+}

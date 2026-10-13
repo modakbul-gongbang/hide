@@ -6,7 +6,7 @@ import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { UsageSnapshot, UsagePreferences } from "./generated/hided-ws";
+import type { UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -1488,6 +1488,8 @@ export type MemoryRow = {
   number: number;
   title: string;
   kind: MemoryCardKind;
+  /** At most 512 characters, only for cards in an active promotion. */
+  body_preview?: string;
   human_source_count: number;
   /** Sessions the card was given to in full. */
   provided_session_count: number;
@@ -1500,6 +1502,8 @@ export type MemoryRow = {
   document_comparison?: MemoryDocument | null;
   promotion: {
     state: MemoryPromotionState;
+    /** The durable promotion attempt's start; absent on older daemons. */
+    started_at_unix_ms?: number;
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
@@ -1693,8 +1697,6 @@ export type SnapshotRest = {
     sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
-    /** The core node comes first; each registered agent has typed limit and consumption cells. */
-    usage?: UsageSnapshot;
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;

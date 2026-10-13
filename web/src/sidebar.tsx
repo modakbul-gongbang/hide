@@ -1017,6 +1017,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const inactive = inactiveCheckouts(workspace);
   const rowsByCheckout = useMemo(() => checkoutAgentRows(workspace, agents, "sidebar"), [workspace, agents]);
   const hideAiListed = useShellStore((s) => s.rest?.navigator?.hide_ai_checkouts);
+  const issueSource = useShellStore((s) => projectIssueSource(s.rest, workspace));
   const expanded = !disclosure || projectExpanded(workspace);
   const inset = level === "child" ? "pl-(--size-lineage-indent)" : "";
   const folder = folderCheckout(workspace);
@@ -1055,7 +1056,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
     <li data-project={workspace.id} className={inset}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => projectMenu(workspace, menuHost(), t, projectIssueSource(useShellStore.getState().rest, workspace))}
+        items={() => projectMenu(workspace, menuHost(), t, issueSource)}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1079,7 +1080,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           <RowActions
             workspace={workspace}
             badge={<ProjectBadge workspace={workspace} expanded={expanded} marks={marks} />}
-            items={() => projectMenu(workspace, menuHost(), t, projectIssueSource(useShellStore.getState().rest, workspace))}
+            items={() => projectMenu(workspace, menuHost(), t, issueSource)}
             onSelect={(item) => runProjectItem(actions, workspace, item)}
           />
           {disclosure ? (
@@ -1335,6 +1336,7 @@ const FolderRowView = memo(function FolderRowView({
   const { t } = useInterfaceTranslation();
   const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
+  const issueSource = useShellStore((s) => projectIssueSource(s.rest, workspace));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
@@ -1349,7 +1351,7 @@ const FolderRowView = memo(function FolderRowView({
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, projectIssueSource(useShellStore.getState().rest, workspace))}
+        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, issueSource)}
         onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1381,7 +1383,7 @@ const FolderRowView = memo(function FolderRowView({
               <RowActions
                 workspace={workspace}
                 badge={<ProjectBadge workspace={workspace} expanded={open} marks={marks} />}
-                items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, projectIssueSource(useShellStore.getState().rest, workspace))}
+                items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, issueSource)}
                 onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
               />
               {foldable ? (

@@ -4924,7 +4924,18 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
     {name: 'Screen / Project Settings', build: () => projectSettingsScreens(tokens, settingsParts(tokens, root, {themedXref, screenIconButton, screenSwatch}), {screenSheet, screenIconButton, screenInput})},
     {name: 'Screen / Usage', build: () => {
-      const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover')];
+      const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
+        frame(`screen-usage-overview-${suffix}`, 'Overview Usage', {width: 1160, layout: 'vertical', padding: '$--spacing-lg', gap: '$--spacing-lg', fill: '$--background'}, [
+          text(`screen-usage-title-${suffix}`, 'Overview · Agents   Tasks   Projects   Usage', {size: '$--text-subhead', weight: '600'}),
+          frame(`screen-usage-columns-${suffix}`, 'Limits and history', {layout: 'horizontal', gap: '$--spacing-lg'}, [
+            frame(`screen-usage-limits-${suffix}`, 'Limits', {width: 292, layout: 'vertical', gap: '$--spacing-md'}, [
+              themedXref(`screen-usage-claude-${suffix}`, 'usage-card-0-light', 'Claude Code', {width: 292}),
+              themedXref(`screen-usage-codex-${suffix}`, 'usage-card-1-light', 'Codex', {width: 292}),
+              text(`screen-usage-token-only-${suffix}`, 'No limit reading\nOpenCode 7.8M\nPi 3.9M\nomp 2.3M\nGrok 1.6M', {size: '$--text-caption', fill: '$--muted-foreground'}),
+            ]),
+            themedXref(`screen-usage-year-${suffix}`, 'usage-history-year-light', 'New tokens'),
+          ]),
+        ])];
       return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: account cards and their windows above the sidebar chips. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
     }},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},

@@ -148,7 +148,7 @@ pub struct RunningDaemon {
 struct OwnSeat {
     _seat: seat::Seat,
     state_dir: std::path::PathBuf,
-    _lock: std::fs::File,
+    _lock: hide_platform::fs::lock::Lock,
 }
 
 impl Drop for OwnSeat {

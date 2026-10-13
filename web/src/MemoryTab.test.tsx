@@ -155,17 +155,17 @@ describe("the Memory tab", () => {
   });
 
   it.each([
-    ["en", "In PR 1050"],
-    ["ko", "PR 1050에 포함"],
-    ["ja", "PR 1050 に含む"],
-    ["zh-CN", "在 PR 1050 中"],
+    ["en", "PR 1050"],
+    ["ko", "PR 1050"],
+    ["ja", "PR 1050"],
+    ["zh-CN", "PR 1050"],
   ])("renders PR identifiers as plain digits in %s", async (language, expected) => {
     await act(async () => { await clientI18n.changeLanguage(language); });
     await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 1050, target_path: null, github_failure: null } })] }));
     const group = container.querySelector("[data-memory-pr-group='1050']");
     expect(group?.textContent).toContain(expected);
     expect(group?.textContent).not.toContain("1,050");
-    await click("[data-memory-pr-group='1050']");
+    await click("[data-memory-open-pr='1050']");
     expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 1050, focus: 1050 } });
   });
 
@@ -182,6 +182,26 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-promote='7']")).not.toBeNull();
     await click("[data-memory-open-batch]");
     expect(sent("memory_action").at(-1)).toEqual({ workspace_id: "p", action: "promote", number: null, numbers: [3] });
+  });
+
+  it("discloses a whole question or PR row while its checkbox, promotion and PR buttons act independently", async () => {
+    const promotion = { state: "pr_open" as const, agent: null, pr_number: 72, target_path: null, github_failure: null };
+    const data = memory({ rows: [row(3), row(7, { promotion, body_preview: "A rule's body" }), row(9, { promotion, body_preview: "Another rule's body" })], questions: [{ kind: "promote", number: 3, title: "card 3", human_session_count: 2, pulled_session_count: 0 }] });
+    await render(data);
+    await click("[data-memory-promote='3']");
+    await click("[data-memory-select='3']");
+    await click("[data-memory-open-pr='72']");
+    expect(sent("memory_expand")).toEqual([]);
+    await click("[data-memory-row-toggle='3']");
+    await click("[data-memory-row-toggle='7']");
+    expect(sent("memory_expand")).toEqual([{ workspace_id: "p", number: 3 }, { workspace_id: "p", number: 7 }]);
+    await render({ ...data, expanded: { number: 7, body: "A rule's body", cited_paths: [], sources: [], previous: null } });
+    expect(container.querySelectorAll("[data-memory-progress-detail] [data-memory-preview]")).toHaveLength(2);
+    expect(container.querySelector("[data-memory-preview='9']")?.textContent).toContain("Another rule's body");
+    expect(container.querySelector("[data-memory-cards]")).toBeNull();
+    expect(container.querySelector("[data-memory-row-toggle='7']")?.getAttribute("aria-expanded")).toBe("true");
+    await click("[data-memory-row-toggle='7']");
+    expect(sent("memory_expand").at(-1)).toEqual({ workspace_id: "p", number: null });
   });
 
   it("says in a failed card's status why its agent never started, with the question its shell stopped at", async () => {
@@ -214,14 +234,14 @@ describe("the Memory tab", () => {
     // GitHub could not say whether the gone agent's pull request came: a quiet
     // line with its reason, no spinner and nothing to press.
     const unconfirmed = container.querySelector("[data-memory-card='5']");
-    expect(unconfirmed?.querySelector("[data-memory-unconfirmed]")?.textContent).toBe("Couldn't check for a PR·gh not logged in");
+    expect(unconfirmed?.querySelector("[data-memory-unconfirmed]")?.textContent).toBe("Couldn't check for a PR · gh not logged in");
     expect(unconfirmed?.querySelector(".animate-spin")).toBeNull();
     expect(unconfirmed?.textContent).not.toContain("Retry");
     // A merged card no file was named for shows the pull request it went in by.
     expect(container.querySelector("[data-memory-card='4'] [data-pr-mark]")?.textContent).toContain("931");
-    expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
+    expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("Writing PRAgent ↗");
     // An agent not seen yet: no name, and nothing it would follow.
-    expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
+    expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("Writing PR");
     expect(container.querySelector("[data-memory-pr-group='924']")?.textContent).toContain("924");
     const merged = container.querySelector("[data-memory-card='8']");
     expect(merged?.className).toContain("opacity-");

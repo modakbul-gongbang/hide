@@ -55,6 +55,7 @@ mod tab_focus;
 mod terminal;
 mod terminal_input;
 mod tree_close;
+pub(crate) mod usage_ledger;
 mod usage_limit;
 mod view_areas;
 mod view_bookmarks;
@@ -1296,6 +1297,7 @@ pub struct Runtime {
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
     usage_window_visible: bool,
+    usage_ledger_client: Option<crate::usage_ledger::worker::Client>,
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
     /// The usage limit and the weekly figures the label and Memory routers
@@ -1738,6 +1740,8 @@ pub struct Runtime {
     next_explorer_operation_id: u64,
     explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
+    /// Usage publications have their own wire revision, independent of navigation.
+    usage_edit: u64,
     agent_scope_cache: crate::agent_state::ScopeCache,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
@@ -2022,6 +2026,7 @@ impl Runtime {
             ai_start_observing: false,
             background_ai_providers: Vec::new(),
             usage_window_visible: false,
+            usage_ledger_client: None,
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             usage_limits: Arc::new(hide_ai::UsageLimits::new()),
@@ -2191,6 +2196,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
+            usage_edit: 1,
             agent_scope_cache: crate::agent_state::ScopeCache::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),

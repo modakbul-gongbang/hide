@@ -77,7 +77,7 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
       await expect(popover.locator('[data-usage-window-row="five_hour"] [data-usage-value]')).toHaveText("4%");
       expect(await popover.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       await capture(`usage-popover-${language}-electron`);
-      await popover.getByRole("button").click();
+      await popover.getByRole("button", { name: language === "en" ? "Choose chips" : "칩 선택", exact: true }).click();
       await page.locator('[data-settings-tab="general"]').click();
     }
   } catch (error) { failures.push(error); }

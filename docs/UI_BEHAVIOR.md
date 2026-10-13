@@ -487,15 +487,20 @@ A URL takes the same boundary, and since a URL cannot be checked, a particle aft
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
-A click opens it in the front Workspace: a URL as a browser display, a file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
+A click opens it in the front Workspace: a URL or an HTML file (`.html`, `.htm` or `.xhtml`, case-insensitive) as a browser display, another file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
 A path in another registered checkout brings that checkout forward; with no Workspace in front a URL goes to the default browser.
+Right-clicking a URL offers Open in Hide, Open in default browser and Copy link above the terminal's ordinary editing and pane actions.
+Right-clicking an existing path offers Open, Open in default application, the host's Reveal in Finder/File Explorer/file manager and Copy path; an HTML file in a registered checkout offers Open in browser and Open source instead of Open.
+Open source opens that HTML file in View at the line its link names.
+These choices use the exact target under the pointer, including an OSC 8 label, and keep that target after the pointer leaves it; Copy path copies its physical path without the line suffix.
+Opening or dismissing the menu moves no checkout, opens nothing and sends no click to the terminal program; a late path check cannot reopen a dismissed menu or replace a newer one.
 ⌘-click (Ctrl off macOS) hands the link to the operating system: a URL to the default browser, a path to its default application or, for a folder, a Finder window, within the limits below.
 A path outside every registered checkout, such as `/tmp`, goes to the operating system on a plain click as well.
 The operating system opens only a plain document (text, source, a PDF, an image, audio or video) or a folder whose name has no extension; anything else, such as a script, a program, a spreadsheet, an application bundle or an installer, is revealed in Finder, never opened.
 A program's OSC 8 link takes the same routes with no confirmation dialog: `file://` and `vscode://file/` addresses are paths, any other scheme is not opened, and a refused link goes to the diagnostic log.
 A pane on an SSH device, and a page outside the desktop app, links URLs only, because its paths name files this Mac cannot check.
 A path with a space in it is a link only where the program marks it (OSC 8), since plain text gives no way to tell where it ends.
-Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider.ts` (the check and the routes), `web/src/actions.ts` (`openLink`, `openTerminalPath`), `web/src/editor/lineRequest.ts` (the line); desktop owner: `desktop/src/main/localPath.ts`.
+Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider.ts` (the check and the routes), `web/src/terminals.ts` (pointer-to-cell lookup), `web/src/PaneRelations.tsx` (target-specific menu), `web/src/actions.ts` (`openLink`, `openTerminalPath`), `web/src/editor/lineRequest.ts` (the line); desktop owner: `desktop/src/main/localPath.ts`.
 
 ## Web Project Conversation history
 
@@ -549,15 +554,23 @@ Eligible rows have checkboxes; selecting one to five shows `N selected · up to 
 The row's single-card action uses the same batch path.
 While any row is selected, per-row promotion and dismissal buttons are hidden; unknown-authority answer buttons remain so those comparisons can be settled before selection.
 Promotion reasons omit zero counts and use short source-session counts.
-Started single or batch promotions remain in To ask: a running row before confirmation, then one clickable `In PR <number>` row grouping cards with that confirmed number and the catalog's actual review decision when known.
-This applies equally to promotions already open before upgrade; clicking the PR row opens the shell's existing PR panel.
-PR numbers are identifiers rendered as plain digits in all four languages, including the row and its accessible name (`In PR 1050`).
+Started single or batch promotions remain in To ask, in the same two-line format as the questions: a PR mark in the checkbox slot, card numbers, the first title and `+N` for additional cards, then the status and links.
+Before a PR exists the row says Writing PR with the durable attempt's elapsed time; cards bound to the same running agent and attempt share a row.
+After confirmation, cards with the same PR number share a row, and `PR <number>` opens the existing PR panel.
+The catalog's failed checks use destructive text, requested changes and an agent asking the operator use warning text, and writing or awaiting review is neutral.
+`Agent ↗` appears only while writing or needing attention and only when a real pane is known; a quiet review row keeps only its disclosure indicator.
+After PR creation the agent link requires a Hide AI promotion origin and that agent's live PR association with the catalog's full repository-qualified URL, rather than a name or branch guess.
+This applies equally to promotions already open before upgrade; PR numbers remain plain identifier digits in all four languages.
+Every To ask row expands from its title, reason or empty space, or its single disclosure button with Enter or Space; the chevron only indicates expansion.
+Checkboxes, links and action buttons perform only their own actions.
+An ordinary question opens its current body, cited files and sources below its action buttons, while a document disagreement opens Compare content.
+A progress row opens each card's title and a two-line body preview, followed by Open PR and Open agent where their real targets are available.
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
 A card that was not processed returns with its concrete reason and Retry, continuing the shared branch and PR.
 A new rule or lesson suggestion keeps its source-session counts and dismissal until its revision changes; at most three new suggestions are open.
 `카드 N` lists the other cards, two lines each: the number and title, then the kind, how many sessions it was given to, how many times it was pulled, how many of its sources are the operator's words, and when it changed.
 The first five show, the rest fold under `그 외 N`, and a card shown in full is never folded; the search above them shows every match, best first, and is the Project's, so every window shows the same query and only the one typed into sends it.
-An expanded or searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears.
+A searched promotion card also shows its running status and the name that opens its pane, with no name before the session appears; expanding a progress row does not duplicate it in Cards.
 Once merged, its ordinary card dims and shows the file it went into, or the merged pull request's mark when no file was named, with `파일로 올라감 · 주입 안 함`.
 A personal preference carries `Personal`, remains available to agents and never appears as a document suggestion.
 Fact disagreements remain withheld and readable in ordinary card detail, with no unsupported document correction action; rule, lesson and decision disagreements are eligible for correction.
@@ -764,6 +777,7 @@ The Issues tab opens a board of issues, laid out by PRD overview-lenses-issues: 
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
 Every project on this Mac has one issue source, chosen in the project row's Issue source menu (Auto, GitHub or Local, the stored choice checked): GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
+An open Issue source menu follows the core's stored choice as it arrives, including an acknowledgement received after the menu reopened; selecting an item does not create a second, optimistic choice in the shell.
 A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project of a device the core dials has no source here, while a project of a node that dials the core (the screen machine of a core that runs elsewhere) keeps its source, its issues and its Start as it had them before the core moved (PRD core-host-node-move D-29).
 The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, when it last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
 
@@ -1565,8 +1579,8 @@ Settings > Agents > Starting work has no default agent of its own.
 
 ## Usage
 
-Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
-The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
+Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/UsageOverview.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
 The footer draws up to three pinned account windows, followed by Help and Settings.
@@ -1588,7 +1602,31 @@ Network and timeout detail stays in diagnostics.
 No usage state becomes a banner, toast or alert.
 The countdown advances once a minute only while the popover is open.
 
-The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Below the account cards, New tokens draws up to twenty Sunday-first weeks of the core's own machine's recorded usage.
+Overview's Usage tab draws up to a year beside the same account cards and the agents without limit readings.
+New tokens means input, output and cache writes; cache reads are shown in the day detail and excluded from every total, share and intensity.
+The core prepares the day boundaries, quartile levels, peak, active days, streak and shares; the page only formats and draws them.
+Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
+The calendar starts at the first retained record's week, bounded by the surface's width in weeks; during initial backfill it starts forty-five days ago, marks unread days and shows file progress and `so far`.
+Finishing the backfill removes leading empty weeks once.
+With no records and no backfill there is no popover section or Overview history column; with no visible account chips the footer's chart button opens the available history.
+
+The popover reserves its tallest localized day or agent detail before hover, so its height and the cell under the pointer stay still.
+At rest it shows the peak and all agent shares; a day shows date, total, input/output/write, excluded read tokens, API-rate equivalent cost and the top three agents plus the remaining count.
+An agent share shows that agent's retained lifetime cost; costs are otherwise hidden.
+An unpriced model or incomplete native usage makes the cost a lower bound with its reason; an absent price table says cost will appear once it loads, and a table older than sixty days is marked stale.
+No calls means No data, never a zero dollar amount.
+Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes the limit outline.
+Arrow keys move through dates, Home and End reach the range's ends, and keyboard focus shows the same details as hover.
+
+Pressing an agent share or bar filters the calendar and statistics while keeping the complete agent comparison visible; pressing it again clears the filter.
+Usage history opens Overview's global Usage tab; it is not a per-project ledger.
+The large surface adds current and longest streak, peak, period totals and agent bars, replaced by the selected day's details and bars while over a day.
+Pi and omp show recorded provider provenance using known display names, account wording only for a recorded account provider, and no line for an unknown provider.
+A bounded or partly unreadable source has the small limited marker in its own row and range.
+At narrow widths and large Interface text the Overview columns stack and copy wraps; a full-year grid scrolls within its calendar, never the whole page sideways.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` while the popover or Usage tab is open.
 Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
 The core keeps one value of each hint, so with several pages open the last page to report decides.
 

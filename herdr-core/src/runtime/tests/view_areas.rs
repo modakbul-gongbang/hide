@@ -2210,6 +2210,48 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     assert_eq!((kept[0], kept[7]), ("again-2", "again-9"));
 }
 
+/// A terminal HTML click selects its owning checkout and page in one event;
+/// a background browser open keeps the checkout the operator was using.
+#[test]
+fn a_browser_open_reveals_its_checkout_only_when_asked() {
+    let (mut runtime, _, directory) = views_runtime("browser-reveal");
+    with_pane(&mut runtime, &directory);
+    let (other, other_id) = second_checkout(&mut runtime, &directory);
+    let url = "https://example.test/terminal-report";
+    let workspace =
+        serde_json::json!({"device_id": crate::node::TEST_NODE, "path": other.to_string_lossy()});
+    let before = runtime.snapshot.navigator.focused_checkout_id.clone();
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": url, "workspace": workspace})
+    ));
+    assert_eq!(runtime.snapshot.navigator.focused_checkout_id, before);
+    assert!(browser_displays(&mut runtime).is_empty());
+
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": url, "workspace": workspace, "reveal": true})
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(other_id.as_str())
+    );
+    let [page] = browser_displays(&mut runtime)
+        .try_into()
+        .expect("the revealed page");
+    assert_eq!(page.url.as_deref(), Some(url));
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+
+    let before = runtime.snapshot.navigator.focused_checkout_id.clone();
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": "javascript:alert(1)", "workspace": workspace, "reveal": true})
+    ));
+    assert_eq!(runtime.snapshot.navigator.focused_checkout_id, before);
+    assert_eq!(browser_displays(&mut runtime).len(), 1);
+}
+
 /// The page's own navigation is recorded, not loaded; the toolbar's address
 /// is loaded. Neither touches a document display.
 #[test]

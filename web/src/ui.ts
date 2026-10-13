@@ -90,7 +90,7 @@ export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column:
  * list of Projects (PRD task-agents-views D-01). A Project's Overview has its
  * own tiles instead (`OverviewLens`).
  */
-export type MainView = "requests" | "tasks" | "agents" | "projects";
+export type MainView = "requests" | "tasks" | "agents" | "projects" | "usage";
 
 /** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its pull requests, its sessions. */
 export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";

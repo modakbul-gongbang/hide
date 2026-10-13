@@ -234,6 +234,7 @@ impl Runtime {
             });
         Some(MemoryPromotionSnapshot {
             state,
+            started_at_unix_ms: promotion.started_at_unix_ms,
             agent,
             pr_number: promotion.pr_number,
             target_path: promotion.target_path.clone(),
