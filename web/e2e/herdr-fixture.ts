@@ -235,6 +235,11 @@ function cmdQuote(value: string): string {
   return `"${value}"`;
 }
 
+/** Clears the pane and prints a fixture file through the shell it really runs. */
+export function printFileCommand(shell: PaneShell, file: string): string {
+  return shell === "cmd" ? `cls & type ${cmdQuote(file)}` : `clear; cat ${posixQuote(file)}`;
+}
+
 /** The text that runs `program` in a pane's shell, ready for `pane run`. */
 export function paneProgramLine(shell: PaneShell, program: PaneProgram): string {
   const env = Object.entries(program.env ?? {});

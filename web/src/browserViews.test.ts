@@ -26,6 +26,7 @@ describe("the address field", () => {
   it("writes a file URL the way the daemon writes the checked path back", () => {
     // hided/src/file_url.rs spells the same path this way.
     expect(fileUrl("/a/100%/#x?.html")).toBe("file:///a/100%25/%23x%3F.html");
+    expect(fileUrl("C:/reports/a b.HTML")).toBe("file:///C:/reports/a%20b.HTML");
     expect(fileUrl("/a/{b}`c\"<d>")).toBe("file:///a/%7Bb%7D%60c%22%3Cd%3E");
   });
 });
