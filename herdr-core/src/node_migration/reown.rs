@@ -1098,11 +1098,11 @@ mod tests {
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "layout": {"root": {"area": {"id": "a1"}}}},
+                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_visibility": {tabs[0].clone(): false}, "layout": {"root": {"area": {"id": "a1"}}}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
-                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "layout": {}},
+                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_visibility": {tabs[1].clone(): true}, "layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
-                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "layout": {}},
+                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_visibility": {tabs[2].clone(): false}, "layout": {}},
             ]}),
         );
         write(
