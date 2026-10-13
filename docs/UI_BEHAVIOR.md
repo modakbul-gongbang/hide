@@ -54,7 +54,8 @@ Only when the window's frame itself cannot draw does the line take the whole win
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
 No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
-File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
+Each Agent tab remembers whether File Views is on or off, while Tools, its tool and both widths are stored per Workspace; all survive a restart.
+A Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
 Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the named Sessions, Explorer and History tabs, in that order with the shown one marked.
 The tool tabs have one keyboard stop; Left, Right, Home and End choose another tool, and the Workspace remembers that choice.
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
@@ -79,14 +80,21 @@ File Views is never empty: closing its last view turns it off in the same transi
 With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
 Tools alone is an ordinary state.
 Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and changes no column in a window wide enough for them all.
+A file read opens File Views when its document is ready, in the Agent tab that requested it.
+Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
+When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
+A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
+Closing that buffer's last current display does not cancel another tab's pending GUI open.
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
+Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
 Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
 The divider between File Views and Tools trades width between the two, so the agents keep theirs; the others change one column's width against Agent Views.
 No column gets narrower than its minimum: Agent Views 480px, File Views 360px, Tools 260px; File Views starts at 640px and Tools at its usual tool width until first resized.
-Turning File Views or Tools on or off, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once; a drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent resize nothing.
+Turning File Views or Tools on or off, including a tab's restored File Views visibility, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once.
+A drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent with the same File Views visibility resize nothing.
 Changing Workspace or column geometry during a column drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
 
 Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, Tools or a pane.
@@ -118,9 +126,9 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
 An explicit local `--reveal` brings that Workspace and the opened View forward and turns File Views on, showing it in a window too narrow for every column; without it, File Views keeps its state and its icon's badge counts the new view.
-A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds or selects the View for its own tab's bookmark and leaves the front of every View area as the operator left it (see View bookmarks per Agent tab).
+A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, updates its own presentation and preserves the operator's complete panel (see File Views per Agent tab).
 Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front as before and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
-`hide view split`, `move` and `close` change the shared layout, so they apply at once from any tab.
+`hide view split`, `move` and `close` apply to the caller's presentation, including while it is hidden.
 
 ### Agent areas
 
@@ -212,28 +220,44 @@ No area gets narrower or shorter than its minimum, a divider stops where either 
 An area whose last view leaves disappears, and its neighbour takes the space.
 When the last view closes, File Views turns off and Tools stays as it was, with that state saved for the Workspace.
 
-### View bookmarks per Agent tab
+### File Views per Agent tab
 
-The View list, the layout, the columns' state and widths, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
-Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
-Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
-A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
-Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
-A new tab, a delegated child moved to its own tab and every tab right after an update have none.
-The area in use, the keyboard and the columns stay where they were; while File Views is off the bookmark still applies, so turning it on shows the tab's front.
-Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap File Views under the operator.
-When the front of a View area changes, the active tab remembers the new front.
-The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
-A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
-Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
-Connected device Workspaces follow the same rules; the visible tab of a device changes when its Herdr's answer lands, and an SSH device has one Agent area.
-The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
-Web owner: none, the shell draws each area's front as the snapshot names it.
-Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.
+Each Agent tab remembers its own View list, area layout, selected Views, active area and File Views visibility.
+Tools, column widths and document editing/saving remain shared by the Workspace.
+A tab with no saved presentation inherits the current list, layout, selection and visibility, with distinct display and browser-area identities.
+Empty presentations remember visibility without consuming View areas or opening an empty column.
+An older schema-2 entry retains its current Views and reads its saved fronts and visibility on first use.
 
-A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
-A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.
-Opening a file that is already shown moves to its view, so it is never refused.
+Showing a tab that no Agent area showed a moment before restores its complete presentation in the frame that shows the tab.
+The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
+Moving ordinary focus among tabs already shown in Agent areas keeps the current File Views panel.
+An explicit tab choice shows that tab's pending background result even when it is already shown in another Agent area.
+Hiding File Views preserves its documents, unsaved text and save state.
+Closing its last View leaves that tab's File Views off.
+
+A pane caller's file, diff or browser open and View actions affect its actual Agent tab.
+Without `--reveal`, a background open or selection keeps the operator's complete View list, layout, selection, visibility, Tools, widths and keyboard focus.
+`--beside` applies to the caller's presentation, and selecting A later shows A's background result with File Views on.
+Returning to B restores B's previous presentation without A's new Views in its strip.
+`--reveal` selects the caller's actual A tab and requested View together; a caller without a pane and a GUI action use the current checkout presentation.
+A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.
+
+Preview displays belong to their presentation, while matching checkout/path documents use one shared buffer.
+An A open cannot retarget or pin B's preview, and dirty-document close guards count hidden references.
+Browser copies have independent page identities: a same-URL A open leaves B's page, load and internal state intact.
+Hidden browser resources and area authority remain retained; a new hidden page may stay pending until first placement, and `--wait` proves only a real load.
+The desktop hides every retained page absent from the current presentation's placements.
+
+Presentations are saved with the Workspace and survive restart and core moves.
+Authoritative topology removes closed-tab records and resources while retaining other tabs' documents.
+An exclusively owned clean document closes with its tab; unsaved content remains recoverable and never enters another tab's strip automatically.
+An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
+Local and connected-device callers follow the same rules; the phone keeps its existing flow.
+No additional badge, notice or setting is introduced.
+The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout; a refused operation preserves existing content.
+Web owner: none, the shell draws the existing snapshot projection.
+Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
+Regression owners are `runtime/tests/view_bookmarks.rs`, `web/e2e/{view-bookmarks,file-view-visibility}.spec.ts` and `desktop/e2e/browser.spec.ts`.
 
 ### Opening, preview, and Open to the side
 
