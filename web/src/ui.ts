@@ -291,6 +291,7 @@ type UiStore = {
   pendingTrash: PendingTrash | null;
   overlay: Overlay;
   projectSettingsTarget: ProjectSettingsTarget | null;
+  projectSettingsReturnFocus: HTMLElement | null;
   /** The tab the Settings sheet opens on. */
   settingsTab: SettingsTab;
   /** Settings was opened to add a device: the Devices tab opens its Add dialog once and clears this. */
@@ -370,7 +371,7 @@ type UiStore = {
   searchOver: Overlay;
   closeOverlay: (overlay?: Overlay) => void;
   openSettings: (tab: SettingsTab) => void;
-  openProjectSettings: (target: ProjectSettingsTarget) => void;
+  openProjectSettings: (target: ProjectSettingsTarget, returnFocus?: HTMLElement | null) => void;
   /** Opens Settings on Devices with the Add device dialog in front. */
   openAddDevice: () => void;
   clearAddDeviceRequest: () => void;
@@ -422,6 +423,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   pendingTrash: null,
   overlay: "none",
   projectSettingsTarget: null,
+  projectSettingsReturnFocus: null,
   settingsTab: "general",
   addDeviceRequested: false,
   moveGiveUpRequested: false,
@@ -501,7 +503,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },
   openSettings: (settingsTab) => set({ overlay: "settings", settingsTab }),
-  openProjectSettings: (projectSettingsTarget) => set({ overlay: "project_settings", projectSettingsTarget }),
+  openProjectSettings: (projectSettingsTarget, returnFocus) => set({ overlay: "project_settings", projectSettingsTarget, projectSettingsReturnFocus: returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null) }),
   openAddDevice: () => set({ overlay: "settings", settingsTab: "devices", addDeviceRequested: true }),
   clearAddDeviceRequest: () => set({ addDeviceRequested: false }),
   openMoveGiveUp: () => set({ overlay: "settings", settingsTab: "devices", moveGiveUpRequested: true }),

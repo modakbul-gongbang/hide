@@ -969,6 +969,7 @@ const ROW_COVERED = "group-hover:opacity-0 group-focus-within:opacity-0 group-da
 function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspace; badge: ReactNode; items: () => MenuItem[]; onSelect: (id: MenuItem["id"]) => void }) {
   const { t } = useInterfaceTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const more = useRef<HTMLButtonElement>(null);
   const control = "flex size-(--size-icon-button-toolbar) items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
   return (
     <span className="grid shrink-0 items-center justify-items-end">
@@ -993,13 +994,13 @@ function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspac
         <EntryDropdown
           label={t("common.entryActions", { name: workspace.label })}
           items={items}
-          onSelect={onSelect}
+          onSelect={(id) => id === "project_settings" ? useUiStore.getState().openProjectSettings(settingsTarget(workspace), more.current) : onSelect(id)}
           align="start"
           hint={t("sidebar.moreActionsFor", { name: workspace.label })}
           onOpenChange={setMenuOpen}
           data-row-more-menu={workspace.id}
           trigger={
-            <button type="button" aria-label={t("sidebar.moreActionsFor", { name: workspace.label })} data-row-more={workspace.id} className={control}>
+            <button ref={more} type="button" aria-label={t("sidebar.moreActionsFor", { name: workspace.label })} data-row-more={workspace.id} className={control}>
               <EllipsisIcon aria-hidden="true" className="size-(--size-icon-sm)" />
             </button>
           }

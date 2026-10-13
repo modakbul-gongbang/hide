@@ -1713,6 +1713,7 @@ The dialog is 880 by 640 when the window permits it, with a fixed 200-wide navig
 Choices are scoped to the owning device and canonical main-worktree root, shared by all of that project's checkouts.
 Each change saves immediately through the core's existing state writer, shows pending, saved or failed beside its row, and keeps the last confirmed value until durable acknowledgment.
 Closing does not cancel a save, and reopening preserves the failed intent's Retry.
+A later window's save does not turn an already completed change back into Pending.
 An unavailable device or missing project retains its last observed values read-only, with a retry at that surface; a newer settings version is also read-only with an update reason.
 
 Connections shows the actual GitHub repository or why none was detected, with automatic detection or an explicit owner/repository override, and the existing Auto, GitHub and Local issue choices.
@@ -1729,9 +1730,11 @@ Plain folders cannot select worktree creation or a Git base.
 Original-checkout branch protection and main file-write blocking are separate unsupported rows.
 
 Memory uses the existing consent and kit; its row shows hook preparation, pending writes and project-scoped failure with Retry, while retaining the confirmed value.
+That Retry applies only to enabling or disabling Memory; card actions stay in the Memory tool with their existing confirmations.
 Turning it off keeps existing cards.
 While the dialog is open its project owns the daemon's single Memory read slot, and the Tools project is restored when it closes.
 Open project Memory is one scoped navigation intent that closes the dialog and opens that project's usable checkout and Memory tool; a delayed remote focus changes Tools only on arrival, and refusal leaves the earlier checkout's Tools unchanged.
+A newer explicit navigation cancels the delayed Memory choice so its later arrival cannot take the screen back.
 Without a usable checkout it gives a local recovery reason.
 All pages use the four interface languages, existing settings rows, system controls, dialog keyboard containment and theme tokens.
 `web/src/ProjectSettingsSheet.tsx` owns the dialog and `web/src/projectSettings.ts` reads its confirmed scoped choices.

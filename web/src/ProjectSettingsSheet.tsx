@@ -35,13 +35,19 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
   const workspace = current ?? lastWorkspace.current;
   const available = live && current !== null && deviceConnected(rest, target.deviceId);
   const [page, setPage] = useState<Page>(initialPage);
-  const [intent, setIntent] = useState<{ id: string; field: keyof ProjectSettingsPatch; patch: ProjectSettingsPatch; failed: boolean } | null>(null);
+  const [intent, setIntent] = useState<{ id: string; field: keyof ProjectSettingsPatch; patch: ProjectSettingsPatch; state: "pending" | "saved" | "failed" } | null>(null);
   const { record, write } = projectSettings(rest, target, intent?.id);
   const waiting = useRef(false);
-  const pending = write?.state === "pending" || (intent !== null && !intent.failed && write?.request_id !== intent.id);
-  useEffect(() => { if (write && write.request_id === intent?.id && write.state !== "pending") waiting.current = false; }, [write, intent?.id]);
+  const pending = write?.state === "pending" || (intent !== null && intent.state === "pending" && write?.request_id !== intent.id);
+  useEffect(() => {
+    if (write && write.request_id === intent?.id && write.state !== "pending") {
+      waiting.current = false;
+      const state = write.state;
+      setIntent((current) => current && current.state !== state ? { ...current, state } : current);
+    }
+  }, [write, intent?.id]);
   const blocked = !available || pending || (record !== null && record.version !== 1);
-  const previous = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const previous = useRef<HTMLElement | null>(useUiStore.getState().projectSettingsReturnFocus);
   const close = () => useUiStore.getState().closeOverlay("project_settings");
   const save = (field: keyof ProjectSettingsPatch, patch: ProjectSettingsPatch) => {
     if (blocked || waiting.current) return;
@@ -49,16 +55,16 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     waiting.current = true;
     const sent = actions.setProjectSettings(target, patch, id);
     if (!sent) waiting.current = false;
-    setIntent({ id, field, patch, failed: !sent });
+    setIntent({ id, field, patch, state: sent ? "pending" : "failed" });
   };
   const stateFor = (field: keyof ProjectSettingsPatch): ReactNode => {
     const retry = intent?.field === field ? intent : write?.patch?.[field] !== undefined ? { id: write.request_id, patch: write.patch } : null;
     if (!retry) return null;
-    const state = write?.request_id === retry.id ? write.state : intent?.failed ? "failed" : "pending";
+    const state = write?.request_id === retry.id ? write.state : intent?.state ?? "pending";
     return <div className="flex flex-wrap items-center gap-sm" aria-live="polite">
       <Status tone={state === "failed" ? "error" : state === "pending" ? "pending" : "ok"}>{t(`projectSettings.${state === "failed" ? "failed" : state === "pending" ? "pending" : "saved"}`)}</Status>
       {state === "failed" ? <Note tone="error">{t(settingsErrorKey(write?.error))}</Note> : null}
-      {state === "failed" ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, patch: retry.patch, failed: !actions.setProjectSettings(target, retry.patch, retry.id) })}>{t("projectSettings.retry")}</Button> : null}
+      {state === "failed" ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, patch: retry.patch, state: actions.setProjectSettings(target, retry.patch, retry.id) ? "pending" : "failed" })}>{t("projectSettings.retry")}</Button> : null}
     </div>;
   };
   useMemoryProject(actions, available ? current.id : null);
@@ -74,7 +80,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     if (write?.state === "pending") return;
     setRepositoryDraft(confirmedRepository ?? "");
     setRepositoryEditing(confirmedRepository !== null);
-  }, [confirmedRepository, write?.state, intent?.failed]);
+  }, [confirmedRepository, write?.state, intent?.state]);
   const detected = workspace?.home_issues?.repository ?? (workspace?.tasks?.source?.kind === "github" ? workspace.tasks.source.name : null);
   const branches = workspace?.branches ?? [];
   const base = workspace ? projectBaseBranch(rest, workspace) : { branch: "", missing: null };
@@ -103,7 +109,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
           <TabsList aria-label={t("projectSettings.section")} className="min-h-0 w-full flex-1 flex-col items-stretch justify-start gap-xxs rounded-none bg-transparent p-none">
             {PAGES.map(({ id, icon: Icon }) => <TabsTrigger key={id} value={id} className="min-h-(--size-control) w-full shrink-0 justify-start gap-sm whitespace-normal rounded-xs px-sm py-xs text-body data-[state=active]:bg-accent data-[state=active]:shadow-none"><Icon aria-hidden="true" className="size-(--size-icon) shrink-0" />{t(`projectSettings.${id}`)}</TabsTrigger>)}
           </TabsList>
-          <p className="shrink-0 break-keep px-sm pt-sm text-caption text-muted-foreground">{t("projectSettings.scope")}</p>
+          <p className="shrink-0 break-words px-sm pt-sm text-caption text-muted-foreground">{t("projectSettings.scope")}</p>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex shrink-0 items-center gap-sm px-xl pb-lg pt-lg">
@@ -155,7 +161,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
                 <Row label={t("projectSettings.memory")} detail={<Note>{t("projectSettings.memoryNote")}</Note>}>
                   {memory ? <MemorySettings project={memory} actions={actions} disabled={!available} /> : <Status tone="pending">{t("memory.reading")}</Status>}
                 </Row>
-                <Row label={memory ? t("projectSettings.cards", { count: memory.rows.length }) : t("projectSettings.reading")} detail={!usable ? <Note>{t("projectSettings.noCheckout")}</Note> : undefined}><Button size="sm" variant="outline" disabled={!available || !usable} onClick={() => { if (!workspace || !available) return; close(); actions.openProjectMemory(target.deviceId, workspace.id); }}>{t("projectSettings.memoryOpen")}</Button></Row>
+                <Row label={memory ? t("projectSettings.cards", { count: memory.rows.length }) : t("projectSettings.reading")} detail={!usable ? <Note>{t("projectSettings.noCheckout")}</Note> : undefined}><Button size="sm" variant="outline" className="h-auto min-h-(--size-control-sm) min-w-0 max-w-full whitespace-normal break-words py-xs" disabled={!available || !usable} onClick={() => { if (!workspace || !available) return; close(); actions.openProjectMemory(target.deviceId, workspace.id); }}>{t("projectSettings.memoryOpen")}</Button></Row>
               </Group> : null}
             </div>
           </TabsContent>

@@ -76,10 +76,11 @@ export function OverviewTitleRow({
   newAgent: { run: () => void; disabled: boolean };
   /** Null when the project cannot take issues. */
   newIssue: (() => void) | null;
-  openSettings?: () => void;
+  openSettings?: (returnFocus: HTMLElement | null) => void;
 }) {
   const { t } = useInterfaceTranslation();
   const row = useRef<HTMLDivElement>(null);
+  const more = useRef<HTMLButtonElement>(null);
   const nav = useRef<HTMLElement>(null);
   const twin = useRef<HTMLDivElement>(null);
   const [iconOnly, setIconOnly] = useState(false);
@@ -110,7 +111,7 @@ export function OverviewTitleRow({
             {name}
           </h1>
         </Hint>
-        {openSettings ? <EntryDropdown label={t("projectSettings.title")} items={() => [{ id: "project_settings", label: t("projectSettings.title"), unavailable: null }]} onSelect={openSettings} trigger={<Button variant="ghost" size="icon-sm" aria-label={t("projectSettings.title")}><EllipsisIcon /></Button>} /> : null}
+        {openSettings ? <EntryDropdown label={t("projectSettings.title")} items={() => [{ id: "project_settings", label: t("projectSettings.title"), unavailable: null }]} onSelect={() => openSettings(more.current)} trigger={<Button ref={more} variant="ghost" size="icon-sm" aria-label={t("projectSettings.title")}><EllipsisIcon /></Button>} /> : null}
         {remoteDevice ? <Badge variant="secondary" className="min-w-0 shrink">{remoteDevice}</Badge> : null}
       </nav>
       <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={iconOnly} button={{ onClick: newAgent.run, disabled: newAgent.disabled, "data-overview-new-agent": "true" }} />

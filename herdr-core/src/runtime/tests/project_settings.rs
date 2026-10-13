@@ -76,6 +76,32 @@ fn project_settings_save_survives_restart_and_omitted_fields() {
 }
 
 #[test]
+fn coalesced_writes_keep_each_callers_completed_receipt() {
+    let mut runtime = fixture();
+    change(
+        &mut runtime,
+        "first-window",
+        serde_json::json!({"issue_source": "local"}),
+    );
+    change(
+        &mut runtime,
+        "second-window",
+        serde_json::json!({"new_work": "worktree"}),
+    );
+    // A caller can first observe the snapshot only after both saves completed.
+    for request in ["first-window", "second-window"] {
+        let receipt = runtime
+            .snapshot
+            .ui_state
+            .project_settings_writes
+            .values()
+            .find(|receipt| receipt.request_id == request)
+            .expect("each caller receives its outcome");
+        assert_eq!(receipt.state, WriteState::Saved);
+    }
+}
+
+#[test]
 fn invalid_repository_and_failed_save_keep_last_confirmed_value() {
     let mut runtime = fixture();
     let id = crate::project_settings::key(crate::node::TEST_NODE, "/fixture/project");
@@ -642,4 +668,98 @@ fn connection_change_invalidates_only_feedback_owned_by_that_project() {
         Some("project_settings_repository_changed")
     );
     assert!(!runtime.ingest_pr_feedback("other", Err("obsolete provider response".into())));
+}
+
+#[test]
+fn a_later_local_memory_or_device_visit_supersedes_delayed_remote_memory() {
+    for visit_memory in [false, true] {
+        for acknowledged_first in [false, true] {
+            let mut runtime = fixture();
+            let local = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+            let mut remote = runtime.snapshot.navigator.devices[0].clone();
+            remote.id = "mini".into();
+            remote.kind = "remote".into();
+            runtime.snapshot.navigator.devices.push(remote);
+            runtime = super::workspace_view::with_new_views(runtime, "superseded-memory");
+            runtime.focus_checkout("visible-id", &local.id);
+            runtime.sync_workspace_view();
+            let key = ("mini".to_owned(), "/fixture/remote".to_owned());
+            runtime.choose_when_in_front("mini", "old-memory", key.clone());
+            runtime.attach_memory_navigation("mini", "old-memory", "remote-project".into());
+            if acknowledged_first {
+                runtime.acknowledge_memory_navigation("mini", "old-memory");
+            }
+            let (kind, payload) = if visit_memory {
+                (
+                    "project_memory_navigate",
+                    serde_json::json!({"device_id": crate::node::TEST_NODE, "workspace_id": "visible-id", "checkout_id": local.id, "request_id": "new-memory"}),
+                )
+            } else {
+                (
+                    "focus_device",
+                    serde_json::json!({"device_id": crate::node::TEST_NODE}),
+                )
+            };
+            runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload})).unwrap());
+            runtime.acknowledge_memory_navigation("mini", "old-memory");
+            let mut project = workspace(
+                "remote-project",
+                "Remote",
+                &key.1,
+                vec![checkout("remote-project", "remote-checkout", &key.1, None)],
+            );
+            project.device_id = "mini".into();
+            project.remote_target_id = Some("mini".into());
+            runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+                target_id: "mini".into(),
+                state: "connected".into(),
+                message: None,
+                herdr_version: None,
+                session: Some(RemoteSessionSnapshot {
+                    workspaces: vec![project],
+                    agents: vec![],
+                    active_tab_ids: Default::default(),
+                    focused_workspace_id: Some("remote-project".into()),
+                    focused_checkout_id: Some("remote-checkout".into()),
+                    focused_tab_id: None,
+                    focused_pane_id: None,
+                    pane_layouts: vec![],
+                    pane_hook_tokens: Default::default(),
+                    issue_tokens: Default::default(),
+                    issue_links: Default::default(),
+                }),
+                files: RemoteFileListSnapshot::idle(),
+                catalog: Default::default(),
+            });
+            runtime.sync_workspace_view();
+            assert!(runtime.device_in_front(crate::node::TEST_NODE));
+            assert_eq!(
+                runtime.snapshot.workspace_view.as_ref().unwrap().path,
+                local.path
+            );
+            assert!(
+                !runtime
+                    .workspace_views
+                    .as_mut()
+                    .unwrap()
+                    .views
+                    .entry("mini", &key.1)
+                    .tools
+            );
+            if visit_memory {
+                assert_eq!(
+                    runtime
+                        .snapshot
+                        .memory
+                        .as_ref()
+                        .unwrap()
+                        .project
+                        .as_ref()
+                        .unwrap()
+                        .workspace_id,
+                    "visible-id"
+                );
+            }
+        }
+    }
 }

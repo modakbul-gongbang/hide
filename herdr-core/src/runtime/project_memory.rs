@@ -220,6 +220,7 @@ impl Runtime {
             if self.snapshot.navigator.focused_checkout_id.as_deref()
                 == Some(payload.checkout_id.as_str())
             {
+                self.supersede_memory_navigation();
                 self.bring_device_forward(payload.device_id);
                 self.show_project_memory_at(&key, payload.workspace_id);
                 self.sync_workspace_view();

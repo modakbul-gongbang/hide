@@ -147,7 +147,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <OverviewTitleRow
           name={project.label}
-          openSettings={() => useUiStore.getState().openProjectSettings(settingsTarget(project))}
+          openSettings={(returnFocus) => useUiStore.getState().openProjectSettings(settingsTarget(project), returnFocus)}
           path={project.path}
           remoteDevice={device && device.kind === "remote" ? device.label : null}
           onAllProjects={() => setProject(null)}

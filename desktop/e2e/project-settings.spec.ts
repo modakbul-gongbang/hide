@@ -6,6 +6,8 @@ import path from "node:path";
 import { expect, type ElectronApplication } from "@playwright/test";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { showProjectRow } from "../../web/e2e/wire";
+import { openProjectOverview } from "../../web/e2e/overview-entry";
+import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
 import { captureNativeWindow } from "./native-window";
 import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 
@@ -142,27 +144,82 @@ test("Project settings fit a narrow native window in every language and theme", 
       await page.locator('[data-interface-language]').click();
       await page.locator(`[data-language-option="${language}"]`).click();
       await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await page.locator('[data-settings-tab="general"]').click();
+      await page.locator('[data-font-size] [role="slider"]').focus();
+      await page.keyboard.press("End");
+      await expect(page.locator('[data-font-size] [role="slider"]')).toHaveAttribute("aria-valuenow", "17");
       await page.keyboard.press("Escape");
-      await page.evaluate(() => document.documentElement.style.setProperty("--interface-scale", String(17 / 13)));
       await gear().click();
       const tabs = sheet.getByRole("tab");
       await tabs.first().focus();
       await page.keyboard.press("ArrowDown");
       await expect(tabs.nth(1)).toHaveAttribute("data-state", "active");
       for (const theme of ["light", "dark"]) {
-        await page.evaluate((theme) => { document.documentElement.classList.toggle("dark", theme === "dark"); document.documentElement.classList.toggle("light", theme === "light"); }, theme);
+        await page.keyboard.press("Escape");
+        await page.locator('[data-open-settings]').click();
+        await page.locator('[data-settings-tab="general"]').click();
+        await page.locator(`[data-theme-option="${theme}"]`).click();
+        await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+        await page.keyboard.press("Escape");
+        await gear().click();
         for (let index = 0; index < 3; index++) {
           await tabs.nth(index).click();
-          await expect.poll(() => sheet.evaluate((node) => {
+          await sheet.locator("img").evaluateAll(async (images) => { await Promise.all(images.map((image) => (image as HTMLImageElement).decode())); });
+          await animationsFinished(page);
+          await compositorPresents(page);
+          await screenshot(page, `project-settings-${language}-${theme}-${index}-narrow`);
+          const overflow = await sheet.evaluate((node) => {
             const panel = node.querySelector('[role=tabpanel]')!;
             const nav = node.querySelector("nav")!;
-            return node.scrollWidth <= node.clientWidth && panel.scrollWidth <= panel.clientWidth && nav.scrollHeight <= nav.clientHeight;
-          })).toBe(true);
-          await screenshot(page, `project-settings-${language}-${theme}-${index}-narrow`);
+            return { dialog: node.scrollWidth - node.clientWidth, panel: panel.scrollWidth - panel.clientWidth, nav: nav.scrollHeight - nav.clientHeight };
+          });
+          console.log({ language, theme, index, overflow });
+          expect(overflow).toEqual({ dialog: 0, panel: 0, nav: 0 });
+          if (language === "ja" && theme === "light" && index === 2) await captureNativeWindow(app, "project-settings-ja-light-memory-native", { build: "worktree debug", daemonPid: run.daemonPid(), themeRoute: "global appearance settings", imagesDecoded: true });
         }
       }
     }
     await captureNativeWindow(app, "project-settings-narrow-native", { build: "worktree debug", daemonPid: run.daemonPid(), width: 720, height: 480, scale: 17 / 13 });
+  } finally {
+    if (app) await app.close();
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
+test("Project and Overview menus return Settings focus to their own trigger", async () => {
+  const herdr = await startHerdr({ agents: false });
+  const run = isolate(herdr, "project-settings-menus");
+  let app: ElectronApplication | null = null;
+  try {
+    const repo = path.join(run.env.HOME!, "projects", "sample");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "README.md"), "Fixture\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Initial"], { cwd: repo });
+    herdr.run(["workspace", "create", "--cwd", repo, "--label", "sample", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    const launched = await launch(run.env);
+    app = launched.app;
+    const page = launched.page;
+    const more = page.locator('[data-project]', { hasText: "sample" }).locator('[data-row-more]');
+    await (await showProjectRow(page, more)).focus();
+    await page.keyboard.press("Enter");
+    await page.locator('[data-menu-item="project_settings"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[data-project-settings]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(more).toBeFocused();
+    await openProjectOverview(page, "sample");
+    const titleMore = page.locator('[data-overview-screen]').getByRole("button", { name: "Project settings", exact: true });
+    await titleMore.focus();
+    await page.keyboard.press("Enter");
+    await page.locator('[data-menu-item="project_settings"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[data-project-settings]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(titleMore).toBeFocused();
+    await captureNativeWindow(app, "project-settings-overview-focus-native", { build: "worktree debug", daemonPid: run.daemonPid(), menuFocusReturned: true });
   } finally {
     if (app) await app.close();
     run.cleanup();

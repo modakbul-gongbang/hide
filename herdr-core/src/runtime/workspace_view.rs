@@ -339,6 +339,19 @@ impl Runtime {
         }
     }
 
+    /// A newer explicit visit supersedes the outstanding Memory visit;
+    /// its late ACK or target arrival must no longer change the screen.
+    pub(super) fn supersede_memory_navigation(&mut self) {
+        if let Some(store) = self.workspace_views.as_mut()
+            && store
+                .pending_choice
+                .as_ref()
+                .is_some_and(|pending| pending.memory_project.is_some())
+        {
+            store.pending_choice = None;
+        }
+    }
+
     pub(super) fn attach_memory_navigation(
         &mut self,
         device: &str,

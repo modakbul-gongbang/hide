@@ -1832,6 +1832,7 @@ An unset issue or base field retains the legacy path-based choice, an explicit a
 `project_settings_set` admits the exact catalog device/root pair and validates the repository and existing branch before the existing coalesced state writer saves it outside the runtime mutex.
 The confirmed record and its consumers move only when that exact save acknowledges the pending record; a failure retains the prior record with a request-scoped failed receipt, and closing a client does not cancel the write.
 Records are bounded to 256 projects, and transient receipts to 512 entries so a busy refusal can settle its caller without replacing an active write; receipts are not persisted, and unrelated `ui_state_update` echoes preserve both maps.
+Completed receipts displaced by a later caller remain request-scoped within that bound, so a coalesced snapshot still exposes each saved outcome; clients retain an observed terminal outcome when another writer replaces the project's latest receipt.
 An explicit repository is a private provider target, not a git remote or credential change.
 The existing GitHub reader separates its cached checks by repository as well as root and generation; changing the confirmed connection removes the previous screen data, moves the generation and rejects late remote answers for the old repository.
 Before a connection changes, the record retains up to 200 existing checkout issue references by checkout path, branch and bare number, with their original repository.
@@ -1840,7 +1841,9 @@ This adds bounded map lookups to link projection and uses the existing readers a
 Remote worktree requests carry the confirmed device/root base choice, and a base change discards the one old in-flight answer before the coalesced reread.
 The search slot likewise refuses joins to an invalidated worker and resolves every fresh target from the confirmed connection before a provider read answers.
 `project_memory_navigate` scopes focus and Memory Tools to one checkout; remote Tools change only when the existing pending choice reaches its exact front, and a refused focus drops the choice.
+An accepted newer checkout, pane, tab, device, file or local Memory navigation supersedes that pending Memory choice before its late acknowledgment or checkout arrival can move the screen.
 Memory projects expose their own hook-preparation and failed-action state, preserving confirmed values and cards for Retry.
+Settings retries only its enable or disable action; card deletion, forgetting and promotion retain the existing Memory tool's confirmation and card identity.
 Tests in `herdr-core/src/runtime/tests/project_settings.rs` cover the save acknowledgment, failed save, fallback, identity and late-answer boundary.
 
 Interface language is a core-owned UI preference: `interface_language_set` alone changes `ui_state.interface_language`, and unrelated UI saves preserve it.

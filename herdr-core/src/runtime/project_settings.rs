@@ -221,6 +221,34 @@ impl Runtime {
         state: WriteState,
         error: Option<&str>,
     ) {
+        // One notifier frame may contain several completed writes. Keep the
+        // displaced caller's outcome so coalescing cannot hide its completion.
+        if let Some(previous) = self
+            .snapshot
+            .ui_state
+            .project_settings_writes
+            .get(id)
+            .cloned()
+            && previous.request_id != payload.request_id
+            && previous.state != WriteState::Pending
+        {
+            self.settings_write_status(
+                &format!("{id}:{}", previous.request_id),
+                &SetPayload {
+                    device_id: previous.device_id,
+                    root: previous.root,
+                    request_id: previous.request_id,
+                    patch: previous.patch,
+                },
+                previous.state,
+                previous.error.as_deref(),
+            );
+        }
+        // Retry moves that same intent back to the canonical live receipt.
+        self.snapshot
+            .ui_state
+            .project_settings_writes
+            .remove(&format!("{id}:{}", payload.request_id));
         let statuses = &mut self.snapshot.ui_state.project_settings_writes;
         if !statuses.contains_key(id) && statuses.len() >= settings::LIMIT * 2 {
             // Completed receipts are replaceable; an active caller retains its

@@ -2467,10 +2467,14 @@ impl Runtime {
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
+        let supersedes_memory = matches!(event, Event::FocusDevice(_) | Event::FileFocus(_));
         let visible_tab_before = chooses_workspace
             .then(|| self.focused_visible_tab_id())
             .flatten();
         let mut changed = self.apply(event) || cleared_error;
+        if supersedes_memory && self.snapshot.status.last_error.is_none() {
+            self.supersede_memory_navigation();
+        }
         // A committed visit to another tab wakes what sleeps there (PRD
         // agent-sleep B12); a refused one moved nothing.
         if chooses_workspace && self.snapshot.status.last_error.is_none() {

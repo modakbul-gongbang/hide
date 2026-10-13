@@ -411,6 +411,10 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[role=alert]")?.textContent).toContain("Could not change Memory");
     await click("[role=alert] button");
     expect(sent("memory_action")).toEqual([{ workspace_id: "p", action: "disable", number: null }]);
+    for (const action of ["delete", "forget", "promote"] as const) {
+      await act(async () => root.render(<TooltipProvider><MemorySettings project={memory({ action_failure: action })} actions={actions} disabled={false} /></TooltipProvider>));
+      expect(container.querySelector("[role=alert]")).toBeNull();
+    }
     await act(async () => root.render(<TooltipProvider><MemorySettings project={memory({ pending_action: "enable", preparing_hooks: true })} actions={actions} disabled={false} /></TooltipProvider>));
     expect(container.textContent).toContain("Preparing agent hooks");
     expect(container.querySelector("[data-memory-switch]")?.hasAttribute("disabled")).toBe(true);
