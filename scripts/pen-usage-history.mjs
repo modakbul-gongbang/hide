@@ -27,9 +27,10 @@ export function usageHistory(tokens, id, surface, state = 'rest') {
     grid,
     row(`${id}-legend`, [year ? caption(`${id}-streak`, pending ? 'So far' : '3-day streak') : ref(`${id}-history-link`, 'btn-m', 'Usage history', {fill: [], height: 24, descendants: {'btn-lb': {content: 'Usage history'}, 'btn-ic': {enabled: true, icon: 'arrow-up-right'}}}), frame(`${id}-space`, 'Space', {width: 'fill_container', height: 1}, []), text(`${id}-less`, 'Less', {size: '$--text-micro', fill: '$--muted-foreground'}), ...Array.from({length: 5}, (_, level) => cell(`${id}-legend-${level}`, level, size, tokens)), text(`${id}-more`, 'More', {size: '$--text-micro', fill: '$--muted-foreground'})], {gap: 3}),
     ...(pending ? [caption(`${id}-progress`, 'Reading history · 412 / 1,280 files')] : []),
+    ...(year ? [caption(`${id}-peak-summary`, 'Peak · Sun, Oct 11 · 4M')] : []),
     frame(`${id}-detail`, 'Reserved detail', {width: 'fill_container', layout: 'vertical', gap: '$--spacing-xs', ...(year ? {padding: '$--spacing-md', stroke: '$--border', strokeWidth: 1, cornerRadius: '$--radius-md'} : {height: 106})}, detail ? [
       caption(`${id}-date`, 'Sun, Oct 11 · 4M', {fill: '$--foreground'}), caption(`${id}-split`, 'In 1.2M · Out 800K · Cache write 2M'), caption(`${id}-read`, 'Cache read 48M · not counted'), caption(`${id}-cost`, state === 'unpriced' ? '≥ $8.00 API rate · model-with-no-public-price unpriced' : '≈ $8.00 API rate'), caption(`${id}-top`, 'Claude 2.4M · Codex 800K · OpenCode 400K · +3'),
-    ] : [caption(`${id}-peak`, 'Peak · Sun, Oct 11 · 4M'), shares]),
+    ] : [caption(`${id}-peak`, year ? 'Since Sep 7 · 78M' : 'Peak · Sun, Oct 11 · 4M'), shares]),
   ]);
 }
 export function buildUsageHistory(tokens) {

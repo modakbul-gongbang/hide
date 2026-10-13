@@ -47319,6 +47319,16 @@
                       "alignItems": "center"
                     },
                     {
+                      "type": "text",
+                      "id": "usage-history-year-light-peak-summary",
+                      "name": "Peak · Sun, Oct 11 · 4M",
+                      "content": "Peak · Sun, Oct 11 · 4M",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
                       "type": "frame",
                       "id": "usage-history-year-light-detail",
                       "name": "Reserved detail",
@@ -47326,8 +47336,8 @@
                         {
                           "type": "text",
                           "id": "usage-history-year-light-peak",
-                          "name": "Peak · Sun, Oct 11 · 4M",
-                          "content": "Peak · Sun, Oct 11 · 4M",
+                          "name": "Since Sep 7 · 78M",
+                          "content": "Since Sep 7 · 78M",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -55025,6 +55035,16 @@
                       "alignItems": "center"
                     },
                     {
+                      "type": "text",
+                      "id": "usage-history-year-dark-peak-summary",
+                      "name": "Peak · Sun, Oct 11 · 4M",
+                      "content": "Peak · Sun, Oct 11 · 4M",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
                       "type": "frame",
                       "id": "usage-history-year-dark-detail",
                       "name": "Reserved detail",
@@ -55032,8 +55052,8 @@
                         {
                           "type": "text",
                           "id": "usage-history-year-dark-peak",
-                          "name": "Peak · Sun, Oct 11 · 4M",
-                          "content": "Peak · Sun, Oct 11 · 4M",
+                          "name": "Since Sep 7 · 78M",
+                          "content": "Since Sep 7 · 78M",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",

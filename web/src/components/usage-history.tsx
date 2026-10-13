@@ -123,9 +123,9 @@ export function UsageHistory({ node, surface, outline, onHistory }: { node: Node
     <div className={cn(surface === "popover" ? "usage-detail-slot" : "flex flex-col gap-sm rounded-md border border-border p-md")} data-usage-detail="true">
       {reservation}
       {surface === "popover" ? history.shares.map((item) => <div key={item.contribution.agent} className="usage-detail-reserve" aria-hidden="true" inert><ShareDetail share={item} /><AgentShares shares={history.shares} selected={selected} hovered={null} onSelect={() => {}} onHover={() => {}} bars={false} /></div>) : null}
-      <div className="usage-detail-copy">
+      <div className="usage-detail-copy h-full">
         {day ? <DayDetail day={day} /> : share && surface === "popover" ? <ShareDetail share={share} /> : surface === "popover" ? <div className="flex flex-wrap justify-between gap-xs text-caption text-muted-foreground"><span>{t("usage.history.peak")}{range.peak ? ` · ${usageDate(range.peak.date, language, { weekday: "short", month: "short", day: "numeric" })}` : null}</span><span className="font-mono">{range.peak ? compactTokens(range.peak.new_tokens, language) : t("usage.history.noData")}</span></div> : <div className="flex flex-wrap items-baseline gap-sm text-caption font-semibold"><span>{range.reading ? t("usage.history.soFar") : range.since ? t("usage.history.since", { date: usageDate(range.since, language) }) : t("usage.history.noData")}</span><span className="font-mono">{range.amount.calls ? compactTokens(range.amount.new_tokens, language) : null}</span></div>}
-        {!day || surface === "year" ? <AgentShares shares={history.shares} selected={selected} hovered={agent} onSelect={toggle} onHover={setAgent} bars={surface === "year"} day={day} /> : null}
+        {!day || surface === "year" ? <div className={surface === "popover" ? "mt-auto" : undefined}><AgentShares shares={history.shares} selected={selected} hovered={agent} onSelect={toggle} onHover={setAgent} bars={surface === "year"} day={day} /></div> : null}
       </div>
     </div>
   </section>;
