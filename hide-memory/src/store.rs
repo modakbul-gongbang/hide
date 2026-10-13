@@ -17,7 +17,7 @@ use crate::{
     RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
@@ -704,13 +704,22 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     pub fn open(path: &Path) -> Result<Self, MemoryError> {
+        Self::open_with_diagnostic(path, &mut |record| eprintln!("{record}"))
+    }
+
+    /// A writer can route a one-time migration warning to its diagnostic
+    /// sink. The callback runs only after the migration commits.
+    pub fn open_with_diagnostic(
+        path: &Path,
+        diagnostic: &mut dyn FnMut(serde_json::Value),
+    ) -> Result<Self, MemoryError> {
         prepare_database_file(path)?;
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA secure_delete=ON;",
         )?;
-        migrate(&connection, path)?;
+        migrate(&connection, path, diagnostic)?;
         enforce_database_permissions(path)?;
         let store = Self {
             connection,
@@ -1247,7 +1256,7 @@ impl MemoryStore {
              WHERE p.enabled=1 AND p.disclosure_version=?1 AND (?2 IS NULL OR i.project_id=?2) \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND i.lifecycle='active' AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?3) \
-             AND ((r.verified_at_ms IS NULL AND (c.item_id IS NULL OR c.state!='merged')) \
+             AND (((r.verified_at_ms IS NULL OR r.docs_compared=0) AND (c.item_id IS NULL OR c.state!='merged')) \
                OR (r.verified_at_ms IS NOT NULL AND r.kind IN ('rule','lesson') \
                  AND i.promotion_ok_revision IS NOT i.current_revision \
                  AND (c.item_id IS NULL OR c.state='outdated' OR (c.state='dismissed' AND c.revision!=i.current_revision)) \
@@ -2256,9 +2265,17 @@ impl MemoryStore {
         self.require_writer()?;
         let data = serde_json::to_string(comparison)
             .map_err(|error| MemoryError::InvalidState(error.to_string()))?;
-        let changed = self.connection.execute(
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute(
             "INSERT INTO card_comparisons(item_id,revision,data) SELECT id,current_revision,?4 FROM memory_items WHERE project_id=?1 AND number=?2 AND current_revision=?3 AND lifecycle='active' ON CONFLICT(item_id) DO UPDATE SET revision=excluded.revision,data=excluded.data",
             params![project_id, number, revision, data])?;
+        if changed == 1 {
+            transaction.execute(
+                "UPDATE memory_revisions SET docs_compared=1 WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?1 AND number=?2) AND revision=?3",
+                params![project_id, number, revision],
+            )?;
+        }
+        transaction.commit()?;
         Ok(changed == 1)
     }
 
@@ -2370,9 +2387,9 @@ impl MemoryStore {
         Ok(changed == 1)
     }
 
-    /// The unverified cards a verification may ask about now, the most read
-    /// first: active, not already a pointer into the repository, and not
-    /// asked about within [`crate::REVERIFY_INTERVAL_MS`] (B10).
+    /// Unverified cards and legacy verified revisions awaiting their first
+    /// docs comparison, most read first. Waiting alone never withholds a
+    /// verified card. Both share the existing interval and per-pass cap.
     pub fn pending_cards(
         &self,
         project_id: &str,
@@ -2382,7 +2399,7 @@ impl MemoryStore {
         let mut statement = self.connection.prepare(
             "SELECT i.id,i.number,i.current_revision,r.kind,r.title,r.body,r.aliases,r.cited_paths,i.outdated_reason FROM memory_items i \
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-             WHERE i.project_id=?1 AND i.lifecycle='active' AND r.verified_at_ms IS NULL \
+             WHERE i.project_id=?1 AND i.lifecycle='active' AND (r.verified_at_ms IS NULL OR r.docs_compared=0) \
              AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.revision=i.current_revision AND p.state='merged') \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?2) \
@@ -2490,6 +2507,10 @@ impl MemoryStore {
             return Ok(false);
         }
         write_evidence(&transaction, item_id, revision, evidence, now_unix_ms)?;
+        transaction.execute(
+            "UPDATE memory_revisions SET docs_compared=1 WHERE item_id=?1 AND revision=?2",
+            params![item_id, revision],
+        )?;
         transaction.execute(
             "UPDATE memory_items SET outdated_reason=NULL WHERE id=?1",
             [item_id],
@@ -3018,8 +3039,13 @@ fn select_bodies(candidates: Vec<RetrievalCandidate>, query: &RetrievalQuery) ->
     selected
 }
 
-fn migrate(connection: &Connection, path: &Path) -> Result<(), MemoryError> {
+fn migrate(
+    connection: &Connection,
+    path: &Path,
+    diagnostic: &mut dyn FnMut(serde_json::Value),
+) -> Result<(), MemoryError> {
     let mut version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let legacy_verified = version <= 11;
     if version == 0 {
         connection.execute_batch("BEGIN IMMEDIATE")?;
         if let Err(error) = connection
@@ -3094,10 +3120,16 @@ COMMIT;"#,
         let current: u32 =
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if current == 11 {
-            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL WHERE NOT EXISTS (SELECT 1 FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE p.item_id=memory_revisions.item_id AND p.revision=i.current_revision AND p.state='merged'); PRAGMA user_version=12;")?;
+            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); PRAGMA user_version=12;")?;
         }
         transaction.commit()?;
         version = 12;
+    }
+    if version == 12 {
+        if let Some(warning) = migrate_version_twelve(connection, path, legacy_verified)? {
+            diagnostic(warning);
+        }
+        version = 13;
     }
     if version != SCHEMA_VERSION {
         return Err(MemoryError::WrongSchema {
@@ -3106,6 +3138,99 @@ COMMIT;"#,
         });
     }
     Ok(())
+}
+
+fn migrate_version_twelve(
+    connection: &Connection,
+    path: &Path,
+    legacy_verified: bool,
+) -> Result<Option<serde_json::Value>, MemoryError> {
+    let transaction = connection.unchecked_transaction()?;
+    let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version != 12 {
+        transaction.commit()?;
+        return Ok(None);
+    }
+    // New revisions already pass the creation check. Only legacy verified
+    // revisions and dates restored from the pre-v12 backup need this queue.
+    transaction.execute_batch("ALTER TABLE memory_revisions ADD COLUMN docs_compared INTEGER NOT NULL DEFAULT 1 CHECK(docs_compared IN (0,1));")?;
+    let mut warning = None;
+    if legacy_verified {
+        transaction.execute(
+            "UPDATE memory_revisions SET docs_compared=0 WHERE verified_at_ms IS NOT NULL \
+             AND EXISTS(SELECT 1 FROM memory_items i WHERE i.id=item_id AND i.current_revision=revision) \
+             AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=memory_revisions.item_id AND p.revision=memory_revisions.revision AND p.state='merged')",
+            [],
+        )?;
+    } else {
+        let revisions = {
+            let mut statement = transaction.prepare(
+                "SELECT r.id FROM memory_revisions r JOIN memory_items i ON i.id=r.item_id AND i.current_revision=r.revision \
+                 WHERE r.verified_at_ms IS NULL AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision)",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        if !revisions.is_empty() {
+            match verified_backup_dates(&backup_path(path, 11), &revisions) {
+                Ok(dates) => {
+                    for (id, verified_at) in dates {
+                        transaction.execute("UPDATE memory_revisions SET verified_at_ms=?2,docs_compared=0 WHERE id=?1", params![id, verified_at])?;
+                    }
+                }
+                Err(reason) => {
+                    warning = Some(serde_json::json!({
+                        "component": "memory", "kind": "migration.verification_restore_unavailable",
+                        "from_schema": 12, "to_schema": 13, "reason": reason,
+                        "unverified_revisions": revisions.len(),
+                    }));
+                }
+            }
+        }
+    }
+    // Queue the first comparison now, without spending a call or changing
+    // verification/promotion eligibility. A later attempt keeps its cooldown.
+    transaction.execute(
+        "UPDATE memory_items SET reverify_at_ms=NULL WHERE EXISTS(SELECT 1 FROM memory_revisions r \
+         WHERE r.item_id=memory_items.id AND r.revision=current_revision AND r.docs_compared=0 AND r.verified_at_ms IS NOT NULL)",
+        [],
+    )?;
+    transaction.pragma_update(None, "user_version", 13)?;
+    transaction.commit()?;
+    Ok(warning)
+}
+
+/// The backup is opened read-only, never attached as a writable database.
+/// Read every requested date before restoring any, so an unreadable backup
+/// cannot partially restore the store. Revision ids are the exact match key.
+fn verified_backup_dates(
+    path: &Path,
+    revisions: &[String],
+) -> Result<Vec<(String, i64)>, &'static str> {
+    if !path.exists() {
+        return Err("v11_backup_missing");
+    }
+    let read = || -> rusqlite::Result<Vec<(String, i64)>> {
+        let backup = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        backup.busy_timeout(Duration::from_secs(2))?;
+        let version: i64 = backup.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version != 11 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let mut statement = backup.prepare("SELECT verified_at_ms FROM memory_revisions WHERE id=?1 AND verified_at_ms IS NOT NULL")?;
+        let mut dates = Vec::new();
+        for id in revisions {
+            if let Some(date) = statement
+                .query_row([id], |row| row.get::<_, i64>(0))
+                .optional()?
+            {
+                dates.push((id.clone(), date));
+            }
+        }
+        Ok(dates)
+    };
+    read().map_err(|_| "v11_backup_unreadable")
 }
 
 fn enable_fts_secure_delete(connection: &Connection) -> rusqlite::Result<()> {
@@ -3658,7 +3783,7 @@ CREATE TABLE analysis_batches(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFER
 CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER,reverify_at_ms INTEGER,promotion_ok_revision INTEGER,evidence_checked_at_ms INTEGER,outdated_reason TEXT);
 CREATE INDEX memory_items_project_state ON memory_items(project_id,lifecycle,updated_at_ms DESC);
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
-CREATE TABLE memory_revisions(id TEXT PRIMARY KEY,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,lifecycle TEXT NOT NULL,created_at_ms INTEGER NOT NULL,batch_id TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',aliases TEXT NOT NULL DEFAULT '[]',cited_paths TEXT NOT NULL DEFAULT '[]',verified_at_ms INTEGER,UNIQUE(item_id,revision));
+CREATE TABLE memory_revisions(id TEXT PRIMARY KEY,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,lifecycle TEXT NOT NULL,created_at_ms INTEGER NOT NULL,batch_id TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',aliases TEXT NOT NULL DEFAULT '[]',cited_paths TEXT NOT NULL DEFAULT '[]',verified_at_ms INTEGER,docs_compared INTEGER NOT NULL DEFAULT 1 CHECK(docs_compared IN (0,1)),UNIQUE(item_id,revision));
 CREATE TABLE memory_evidence(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,kind TEXT NOT NULL CHECK(kind IN('file','path','command')),value TEXT NOT NULL,fingerprint TEXT,present INTEGER NOT NULL,PRIMARY KEY(item_id,revision,kind,value));
 CREATE TABLE memory_sources(item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,provider TEXT NOT NULL,session_id TEXT NOT NULL,event_offset INTEGER NOT NULL,content_hash TEXT NOT NULL,available INTEGER NOT NULL DEFAULT 1,human INTEGER NOT NULL DEFAULT 0,at_ms INTEGER,PRIMARY KEY(item_id,provider,session_id,event_offset,content_hash));
 CREATE TABLE batch_changes(batch_id TEXT NOT NULL,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,previous_lifecycle TEXT,previous_revision INTEGER,PRIMARY KEY(batch_id,item_id));
@@ -3816,7 +3941,7 @@ fn undo_item(
     // verdict again.
     if batch_id.starts_with("verify:") {
         transaction.execute(
-            "UPDATE memory_revisions SET verified_at_ms=?2 WHERE item_id=?1 \
+            "UPDATE memory_revisions SET verified_at_ms=?2,docs_compared=1 WHERE item_id=?1 \
              AND revision=(SELECT current_revision FROM memory_items WHERE id=?1)",
             params![item_id, now_ms()],
         )?;
@@ -4492,6 +4617,333 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             session_id: session_id.to_owned(),
             ..batch(project, id, id)
         }
+    }
+
+    // Historical v11 shape, with one recently checked, verified suggestion
+    // and one card that was genuinely unverified before the upgrade.
+    fn version_eleven_fixture() -> (tempfile::TempDir, PathBuf, String) {
+        let (temp, mut store, project) = store();
+        let words = candidate("Lint before tests", CandidateRelation::New);
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "one", "s1"),
+                &[
+                    words.clone(),
+                    candidate("Check release commands", CandidateRelation::New),
+                ],
+            )
+            .unwrap();
+        let first = store.item_by_number(&project, 1).unwrap().unwrap();
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "two", "s2"),
+                &[words.with_relation(CandidateRelation::Same {
+                    target_id: first.id.clone(),
+                })],
+            )
+            .unwrap();
+        store.mark_promotion_checked(&project, 1, 1).unwrap();
+        let second = store.item_by_number(&project, 2).unwrap().unwrap();
+        store.mark_unverified(&second.id, 1).unwrap();
+        for id in [&first.id, &second.id] {
+            store.begin_verification(id, 100).unwrap();
+        }
+        let path = temp.path().join("memory.sqlite3");
+        store
+            .connection
+            .execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches;")
+            .unwrap();
+        let compared: bool = store.connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('memory_revisions') WHERE name='docs_compared')", [], |row| row.get(0)).unwrap();
+        if compared {
+            store
+                .connection
+                .execute_batch("ALTER TABLE memory_revisions DROP COLUMN docs_compared;")
+                .unwrap();
+        }
+        store
+            .connection
+            .pragma_update(None, "user_version", 11)
+            .unwrap();
+        drop(store);
+        (temp, path, project)
+    }
+
+    #[test]
+    fn version_eleven_migration_keeps_verified_cards_usable_and_queues_comparison() {
+        let (_temp, path, project) = version_eleven_fixture();
+        let mut store = MemoryStore::open(&path).unwrap();
+        let card = store.item_by_number(&project, 1).unwrap().unwrap();
+        assert!(
+            !card.verifying,
+            "waiting for a first docs comparison does not withhold a verified card"
+        );
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(
+            store
+                .promotion_suggestions(&project, 1000, 3)
+                .unwrap()
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(
+            store
+                .pending_cards(&project, 1000, 4)
+                .unwrap()
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(store.due_checks(Some(&project), 1000, 4).unwrap(), 1);
+        assert!(
+            store
+                .item_by_number(&project, 2)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(store.begin_verification(&card.id, 1000).unwrap());
+        assert!(store.pending_cards(&project, 1000, 4).unwrap().is_empty());
+        assert!(store.confirm_card(&card.id, 1, None, &[], 1000).unwrap());
+        assert!(
+            store
+                .pending_cards(&project, 1000 + DAY_MS, 4)
+                .unwrap()
+                .iter()
+                .all(|card| card.number != 1)
+        );
+    }
+
+    fn damaged_version_twelve_fixture(backup: bool) -> (tempfile::TempDir, PathBuf, String) {
+        let fixture = version_eleven_fixture();
+        let connection = Connection::open(&fixture.1).unwrap();
+        if backup {
+            connection
+                .execute(
+                    "VACUUM INTO ?1",
+                    [backup_path(&fixture.1, 11).to_str().unwrap()],
+                )
+                .unwrap();
+        }
+        // The shipped v12 step, including its destructive update.
+        connection.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL; PRAGMA user_version=12;").unwrap();
+        fixture
+    }
+
+    #[test]
+    fn version_twelve_repair_restores_exact_dates_and_keeps_the_backup_unchanged() {
+        let (_temp, path, project) = damaged_version_twelve_fixture(true);
+        let backup = backup_path(&path, 11);
+        let bytes = std::fs::read(&backup).unwrap();
+        let modified = std::fs::metadata(&backup).unwrap().modified().unwrap();
+        let mut diagnostics = Vec::new();
+        let store =
+            MemoryStore::open_with_diagnostic(&path, &mut |record| diagnostics.push(record))
+                .unwrap();
+        assert!(diagnostics.is_empty());
+        assert!(
+            !store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(
+            store
+                .item_by_number(&project, 2)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        let dates: Vec<Option<i64>> = store
+            .connection
+            .prepare("SELECT verified_at_ms FROM memory_revisions ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(dates, [Some(100), None]);
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(
+            store
+                .promotion_suggestions(&project, 1000, 3)
+                .unwrap()
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(
+            store
+                .pending_cards(&project, 1000, 4)
+                .unwrap()
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(store.due_checks(Some(&project), 1000, 4).unwrap(), 1);
+        drop(store);
+        let store = MemoryStore::open(&path).unwrap();
+        assert_eq!(store.pending_cards(&project, 1000, 4).unwrap().len(), 1);
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&backup).unwrap().modified().unwrap(),
+            modified
+        );
+        assert!(!PathBuf::from(format!("{}-wal", backup.display())).exists());
+        assert!(!PathBuf::from(format!("{}-shm", backup.display())).exists());
+    }
+
+    #[test]
+    fn version_twelve_repair_without_a_readable_backup_keeps_dates_and_warns_once() {
+        for reason in ["v11_backup_missing", "v11_backup_unreadable"] {
+            let (_temp, path, project) = damaged_version_twelve_fixture(false);
+            let backup = backup_path(&path, 11);
+            if reason == "v11_backup_unreadable" {
+                std::fs::write(&backup, b"not a database").unwrap();
+            }
+            let mut diagnostics = Vec::new();
+            let store =
+                MemoryStore::open_with_diagnostic(&path, &mut |record| diagnostics.push(record))
+                    .unwrap();
+            assert!(
+                store
+                    .list_memories(&project)
+                    .unwrap()
+                    .iter()
+                    .all(|card| card.verifying)
+            );
+            let dates: Vec<Option<i64>> = store
+                .connection
+                .prepare("SELECT verified_at_ms FROM memory_revisions ORDER BY rowid")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(dates, [None, None]);
+            let checks: Vec<Option<i64>> = store
+                .connection
+                .prepare("SELECT reverify_at_ms FROM memory_items ORDER BY number")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(checks, [Some(100), Some(100)]);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(
+                diagnostics[0]["kind"],
+                "migration.verification_restore_unavailable"
+            );
+            assert_eq!(diagnostics[0]["reason"], reason);
+            drop(store);
+            drop(
+                MemoryStore::open_with_diagnostic(&path, &mut |record| diagnostics.push(record))
+                    .unwrap(),
+            );
+            assert_eq!(diagnostics.len(), 1);
+            if reason == "v11_backup_unreadable" {
+                assert_eq!(std::fs::read(backup).unwrap(), b"not a database");
+            }
+        }
+    }
+
+    #[test]
+    fn version_twelve_repair_respects_current_comparisons_and_exact_revision_ids() {
+        for excluded in ["compared", "different_revision"] {
+            let (_temp, path, project) = damaged_version_twelve_fixture(true);
+            let connection = Connection::open(&path).unwrap();
+            if excluded == "compared" {
+                connection.execute_batch("INSERT INTO card_comparisons SELECT id,current_revision,'{}' FROM memory_items WHERE number=1;").unwrap();
+            } else {
+                connection.execute_batch("UPDATE memory_revisions SET id='a-new-revision-id' WHERE item_id=(SELECT id FROM memory_items WHERE number=1);").unwrap();
+            }
+            drop(connection);
+            let store = MemoryStore::open(&path).unwrap();
+            let verified: Option<i64> = store.connection.query_row("SELECT r.verified_at_ms FROM memory_revisions r JOIN memory_items i ON i.id=r.item_id WHERE i.number=1", [], |row| row.get(0)).unwrap();
+            assert_eq!(
+                verified, None,
+                "{excluded} must not be restored from an older verified date"
+            );
+            assert!(store.pending_cards(&project, 1000, 4).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn version_twelve_repair_rolls_back_the_schema_and_dates_together_on_failure() {
+        let (_temp, path, _project) = damaged_version_twelve_fixture(true);
+        let backup = backup_path(&path, 11);
+        let bytes = std::fs::read(&backup).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch("CREATE TRIGGER refuse_restore BEFORE UPDATE OF verified_at_ms ON memory_revisions WHEN NEW.verified_at_ms IS NOT NULL BEGIN SELECT RAISE(ABORT,'fixture restore failure'); END;").unwrap();
+        drop(connection);
+        let mut diagnostics = Vec::new();
+        assert!(
+            MemoryStore::open_with_diagnostic(&path, &mut |record| diagnostics.push(record))
+                .is_err()
+        );
+        assert!(diagnostics.is_empty());
+        let connection = Connection::open(&path).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            12
+        );
+        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_table_info('memory_revisions') WHERE name='docs_compared'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM memory_revisions WHERE verified_at_ms IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(backup).unwrap(), bytes);
+    }
+
+    #[test]
+    fn newly_created_cards_are_already_compared_and_need_no_first_comparison() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "new", "new"),
+                &[candidate("Run lint before tests", CandidateRelation::New)],
+            )
+            .unwrap();
+        assert!(
+            !store
+                .item_by_number(&project, 1)
+                .unwrap()
+                .unwrap()
+                .verifying
+        );
+        assert!(store.pending_cards(&project, 1000, 4).unwrap().is_empty());
     }
 
     #[test]
@@ -5724,7 +6176,8 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE memory_revisions DROP COLUMN verified_at_ms;
+                "ALTER TABLE memory_revisions DROP COLUMN docs_compared;
+                 ALTER TABLE memory_revisions DROP COLUMN verified_at_ms;
                  ALTER TABLE analysis_calls DROP COLUMN checks;
                  ALTER TABLE memory_items DROP COLUMN reverify_at_ms;
                  ALTER TABLE memory_items DROP COLUMN promotion_ok_revision;
@@ -7263,7 +7716,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     fn check_share_is_counted_separately_and_preserves_the_migrated_total() {
         use crate::{MemoryCallDeferral as Wait, MemoryCallKind as Kind};
         let (temp, store, _project) = store();
-        store.connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
+        store.connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE analysis_calls DROP COLUMN checks; INSERT INTO analysis_calls VALUES(0,595); PRAGMA user_version=10;").unwrap();
         drop(store);
         let store = MemoryStore::open(&temp.path().join("memory.sqlite3")).unwrap();
         assert_eq!(store.analysis_calls(100).unwrap(), 595);
@@ -7370,7 +7823,12 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .unwrap();
 
         let scratch = tempfile::tempdir().unwrap();
-        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        migrate(
+            &connection,
+            &scratch.path().join("memory.sqlite3"),
+            &mut |_| {},
+        )
+        .unwrap();
 
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -7608,11 +8066,16 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection.execute_batch(SCHEMA).unwrap();
         connection
             .execute_batch(
-                "DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
+                "DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; ALTER TABLE card_promotions DROP COLUMN failure; ALTER TABLE analysis_calls DROP COLUMN checks; PRAGMA user_version=9;",
             )
             .unwrap();
         let scratch = tempfile::tempdir().unwrap();
-        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        migrate(
+            &connection,
+            &scratch.path().join("memory.sqlite3"),
+            &mut |_| {},
+        )
+        .unwrap();
         let version = |connection: &Connection| {
             connection
                 .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
@@ -7643,7 +8106,12 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         connection.pragma_update(None, "user_version", 5).unwrap();
 
         let scratch = tempfile::tempdir().unwrap();
-        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        migrate(
+            &connection,
+            &scratch.path().join("memory.sqlite3"),
+            &mut |_| {},
+        )
+        .unwrap();
 
         assert_eq!(
             connection
@@ -7679,7 +8147,12 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .unwrap();
 
         let scratch = tempfile::tempdir().unwrap();
-        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        migrate(
+            &connection,
+            &scratch.path().join("memory.sqlite3"),
+            &mut |_| {},
+        )
+        .unwrap();
 
         assert_eq!(
             connection
@@ -7817,7 +8290,12 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .unwrap();
 
         let scratch = tempfile::tempdir().unwrap();
-        migrate(&connection, &scratch.path().join("memory.sqlite3")).unwrap();
+        migrate(
+            &connection,
+            &scratch.path().join("memory.sqlite3"),
+            &mut |_| {},
+        )
+        .unwrap();
 
         let store = MemoryStore {
             connection,

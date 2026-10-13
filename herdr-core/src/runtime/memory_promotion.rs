@@ -657,7 +657,7 @@ fn track_promotions(
         (moves, asks, releasers)
     };
     let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
-        .then(|| MemoryStore::open(database))
+        .then(|| super::memory::open_memory_store(database))
         .transpose()
     {
         Ok(store) => store,

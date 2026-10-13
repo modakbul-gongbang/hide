@@ -1092,7 +1092,7 @@ fn convert_memory(
     node: &NodeId,
     backup: &Backup,
 ) -> Result<usize, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(0);
     };
     let pending: bool = store
@@ -1115,7 +1115,7 @@ fn convert_memory(
 /// The roots of the node's Projects in a Memory store; none when the store
 /// does not open, which Project Memory reports on its own.
 fn memory_roots(path: &Path, node: &NodeId) -> Result<Vec<String>, String> {
-    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+    let Ok(store) = crate::runtime::memory::open_memory_store(path) else {
         return Ok(Vec::new());
     };
     store

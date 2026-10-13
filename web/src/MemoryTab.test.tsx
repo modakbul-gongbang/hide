@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Tools } from "./Tools";
+import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -43,9 +44,13 @@ describe("the Memory tab", () => {
   let root: Root;
   let saved: ReturnType<typeof useShellStore.getState>;
   let events: Parameters<DispatchFn>[0][];
+  let savedLanguage: string;
+  let savedUi: ReturnType<typeof useUiStore.getState>;
 
   beforeEach(() => {
     saved = useShellStore.getState();
+    savedLanguage = clientI18n.language;
+    savedUi = useUiStore.getState();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     events = [];
     container = document.createElement("div");
@@ -56,6 +61,8 @@ describe("the Memory tab", () => {
     await act(async () => root.unmount());
     container.remove();
     useShellStore.setState(saved, true);
+    await clientI18n.changeLanguage(savedLanguage);
+    useUiStore.setState(savedUi, true);
     vi.unstubAllGlobals();
   });
 
@@ -124,6 +131,21 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-questions]")).toBeNull();
     expect(container.querySelector("[data-memory-card='3']")).not.toBeNull();
     expect(container.querySelector("[data-memory-card='7']")?.textContent).toContain("AGENTS.md");
+  });
+
+  it.each([
+    ["en", "In PR 1050"],
+    ["ko", "PR 1050에 포함"],
+    ["ja", "PR 1050 に含む"],
+    ["zh-CN", "在 PR 1050 中"],
+  ])("renders PR identifiers as plain digits in %s", async (language, expected) => {
+    await act(async () => { await clientI18n.changeLanguage(language); });
+    await render(memory({ rows: [row(7, { promotion: { state: "pr_open", agent: null, pr_number: 1050, target_path: null, github_failure: null } })] }));
+    const group = container.querySelector("[data-memory-pr-group='1050']");
+    expect(group?.textContent).toContain(expected);
+    expect(group?.textContent).not.toContain("1,050");
+    await click("[data-memory-pr-group='1050']");
+    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 1050, focus: 1050 } });
   });
 
   it("selection hides row promotion actions while unknown authority still needs an answer", async () => {

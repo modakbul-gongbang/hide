@@ -794,7 +794,8 @@ fn mutate_memory(
     start: Option<super::memory_promotion::PromotionStart>,
 ) -> Result<MemoryActionOutcome, String> {
     let identity = project_identity(sessions_node, node, checkout_path)?;
-    let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
+    let mut store =
+        super::memory::open_memory_store(database).map_err(|error| error.to_string())?;
     let outcome = || MemoryActionOutcome {
         project_id: identity.id.clone(),
         diagnostic: None,
@@ -1141,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn a_read_puts_each_promotion_on_its_row_and_asks_only_about_suggestions_and_failures() {
+    fn migration_keeps_the_index_usable_cards_and_promotion_questions_on_a_read() {
         // B28-B32.
         use crate::model::{MemoryPromotionSnapshot, MemoryPromotionState};
         use hide_memory::{Promotion, PromotionState};
@@ -1250,6 +1251,29 @@ mod tests {
                 &promotion(PromotionState::PrOpen, Some(924)),
             )
             .unwrap();
+        let before_index = store
+            .retrieve(&hide_memory::RetrievalQuery::session_start(&identity.id))
+            .unwrap()
+            .items;
+        let before_suggestions = store.promotion_suggestions(&identity.id, 1000, 3).unwrap();
+        drop(store);
+        // Reproduce the historical v11 shape before the first docs check.
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection.execute_batch("DROP TABLE card_comparisons; DROP TABLE promotion_batches; ALTER TABLE memory_revisions DROP COLUMN docs_compared; PRAGMA user_version=11;").unwrap();
+        drop(connection);
+        let store = super::memory::open_memory_store(&database).unwrap();
+        assert_eq!(
+            store
+                .retrieve(&hide_memory::RetrievalQuery::session_start(&identity.id))
+                .unwrap()
+                .items,
+            before_index
+        );
+        assert_eq!(
+            store.promotion_suggestions(&identity.id, 1000, 3).unwrap(),
+            before_suggestions
+        );
+        assert_eq!(store.pending_cards(&identity.id, 1000, 4).unwrap().len(), 4);
         drop(store);
         let load = load_opened_memory(
             &crate::node::test_node(),

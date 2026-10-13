@@ -230,7 +230,7 @@ function Questions({ project, actions, busy }: { project: ProjectMemory; actions
         return (
         <button key={group.number} type="button" className="flex min-w-0 items-center gap-sm rounded-xs py-sm text-left text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, group.number)} data-memory-pr-group={group.number}>
           <PrMark state="pending" compact />
-          <span className="shrink-0">{t("memory.batch.inPr", { number: group.number })}</span>
+          <span className="shrink-0">{t("memory.batch.inPr", { number: String(group.number) })}</span>
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{group.cards.map(cardName).join(" · ")}{review ? ` · ${t(review.key)}` : ""}</span>
         </button>
         );
@@ -468,7 +468,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         ) : null}
         {row.promotion?.state === "pr_open" && row.promotion.pr_number !== null ? (
           <span className="flex items-center gap-sm text-caption text-subtle-foreground">
-            <button type="button" aria-label={t("memory.openPr", { number: row.promotion.pr_number })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, row.promotion!.pr_number)}>
+            <button type="button" aria-label={t("memory.openPr", { number: String(row.promotion.pr_number) })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, row.promotion!.pr_number)}>
               <PrMark state="pending" number={row.promotion.pr_number} />
             </button>
             {t("memory.prOpen")}

@@ -28,6 +28,7 @@ It sets the document language and subscribes React surfaces through react-i18nex
 Language selection is disabled while disconnected, and displays only the confirmed core value while connected.
 A client never translates conversations, terminal bytes, file contents, paths, branch names, device labels, task labels or other user-owned text.
 Such values are interpolation data, rendered as text.
+Numeric identifiers, including Memory's PR numbers, are passed to translation as digit strings so locale grouping never changes their spelling; quantities retain locale number formatting.
 Diagnostic payloads and copied diagnostic records remain technical source data.
 Missing keys and missing interpolation values fail explicitly; English is a locale-resolution fallback, never a missing-key fallback.
 
