@@ -1522,7 +1522,7 @@ Settings > Agents > Starting work has no default agent of its own.
 
 ## Usage
 
-Web owner: `web/src/components/usage.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/UsageOverview.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
 The core owns account windows and shared preferences (`navigator.usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
@@ -1545,7 +1545,31 @@ Network and timeout detail stays in diagnostics.
 No usage state becomes a banner, toast or alert.
 The countdown advances once a minute only while the popover is open.
 
-The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` when the popover opens or closes.
+Below the account cards, New tokens draws up to twenty Sunday-first weeks of the core's own machine's recorded usage.
+Overview's Usage tab draws up to a year beside the same account cards and the agents without limit readings.
+New tokens means input, output and cache writes; cache reads are shown in the day detail and excluded from every total, share and intensity.
+The core prepares the day boundaries, quartile levels, peak, active days, streak and shares; the page only formats and draws them.
+Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
+The calendar starts at the first retained record's week, bounded by the surface's width in weeks; during initial backfill it starts forty-five days ago, marks unread days and shows file progress and `so far`.
+Finishing the backfill removes leading empty weeks once.
+With no records and no backfill there is no popover section or Overview history column; with no visible account chips the footer's chart button opens the available history.
+
+The popover reserves its tallest localized day or agent detail before hover, so its height and the cell under the pointer stay still.
+At rest it shows the peak and all agent shares; a day shows date, total, input/output/write, excluded read tokens, API-rate equivalent cost and the top three agents plus the remaining count.
+An agent share shows that agent's retained lifetime cost; costs are otherwise hidden.
+An unpriced model or incomplete native usage makes the cost a lower bound with its reason; an absent price table says cost will appear once it loads, and a table older than sixty days is marked stale.
+No calls means No data, never a zero dollar amount.
+Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes the limit outline.
+Arrow keys move through dates, Home and End reach the range's ends, and keyboard focus shows the same details as hover.
+
+Pressing an agent share or bar filters the calendar and statistics while keeping the complete agent comparison visible; pressing it again clears the filter.
+Usage history opens Overview's global Usage tab; it is not a per-project ledger.
+The large surface adds current and longest streak, peak, period totals and agent bars, replaced by the selected day's details and bars while over a day.
+Pi and omp show recorded provider provenance using known display names, account wording only for a recorded account provider, and no line for an unknown provider.
+A bounded or partly unreadable source has the small limited marker in its own row and range.
+At narrow widths and large Interface text the Overview columns stack and copy wraps; a full-year grid scrolls within its calendar, never the whole page sideways.
+
+The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` while the popover or Usage tab is open.
 Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.
 The core keeps one value of each hint, so with several pages open the last page to report decides.
 

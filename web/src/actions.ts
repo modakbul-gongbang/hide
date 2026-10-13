@@ -2028,6 +2028,12 @@ export function createActions(send: DispatchFn) {
       this.toggleOverview();
     },
 
+    openUsageHistory() {
+      ui().setOverviewProject(null);
+      ui().setMainView("usage");
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
+    },
+
     openAgentsOverview() {
       ui().setLens({ tab: "agents" });
       ui().setMainView("agents");

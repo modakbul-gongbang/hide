@@ -1,5 +1,8 @@
+import { UsageHistory } from "../components/usage-history";
 // Synthetic visual states only; native/daemon checks own persistence and reads.
 import { useLayoutEffect, useMemo } from "react";
+import { OverviewPage, OverviewModal } from "../Overview";
+import { ledgerScene } from "./usageHistorySceneData";
 import { createActions } from "../actions";
 import { AGENT_ADAPTERS } from "../agentAdapters";
 import { TooltipProvider } from "../components/ui/tooltip";
@@ -14,6 +17,8 @@ import { hasLimits } from "../usage";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 
 export function UsageScene({ params }: { params: URLSearchParams }) {
+  const historyNode = useShellStore((s) => s.rest?.navigator?.usage?.nodes[0]);
+  const mainView = useUiStore((s) => s.mainView);
   const state = params.get("state") ?? "default";
   const actions = useMemo(() => createActions((event) => {
     useShellStore.setState((store) => {
@@ -45,16 +50,18 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
         value: { windows: [
           { kind: "five_hour", scope: { kind: "all" }, outcome: adapter.id === "codex" && state !== "both-plans" && state !== "full" ? { state: "not_offered" } : state === "not-started" ? { state: "not_started" } : state === "expired" ? { state: "expired", reset_at_s: reset - 1 } : { state: "open", used_percent: 11, resets_at_s: reset + 11520 } },
           { kind: "weekly", scope: { kind: "all" }, outcome: { state: "open", used_percent: adapter.id === "codex" ? 76 : 81, resets_at_s: reset + 450000 } },
-          ...(adapter.id === "claude" ? [{ kind: "weekly" as const, scope: { kind: "model" as const, label: "Fable" }, outcome: { state: "open" as const, used_percent: 42, resets_at_s: reset + 450000 } }] : []),
+          ...(adapter.id === "claude-code" ? [{ kind: "weekly" as const, scope: { kind: "model" as const, label: "Fable" }, outcome: { state: "open" as const, used_percent: 42, resets_at_s: reset + 450000 } }] : []),
         ] },
       },
     }));
     const scene = sidebarScene("reference", REFERENCE_FOLDS, now, "one");
     const usage: UsagePreferences = { pinned: [{ agent: "claude", window: "weekly" }, { agent: "codex", window: "weekly" }], hidden: state === "hidden" ? ["claude"] : [] };
     if (["full", "not-started", "expired"].includes(state)) usage.pinned.push({ agent: "claude", window: "five_hour" });
-    useShellStore.setState({ connection: "live", rest: { ...scene.rest, navigator: { ...scene.rest.navigator, usage: { nodes: [{ node: "local", agents }] } }, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
-    if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");
-    else useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" } });
+    useShellStore.setState({ connection: "live", rest: { ...scene.rest, navigator: { ...scene.rest.navigator, usage: { nodes: [params.has("history") ? ledgerScene({ node: "local", agents, history: null }, params.get("history") ?? "reference") : { node: "local", agents, history: null }] } }, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
+    if (params.get("surface") === "history-year") useUiStore.setState({ screen: { kind: "main" } });
+    else if (params.get("surface") === "overview") useUiStore.setState({ screen: { kind: "main" }, mainView: "usage", overviewProjectId: null });
+    else if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");
+    else useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, mainView: "agents" });
     const root = document.documentElement;
     root.classList.toggle("dark", params.get("theme") !== "light");
     root.classList.toggle("light", params.get("theme") === "light");
@@ -63,5 +70,6 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
     root.lang = language;
     void clientI18n.changeLanguage(language);
   }, [params, state]);
-  return <TooltipProvider><div className="flex h-screen flex-col bg-background" data-gallery-scene="usage"><TitleRow actions={actions} /><div className="flex min-h-0 flex-1"><Sidebar actions={actions} /></div><SettingsGate actions={actions} /></div></TooltipProvider>;
+  if (params.get("surface") === "history-year") return <TooltipProvider>{historyNode ? <UsageHistory node={historyNode} surface="year" outline={null} /> : null}</TooltipProvider>;
+  return <TooltipProvider><div className="flex h-screen flex-col bg-background" data-gallery-scene="usage"><TitleRow actions={actions} /><div className="flex min-h-0 flex-1"><Sidebar actions={actions} />{mainView === "usage" ? <OverviewPage actions={actions} /> : null}</div><OverviewModal actions={actions} /><SettingsGate actions={actions} /></div></TooltipProvider>;
 }

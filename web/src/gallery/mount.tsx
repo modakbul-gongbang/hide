@@ -18,7 +18,11 @@ export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
-    if (scene === "usage") {
+    if (scene === "usage" || scene === "usage-history") {
+      if (scene === "usage-history") {
+        params.set("surface", "history-year");
+        params.set("history", params.get("history") ?? (params.get("content") === "long" ? "unpriced" : "reference"));
+      }
       root.render(<StrictMode><UsageScene params={params} /></StrictMode>);
       return;
     }
