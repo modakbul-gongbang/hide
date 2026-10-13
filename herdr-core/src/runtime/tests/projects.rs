@@ -2478,7 +2478,9 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
                 &crate::model::WorktreeCatalogSnapshot::default(),
             ),
         ),
-        paths: Default::default(),
+        // Both layouts have the same answered checkout path, so the selected
+        // pane decides the projection rather than an unresolved-path gate.
+        paths: workspace::paths_here([checkout_path]).into(),
     };
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
 
