@@ -29,7 +29,7 @@ import { TitleRow } from "./TitleRow";
 import { readEditorAvailability } from "./host";
 import { RegionFailed, RenderBoundary, ShellFailed, SidebarFailed, TitleRowFailed } from "./RenderBoundary";
 import { focusedRemoteDevice, frontCheckout } from "./snapshot";
-import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
+import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen, waitingForSavedWorkspace } from "./navigation";
 import { useShellStore } from "./store";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
@@ -312,6 +312,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const front = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const hasView = useShellStore((s) => Boolean(s.rest?.workspace_view));
   const first = useShellStore((s) => startupScreen(s.rest, front !== null));
+  const restoring = useShellStore((s) => waitingForSavedWorkspace(s.rest) && s.rest?.status?.herdr?.state === "connected");
   const loaded = useShellStore((s) => s.rest !== null);
   const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const opening = useUiStore((s) => s.opening);
@@ -352,13 +353,16 @@ function CenterScreen({ actions }: { actions: Actions }) {
       useUiStore.getState().setScreen({ kind: first });
       return undefined;
     }
+    // A connected Herdr's saved choice is still being restored, rather than
+    // an unanswered connection. Its catalog/View decides when it settles.
+    if (restoring) return undefined;
     // A Herdr or a device that never answers must not hold the page on a
     // blank screen; a device gets longer, since it is reached over SSH.
     const timer = window.setTimeout(() => {
       if (useUiStore.getState().screen === null) useUiStore.getState().setScreen({ kind: "main" });
     }, remoteFront ? 15_000 : 3000);
     return () => window.clearTimeout(timer);
-  }, [screen, loaded, first, remoteFront]);
+  }, [screen, loaded, first, remoteFront, restoring]);
   if (screen === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-caption text-muted-foreground" data-center-screen="starting">

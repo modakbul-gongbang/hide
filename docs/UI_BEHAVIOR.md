@@ -284,6 +284,7 @@ Each state belongs to its view alone, so one missing file never blanks another v
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, whether File Views and Tools are on, their widths, and the tool; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 Herdr connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
+The unanswered-connection fallback does not settle a connected session's pending saved Workspace; a settled connection failure still opens All projects.
 A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
 A Workspace stored with the side panel that came before the columns restarts with File Views on when its panel was open or expanded and off when it was closed, docked whether or not it was pinned, its tools, tool, views, tabs and areas as they were and both widths at their defaults; one stored before the side panel, with a layout instead of a panel state, restarts with File Views on unless it showed the agents alone.
 

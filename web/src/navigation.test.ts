@@ -161,10 +161,20 @@ describe("the first screen", () => {
     const pending = { ...local, ui_state: { focused_checkout_id: "saved" }, status: { herdr: { state: "connected" } } };
     expect(startupScreen(pending as unknown as SnapshotRest, false)).toBeNull();
     expect(startupScreen(pending as unknown as SnapshotRest, true)).toBeNull();
+    for (const state of ["connecting", "not_connected"]) {
+      const reaching = { ...pending, status: { herdr: { state } } };
+      expect(startupScreen(reaching as unknown as SnapshotRest, false)).toBeNull();
+      expect(startupScreen(reaching as unknown as SnapshotRest, true)).toBeNull();
+    }
     const removed = { ...pending, ui_state: { focused_checkout_id: null } };
     expect(startupScreen(removed as unknown as SnapshotRest, false)).toBe("main");
     const restored = { ...pending, workspace_view: { resumed: true } };
     expect(startupScreen(restored as unknown as SnapshotRest, true)).toBe("workspace");
+    for (const state of ["socket_missing", "unconfigured", "unreachable", "incompatible", "stale"]) {
+      const failed = { ...pending, status: { herdr: { state } } };
+      expect(startupScreen(failed as unknown as SnapshotRest, false)).toBe("main");
+      expect(startupScreen(failed as unknown as SnapshotRest, true)).toBe("main");
+    }
   });
 
   it("waits for the device in front, not for this machine's Herdr", () => {
