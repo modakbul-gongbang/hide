@@ -25,6 +25,7 @@ export function workFixture(herdr: HerdrFixture, uncertainCreate = false) {
   const bin = path.join(herdr.root, "gh-bin");
   const calls = path.join(herdr.root, "gh-calls.jsonl");
   const issue = path.join(herdr.root, "created-issue.json");
+  const repositoryUnavailable = path.join(herdr.root, "repository-unavailable");
   const clock = path.join(herdr.root, "work-clock.json");
   const draft = path.join(herdr.root, "issue-draft.json");
   fs.writeFileSync(draft, JSON.stringify({ title: "한국어 요청 줄바꿈 확인", body: "## 확인할 동작\n\n좁은 Tools 열에서 요청을 확인합니다.\n\n## 재현 순서\n\n1. 기록 화면을 엽니다." }));
@@ -42,7 +43,7 @@ const pulls = [pull(31,"기록 화면 구현",true,false,clock.first),pull(32,"�
 const tracked = {number:41,title:"기록 화면 후속 검증",state:"OPEN",url:"https://github.com/acme/repo/issues/41",createdAt:new Date(clock.first+500).toISOString(),updatedAt:new Date(clock.first+1000).toISOString(),labels:[]};
 const [a,b] = args;
 if(a==="auth"&&b==="status") process.exit(0);
-if(a==="repo"&&b==="view") {out({nameWithOwner:"acme/repo",id:"R_fixture"});process.exit(0);}
+if(a==="repo"&&b==="view") {if(fs.existsSync(${JSON.stringify(repositoryUnavailable)})) {process.stderr.write("fixture GitHub unavailable\\n");process.exit(1);} out({nameWithOwner:"acme/repo",id:"R_fixture"});process.exit(0);}
 if(a==="pr"&&b==="list") {out(pulls.filter(p=>args.includes("all")|| (args.includes("merged")?p.state==="MERGED":p.state==="OPEN")));process.exit(0);}
 if(a==="issue"&&b==="list") {out([tracked,...(created?[created]:[])]);process.exit(0);}
 if(a==="issue"&&b==="create") {
@@ -64,7 +65,7 @@ process.stderr.write("unsupported fixture gh arguments\\n");process.exit(1);
 `);
   const env = { PATH: `${bin}${path.delimiter}${herdr.fixturePath}`, HIDE_E2E_PROVIDER_ANSWER: draft };
   const setClock = (first: number, next: number) => fs.writeFileSync(clock, JSON.stringify({ first, next }));
-  return { env, calls, issue, clock: setClock };
+  return { env, calls, issue, repositoryUnavailable, clock: setClock };
 }
 
 export function seedFirstWork(herdr: HerdrFixture, at: number) {

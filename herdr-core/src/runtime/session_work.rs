@@ -127,10 +127,19 @@ impl Runtime {
         let cancel = CancelToken::new();
         self.session_issue_work.active = Some(cancel.clone());
         self.session_issue_work.ready = None;
+        // A connection retry keeps the same form mounted, so edited title
+        // and body remain the operator's until an explicit Create.
+        let workspace_id = self
+            .snapshot
+            .issue_work
+            .draft
+            .as_ref()
+            .filter(|draft| draft.source == source)
+            .and_then(|draft| draft.workspace_id.clone());
         self.snapshot.issue_work.draft = Some(SessionIssueDraftSnapshot {
             source: source.clone(),
             phase: "working".into(),
-            workspace_id: None,
+            workspace_id,
             repository: None,
             title: String::new(),
             body: String::new(),
@@ -325,14 +334,20 @@ fn read_draft(
         place,
         title: missed.text.clone(),
         body: String::new(),
-        message: None,
+        message: repository
+            .is_err()
+            .then(|| "issue_draft_github_unavailable".into()),
     };
     if !ai_usable {
-        draft.message = Some("issue_draft_ai_unavailable".into());
+        draft
+            .message
+            .get_or_insert_with(|| "issue_draft_ai_unavailable".into());
         return Ok(draft);
     }
     let Some(witness) = missed.turn_witness.clone() else {
-        draft.message = Some("issue_draft_context_unavailable".into());
+        draft
+            .message
+            .get_or_insert_with(|| "issue_draft_context_unavailable".into());
         return Ok(draft);
     };
     let request = hide_session::label_transcript::WorkTurnRequest {
@@ -369,18 +384,19 @@ fn read_draft(
                 crate::diagnostic!(
                     serde_json::json!({"component":"session_work","kind":"issue_draft.fallback","code":code})
                 );
-                draft.message = Some("issue_draft_ai_unavailable".into());
+                draft
+                    .message
+                    .get_or_insert_with(|| "issue_draft_ai_unavailable".into());
             }
         },
         Err(_) => {
             crate::diagnostic!(
                 serde_json::json!({"component":"session_work","kind":"issue_draft.context_failed","code":"issue_draft_context_unavailable"})
             );
-            draft.message = Some("issue_draft_context_unavailable".into());
+            draft
+                .message
+                .get_or_insert_with(|| "issue_draft_context_unavailable".into());
         }
-    }
-    if repository.is_err() {
-        draft.message = Some("issue_draft_github_unavailable".into());
     }
     if cancel.is_cancelled() {
         return Err("cancelled".into());

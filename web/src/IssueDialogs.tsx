@@ -119,7 +119,8 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
   const create = useShellStore((s) => s.rest?.issue_work?.create ?? null);
   const answer = request && create && create.id > request.after && create.workspace_id === request.projectId ? create : null;
   const refused = useErrorSince(request?.at ?? null, ["issue_create."]);
-  const working = request !== null && refused === null && (answer === null || answer.phase === "working");
+  const retryPreview = !!draft && (draft.phase === "failed" || !draft.repository || draft.message === "issue_draft_github_unavailable");
+  const working = draft?.phase === "working" || request !== null && refused === null && (answer === null || answer.phase === "working");
   const failure = answer?.phase === "failed" ? (answer.message ?? t("issue.createFailed")) : refused;
 
   useEffect(() => {
@@ -132,7 +133,12 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
   }, [answer, request, onClose]);
 
   const submit = () => {
-    if (working || !project || !title.trim() || draft && !draft.repository) return;
+    if (working || !project) return;
+    if (draft && retryPreview) {
+      actions.draftMissedIssue(draft.source.session, draft.source.id);
+      return;
+    }
+    if (!title.trim()) return;
     setRequest({ after: create?.id ?? 0, at: Date.now(), start: thenStart, projectId: project.id });
     actions.createIssue(project.id, title.trim(), body, draft?.source);
   };
@@ -161,7 +167,7 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
               </Select>}
             </Field>
             {draft ? <Note>{t("sessionWork.draftNote")}</Note> : null}
-            {draft?.message ? <Note tone="warn">{t(draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
+            {draft?.message ? <Note tone="warn">{t(draft.phase === "failed" ? "sessionWork.issue_draft_unavailable" : draft.message === "issue_draft_ai_unavailable" ? "sessionWork.issue_draft_ai_unavailable" : draft.message === "issue_draft_github_unavailable" ? "sessionWork.issue_draft_github_unavailable" : "sessionWork.issue_draft_context_unavailable")}</Note> : null}
             <Field label={t("issue.title")}>
               <Input value={title} autoFocus disabled={working} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-new-issue-title="true" />
             </Field>
@@ -172,14 +178,14 @@ export function NewIssueDialog({ actions, workspace, draft, onClose }: { actions
               <Checkbox checked={thenStart} disabled={working} onCheckedChange={(checked) => setThenStart(checked === true)} data-new-issue-start="true" />
               {t("issue.createAndStart")}
             </label> : null}
-            {project?.tasks?.source?.failure ? <Note tone="warn">{`${project.tasks.source.label}: ${project.tasks.source.failure}`}</Note> : null}
+            {!draft && project?.tasks?.source?.failure ? <Note tone="warn">{`${project.tasks.source.label}: ${project.tasks.source.failure}`}</Note> : null}
             {failure ? <Note tone="error" data-new-issue-error="true">{failure}</Note> : null}
             {working ? <Status tone="pending">{t("issue.creating")}</Status> : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
-            <Button type="submit" disabled={working || !project || !title.trim() || !!draft && !draft.repository} data-new-issue-create="true">
-              {t(failure ? "common.retry" : draft ? "sessionWork.createIssue" : thenStart ? "issue.createStart" : "issue.create")}
+            <Button type="submit" disabled={working || !project || !retryPreview && !title.trim()} data-new-issue-create="true">
+              {t(failure || retryPreview ? "common.retry" : draft ? "sessionWork.createIssue" : thenStart ? "issue.createStart" : "issue.create")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>

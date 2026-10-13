@@ -8,7 +8,7 @@ import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
-test("a native session keeps its chapters, child outputs and reversible missed work through search and summaries off", async ({ page }) => {
+test("@platform a native session keeps its chapters, child outputs and reversible missed work through search and summaries off", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
@@ -72,7 +72,7 @@ test("a native session keeps its chapters, child outputs and reversible missed w
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("cancel leaves missed work open and retry reconciles an issue whose create response was lost", async ({ page }) => {
+test("@platform cancel leaves missed work open and retry reconciles an issue whose create response was lost", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
   try {
@@ -108,5 +108,42 @@ test("cancel leaves missed work open and retry reconciles an issue whose create 
     const calls = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
     expect(calls.filter((args) => args[0] === "issue" && args[1] === "create")).toHaveLength(1);
     expect(calls.some((args) => args.join(" ").includes("HideSessionIssueAttempts"))).toBe(true);
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("@platform GitHub connection retry preserves the edited preview and creates only after confirmation", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    const github = workFixture(herdr);
+    fs.writeFileSync(github.repositoryUnavailable, "unavailable");
+    daemon = await startHided(herdr, "session-issue-connection", undefined, github.env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await page.getByRole("button", { name: "Tools", exact: true }).click();
+    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    seedFirstWork(herdr, Date.now());
+    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
+    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    await root.hover();
+    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
+    const missed = page.locator('[data-missed-work]', { hasText: MISSED });
+    await missed.locator('[data-missed-issue]').click({ timeout: 45_000 });
+    const form = page.locator('[data-new-issue]');
+    await expect(form.getByText("Couldn't read GitHub. Retry to check the connection; your edits stay here.")).toBeVisible({ timeout: 30_000 });
+    await form.locator('[data-new-issue-title]').fill("edited title");
+    await form.locator('[data-new-issue-body]').fill("edited body");
+    fs.unlinkSync(github.repositoryUnavailable);
+    await form.getByRole("button", { name: /Retry/ }).click();
+    await expect(form.getByRole("button", { name: /Create issue/ })).toBeEnabled({ timeout: 30_000 });
+    await expect(form.locator('[data-new-issue-title]')).toHaveValue("edited title");
+    await expect(form.locator('[data-new-issue-body]')).toHaveValue("edited body");
+    expect(fs.existsSync(github.issue)).toBe(false);
+    await form.locator('[data-new-issue-create]').click();
+    await expect(form).toHaveCount(0, { timeout: 30_000 });
+    const calls = fs.readFileSync(github.calls, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const creates = calls.filter((args) => args[0] === "issue" && args[1] === "create");
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toEqual(expect.arrayContaining(["edited title", "edited body"]));
   } finally { daemon?.stop(); herdr.stop(); }
 });

@@ -77,7 +77,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   // dialog still reports the result, so the dialog keeps the last row it saw.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);
   const close = () => useUiStore.getState().setWorkspaceDialog(null);
-  if (summary && draft?.phase === "ready" && draft.workspace_id) {
+  if (summary && draft?.workspace_id) {
     const place = findTarget(draft.workspace_id);
     if (place) return <NewIssueDialog key={`missed:${draft.source.session.device_id}:${draft.source.session.session_id}:${draft.source.id}`} actions={actions} workspace={place.workspace} draft={draft} onClose={() => actions.cancelMissedIssueDraft()} />;
   }
