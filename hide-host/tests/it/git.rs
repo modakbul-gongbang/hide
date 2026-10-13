@@ -34,6 +34,37 @@ fn repository(path: &Path) {
     git(path, &["config", "user.email", "fixture@example.invalid"]);
 }
 
+#[test]
+fn a_document_time_is_the_committed_file_time_and_dirty_or_untracked_is_unknown() {
+    use hide_node_link::git::GitCommand;
+    let temporary = tempfile::tempdir().unwrap();
+    repository(temporary.path());
+    fs::write(temporary.path().join("AGENTS.md"), "First guide\n").unwrap();
+    git(temporary.path(), &["add", "AGENTS.md"]);
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(temporary.path())
+        .args(["commit", "-qm", "Guide"])
+        .env("GIT_AUTHOR_DATE", "2026-10-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-10-02T00:00:00Z")
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    let read = |path: &str| {
+        hide_host::git_command::run(
+            temporary.path(),
+            &GitCommand::DocumentTime { path: path.into() },
+        )
+        .unwrap()
+    };
+    assert_eq!(read("AGENTS.md"), "1790899200");
+    fs::write(temporary.path().join("AGENTS.md"), "Uncommitted guide\n").unwrap();
+    assert_eq!(read("AGENTS.md"), "");
+    fs::write(temporary.path().join("new.md"), "Untracked guide\n").unwrap();
+    assert_eq!(read("new.md"), "");
+    assert_eq!(read("missing.md"), "");
+}
+
 fn query(scope: &str, selected: Option<&str>, committed: bool, base: Option<&str>) -> ChangesQuery {
     ChangesQuery {
         scope: scope.to_owned(),

@@ -1491,8 +1491,8 @@ export function createActions(send: DispatchFn) {
     },
 
     /** One operator action on the opened Project's Memory or one of its cards. */
-    memoryAction(workspaceId: string, action: MemoryAction, number: number | null = null) {
-      dispatch({ schema_version: 2, kind: "memory_action", payload: { workspace_id: workspaceId, action, number } });
+    memoryAction(workspaceId: string, action: MemoryAction, number: number | null = null, numbers: readonly number[] = []) {
+      dispatch({ schema_version: 2, kind: "memory_action", payload: { workspace_id: workspaceId, action, number, ...(numbers.length ? { numbers } : {}) } });
     },
 
     /**

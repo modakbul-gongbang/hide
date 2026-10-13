@@ -1925,6 +1925,97 @@ pub(crate) fn write_cards(
     }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
     let mut facts = CheckoutFacts::new(sessions_node, source.evidence_root);
+    let documents =
+        super::memory_verify::repository_sources(sessions_node, &mut facts, source.evidence_root);
+    let matches = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.relation == CandidateRelation::New
+                && candidate.kind != hide_memory::CandidateKind::Preference
+        })
+        .filter_map(|(index, candidate)| {
+            let words = hide_memory::query_words(&[
+                &candidate.title,
+                &candidate.text,
+                &candidate.aliases.join(" "),
+            ]);
+            let document = documents
+                .iter()
+                .map(|document| {
+                    let lower = document.text.to_lowercase();
+                    let score = words
+                        .iter()
+                        .filter(|word| lower.contains(word.as_str()))
+                        .count();
+                    (score, document)
+                })
+                .filter(|(score, _)| *score >= 2)
+                .max_by_key(|(score, _)| *score)?
+                .1;
+            Some((
+                index,
+                candidate.text.clone(),
+                hide_memory::relevant_excerpt(
+                    &document.path,
+                    &document.text,
+                    document.truncated,
+                    &words,
+                    hide_memory::COMPARISON_EXCERPT_BYTES,
+                ),
+            ))
+        })
+        .take(hide_memory::NEW_CARDS_PER_SESSION)
+        .collect::<Vec<_>>();
+    let mut document_input = 0;
+    let mut duplicates = 0;
+    if let Some(check) = hide_memory::creation_docs_request(
+        digest(&["creation-docs", &batch_id]),
+        source.project_id,
+        &matches,
+        request.input.chars().count().min(request.input.len()),
+    ) {
+        admit(store)?;
+        document_input = check.input.chars().count();
+        let answer = router
+            .execute(&check, cancel)
+            .map_err(|error| AnalysisFailure::Provider(error))?;
+        let results = answer.value["results"].as_array().ok_or_else(|| {
+            AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_results".into()))
+        })?;
+        let sent: Value =
+            serde_json::from_str(&check.input).map_err(|error| local(error.to_string()))?;
+        let expected = sent["candidates"]
+            .as_array()
+            .ok_or_else(|| local("creation_docs_input".into()))?;
+        let mut seen = BTreeSet::new();
+        for result in results {
+            let index = result["candidate"].as_u64().ok_or_else(|| {
+                AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_candidate".into()))
+            })? as usize;
+            let same = result["same"].as_bool().ok_or_else(|| {
+                AnalysisFailure::Provider(AiError::InvalidOutput("creation_docs_same".into()))
+            })?;
+            if !seen.insert(index)
+                || !expected
+                    .iter()
+                    .any(|entry| entry["candidate"].as_u64() == Some(index as u64))
+            {
+                return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                    "creation_docs_unknown_candidate".into(),
+                )));
+            }
+            if same {
+                candidates[index].relation = CandidateRelation::Discard;
+                duplicates += 1;
+            }
+        }
+        if results.len() != expected.len() {
+            return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
+                "creation_docs_incomplete".into(),
+            )));
+        }
+    }
     let evidence = candidates
         .iter()
         .map(|candidate| match candidate.relation {
@@ -1959,6 +2050,10 @@ pub(crate) fn write_cards(
             hide_memory::MemoryError::Disabled => AnalysisFailure::Disabled,
             error => local(error.to_string()),
         })?;
+    crate::diagnostic!(
+        json!({"component":"memory", "kind":"analysis.session_cards", "project_id":source.project_id, "session_id":source.session_id, "batch_id":batch_id,
+        "created":summary.created, "superseded":summary.superseded, "duplicates_in_docs":duplicates, "extraction_input_chars":request.input.chars().count(), "document_input_chars":document_input })
+    );
     for backfill in output.backfill {
         if let Err(error) = store.fill_aliases(
             source.project_id,

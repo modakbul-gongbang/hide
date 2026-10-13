@@ -150,7 +150,7 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
     // An agent not seen yet: no name, and nothing it would follow.
     expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
-    expect(container.querySelector("[data-memory-card='9'] [data-pr-mark]")?.textContent).toContain("924");
+    expect(container.querySelector("[data-memory-pr-group='924']")?.textContent).toContain("924");
     const merged = container.querySelector("[data-memory-card='8']");
     expect(merged?.className).toContain("opacity-");
     expect(merged?.textContent).toContain("AGENTS.md");

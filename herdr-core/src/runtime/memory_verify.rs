@@ -46,10 +46,10 @@ fn provider_failure(error: AiError) -> AnalysisFailure {
 
 /// A file as the node gave it, up to [`EXCERPT_SOURCE_BYTES`], before an
 /// excerpt for one card is chosen from it.
-struct Source {
-    path: String,
-    text: String,
-    truncated: bool,
+pub(super) struct Source {
+    pub(super) path: String,
+    pub(super) text: String,
+    pub(super) truncated: bool,
 }
 
 /// An answer that arrived but cannot be used (not the schema, a correction
@@ -118,6 +118,7 @@ pub(super) fn reverify_pending(
     let cards = store
         .pending_cards(project_id, now_ms(), REVERIFY_PER_PASS)
         .map_err(|error| local(error.to_string()))?;
+    let repository = repository_sources(node, facts, root);
     for card in cards {
         if cancel.is_cancelled() {
             return Err(AnalysisFailure::Cancelled);
@@ -133,7 +134,7 @@ pub(super) fn reverify_pending(
         }
         let answers = facts.facts(&card.evidence);
         let words = query_words(&[&card.title, &card.body, &card.aliases.join(" ")]);
-        let files = excerpts(
+        let mut files = excerpts(
             &cited_files(&card.evidence)
                 .into_iter()
                 .filter_map(|path| source(node, root, &path))
@@ -141,6 +142,9 @@ pub(super) fn reverify_pending(
             &words,
             FILE_EXCERPT_BYTES,
         );
+        if card.kind != hide_memory::CandidateKind::Preference {
+            files.extend(excerpts(&repository, &words, DOCUMENT_EXCERPT_BYTES));
+        }
         let request = verify_request(
             digest(&[
                 "memory-verify",
@@ -200,6 +204,34 @@ pub(super) fn reverify_pending(
                 node,
             ),
             Verification::Gone => store.forget_checked(project_id, &card.item_id, card.revision),
+            Verification::InDocs { document } => {
+                if card.kind != hide_memory::CandidateKind::Preference
+                    && repository.iter().any(|source| source.path == *document)
+                {
+                    let item = store
+                        .item_by_number(project_id, card.number)
+                        .map_err(|error| local(error.to_string()))?
+                        .ok_or_else(|| local("card_missing".into()))?;
+                    if item.revision == card.revision {
+                        point_at(store, project_id, &item, document).map(|()| true)
+                    } else {
+                        Ok(false)
+                    }
+                } else {
+                    Ok(false)
+                }
+            }
+            Verification::DocsDisagree { document, quote } => apply_disagreement(
+                store,
+                node,
+                project_id,
+                card.number,
+                card.revision,
+                root,
+                &repository,
+                document,
+                quote,
+            ),
         }
         .map_err(|error| local(error.to_string()))?;
         if applied {
@@ -215,6 +247,8 @@ pub(super) fn reverify_pending(
                 Verification::Valid => "valid",
                 Verification::Outdated(_) => "outdated",
                 Verification::Gone => "gone",
+                Verification::InDocs { .. } => "in_docs",
+                Verification::DocsDisagree { .. } => "docs_disagree",
             },
             "applied": applied,
         }));
@@ -266,7 +300,11 @@ fn revise(
 /// The documents agents read at the start of work here: `AGENTS.md`,
 /// `CLAUDE.md` when it says something else, then the repository documents
 /// they point to, at most [`DOCUMENT_LIMIT`] and each cut to a bound.
-fn repository_sources(node: &dyn NodeLink, facts: &CheckoutFacts<'_>, root: &str) -> Vec<Source> {
+pub(super) fn repository_sources(
+    node: &dyn NodeLink,
+    facts: &CheckoutFacts<'_>,
+    root: &str,
+) -> Vec<Source> {
     let mut documents: Vec<Source> = Vec::new();
     for name in ["AGENTS.md", "CLAUDE.md"] {
         if let Some(found) = source(node, root, name)
@@ -424,6 +462,23 @@ pub(super) fn check_before_suggestion(
             continue;
         }
         match verdict {
+            PromoteCheck::DocsDisagree { document, quote } => {
+                if apply_disagreement(
+                    store,
+                    node,
+                    project_id,
+                    item.number,
+                    item.revision,
+                    root,
+                    &repository,
+                    &document,
+                    &quote,
+                )
+                .map_err(|error| local(error.to_string()))?
+                {
+                    checked.changed += 1;
+                }
+            }
             PromoteCheck::Propose => {
                 store
                     .mark_promotion_checked(project_id, item.number, item.revision)
@@ -501,4 +556,138 @@ fn point_at(
             failure: None,
         },
     )
+}
+
+/// One deterministic authority path used by both existing comparison calls.
+#[allow(clippy::too_many_arguments)]
+fn apply_disagreement(
+    store: &mut MemoryStore,
+    node: &dyn NodeLink,
+    project_id: &str,
+    number: u64,
+    revision: u64,
+    root: &str,
+    documents: &[Source],
+    document: &str,
+    quote: &str,
+) -> Result<bool, hide_memory::MemoryError> {
+    let Some(source) = documents.iter().find(|source| {
+        source.path == document && source.text.contains(quote) && !quote.trim().is_empty()
+    }) else {
+        return Ok(false);
+    };
+    let Some(item) = store.item_by_number(project_id, number)? else {
+        return Ok(false);
+    };
+    if item.revision != revision || item.kind == hide_memory::CandidateKind::Preference {
+        return Ok(false);
+    }
+    let human_source = store.current_human_source(project_id, number)?;
+    let human = human_source.as_ref();
+    let operator_at = human.and_then(|source| source.at_unix_ms);
+    let document_at = crate::node_access::call_as::<String>(
+        node,
+        hide_node_link::protocol::Call::Git {
+            root: root.into(),
+            command: hide_node_link::git::GitCommand::DocumentTime {
+                path: source.path.clone(),
+            },
+        },
+        std::time::Duration::from_secs(10),
+    )
+    .ok()
+    .and_then(|date| date.trim().parse::<u64>().ok())
+    .and_then(|date| date.checked_mul(1000));
+    let operator_text = human
+        .and_then(|human| original_words(store, node, project_id, human))
+        .unwrap_or_default();
+    store.set_document_comparison(
+        project_id,
+        number,
+        revision,
+        &hide_memory::DocumentComparison {
+            authority: hide_memory::DocumentAuthority::by_dates(operator_at, document_at),
+            document: document.into(),
+            document_text: quote.into(),
+            document_at_unix_ms: document_at,
+            operator_text,
+            operator_at_unix_ms: operator_at,
+            source_session: human.map(|source| source.session_id.clone()),
+        },
+    )
+}
+
+fn original_words(
+    store: &MemoryStore,
+    node: &dyn NodeLink,
+    project_id: &str,
+    human: &hide_memory::MemorySource,
+) -> Option<String> {
+    let source = store
+        .list_session_sources(project_id)
+        .ok()?
+        .into_iter()
+        .find(|source| source.id == human.session_id && source.provider == human.provider)?;
+    let agent =
+        hide_session::Agent::from_format(hide_agent_adapter::adapter(&source.provider)?.session?);
+    let scope = hide_session::SessionReadScope {
+        id: source.id,
+        cwd: source.checkout_path,
+    };
+    let mut checkpoint = None;
+    let mut consumed = 0u64;
+    let deadline = std::time::Instant::now() + super::memory::SESSION_CALL_TIMEOUT;
+    for _ in 0..hide_session::cursor::ARCHIVE_PAGE_LIMIT {
+        let read: hide_session::ConversationRead = hide_node_link::link::call_as_reader(
+            node,
+            agent,
+            hide_node_link::sessions::ReaderFeature::Conversation,
+            hide_node_link::protocol::Call::SessionConversation {
+                agent,
+                path: source.locator.clone(),
+                scope: scope.clone(),
+                checkpoint: checkpoint.clone(),
+            },
+            deadline.checked_duration_since(std::time::Instant::now())?,
+        )
+        .ok()?;
+        consumed = consumed.checked_add(read.read_bytes)?;
+        if read.rescanned
+            || consumed > hide_session::SESSION_READ_LIMIT_BYTES
+            || read.events.len() != read.event_offsets.len()
+        {
+            return None;
+        }
+        let next = read.checkpoint.clone();
+        let more = read.has_more;
+        let words = read
+            .events
+            .into_iter()
+            .zip(read.event_offsets)
+            .find(|(event, offset)| {
+                *offset == human.event_offset && event.kind == hide_session::EventKind::Human
+            })
+            .map(|(event, _)| {
+                hide_memory::redact(&event.text)
+                    .text
+                    .chars()
+                    .take(hide_memory::COMPARISON_EXCERPT_BYTES / 4)
+                    .collect()
+            });
+        if words.is_some() {
+            return words;
+        }
+        if !more
+            || read.read_bytes == 0
+            || checkpoint
+                .as_ref()
+                .is_some_and(|previous: &hide_session::ConversationCheckpoint| {
+                    next.offset() <= previous.offset()
+                })
+        {
+            return None;
+        }
+        checkpoint = Some(next);
+    }
+    None
 }

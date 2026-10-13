@@ -698,6 +698,8 @@ fn default_true() -> bool {
 /// number, as agents name them.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
+    #[serde(default)]
+    pub(super) numbers: Vec<u64>,
     pub(super) workspace_id: String,
     pub(super) action: crate::model::MemoryAction,
     /// The card a forget or an undo names.

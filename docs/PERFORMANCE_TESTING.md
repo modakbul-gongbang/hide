@@ -537,6 +537,11 @@ Session file discovery, incremental reads, SQLite work, redaction, provider requ
 One incremental transcript read takes at most 1 MiB, one retained JSONL line is capped at 256 KiB, and catalog or archive detail parsing rejects a complete session above 64 MiB.
 One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB a request, one pass in flight, 1,000 analysis calls a machine a UTC day, 10,000 active cards and 20,000 receipt rows per Project; an agent past the operator's usage limit (90% of its week by default) is skipped and, with every listed agent past it, background analysis waits; the limit adds one mutex write when a figure or the limit changes and snapshot fields that move only then.
 Receipts a live pane's label read hands up wait at most 256 and are recorded on one owned thread; closed sessions waiting for analysis are capped at 256.
+Repository comparison reuses the analysis worker and its bounded document reader; creation adds at most one duplicate-only call per extraction request and at most 15% additional input, while conflict classification uses the existing check calls.
+A conflict adds one bounded node Git date read and one bounded source conversation read, with no subprocess or store work under the runtime lock and no work on terminal input.
+Comparison excerpts reach snapshots only for the expanded card; rows carry the path, dates and authority metadata.
+A batch reservation covers at most five cards and starts one agent; the existing tracker handles their conditional transitions, with the same coalesced Memory refresh and cleanup rules.
+`analysis.session_cards` records session counts and extraction/document input characters; compare fixture and operator measurements separately rather than treating scripted-provider counts as live usage.
 The Memory snapshot section adds no work until a Project's Memory is opened or a live session was given a card: opening, expanding a card or searching is one read on a worker, coalesced like the Sessions read, and a card's text, files and sources are read only for the one card shown in full.
 What each live pane's session was given is read again, one indexed query per live session, after a receipt batch, a pane change or a Memory change, one read in flight and one waiting.
 Crossing a cap is logged, never an enlarged queue; the operator sees only a state they can act on.
@@ -561,8 +566,8 @@ Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test
 The hook accepts at most 256 KiB of input and asks the core with one `hide workspace memory` beside its letter pull, carrying the prompt's first 8 KiB; the core asks the checkout's node for its Project, opens its store read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates within the store's 100 ms retrieval deadline, and returns at most three whole items and 600 estimated tokens, off the runtime lock and within 1 s.
 The hook waits until 1,250 ms after its start, where the letter pull ends, so a turn's worst case is the pull's; the core's side starts no model, embedding, transcript scan, child process, network request beyond the node call, or database write.
 Missing, locked, corrupt, stale, unresolved, unreachable or over-deadline inputs exit successfully with empty context so prompt submission continues.
-`SessionStart` reads the Project's index under the same read-only and fail-open ownership and the same 1,250 ms wait: at most 20 one-line rule, decision and lesson cards and no body.
-`hide memory show|search|forget|undo|outdated|placed` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
+`SessionStart` reads the Project's index under the same read-only and fail-open ownership and the same 1,250 ms wait: at most 20 one-line rule, decision, lesson and preference cards and no body.
+`hide memory show|search|forget|undo|outdated|placed|skipped` is one store read or write on hided's blocking task; `add` is one provider call bounded at 50 s.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
 Manual acceptance in the desktop app uses one exact worktree-local `hided` PID and window against a private Herdr server and private app state.

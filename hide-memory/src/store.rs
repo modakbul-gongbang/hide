@@ -17,7 +17,7 @@ use crate::{
     RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
@@ -65,6 +65,7 @@ pub enum CandidateKind {
     Decision,
     Rule,
     Lesson,
+    Preference,
 }
 
 impl CandidateKind {
@@ -74,6 +75,7 @@ impl CandidateKind {
             Self::Decision => "decision",
             Self::Rule => "rule",
             Self::Lesson => "lesson",
+            Self::Preference => "preference",
         }
     }
 
@@ -82,6 +84,7 @@ impl CandidateKind {
             "decision" => Self::Decision,
             "rule" => Self::Rule,
             "lesson" => Self::Lesson,
+            "preference" => Self::Preference,
             _ => Self::Fact,
         }
     }
@@ -1237,6 +1240,7 @@ impl MemoryStore {
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              LEFT JOIN card_promotions c ON c.item_id=i.id \
              WHERE p.enabled=1 AND p.disclosure_version=?1 AND (?2 IS NULL OR i.project_id=?2) \
+             AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND i.lifecycle='active' AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?3) \
              AND ((r.verified_at_ms IS NULL AND (c.item_id IS NULL OR c.state!='merged')) \
                OR (r.verified_at_ms IS NOT NULL AND r.kind IN ('rule','lesson') \
@@ -1635,6 +1639,14 @@ impl MemoryStore {
         self.item_by_number(project_id, number)
     }
 
+    pub fn current_human_source(
+        &self,
+        project_id: &str,
+        number: u64,
+    ) -> Result<Option<MemorySource>, MemoryError> {
+        self.connection.query_row("SELECT s.provider,s.session_id,s.event_offset,s.content_hash,s.available,s.at_ms FROM memory_sources s JOIN memory_items i ON i.id=s.item_id AND i.current_revision=s.revision WHERE i.project_id=?1 AND i.number=?2 AND s.human=1 ORDER BY COALESCE(s.at_ms,0) DESC,s.event_offset DESC LIMIT 1", params![project_id, number], |row| Ok(MemorySource { provider:row.get(0)?, session_id:row.get(1)?, event_offset:row.get(2)?, content_hash:row.get(3)?, available:row.get(4)?, human:true, at_unix_ms:row.get(5)? })).optional().map_err(Into::into)
+    }
+
     pub fn detail(&self, project_id: &str, item_id: &str) -> Result<MemoryDetail, MemoryError> {
         let item = self
             .item(project_id, item_id)?
@@ -2016,33 +2028,115 @@ impl MemoryStore {
                 "promotion_target:{path}"
             )));
         }
-        let item_id: String = self
+        write_promotion(&self.connection, project_id, number, promotion)?;
+        Ok(())
+    }
+
+    /// Atomically reserves one shared worktree before any external spawn.
+    pub fn set_promotion_batch(
+        &mut self,
+        project_id: &str,
+        branch: &str,
+        promotions: &[(u64, Promotion)],
+    ) -> Result<(), MemoryError> {
+        self.require_writer()?;
+        if promotions.is_empty() || promotions.len() > crate::PROMOTION_BATCH_LIMIT {
+            return Err(MemoryError::InvalidState("promotion_batch_limit".into()));
+        }
+        let transaction = self
             .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let enabled: bool = transaction.query_row(
+            "SELECT enabled=1 AND disclosure_version=?2 FROM projects WHERE id=?1",
+            params![project_id, MEMORY_DISCLOSURE_VERSION],
+            |row| row.get(0),
+        )?;
+        if !enabled {
+            return Err(MemoryError::InvalidState("memory_disabled".into()));
+        }
+        let data: Option<String> = transaction
             .query_row(
-                "SELECT id FROM memory_items WHERE project_id=?1 AND number=?2",
-                params![project_id, number],
+                "SELECT numbers FROM promotion_batches WHERE project_id=?1 AND branch=?2",
+                params![project_id, branch],
                 |row| row.get(0),
             )
-            .optional()?
-            .ok_or(MemoryError::MemoryMissing)?;
-        self.connection.execute(
-            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
-             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure",
-            params![
-                item_id,
-                promotion.state.as_str(),
-                promotion.revision,
-                promotion.attempt,
-                promotion.agent_id,
-                promotion.branch,
-                promotion.pr_number,
-                promotion.target_path,
-                promotion.started_at_unix_ms,
-                promotion.updated_at_unix_ms,
-                promotion.failure
-            ],
-        )?;
+            .optional()?;
+        let mut numbers: Vec<u64> = data
+            .map(|data| {
+                serde_json::from_str(&data)
+                    .map_err(|error| MemoryError::InvalidState(error.to_string()))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut selected = std::collections::HashSet::new();
+        for (number, promotion) in promotions {
+            if !selected.insert(*number) {
+                return Err(MemoryError::InvalidState("duplicate_batch_card".into()));
+            }
+            if !numbers.contains(number) {
+                numbers.push(*number);
+            }
+            let current: u64 = transaction.query_row("SELECT current_revision FROM memory_items WHERE project_id=?1 AND number=?2 AND lifecycle='active'", params![project_id, number], |row| row.get(0))?;
+            let moving: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE i.project_id=?1 AND i.number=?2 AND c.state IN ('running','pr_open','merged'))", params![project_id, number], |row| row.get(0))?;
+            if moving
+                || current != promotion.revision
+                || promotion.branch.as_deref() != Some(branch)
+                || promotion.state != PromotionState::Running
+            {
+                return Err(MemoryError::InvalidState("promotion_card_changed".into()));
+            }
+            write_promotion(&transaction, project_id, *number, promotion)?;
+        }
+        if numbers.len() > crate::PROMOTION_BATCH_LIMIT {
+            return Err(MemoryError::InvalidState("promotion_batch_limit".into()));
+        }
+        let data = serde_json::to_string(&numbers)
+            .map_err(|error| MemoryError::InvalidState(error.to_string()))?;
+        transaction.execute("INSERT INTO promotion_batches(branch,project_id,numbers) VALUES(?1,?2,?3) ON CONFLICT(project_id,branch) DO UPDATE SET numbers=excluded.numbers", params![branch, project_id, data])?;
+        transaction.execute("DELETE FROM promotion_batches WHERE NOT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE c.branch=promotion_batches.branch AND i.project_id=promotion_batches.project_id)", [])?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn promotion_batch(
+        &self,
+        project_id: &str,
+        branch: &str,
+    ) -> Result<Option<Vec<u64>>, MemoryError> {
+        let data: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT numbers FROM promotion_batches WHERE project_id=?1 AND branch=?2",
+                params![project_id, branch],
+                |row| row.get(0),
+            )
+            .optional()?;
+        data.map(|data| {
+            serde_json::from_str(&data)
+                .map_err(|error| MemoryError::InvalidState(error.to_string()))
+        })
+        .transpose()
+    }
+
+    /// A skipped card returns to To ask while its peers retain their shared PR.
+    pub fn skip_promotion(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        reason: &str,
+        now: u64,
+        pr_number: Option<u64>,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let failure = format!(
+            "card_not_processed\u{1f}{}",
+            reason
+                .chars()
+                .take(crate::OUTDATED_REASON_LIMIT_CHARS)
+                .collect::<String>()
+        );
+        Ok(self.connection.execute("UPDATE card_promotions SET state='failed',failure=?1,updated_at_ms=?2,pr_number=COALESCE(?7,pr_number) WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?3 AND number=?4) AND state IN ('running','pr_open') AND attempt=?5 AND agent_id IS ?6", params![failure, now, project_id, number, from.attempt, from.agent_id, pr_number])? == 1)
     }
 
     /// The rule and lesson cards whose use crossed the bar for a repository
@@ -2088,7 +2182,7 @@ impl MemoryStore {
              FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              LEFT JOIN card_promotions p ON p.item_id=i.id \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','lesson') AND r.verified_at_ms IS NOT NULL \
-             AND ((i.promotion_ok_revision IS i.current_revision)=?6) \
+             AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND ((i.promotion_ok_revision IS i.current_revision)=?6) \
              AND (?6 OR i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?7) \
              AND (p.item_id IS NULL OR p.state='outdated' OR (p.state='dismissed' AND p.revision!=i.current_revision))) \
              WHERE human>=?3 OR pulled>=?4 ORDER BY human DESC,pulled DESC,number LIMIT ?5",
@@ -2113,6 +2207,59 @@ impl MemoryStore {
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Current comparison, absent after the card changed or its document landed.
+    pub fn document_comparison(
+        &self,
+        project_id: &str,
+        number: u64,
+    ) -> Result<Option<crate::DocumentComparison>, MemoryError> {
+        let data: Option<String> = self.connection.query_row(
+            "SELECT c.data FROM card_comparisons c JOIN memory_items i ON i.id=c.item_id AND i.current_revision=c.revision LEFT JOIN card_promotions p ON p.item_id=i.id WHERE i.project_id=?1 AND i.number=?2 AND (p.state IS NULL OR p.state!='merged')",
+            params![project_id, number], |row| row.get(0)).optional()?;
+        data.map(|data| {
+            serde_json::from_str(&data)
+                .map_err(|error| MemoryError::InvalidState(error.to_string()))
+        })
+        .transpose()
+    }
+
+    /// A late provider answer never replaces a comparison for a newer revision.
+    pub fn set_document_comparison(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        revision: u64,
+        comparison: &crate::DocumentComparison,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let data = serde_json::to_string(comparison)
+            .map_err(|error| MemoryError::InvalidState(error.to_string()))?;
+        let changed = self.connection.execute(
+            "INSERT INTO card_comparisons(item_id,revision,data) SELECT id,current_revision,?4 FROM memory_items WHERE project_id=?1 AND number=?2 AND current_revision=?3 AND lifecycle='active' ON CONFLICT(item_id) DO UPDATE SET revision=excluded.revision,data=excluded.data",
+            params![project_id, number, revision, data])?;
+        Ok(changed == 1)
+    }
+
+    pub fn resolve_document_comparison(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        card_right: bool,
+    ) -> Result<bool, MemoryError> {
+        let item = self
+            .item_by_number(project_id, number)?
+            .ok_or(MemoryError::ProjectMissing)?;
+        let mut comparison = self
+            .document_comparison(project_id, number)?
+            .ok_or_else(|| MemoryError::InvalidState("card_has_no_document_comparison".into()))?;
+        comparison.authority = if card_right {
+            crate::DocumentAuthority::CardNewer
+        } else {
+            crate::DocumentAuthority::Outdated
+        };
+        self.set_document_comparison(project_id, number, item.revision, &comparison)
     }
 
     /// Records that the check before a suggestion let card `number`'s
@@ -2217,6 +2364,7 @@ impl MemoryStore {
              JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.verified_at_ms IS NULL \
              AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged') \
+             AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision) \
              AND (i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?2) \
              ORDER BY i.pull_count DESC,i.number LIMIT ?3",
         )?;
@@ -2512,7 +2660,7 @@ impl MemoryStore {
         let mut statement = self.connection.prepare(
             "SELECT i.id,i.number,r.revision,r.title,p.target_path,p.pr_number FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
              LEFT JOIN card_promotions p ON p.item_id=i.id AND p.state='merged' \
-             WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson') AND (r.verified_at_ms IS NOT NULL OR p.item_id IS NOT NULL) ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
+             WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson','preference') AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision AND p.item_id IS NULL) AND (r.verified_at_ms IS NOT NULL OR p.item_id IS NOT NULL) ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
         )?;
         Ok(statement
             .query_map(params![project_id, limit as u64], |row| {
@@ -2718,7 +2866,7 @@ impl MemoryStore {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 AND (?4=0 OR (r.verified_at_ms IS NOT NULL AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged'))) ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
+        let mut statement = self.connection.prepare("SELECT i.id,i.number,r.revision,r.title,r.aliases,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,r.kind FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 AND (?4=0 OR (r.verified_at_ms IS NOT NULL AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged'))) ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT ?3")?;
         let mut candidates = statement
             .query_map(
                 params![project_id, query.fts_expression(), limit as u64, given],
@@ -2768,6 +2916,40 @@ impl MemoryStore {
             Err(MemoryError::ReadOnly)
         }
     }
+}
+
+fn write_promotion(
+    connection: &Connection,
+    project_id: &str,
+    number: u64,
+    promotion: &Promotion,
+) -> Result<(), MemoryError> {
+    let item_id: String = connection
+        .query_row(
+            "SELECT id FROM memory_items WHERE project_id=?1 AND number=?2",
+            params![project_id, number],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(MemoryError::MemoryMissing)?;
+    connection.execute(
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure",
+            params![
+                item_id,
+                promotion.state.as_str(),
+                promotion.revision,
+                promotion.attempt,
+                promotion.agent_id,
+                promotion.branch,
+                promotion.pr_number,
+                promotion.target_path,
+                promotion.started_at_unix_ms,
+                promotion.updated_at_unix_ms,
+                promotion.failure
+            ],
+        )?;
+    Ok(())
 }
 
 /// Whole cards for a prompt: distinct sessions' cards first, no card the
@@ -2884,7 +3066,18 @@ COMMIT;"#,
     }
     if version == 10 {
         migrate_version_ten(connection)?;
-        version = SCHEMA_VERSION;
+        version = 11;
+    }
+    if version == 11 {
+        back_up(connection, path, version)?;
+        let transaction = connection.unchecked_transaction()?;
+        let current: u32 =
+            transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if current == 11 {
+            transaction.execute_batch("CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL); CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch)); UPDATE memory_revisions SET verified_at_ms=NULL WHERE item_id NOT IN (SELECT item_id FROM card_promotions WHERE state='merged'); PRAGMA user_version=12;")?;
+        }
+        transaction.commit()?;
+        version = 12;
     }
     if version != SCHEMA_VERSION {
         return Err(MemoryError::WrongSchema {
@@ -3455,6 +3648,8 @@ CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL,checks INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT);
+CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL);
+CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch));
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
 "#;
 
@@ -3465,7 +3660,7 @@ const ITEM_SELECT: &str = "SELECT i.id,i.project_id,i.number,r.title,r.aliases,r
 (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id WHERE rii.item_id=i.id),\
 i.pull_count,i.last_used_at_ms,\
 i.confidence,i.salience,i.created_at_ms,i.updated_at_ms,r.cited_paths,\
-(r.verified_at_ms IS NULL AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged')) \
+(r.verified_at_ms IS NULL AND NOT EXISTS(SELECT 1 FROM card_promotions p WHERE p.item_id=i.id AND p.state='merged') AND NOT EXISTS(SELECT 1 FROM card_comparisons d WHERE d.item_id=i.id AND d.revision=i.current_revision)) \
 FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision";
 
 /// A card's text as stored: body, index line and aliases, each checked.
@@ -4277,6 +4472,194 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             session_id: session_id.to_owned(),
             ..batch(project, id, id)
         }
+    }
+
+    #[test]
+    fn document_conflicts_withhold_both_index_and_prompt_until_the_card_changes() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "first", "first"),
+                &[candidate(
+                    "Always run lint before tests",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+        let item = store.list_memories(&project).unwrap().remove(0);
+        store.confirm_card(&item.id, 1, None, &[], 100).unwrap();
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        let mut comparison = crate::DocumentComparison {
+            authority: crate::DocumentAuthority::Ask,
+            document: "AGENTS.md".into(),
+            document_text: "Run tests before lint".into(),
+            document_at_unix_ms: None,
+            operator_text: "Always run lint before tests".into(),
+            operator_at_unix_ms: Some(90),
+            source_session: Some("session-1".into()),
+        };
+        for authority in [
+            crate::DocumentAuthority::Ask,
+            crate::DocumentAuthority::CardNewer,
+            crate::DocumentAuthority::Outdated,
+        ] {
+            comparison.authority = authority;
+            assert!(
+                store
+                    .set_document_comparison(&project, 1, 1, &comparison)
+                    .unwrap()
+            );
+            for query in [
+                RetrievalQuery::session_start(&project),
+                RetrievalQuery::prompt(&project, "run lint before tests", vec![]),
+            ] {
+                assert!(store.retrieve(&query).unwrap().items.is_empty());
+            }
+        }
+        store
+            .apply_candidates(
+                &batch(&project, "next", "next"),
+                &[candidate(
+                    "Run tests before lint",
+                    CandidateRelation::Supersedes {
+                        target_id: item.id.clone(),
+                    },
+                )],
+            )
+            .unwrap();
+        assert!(
+            !store
+                .set_document_comparison(&project, 1, 1, &comparison)
+                .unwrap()
+        );
+        assert!(store.document_comparison(&project, 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn personal_preferences_are_injected_and_never_offered_for_documents() {
+        let (_temp, mut store, project) = store();
+        let mut personal = candidate("Prefer concise Korean replies", CandidateRelation::New);
+        personal.kind = CandidateKind::Preference;
+        store
+            .apply_candidates(&batch(&project, "personal", "personal"), &[personal])
+            .unwrap();
+        let item = store.list_memories(&project).unwrap().remove(0);
+        store.confirm_card(&item.id, 1, None, &[], 100).unwrap();
+        assert_eq!(item.kind, CandidateKind::Preference);
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .promotion_unchecked(&project, 100, 5)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .promotion_suggestions(&project, 100, 5)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_batch_reserves_all_cards_or_none_and_skipped_cards_keep_the_shared_pr() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "batch", "batch"),
+                &[
+                    candidate("Keep one owner for every process", CandidateRelation::New),
+                    candidate("Bound worker queues", CandidateRelation::New),
+                ],
+            )
+            .unwrap();
+        let running = Promotion {
+            state: PromotionState::Running,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("fixture-agent".into()),
+            branch: Some("shared".into()),
+            pr_number: None,
+            target_path: None,
+            started_at_unix_ms: 100,
+            updated_at_unix_ms: 100,
+            failure: None,
+        };
+        let changed = Promotion {
+            revision: 2,
+            ..running.clone()
+        };
+        assert!(
+            store
+                .set_promotion_batch(&project, "shared", &[(1, running.clone()), (2, changed)])
+                .is_err()
+        );
+        assert!(
+            store.promotions(&project).unwrap().is_empty(),
+            "no partial reservation survives a stale card"
+        );
+        store
+            .set_promotion_batch(
+                &project,
+                "shared",
+                &[(1, running.clone()), (2, running.clone())],
+            )
+            .unwrap();
+        assert_eq!(
+            store.promotion_batch(&project, "shared").unwrap(),
+            Some(vec![1, 2])
+        );
+        assert!(
+            store
+                .set_promotion_batch(
+                    &project,
+                    "other",
+                    &[(
+                        2,
+                        Promotion {
+                            branch: Some("other".into()),
+                            ..running.clone()
+                        }
+                    )]
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .skip_promotion(
+                    &project,
+                    2,
+                    &running,
+                    "No owning document could be found",
+                    200,
+                    Some(72)
+                )
+                .unwrap()
+        );
+        let rows = store.promotions(&project).unwrap();
+        assert_eq!(rows[0].1.state, PromotionState::Running);
+        assert_eq!(rows[1].1.state, PromotionState::Failed);
+        assert_eq!(rows[1].1.pr_number, Some(72));
+        assert_eq!(rows[1].1.branch.as_deref(), Some("shared"));
+        assert!(
+            !store
+                .skip_promotion(&project, 2, &running, "late reply", 300, None)
+                .unwrap()
+        );
     }
 
     #[test]

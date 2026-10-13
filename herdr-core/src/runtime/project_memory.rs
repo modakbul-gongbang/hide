@@ -461,6 +461,27 @@ impl Runtime {
             }
             row.promotion = snapshot;
         }
+        questions.extend(rows.iter().filter_map(|row| {
+            let document = row.document_comparison.as_ref()?;
+            if document.authority == hide_memory::DocumentAuthority::Outdated
+                || row.promotion.as_ref().is_some_and(|promotion| {
+                    matches!(
+                        promotion.state,
+                        crate::model::MemoryPromotionState::Running
+                            | crate::model::MemoryPromotionState::PrOpen
+                            | crate::model::MemoryPromotionState::Failed
+                            | crate::model::MemoryPromotionState::Unconfirmed
+                    )
+                })
+            {
+                return None;
+            }
+            Some(MemoryQuestionSnapshot::DocsDisagree {
+                number: row.number,
+                title: row.title.clone(),
+                document: document.clone(),
+            })
+        }));
         questions.extend(load.suggestions.iter().filter_map(|suggestion| {
             let row = rows.iter().find(|row| row.number == suggestion.number)?;
             Some(MemoryQuestionSnapshot::Promote {
@@ -480,6 +501,7 @@ impl Runtime {
             rows.iter()
                 .filter(|row| {
                     !row.verifying
+                        && row.document_comparison.is_none()
                         && !row.promotion.as_ref().is_some_and(|promotion| {
                             promotion.state == crate::model::MemoryPromotionState::Merged
                         })
@@ -744,6 +766,7 @@ impl Runtime {
             workspace_id,
             action: MemoryAction::Enable,
             number: None,
+            numbers: Vec::new(),
         });
     }
 }
@@ -831,13 +854,33 @@ fn mutate_memory(
         }
         MemoryAction::Promote => {
             let start = start.ok_or("The promotion has no agent to start")?;
-            let number = named()?;
-            let unseen =
-                super::memory_promotion::start_promotion(&mut store, &identity.id, number, start)?;
+            let mut numbers = if payload.numbers.is_empty() {
+                vec![named()?]
+            } else {
+                payload.numbers.clone()
+            };
+            numbers.sort_unstable();
+            let number = *numbers.first().ok_or("The promotion names no cards")?;
+            let unseen = super::memory_promotion::start_promotion(
+                &mut store,
+                &identity.id,
+                &numbers,
+                start,
+            )?;
             Ok(MemoryActionOutcome {
                 unseen: unseen.map(|(attempt, start)| (number, attempt, start)),
                 ..outcome()
             })
+        }
+        MemoryAction::CardRight | MemoryAction::DocRight => {
+            store
+                .resolve_document_comparison(
+                    &identity.id,
+                    named()?,
+                    payload.action == MemoryAction::CardRight,
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(outcome())
         }
         MemoryAction::Dismiss => {
             super::memory_promotion::dismiss_promotion(&mut store, &identity.id, named()?)?;
@@ -879,8 +922,17 @@ fn load_opened_memory(
         .list_memories(&identity.id)
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(memory_row)
-        .collect();
+        .map(|item| {
+            let comparison = store
+                .document_comparison(&identity.id, item.number)
+                .map_err(|error| error.to_string())?;
+            let mut row = memory_row(item);
+            row.document_comparison = comparison
+                .as_ref()
+                .map(crate::model::MemoryDocumentSnapshot::from);
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let expanded = match expanded {
         Some(number) => match store
             .item_by_number(&identity.id, number)
@@ -893,6 +945,9 @@ fn load_opened_memory(
                     .map_err(|error| error.to_string())?;
                 Some(MemoryCardSnapshot {
                     number,
+                    document_comparison: store
+                        .document_comparison(&identity.id, number)
+                        .map_err(|error| error.to_string())?,
                     body: item.body,
                     cited_paths: item.cited_paths,
                     sources: detail
@@ -958,6 +1013,7 @@ fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
         updated_at_unix_ms: item.updated_at_unix_ms,
         verifying: item.verifying,
         promotion: None,
+        document_comparison: None,
     }
 }
 
@@ -967,6 +1023,7 @@ pub(crate) fn card_kind(kind: hide_memory::CandidateKind) -> MemoryCardKind {
         hide_memory::CandidateKind::Decision => MemoryCardKind::Decision,
         hide_memory::CandidateKind::Lesson => MemoryCardKind::Lesson,
         hide_memory::CandidateKind::Fact => MemoryCardKind::Fact,
+        hide_memory::CandidateKind::Preference => MemoryCardKind::Preference,
     }
 }
 
@@ -1049,6 +1106,7 @@ mod tests {
         assert_eq!(
             load.expanded,
             Some(MemoryCardSnapshot {
+                document_comparison: None,
                 number: 1,
                 body: "Run tests with nextest before a merge".to_owned(),
                 cited_paths: vec!["docs/TESTING.md".to_owned()],

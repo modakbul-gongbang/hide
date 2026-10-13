@@ -28,6 +28,25 @@ pub fn run(root: &Path, command: &GitCommand) -> HostResult<String> {
         | GitCommand::FetchBranch { .. } => crate::worktrees::git(root, &args)
             .map(|output| output.trim().to_owned())
             .map_err(failed),
+        GitCommand::DocumentTime { path } => {
+            let status = crate::worktrees::git(
+                root,
+                &[
+                    "--literal-pathspecs",
+                    "status",
+                    "--porcelain=v1",
+                    "--",
+                    path,
+                ],
+            )
+            .map_err(failed)?;
+            if !status.trim().is_empty() {
+                return Ok(String::new());
+            }
+            crate::worktrees::git(root, &args)
+                .map(|output| output.trim().to_owned())
+                .map_err(failed)
+        }
         // A path may begin or end with a space, so the list is not trimmed.
         GitCommand::ListFiles => crate::worktrees::git(root, &args).map_err(failed),
         GitCommand::CurrentBranch

@@ -45,6 +45,7 @@ fn action(workspace: &str, action: MemoryAction) -> crate::runtime::events::Memo
         workspace_id: workspace.to_owned(),
         action,
         number: None,
+        numbers: Vec::new(),
     }
 }
 

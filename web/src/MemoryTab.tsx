@@ -1,4 +1,4 @@
-import { AlertCircleIcon, ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MonitorSmartphoneIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MonitorSmartphoneIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentLogo } from "./components/agent-logo";
@@ -15,6 +15,7 @@ import {
 } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Switch } from "./components/ui/switch";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -22,11 +23,11 @@ import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
-import { cardName, memoryCards, memoryTime, sourceTime, visibleCards } from "./memoryList";
+import { cardName, memoryCards, memoryTime, sourceTime, visibleCards, memoryPullRequests, selectableMemoryQuestions } from "./memoryList";
 import { catalogWorkspaces, frontCheckout, type MemoryCard, type MemoryCardKind, type MemoryQuestion, type MemoryStartFailure, type MemoryRow, type ProjectMemory } from "./snapshot";
 import { useShellStore } from "./store";
 
-const KIND: Record<MemoryCardKind, MessageKey> = { rule: "memory.kind.rule", decision: "memory.kind.decision", lesson: "memory.kind.lesson", fact: "memory.kind.fact" };
+const KIND: Record<MemoryCardKind, MessageKey> = { rule: "memory.kind.rule", decision: "memory.kind.decision", lesson: "memory.kind.lesson", fact: "memory.kind.fact", preference: "memory.kind.preference" };
 
 /**
  * The Tools column's Memory tab (PRD project-memory-v2 D-17, B19-B32): the
@@ -135,7 +136,7 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
           </div>
         ) : null}
         {project.enabled && project.capacity_reached ? <p className="-mt-sm break-keep text-caption text-warning">{t("memory.capacity")}</p> : null}
-        {project.enabled && project.questions.length > 0 ? <Questions project={project} actions={actions} busy={busy} /> : null}
+        {project.enabled && (project.questions.length > 0 || memoryPullRequests(project).length > 0) ? <Questions project={project} actions={actions} busy={busy} /> : null}
         {project.enabled ? <Cards project={project} actions={actions} busy={busy} onDelete={() => setDeleting(true)} /> : null}
       </div>
       {project.forgotten !== null ? (
@@ -208,72 +209,84 @@ function Header({ project, actions, busy }: { project: ProjectMemory; actions: A
 
 function Questions({ project, actions, busy }: { project: ProjectMemory; actions: Actions; busy: boolean }) {
   const { t } = useInterfaceTranslation();
+  const eligible = selectableMemoryQuestions(project);
+  const [selection, setSelection] = useState<{ project: string; numbers: number[] }>({ project: project.workspace_id, numbers: [] });
+  const selected = selection.project === project.workspace_id ? selection.numbers.filter((number) => eligible.has(number)) : [];
+  const toggle = (number: number) => setSelection({ project: project.workspace_id, numbers: selected.includes(number) ? selected.filter((card) => card !== number) : selected.length < 5 ? [...selected, number] : selected });
+  const groups = memoryPullRequests(project);
   return (
-    <section aria-label={t("memory.questions")} className="flex flex-col" data-memory-questions={project.questions.length}>
-      <h3 className="flex items-baseline gap-sm pb-sm text-caption">
-        <span className="text-warning">{t("memory.questions")}</span>
-        <span className="text-muted-foreground">{project.questions.length}</span>
-      </h3>
+    <section className="flex min-w-0 flex-col gap-sm" data-memory-questions="true">
+      {project.questions.length ? <h3 className="text-caption font-medium text-warning">{t("memory.questions")}</h3> : null}
       {project.questions.map((question, index) => (
-        <Question key={question.number} question={question} project={project} actions={actions} busy={busy} last={index === project.questions.length - 1} />
+        <Question key={question.number} question={question} project={project} actions={actions} busy={busy} last={index === project.questions.length - 1} selected={selected.includes(question.number)} selectionDisabled={!eligible.has(question.number) || (!selected.includes(question.number) && selected.length >= 5)} onSelect={() => toggle(question.number)} />
+      ))}
+      {selected.length ? (
+        <div className="flex flex-wrap items-center gap-sm border-t border-border pt-sm text-caption" data-memory-selection={selected.length}>
+          <span className="min-w-0 flex-1 text-muted-foreground">{t("memory.batch.selected", { count: selected.length })}</span>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelection({ project: project.workspace_id, numbers: [] })}>{t("memory.batch.clear")}</Button>
+          <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(project.workspace_id, "promote", null, selected)} data-memory-open-batch="true">{t("memory.batch.open")}</Button>
+        </div>
+      ) : null}
+      {groups.map((group) => (
+        <button key={group.number} type="button" className="flex min-w-0 items-center gap-sm rounded-xs py-sm text-left text-caption outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, group.number)} data-memory-pr-group={group.number}>
+          <PrMark state="pending" compact />
+          <span className="shrink-0">{t("memory.batch.inPr", { number: group.number })}</span>
+          <span className="truncate font-mono text-muted-foreground">{group.cards.map(cardName).join(" · ")}</span>
+        </button>
       ))}
     </section>
   );
 }
 
-/** A failed question's status: why its agent never started, or that it ended with no pull request. */
+/** A failed question's status stays on the card where the operator can retry. */
 function failureKey(failure: MemoryStartFailure | null): MessageKey {
   switch (failure?.code) {
-    case undefined:
-      return "memory.failed";
-    case "shell_starting":
-      return "memory.startFailure.shellStarting";
-    case "agent_not_started":
-      return "memory.startFailure.agentNotStarted";
-    case "other":
-      return "memory.startFailure.other";
+    case undefined: return "memory.failed";
+    case "shell_starting": return "memory.startFailure.shellStarting";
+    case "agent_not_started": return "memory.startFailure.agentNotStarted";
+    case "card_not_processed": return "memory.startFailure.cardNotProcessed";
+    case "other": return "memory.startFailure.other";
   }
 }
 
-function Question({ question, project, actions, busy, last }: { question: MemoryQuestion; project: ProjectMemory; actions: Actions; busy: boolean; last: boolean }) {
+function Question({ question, project, actions, busy, last, selected, selectionDisabled, onSelect }: { question: MemoryQuestion; project: ProjectMemory; actions: Actions; busy: boolean; last: boolean; selected: boolean; selectionDisabled: boolean; onSelect: () => void }) {
   const { t } = useInterfaceTranslation();
   const id = project.workspace_id;
+  const compare = question.kind === "docs_disagree";
+  const ask = compare && question.document.authority === "ask";
+  const expanded = project.expanded?.number === question.number ? project.expanded : null;
+  const reason = question.kind === "promote" ? t("memory.promote.reason", { human: question.human_session_count, sessions: question.pulled_session_count }) : question.kind === "docs_disagree" ? t(ask ? "memory.docs.ask" : "memory.docs.newer") : question.start_failure?.code === "shell_starting" && question.start_failure.detail ? t("memory.startFailure.shellQuestion", { line: question.start_failure.detail }) : question.start_failure?.detail ?? t(failureKey(question.start_failure));
   return (
-    <div className={cn("grid grid-cols-[auto_auto_1fr] gap-x-sm py-sm", !last && "border-b border-border")} data-memory-question={question.kind} data-memory-card={question.number}>
-      <CardToggle number={question.number} project={project} actions={actions} />
-      <span className="font-mono text-caption text-muted-foreground">{cardName(question.number)}</span>
+    <div className={cn("grid min-w-0 grid-cols-[auto_1fr] gap-x-sm py-sm", !last && "border-b border-border")} data-memory-question={question.kind} data-memory-card={question.number}>
+      <Checkbox className="mt-xxs" checked={selected} disabled={busy || selectionDisabled} onCheckedChange={onSelect} aria-label={t("memory.batch.select", { card: cardName(question.number) })} data-memory-select={question.number} />
       <div className="flex min-w-0 flex-col gap-xs">
-        <span className="break-words break-keep text-body text-foreground">{question.title}</span>
-        {question.kind === "promote" ? (
-          <>
-            <span className="break-keep text-caption text-muted-foreground">{t("memory.promote.reason", { human: question.human_session_count, sessions: question.pulled_session_count })}</span>
-            <span className="text-caption text-foreground">{t("memory.promote.ask")}</span>
-            <span className="flex items-center gap-sm">
-              <Button size="sm" disabled={busy} onClick={() => actions.memoryAction(id, "promote", question.number)} data-memory-promote={question.number}>
-                {t("memory.promote.yes")}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => actions.memoryAction(id, "dismiss", question.number)} data-memory-dismiss={question.number}>
-                {t("memory.promote.no")}
-              </Button>
-            </span>
-          </>
-        ) : (
-          <span className="flex items-center gap-sm">
-            <span className="flex min-w-0 flex-1 items-start gap-xs text-caption text-subtle-foreground">
-              <AlertCircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 text-warning" />
-              <span className="min-w-0 break-words" data-memory-failure={question.start_failure?.code ?? "no_pull_request"}>
-                {question.start_failure?.code === "shell_starting" && question.start_failure.detail
-                  ? t("memory.startFailure.shellQuestion", { line: question.start_failure.detail })
-                  : t(failureKey(question.start_failure))}
-              </span>
-            </span>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, "promote", question.number)} data-memory-retry={question.number}>
-              {t("memory.retry")}
-            </Button>
-          </span>
-        )}
-        {project.expanded?.number === question.number ? <CardDetail card={project.expanded} project={project} actions={actions} busy={busy} /> : null}
+        <div className="flex min-w-0 items-center gap-sm">
+          <span className="shrink-0 font-mono text-caption text-muted-foreground">{cardName(question.number)}</span>
+          <span className="truncate text-body text-foreground" title={question.title}>{question.title}</span>
+        </div>
+        <div className="flex min-w-0 items-center gap-sm">
+          <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={reason} data-memory-failure={question.kind === "failed" ? "true" : undefined}>{reason}</span>
+          {compare ? <button type="button" className="shrink-0 text-caption text-subtle-foreground hover:text-foreground" aria-expanded={!!expanded} onClick={() => actions.memoryExpand(id, expanded ? null : question.number)} data-memory-compare={question.number}>{t("memory.docs.compare")}</button> : <CardToggle number={question.number} project={project} actions={actions} />}
+        </div>
+        <div className="flex flex-wrap items-center gap-xs">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => actions.memoryAction(id, ask ? "card_right" : "promote", question.number)} data-memory-promote={question.kind === "failed" ? undefined : question.number} data-memory-retry={question.kind === "failed" ? question.number : undefined}>
+            {t(ask ? "memory.docs.cardRight" : compare ? "memory.docs.fix" : question.kind === "failed" ? "memory.retry" : "memory.promote.yes")}
+          </Button>
+          {question.kind !== "failed" ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => actions.memoryAction(id, compare ? "doc_right" : "dismiss", question.number)} data-memory-dismiss={question.number}>{t(ask ? "memory.docs.docRight" : compare ? "memory.docs.cardWrong" : "memory.promote.no")}</Button> : null}
+        </div>
+        {expanded ? compare && expanded.document_comparison ? <DocumentCompare comparison={expanded.document_comparison} /> : <CardDetail card={expanded} project={project} actions={actions} busy={busy} /> : null}
       </div>
+    </div>
+  );
+}
+
+function DocumentCompare({ comparison }: { comparison: NonNullable<MemoryCard["document_comparison"]> }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const date = (at: number | null) => at === null ? t("memory.docs.unknownDate") : formatDateTime(requireInterfaceLanguage(i18n.language), at, { year:"numeric", month:"short", day:"numeric" });
+  return (
+    <div className="flex min-w-0 flex-col gap-sm border-l border-border pl-sm text-caption" data-memory-comparison="true">
+      <div><p className="break-words font-mono text-muted-foreground">{comparison.document} · {date(comparison.document_at_unix_ms)}</p><p className="whitespace-pre-wrap break-words text-subtle-foreground">{comparison.document_text}</p></div>
+      <div><p className="text-muted-foreground">{t("memory.humanSource")} · {date(comparison.operator_at_unix_ms)}</p><p className="whitespace-pre-wrap break-words text-subtle-foreground">{comparison.operator_text || t("memory.docs.sourceUnavailable")}</p></div>
     </div>
   );
 }
@@ -404,6 +417,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
   const language = requireInterfaceLanguage(i18n.language);
   const open = project.expanded?.number === row.number;
   const merged = row.promotion?.state === "merged";
+  const outdated = row.document_comparison?.authority === "outdated";
   const checking = project.analysis === "checking" && project.checking_card === row.number;
   const waiting = row.verifying && !checking && !STATUS_STATES.has(row.promotion?.state);
   const self = useRef<HTMLLIElement>(null);
@@ -411,7 +425,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
     if (open) self.current?.scrollIntoView({ block: "nearest" });
   }, [open]);
   return (
-    <li ref={self} className={cn("grid grid-cols-[auto_auto_1fr] gap-x-sm rounded-md px-xs py-sm", open && "bg-card", (merged || waiting) && !open && "opacity-(--opacity-dimmed)")} data-memory-card={row.number} data-memory-promotion={row.promotion?.state}>
+    <li ref={self} className={cn("grid grid-cols-[auto_auto_1fr] gap-x-sm rounded-md px-xs py-sm", open && "bg-card", (merged || waiting || outdated) && !open && "opacity-(--opacity-dimmed)")} data-memory-card={row.number} data-memory-promotion={row.promotion?.state}>
       <CardToggle number={row.number} project={project} actions={actions} />
       <span className="font-mono text-caption text-muted-foreground">{cardName(row.number)}</span>
       <div className="flex min-w-0 flex-col gap-xs">
@@ -420,6 +434,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         </button>
         <span className="flex flex-wrap items-center gap-x-sm gap-y-xxs text-caption text-muted-foreground">
           <span className="rounded-xs bg-secondary px-xxs">{t(KIND[row.kind])}</span>
+          {outdated ? <span data-memory-outdated={row.number}>{t("memory.docs.outdated")} · <span className="font-mono">{row.document_comparison!.document}</span>{row.document_comparison!.document_at_unix_ms ? ` · ${formatDateTime(language, row.document_comparison!.document_at_unix_ms, { year:"numeric", month:"short", day:"numeric" })}` : ""}</span> : null}
           {merged ? (
             <>
               {row.promotion?.target_path ? (
