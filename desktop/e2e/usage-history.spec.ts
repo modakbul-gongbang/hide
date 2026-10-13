@@ -57,6 +57,7 @@ test("native usage history preserves totals, hover geometry and the Overview fil
         await chip.click();
         await expect(popover.locator('[data-usage-total]')).toHaveText("360", { timeout: 30_000 });
         const share = popover.locator('[data-usage-detail] [data-usage-filter="claude"]:visible');
+        await share.scrollIntoViewIfNeeded();
         const target = await share.boundingBox();
         await share.hover();
         await expect(detail.locator('[data-usage-cost]:visible')).toContainText("fixture-unpriced-model");
