@@ -32,7 +32,7 @@ export function buildUsage(tokens) {
         frame(`usage-spacer-${s}`, 'Spacer', {width: 'fill_container', height: 1}, []),
         ref(`usage-choose-${s}`, 'btn-m', 'Choose chips', {'btn-lb': {content: 'Choose chips', fill: '$--subtle-foreground'}, 'btn-ic': {icon: 'settings', enabled: true, fill: '$--subtle-foreground'}}, {height: 24, fill: []}),
       ]),
-      ...['Claude Code', 'Codex'].map((label, i) => frame(`usage-card-${i}-${s}`, label, {width: 'fill_container', layout: 'vertical', gap: '$--spacing-md', padding: '$--spacing-md', stroke: '$--border', strokeWidth: 1, cornerRadius: '$--radius-md'}, [
+      ...['Claude Code', 'Codex'].map((label, i) => frame(`usage-card-${i}-${s}`, label, {reusable: true, width: 'fill_container', layout: 'vertical', gap: '$--spacing-md', padding: '$--spacing-md', stroke: '$--border', strokeWidth: 1, cornerRadius: '$--radius-md'}, [
         frame(`usage-agent-header-${i}-${s}`, label, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
           {id: `usage-agent-mark-${i}-${s}`, type: 'rectangle', width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${i === 0 ? 'claude' : 'codex'}.png`, mode: 'contain'}},
           text(`usage-agent-${i}-${s}`, label, {size: '$--text-subhead', weight: '600'}),
@@ -41,6 +41,7 @@ export function buildUsage(tokens) {
         window(`usage-weekly-${i}-${s}`, '7 days', '81%', '$--warning'),
         ...(i === 0 ? [ref(`usage-scoped-${s}`, 'usage-row', 'Fable', {'usage-row-branch': {enabled: true}, 'usage-row-label': {content: 'Fable'}, 'usage-row-value': {content: '42%'}, 'usage-row-fill': {width: 110}})] : []),
       ])),
+      ref(`usage-popover-history-${s}`, `usage-history-popover-rest-${s}`, "Usage history"),
     ]),
   ];
   return frame('cmp-usage-windows', 'Component / Usage windows', {layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card'}, ['Light', 'Dark'].map(mode => frame(`usage-${mode.toLowerCase()}`, mode, {theme: {Mode: mode}, layout: 'vertical', gap: '$--spacing-lg', padding: '$--spacing-lg', fill: '$--background'}, states(mode.toLowerCase()))));

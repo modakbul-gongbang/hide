@@ -1,3 +1,4 @@
+import {buildUsageHistory} from './pen-usage-history.mjs';
 // Draw every `System / <Part>` sheet the gallery names (web/src/gallery/manifest.ts,
 // checked by check-pen-gallery.mjs) from primitives in hide's own idiom, re-dressed
 // with hide tokens and matched 1:1 to what web/src/components/ui/*.tsx renders.
@@ -952,6 +953,7 @@ export function componentSheets(tokens) {
     {name: 'Component / Agent tree parts', build: () => buildAgentTreeParts(tokens), at: {x: 8800, y: 7264}},
     {name: 'Component / Hide AI origin', build: () => buildHideAiOrigin(tokens), at: {x: 11200, y: 7264}},
     {name: 'Component / Usage windows', build: () => buildUsage(tokens), at: {x: 13200, y: 6421}},
+    {name: 'Component / Usage history', build: () => buildUsageHistory(tokens), at: {x: 14600, y: 6421}},
     {name: 'Component / Sidebar chrome', build: () => buildSidebarChrome(tokens), at: {x: 12000, y: 6421}},
   ];
 }

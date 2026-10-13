@@ -15,6 +15,7 @@ import {
 import { openSleepingProject, screenshot } from "./wire";
 import { afterCleanup } from "./worker-owned";
 import { FakeTailscale } from "./fake-tailscale";
+import { dumpOnFailure } from "./failure-dump";
 import type { AgentRow } from "../src/snapshot";
 
 type QuestionRow = AgentRow & { user_turn?: { kind: string; content: { text: string; choices: string[]; truncated: boolean } | null } };
@@ -259,11 +260,18 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
 
     // A question keeps OpenCode's answer unfinished; its answer completes it.
     const question = () => agents.find((agent) => agent.pane_id === sourcePane)?.user_turn;
+    const nativeReadState = () => ({
+      herdr: herdr.run(["agent", "list"]),
+      row: agents.find((agent) => agent.pane_id === sourcePane),
+      files: [database, `${database}-wal`, `${database}-shm`].map(file => ({ file, size: fs.existsSync(file) ? fs.statSync(file).size : null })),
+      diagnostic: fs.readFileSync(path.join(daemon!.stateDir, "Logs", "core.jsonl"), "utf8").trim().split("\n").slice(-40),
+    });
     await reportOpenCodeState(herdr, sourcePane, "working");
     writeOpenCodeQuestion(database, "running");
     await reportOpenCodeState(herdr, sourcePane, "idle");
-    await expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
-      .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } });
+    await dumpOnFailure("OpenCode question native read", nativeReadState, () =>
+      expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
+        .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } }));
     await expect(page.locator(`[data-pane="${sourcePane}"] [data-agent-status-mark="question"]`).first()).toBeVisible();
     await screenshot(page, "opencode-native-question");
     await reportOpenCodeState(herdr, sourcePane, "working");
@@ -273,7 +281,8 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
 
     await row.click();
     await page.locator(`[data-pane-menu="${sourcePane}"]`).click();
-    await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
+    await dumpOnFailure("OpenCode sleep native proof", nativeReadState, () =>
+      expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 }));
     await page.locator('[data-menu-item="sleep_agent"]').click();
     await openSleepingProject(page);
     const sleeping = page.locator("[data-sleeping-session]");

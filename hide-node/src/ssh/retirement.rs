@@ -509,9 +509,16 @@ mod tests {
                     files: Vec::new(),
                     missing: Vec::new(),
                 };
-                super::super::install(&raw, "~/.hide/host-helper", &payload, projects, &locations)
-                    .await
-                    .map(|_| ())
+                super::super::install(
+                    &raw,
+                    "~/.hide/host-helper",
+                    &payload,
+                    projects,
+                    &locations,
+                    |_| {},
+                )
+                .await
+                .map(|_| ())
             } else {
                 raw.init().await.unwrap();
                 preflight(&raw, HOME, OWNER, projects, &locations).await

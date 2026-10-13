@@ -8,6 +8,7 @@ mod retry;
 use crate::node_access::{NodeLink, call_as_with_progress};
 use crate::reader::BackgroundRead;
 use hide_agent_adapter::usage::LimitSource;
+pub mod consumption;
 use hide_ai::CancelToken;
 use hide_node_link::protocol::Call;
 use hide_node_link::usage::{FailureDisposition, LimitFailure, LimitFetch};
@@ -533,10 +534,12 @@ mod tests {
                 .count(),
             2
         );
-        assert!(
-            rows.iter()
-                .all(|r| matches!(r.consumption, Cell::Unsupported))
-        );
+        for row in &rows {
+            assert_eq!(
+                matches!(row.consumption, Cell::Loading),
+                row.agent != "cursor"
+            );
+        }
         assert_eq!(
             hide_agent_adapter::ADAPTERS
                 .iter()

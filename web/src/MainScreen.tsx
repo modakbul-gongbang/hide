@@ -1,3 +1,4 @@
+import { UsageOverview } from "./UsageOverview";
 import { deviceScope } from "./agentScope";
 import { useInterfaceTranslation } from "./i18n/client";
 import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
@@ -38,10 +39,11 @@ import { emptyHome, type EmptyHome } from "./firstRun";
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
 
-const VIEWS: readonly { view: MainView; label: "overview.tasks" | "overview.agents" | "overview.projects" }[] = [
+const VIEWS: readonly { view: MainView; label: "overview.tasks" | "overview.agents" | "overview.projects" | "usage.title" }[] = [
   { view: "agents", label: "overview.agents" },
   { view: "tasks", label: "overview.tasks" },
   { view: "projects", label: "overview.projects" },
+  { view: "usage", label: "usage.title" },
 ];
 
 export function MainScreen({ actions }: { actions: Actions }) {
@@ -79,7 +81,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // Every Git project whose tasks the core reads (its own, or a node's that dials it) is read once the boards are on screen.
   const devices = rest?.navigator?.devices;
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && readsHere(workspace, devices)).map(({ workspace }) => workspace.id).join("\n"), [projects, devices]);
-  const boards = view !== "projects";
+  const boards = view === "tasks" || view === "agents";
   useEffect(() => {
     if (!boards || !localGit) return;
     for (const id of localGit.split("\n")) actions.readProjectTasks(id);
@@ -192,7 +194,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </div>
         ))
       ) : null}
-      {view === "tasks" ? (
+      {view === "usage" ? <UsageOverview actions={actions} /> : view === "tasks" ? (
         <IssuesView
           board={tasks}
           scope="all"

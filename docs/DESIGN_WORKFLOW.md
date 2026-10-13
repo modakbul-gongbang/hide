@@ -238,6 +238,13 @@ A checkout row opens and unfolds, then folds on activation while already selecte
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`, plus the rail component under `web/src/`.
 
+Usage is `Screen / Usage`, composed from `Component / Usage` account windows and `Component / Usage history`.
+The history component carries light/dark popover rest, day, unpriced, backfill and sparse states, and the Overview year surface.
+Its calendar uses the shared secondary zero level, four primary intensity tokens, 10/3 popover cells and 11/3 year cells; the year column's wide size is 800.
+The screen combines the same limit cards with token-only agents and the history component.
+The `usage-history` review target compares the approved year boards and checks actual narrow/large-text states; `scene=usage-history` opens the production component with the invented reference data.
+Its web owners are `web/src/components/usage-history.tsx` and `web/src/UsageOverview.tsx`.
+
 Mobile is `Screen / Mobile`.
 It draws Settings > Mobile as a page of `Screen / Settings`' sheet, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, and the connected phones (2 / 4) with 해지; the push modes are on Settings > Notifications.
 Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).

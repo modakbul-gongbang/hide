@@ -1,0 +1,40 @@
+.usage-history { --usage-cell: var(--size-usage-cell); }
+.usage-history[data-surface="year"] { --usage-cell: var(--size-usage-year-cell); }
+.usage-calendar {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: var(--spacing-xs);
+  overflow-x: auto;
+  padding: var(--spacing-xs);
+}
+.usage-calendar-labels, .usage-calendar-days {
+  display: grid;
+  grid-template-rows: 1.4em repeat(7, var(--usage-cell));
+  gap: var(--size-usage-cell-gap);
+}
+.usage-calendar-days { grid-template-columns: repeat(var(--usage-weeks), var(--usage-cell)); }
+.usage-calendar-labels { align-items: center; }
+.usage-calendar-month { white-space: nowrap; pointer-events: none; }
+.usage-cell {
+  width: var(--usage-cell);
+  height: var(--usage-cell);
+  border-radius: var(--radius-xs);
+  background: var(--secondary);
+  outline-offset: var(--spacing-xxs);
+  outline: none;
+}
+.usage-cell[data-level="1"] { background: color-mix(in srgb, var(--primary) calc(var(--opacity-usage-level-1) * 100%), var(--secondary)); }
+.usage-cell[data-level="2"] { background: color-mix(in srgb, var(--primary) calc(var(--opacity-usage-level-2) * 100%), var(--secondary)); }
+.usage-cell[data-level="3"] { background: color-mix(in srgb, var(--primary) calc(var(--opacity-usage-level-3) * 100%), var(--secondary)); }
+.usage-cell[data-pending="true"] { background: transparent; box-shadow: inset 0 0 0 var(--size-hairline) var(--border); }
+.usage-cell[data-level="4"] { background: color-mix(in srgb, var(--primary) calc(var(--opacity-usage-level-4) * 100%), var(--secondary)); }
+.usage-cell[data-today="true"] { outline: var(--size-hairline) solid var(--muted-foreground); }
+.usage-cell[data-outline="true"], button.usage-cell:hover, button.usage-cell:focus-visible { outline: var(--size-hairline) solid var(--foreground); }
+.usage-detail-slot { display: grid; }
+.usage-detail-slot > * { grid-area: 1 / 1; min-width: 0; }
+.usage-detail-copy { display: flex; flex-direction: column; gap: var(--spacing-xxs); overflow-wrap: anywhere; }
+.usage-detail-reserve { visibility: hidden; pointer-events: none; user-select: none; }
+.usage-overview { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--spacing-lg); padding: var(--spacing-lg); }
+.usage-overview-limits { flex: 1 1 var(--size-usage-popover); min-width: 0; }
+.usage-overview-history { flex: 3 1 var(--size-usage-year); min-width: 0; max-width: 100%; }
+.usage-agent-bar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) auto; align-items: center; gap: var(--spacing-sm); width: 100%; }

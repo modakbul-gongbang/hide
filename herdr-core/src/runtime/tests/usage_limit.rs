@@ -273,3 +273,149 @@ fn the_usage_reader_runs_headless_while_paused_or_lately_active_and_not_when_qui
         "an agent worked lately, so labels are judged by a fresh figure"
     );
 }
+
+/// Limits and historical accounting have independent producers. An old
+/// limits read must not erase the ledger, and a ledger publish must not
+/// change whether background work may run.
+#[test]
+fn limits_and_ledger_publications_preserve_each_others_values() {
+    use crate::usage::consumption::Publication;
+    use crate::usage_ledger::{
+        query,
+        store::{Daily, Totals},
+        worker::Report,
+    };
+    use hide_session::usage::Tokens;
+    let mut runtime = two_agents();
+    let now = unix_milliseconds();
+    let zone = jiff::tz::TimeZone::UTC;
+    let date = crate::usage_ledger::local_day(now, &zone).unwrap();
+    let projection = query::prepare(
+        &[Daily {
+            device: crate::node::TEST_NODE.into(),
+            agent: "claude".into(),
+            day: date,
+            model: "fixture-model".into(),
+            totals: Totals {
+                calls: 1,
+                tokens: Tokens {
+                    input: 20,
+                    output: 10,
+                    cache_write: 30,
+                    cache_read: 900,
+                    ..Default::default()
+                },
+                missing_cost_calls: 1,
+                ..Default::default()
+            },
+        }],
+        &[],
+        None,
+        crate::node::TEST_NODE,
+        now,
+        &zone,
+    )
+    .unwrap()
+    .unwrap();
+    runtime.ingest_usage(vec![weekly("claude", Some(93.0), next_week_ms())]);
+    let before = runtime.snapshot_delta_payload(0);
+    runtime.ingest_ledger(Publication::prepare(
+        Report {
+            projection: Some(std::sync::Arc::new(projection)),
+            progress: Vec::new(),
+            failure: None,
+            price_failure: None,
+        },
+        now,
+    ));
+    let usage = &runtime.snapshot.usage;
+    let published = serde_json::to_value(usage).unwrap();
+    let history = runtime.snapshot_delta_payload(before.revision);
+    assert!(
+        history.rest.is_none(),
+        "ledger publication must not resend navigation"
+    );
+    let bytes = serialize_snapshot_delta(&history).unwrap();
+    let delta: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(delta["usage"], published);
+    assert_eq!(
+        serialize_snapshot_delta(&runtime.snapshot_delta_payload(before.revision)).unwrap(),
+        bytes
+    );
+    let fresh: serde_json::Value = serde_json::from_slice(
+        &serialize_snapshot_delta(&runtime.snapshot_delta_payload(u64::MAX)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fresh["usage"], published);
+    assert!(fresh["rest"]["navigator"].get("usage").is_none());
+    runtime.snapshot.ui_state.sidebar_width += 1;
+    let menu = runtime.snapshot_delta_payload(history.revision);
+    let menu_bytes = serialize_snapshot_delta(&menu).unwrap();
+    let menu_wire: serde_json::Value = serde_json::from_slice(&menu_bytes).unwrap();
+    assert!(menu_wire["rest"]["navigator"].get("usage").is_none());
+    assert!(
+        menu_wire.get("usage").is_none(),
+        "unrelated UI echo must omit usage regardless of calendar density"
+    );
+    let unchanged = runtime.snapshot_delta_payload(menu.revision);
+    assert!(unchanged.rest.is_none() && unchanged.usage.is_none());
+    assert_eq!(
+        published["nodes"][0]["history"]["popover"]["range"]["amount"]["new_tokens"],
+        60
+    );
+    assert_eq!(
+        published["nodes"][0]["agents"][0]["consumption"]["value"]["popover"]["amount"]["tokens"]["cache_read"],
+        900
+    );
+    assert!(row(&runtime, "claude").past_limit);
+    runtime.ingest_usage(vec![weekly("claude", Some(20.0), next_week_ms())]);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&serialize_snapshot_delta(&history).unwrap())
+            .unwrap(),
+        delta,
+        "a retained payload must not change when limits move"
+    );
+    let updated = serde_json::to_value(&runtime.snapshot.usage).unwrap();
+    assert_eq!(
+        published["nodes"][0]["history"],
+        updated["nodes"][0]["history"]
+    );
+    assert_eq!(
+        published["nodes"][0]["agents"][0]["consumption"],
+        updated["nodes"][0]["agents"][0]["consumption"]
+    );
+    assert!(!row(&runtime, "claude").past_limit);
+    let current = runtime.snapshot_delta_payload(menu.revision);
+    let same_limits = runtime.snapshot.usage.nodes[0].agents.clone();
+    assert!(!runtime.ingest_usage(same_limits));
+    let own = &runtime.snapshot.usage.nodes[0];
+    assert!(
+        !runtime.ingest_ledger(Publication {
+            history: own.history.clone(),
+            agents: own
+                .agents
+                .iter()
+                .map(|row| (row.agent.clone(), row.consumption.clone()))
+                .collect(),
+        })
+    );
+    assert!(
+        runtime
+            .snapshot_delta_payload(current.revision)
+            .usage
+            .is_none()
+    );
+    assert!(runtime.ingest_ledger(Publication {
+        history: None,
+        agents: vec![(
+            "claude".into(),
+            crate::usage::model::Cell::Unavailable {
+                cause: crate::usage::model::Cause::SignedOut,
+                last_checked_at_ms: None,
+            },
+        )],
+    }));
+    let cleared = runtime.snapshot_delta_payload(current.revision);
+    assert!(cleared.usage.as_ref().unwrap().nodes[0].history.is_none());
+    assert!(cleared.rest.is_none());
+}

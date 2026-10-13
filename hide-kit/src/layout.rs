@@ -106,6 +106,13 @@ pub fn links_store(state_dir: &Path) -> PathBuf {
     state_dir.join("links.sqlite3")
 }
 
+/// Usage events and retained daily totals, owned by the core's usage worker.
+pub const USAGE_STORE: &str = "usage.sqlite3";
+
+pub fn usage_store(state_dir: &Path) -> PathBuf {
+    state_dir.join(USAGE_STORE)
+}
+
 /// The Software Factory store: Factories, Tasks, questions, records and
 /// events; its owner is the core's Factory engine thread.
 pub fn factory_store(state_dir: &Path) -> PathBuf {
