@@ -30,8 +30,7 @@ export function UsageTab({ actions }: { actions: Actions }) {
           const full = !checked && (preferences?.pinned.length ?? 0) >= 3;
           const label = windowLabel(kind, t);
           const noteId = `usage-pin-limit-${id}-${kind}`;
-          return <Row key={kind} label={label} detail={full ? <Note data-usage-pin-limit="true"><span id={noteId}>{t("usage.pinLimit")}</span></Note> : undefined}>
-            <span className="font-mono text-body text-muted-foreground">{limitValue(cell, kind, now, t)}</span>
+          return <Row key={kind} data-usage-pin-row={kind} label={<span data-usage-pin-label="true">{label}</span>} value={<span className="font-mono text-body text-muted-foreground">{limitValue(cell, kind, now, t)}</span>} detail={full ? <Note data-usage-pin-limit="true"><span id={noteId}>{t("usage.pinLimit")}</span></Note> : undefined}>
             <Switch checked={checked} disabled={!preferences || full} aria-describedby={full ? noteId : undefined} aria-label={`${adapter.label} ${label}`} onCheckedChange={(enabled) => actions.setUsagePin({ agent: id, window: kind, enabled })} />
           </Row>;
         }) : null}

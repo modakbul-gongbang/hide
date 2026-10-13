@@ -43,6 +43,13 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
       await page.locator(`[data-theme-option="${language === "en" ? "light" : "dark"}"]`).click();
       await page.locator('[data-settings-tab="usage"]').click();
       await expect(page.locator('[data-usage-settings]')).toBeVisible();
+      const alignment = await page.locator('[data-usage-pin-row]').evaluateAll(rows => rows.map(row => {
+        const control = row.querySelector('[role="switch"]')!.getBoundingClientRect();
+        const label = row.querySelector('[data-usage-pin-label]')!.getBoundingClientRect();
+        return { right: control.right, centered: Math.abs((control.top + control.bottom - label.top - label.bottom) / 2) < 4 };
+      }));
+      expect(alignment).toHaveLength(4);
+      expect(alignment.every(row => row.centered && Math.abs(row.right - alignment[0]!.right) < 1)).toBe(true);
       await capture(`usage-settings-${language}-electron`);
       const settings = page.locator('[data-usage-settings]');
       await settings.getByText("Grok", { exact: true }).scrollIntoViewIfNeeded();

@@ -1690,6 +1690,7 @@ A window the account reports as not offered has no row or switch.
 When a fresh reading explicitly marks a window not offered or unreadable, the core removes its saved pin so an invisible row cannot hold a chip slot; loading, failed and retained readings preserve choices.
 The initial choices are the weekly window for Claude and Codex; the core stores the choices for every connected window and retains them across restart.
 At three pins, an unselected switch is disabled with “The sidebar shows at most three chips. Switch one off to pick this one.” beneath that row; removing a pin enables it again.
+Every window switch stays in one right-aligned column beside the first line of its label; a long value wraps below the label, including unavailable and refused-fourth-pin rows.
 Hide folds the card to its header, Hidden and Show, preserves the pins, and removes the agent from chips and the popover.
 The five agents without supported limits appear in No limit reading with a reason from the adapter declaration, without Hide or switches.
 Grok's weekly reader is not built, OpenCode Go would need an API key Hide does not hold, Pi and omp count toward their signed-in account, and Cursor would require its stored sign-in.
