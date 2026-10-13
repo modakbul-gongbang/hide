@@ -10,11 +10,23 @@ fn weekly(provider: &str, used: Option<f64>, resets_at_ms: u64) -> crate::usage:
         agent: provider.into(),
         limits: match used {
             Some(used_percent) => Cell::Reading {
-                value: LimitReading { windows: vec![WindowReading { kind: WindowKind::Weekly, scope: Scope::All,
-                    outcome: WindowOutcome::Open { used_percent, resets_at_s: resets_at_ms / 1000 } }] },
-                freshness: Freshness::Fresh, observed_at_ms: 0,
+                value: LimitReading {
+                    windows: vec![WindowReading {
+                        kind: WindowKind::Weekly,
+                        scope: Scope::All,
+                        outcome: WindowOutcome::Open {
+                            used_percent,
+                            resets_at_s: resets_at_ms / 1000,
+                        },
+                    }],
+                },
+                freshness: Freshness::Fresh,
+                observed_at_ms: 0,
             },
-            None => Cell::Unavailable { cause: Cause::SignedOut, last_checked_at_ms: None },
+            None => Cell::Unavailable {
+                cause: Cause::SignedOut,
+                last_checked_at_ms: None,
+            },
         },
         consumption: Cell::Unsupported,
     }

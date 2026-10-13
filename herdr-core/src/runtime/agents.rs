@@ -843,14 +843,20 @@ impl Runtime {
                 self.ai_settings
                     .as_ref()
                     .filter(|settings| settings.enabled && settings.chosen)
-                    .map(|settings| settings.router_config().priority.iter().map(|provider| provider.as_str().to_owned()).collect())
+                    .map(|settings| {
+                        settings
+                            .router_config()
+                            .priority
+                            .iter()
+                            .map(|provider| provider.as_str().to_owned())
+                            .collect()
+                    })
                     .unwrap_or_default()
             } else {
                 Vec::new()
             },
         }
     }
-
 
     /// Recomputes the pet's pose, badge row, and attention queue from the
     /// current agent list and connection state. Idempotent: the same inputs

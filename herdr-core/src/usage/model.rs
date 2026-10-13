@@ -126,18 +126,28 @@ impl UsageSnapshot {
             .find(|row| row.agent == agent)
     }
     pub fn weekly(&self, agent: &str, now_s: u64) -> WeeklyUsage {
-        if matches!(self.own_agent(agent).map(|row| &row.limits), Some(Cell::Loading)) {
+        if matches!(
+            self.own_agent(agent).map(|row| &row.limits),
+            Some(Cell::Loading)
+        ) {
             return WeeklyUsage::Unread;
         }
         self.weekly_reading(agent, now_s)
             .map_or(WeeklyUsage::Unknown, |(used, _)| WeeklyUsage::Used(used))
     }
     pub fn weekly_reading(&self, agent: &str, now_s: u64) -> Option<(f64, u64)> {
-        let Cell::Reading { value, .. } = &self.own_agent(agent)?.limits else { return None; };
+        let Cell::Reading { value, .. } = &self.own_agent(agent)?.limits else {
+            return None;
+        };
         value.windows.iter().find_map(|window| {
-            if window.kind != WindowKind::Weekly || window.scope != Scope::All { return None; }
+            if window.kind != WindowKind::Weekly || window.scope != Scope::All {
+                return None;
+            }
             match window.outcome {
-                WindowOutcome::Open { used_percent, resets_at_s } if resets_at_s > now_s => Some((used_percent, resets_at_s)),
+                WindowOutcome::Open {
+                    used_percent,
+                    resets_at_s,
+                } if resets_at_s > now_s => Some((used_percent, resets_at_s)),
                 _ => None,
             }
         })
