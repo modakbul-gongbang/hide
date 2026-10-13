@@ -144,7 +144,10 @@ impl NodeLink for Local {
     /// runs on a thread of its own, and a caller that stops waiting reads
     /// the effect as unknown.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
-        if let Some(reason) = self.closed_reason() {
+        // Owners drop after the link closes too. Preserve their bounded
+        // cleanup requests without admitting any new machine work.
+        let cleanup = matches!(call, Call::AiRelease { .. } | Call::LabelUnlock { .. });
+        if let Some(reason) = self.closed_reason().filter(|_| !cleanup) {
             return Err(LinkError::NotConnected(reason));
         }
         hide_node_link::link::check_reader_call(self, &call)?;
@@ -163,7 +166,7 @@ impl NodeLink for Local {
         let env = self.env.clone();
         let (answered, answer) = mpsc::sync_channel(1);
         let answered = Arc::new(answered);
-        {
+        if !cleanup {
             let mut pending = self
                 .pending
                 .lock()
@@ -181,7 +184,7 @@ impl NodeLink for Local {
                 // Drop the sender before returning the capacity slot, also
                 // on unwind, so no new call can retain a completed sender.
                 let answered = answered;
-                let result = if env.stop.load(Ordering::Acquire) {
+                let result = if !cleanup && env.stop.load(Ordering::Acquire) {
                     Err(LinkError::Unknown(
                         "This machine's node closed before its work started".to_owned(),
                     ))
@@ -431,6 +434,12 @@ mod tests {
             node.call(Call::Hello, Duration::from_secs(1)),
             Err(LinkError::NotConnected(_))
         ));
+        // Router teardown follows link close; releasing an already absent
+        // backend is harmless and must still reach the owning host.
+        assert!(
+            node.call(Call::AiRelease { instance: 42 }, Duration::from_secs(5))
+                .is_ok()
+        );
         assert!(
             Local::new(None)
                 .call(Call::Hello, Duration::from_secs(5))
