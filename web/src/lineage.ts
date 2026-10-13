@@ -1,6 +1,6 @@
 // A pane's relatives in the delegation tree (PRD S6 D-07, B14-B16), read from
-// what the core already projects on each pane: `children.chips` for its
-// direct children and `lineage_path` for its ancestors. Moving to one is a
+// what the core already projects on each pane: `lineage_path` for its
+// ancestors and their children. Moving to one is a
 // focus_pane that carries a request id; the core owns the outcome, so a
 // click's pending, failed and retry states are its answer, never a guess.
 
@@ -41,10 +41,6 @@ function parentStep(pane: PaneRow): LineageStep | null {
   return path.length >= 2 ? (path[path.length - 2] ?? null) : null;
 }
 
-export function directChildren(pane: PaneRow): AgentChip[] {
-  return pane.children?.chips ?? [];
-}
-
 /** A chip's full name for its tooltip and accessible name: who, what state, and what it said. */
 export function chipTitle(t: TFunction<"translation">, chip: AgentChip): string {
   return [chip.label, statusText(t, chip.status_code), chip.detail].filter(Boolean).join(" · ");
@@ -60,12 +56,12 @@ export function chipTone(chip: Pick<AgentChip, "tone">): string {
   return toneClass(chip.tone);
 }
 
-export type RelationEntry = { paneId: string; label: string; relation: "parent" | "sibling" | "child"; chip: AgentChip | null };
+export type RelationEntry = { paneId: string; label: string; relation: "parent" | "sibling"; chip: AgentChip | null };
 
 /**
- * The relationship menu's rows (B16): the parent, the other children of that
- * parent, then this pane's own children. Each is opened only by its row's
- * explicit Open.
+ * The relationship menu's rows (B16): the parent, then the other children of
+ * that parent. Each is opened only by its row's explicit Open; this pane's own
+ * children are reached from its tree button, not the menu.
  */
 export function relationEntries(pane: PaneRow): RelationEntry[] {
   const entries: RelationEntry[] = [];
@@ -75,6 +71,5 @@ export function relationEntries(pane: PaneRow): RelationEntry[] {
   for (const sibling of self?.siblings ?? []) {
     if (sibling.pane_id !== pane.id) entries.push({ paneId: sibling.pane_id, label: sibling.label, relation: "sibling", chip: sibling });
   }
-  for (const child of directChildren(pane)) entries.push({ paneId: child.pane_id, label: child.label, relation: "child", chip: child });
   return entries;
 }

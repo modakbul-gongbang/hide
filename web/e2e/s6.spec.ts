@@ -394,15 +394,18 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(page.locator("[data-relation-status]")).toHaveCount(0, { timeout: 15_000 });
 
-    // The pane menu lists the relative and opens it only when chosen (B16, B18).
+    // The pane menu leaves the pane's own children to its tree button, and
+    // opening it moves no focus (B16, B18).
     const menuButton = page.locator(`[data-pane-menu="${parent}"]`);
     const focusCount = sent.get("focus_pane") ?? 0;
     await menuButton.click();
-    const openChild = page.locator(`[data-menu-item="open:${child}"]`);
-    await expect(openChild).toBeVisible();
+    const copyName = page.locator('[data-menu-item="copy_name"]');
+    await expect(copyName).toBeVisible();
+    await expect(page.locator(`[data-menu-item="open:${child}"]`)).toHaveCount(0);
+    await screenshot(page, "s6-pane-menu");
     await page.mouse.move(0, 0);
     await page.keyboard.press("Escape");
-    await expect(openChild).toHaveCount(0);
+    await expect(copyName).toHaveCount(0);
     expect(sent.get("focus_pane") ?? 0).toBe(focusCount);
     // The focus the closed menu hands back to its button does not bring the
     // button's hint up after it; the hint waits for the pointer to come back.

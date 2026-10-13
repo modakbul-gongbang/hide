@@ -46,7 +46,7 @@ describe("a relationship focus", () => {
 });
 
 describe("the relationship menu", () => {
-  it("lists the parent, the other siblings, then the pane's own children", () => {
+  it("lists the parent and the other siblings, never the pane's own children", () => {
     const pane = {
       id: "me",
       children: { instrumented: true, uninstrumented_reason: null, uninstrumented_label: null, chips: [chip("kid")] },
@@ -58,7 +58,6 @@ describe("the relationship menu", () => {
     expect(relationEntries(pane).map((entry) => [entry.relation, entry.paneId])).toEqual([
       ["parent", "root"],
       ["sibling", "sister"],
-      ["child", "kid"],
     ]);
   });
 });
