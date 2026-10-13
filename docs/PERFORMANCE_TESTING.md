@@ -528,8 +528,8 @@ Manual acceptance in the desktop app additionally covers row click versus header
 
 ## Project Memory cost contract
 
-Opening Sessions starts one bounded background catalog read for the focused local Project; filtering and searching operate on the retained snapshot and start no subprocess.
-One Memory pass at a time runs on a worker, every 60 s or at once when a live session's pane closes, and walks every Memory-enabled local Project; a session is analyzed only after its file has been unchanged for 30 minutes or its pane closed (PRD project-memory-v2 D-07).
+Opening Sessions starts one bounded background catalog read for the focused Project through its own node; filtering and searching operate on the retained snapshot and start no subprocess.
+One Memory pass at a time runs on a worker, every 60 s or at once when a live session's pane closes, and walks every Memory-enabled Project on the core and each linked device; a session is analyzed only after its file has been unchanged for 30 minutes or its pane closed (PRD project-memory-v2 D-07).
 A pass reads each session's size and time once (one local stat through the node), at most one bounded receipt read and, when analysis is due, one bounded conversation read per session; an unchanged session reads no transcript byte, writes no SQLite row and makes no provider call, and a pass that changed nothing publishes nothing.
 Idle, a pass over an enabled Project with N sessions costs N stats, N cursor reads and no write; driven, it adds one bounded read per session written since its cursor and, past the quiet rule, one provider call per 64 KiB group.
 Memory call admission uses one immediate SQLite transaction on the existing worker, reading the day's two counters and, for analysis only, due re-verification and promotion checks up to the 500-call reservation bound.
@@ -547,6 +547,10 @@ A conflict adds one bounded node Git date read and one bounded source conversati
 Comparison excerpts reach snapshots only for the expanded card; rows carry the path, dates and authority metadata.
 A batch reservation covers at most five cards and starts one agent; the existing tracker handles their conditional transitions, with the same coalesced Memory refresh and cleanup rules.
 `analysis.session_cards` records session counts and extraction/document input characters; compare fixture and operator measurements separately rather than treating scripted-provider counts as live usage.
+Connection direction adds no worker, timer or store: Memory admission reads the live connection's bounded reader facts under the lock (at most the supported agent set), without a node call.
+Each pass visits the registered devices once; a missing link or Memory reader leaves its closed sessions queued, and an unsupported reader records a diagnostic only when its reason changes.
+The last refusal is retained at most once per registered device; recovery or removal drops its entry on the next pass, with no additional node call or UI notification.
+All transcript and Project reads still run on the existing worker through the device's own node, and the existing per-core call and queue caps cover both directions.
 The Memory snapshot section adds no work until a Project's Memory is opened or a live session was given a card: opening, expanding a card or searching is one read on a worker, coalesced like the Sessions read, and a card's text, files and sources are read only for the one card shown in full.
 What each live pane's session was given is read again, one indexed query per live session, after a receipt batch, a pane change or a Memory change, one read in flight and one waiting.
 Crossing a cap is logged, never an enlarged queue; the operator sees only a state they can act on.

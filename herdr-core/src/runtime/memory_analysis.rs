@@ -2,9 +2,8 @@
 //! D-08, D-10, D-16).
 //!
 //! One pass at a time walks every Memory-enabled Project of this machine
-//! and of each node that dials in, whatever the screen shows, each read
-//! through its own node's link (PRD core-host-node-move B14); a device the
-//! core dials keeps no Memory. For each of its sessions it records the
+//! and of each linked device, whatever the screen shows, each read
+//! through its own node's link. For each of its sessions it records the
 //! receipts a live pane's label read cannot see (a session started outside
 //! Herdr, or whose pane is gone), from a JSONL file or OpenCode's database,
 //! and analyzes a session once its file has
@@ -82,6 +81,10 @@ type FailedReads = HashMap<(&'static str, MemorySession), (u64, Option<u64>)>;
 pub(super) struct MemoryWork {
     pass_in_flight: bool,
     pub(super) next_pass_unix_ms: u64,
+    /// Last refusal for each registered node; refreshed by each pass so a
+    /// recovered or removed device keeps no entry and repeated refusals
+    /// add no diagnostic. At most one entry per registered device.
+    pub(super) node_refusals: HashMap<String, &'static str>,
     /// Cancels the running pass; its AI settings, to tell whether a settings
     /// change moved the provider it asks.
     pass_cancel: Option<CancelToken>,
@@ -223,12 +226,11 @@ impl Runtime {
     /// Takes what the label reads of `device`'s panes found for Memory:
     /// receipts to record off the lock, and the sessions its live panes hold
     /// now. A session that left the set had its pane closed or replaced, and
-    /// the next pass, started at once, analyzes it (B2). A machine with no
-    /// Memory, a device the core dials, hands nothing over; a node that dials
-    /// in keeps its sessions while its link is down, for the pass after it
-    /// is back.
+    /// the next pass, started at once, analyzes it (B2). Every
+    /// registered device keeps its sessions while its link or reader is
+    /// unavailable, for the pass after it is back.
     pub(crate) fn take_memory_handoff(&mut self, device: &str, handoff: MemoryHandoff) {
-        if let Err(reason @ ("dialed_device" | "unregistered")) = self.linked_node(device) {
+        if let Err(reason @ "unregistered") = self.linked_node(device) {
             // Its sessions are the designed absence; receipts there are not.
             if !handoff.receipts.is_empty() {
                 crate::diagnostic!(json!({
@@ -283,7 +285,7 @@ impl Runtime {
         }
         by_device
             .into_iter()
-            .filter_map(|(device, receipts)| match self.linked_node(&device) {
+            .filter_map(|(device, receipts)| match self.memory_node(&device) {
                 Ok((node, link)) => Some((node, link, receipts)),
                 Err(reason) => {
                     crate::diagnostic!(json!({
@@ -830,9 +832,9 @@ pub(crate) fn report_memory_change(
 /// What one pass needs, taken under the lock when it starts.
 struct PassInput {
     /// The machines whose Projects have Memory, each with the link that
-    /// reads its files: this machine's and each node that dials in now.
+    /// reads its files: this machine's and each linked device's.
     nodes: Vec<super::hosts::LinkedNode>,
-    /// Nodes that dial in but whose link is down: their Projects wait.
+    /// Registered nodes currently unavailable for Memory: their Projects wait.
     unreached: Vec<NodeId>,
     database: PathBuf,
     /// `None` while Hide AI is off: the pass only records receipts.
@@ -2444,7 +2446,7 @@ mod tests {
                 &root.to_string_lossy(),
             )
             .unwrap();
-            let database = temp.path().join("memory.sqlite3");
+            let database = hide_memory::database_path(temp.path());
             let mut store = MemoryStore::open(&database).unwrap();
             store
                 .ensure_project(&identity.id, &identity.root, crate::node::TEST_NODE)
@@ -2865,47 +2867,129 @@ mod tests {
         assert_eq!(fixture.calls(), 1);
     }
 
-    /// PRD core-host-node-move B14: the Projects of a node that dials in
-    /// are walked through its link like this machine's, and while its link
-    /// is down a closed session of its stays queued for the next pass.
+    /// Runtime admission and the pass share one store for both directions;
+    /// closed sessions wait for the device's own reader to reconnect.
     #[test]
     fn a_linked_node_s_closed_session_is_analyzed_through_its_link_and_waits_while_it_is_down() {
-        let fixture = Fixture::new();
-        let core = NodeId::parse("core-node").unwrap();
-        let elsewhere = tempfile::tempdir().unwrap();
-        let core_link: Arc<dyn NodeLink> =
-            Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
-        let key = ("claude", SESSION.to_owned());
+        for origin in [
+            crate::model::LinkOrigin::Inbound,
+            crate::model::LinkOrigin::Dialed {
+                ssh_alias: "fixture-host".to_owned(),
+            },
+        ] {
+            let fixture = Fixture::new();
+            let elsewhere = tempfile::tempdir().unwrap();
+            let mut runtime = super::super::tests::runtime();
+            runtime.node = NodeId::parse("core-node").unwrap();
+            runtime.own_node = Arc::new(hide_node::Local::new(Some(elsewhere.path().to_owned())));
+            runtime.state_path = fixture._temp.path().join("state.json");
+            runtime
+                .snapshot
+                .ui_state
+                .device_registrations
+                .push(crate::model::DeviceRegistration {
+                    id: crate::node::TEST_NODE.to_owned(),
+                    label: "device".to_owned(),
+                    origin,
+                    herdr_socket_path: None,
+                    host_consent: None,
+                });
+            let context = crate::workspace_control::Context {
+                device_id: crate::node::TEST_NODE.to_owned(),
+                workspace_id: "w".to_owned(),
+                checkout_id: "c".to_owned(),
+                checkout_path: fixture.root.to_string_lossy().into_owned(),
+            };
+            let key = ("claude", SESSION.to_owned());
+            assert_eq!(runtime.memory_scope(&context).err(), Some("link_down"));
+            let (nodes, unreached) = runtime.memory_nodes();
+            let (reports, outcome) = fixture.pass_over(key.clone(), false, true, nodes, unreached);
+            assert!(reports.is_empty());
+            assert_eq!(fixture.calls(), 0);
+            assert!(outcome.settled.is_empty(), "the session waits for its node");
 
-        let (reports, outcome) = fixture.pass_over(
-            key.clone(),
-            false,
-            true,
-            vec![(core.clone(), Arc::clone(&core_link))],
-            vec![crate::node::test_node()],
-        );
-        assert!(reports.is_empty());
-        assert_eq!(fixture.calls(), 0);
-        assert!(outcome.settled.is_empty(), "the session waits for its node");
+            runtime.device_hosts.insert(
+                crate::node::TEST_NODE.to_owned(),
+                super::super::hosts::DeviceHost {
+                    generation: 1,
+                    phase: super::super::hosts::HostPhase::Ready {
+                        host: Arc::clone(&fixture.node),
+                        platform: "linux".to_owned(),
+                        helper_path: None,
+                    },
+                },
+            );
+            let scope = runtime
+                .memory_scope(&context)
+                .expect("a ready device's Memory");
+            assert_eq!(
+                scope.store, fixture.database,
+                "the scope uses the core's single store"
+            );
+            let mut store = fixture.store();
+            let card = store
+                .item_by_number(&fixture.project_id, 1)
+                .unwrap()
+                .unwrap();
+            store
+                .confirm_card(&card.id, card.revision, None, &[], 1)
+                .unwrap();
+            drop(store);
+            let ask = crate::memory_hook::Ask::from_wire(
+                &json!({"runtime":"claude", "event":"SessionStart", "session":"greeting-session"}),
+            )
+            .unwrap();
+            let received = crate::memory_hook::answer(
+                &scope,
+                &ask,
+                std::time::Instant::now() + crate::memory_hook::WITHIN,
+            );
+            assert!(
+                received
+                    .context
+                    .unwrap()
+                    .contains("Keep the hook under 100 ms")
+            );
+            let own = crate::memory_hook::project_identity(
+                runtime.own_node.as_ref(),
+                &runtime.node,
+                &context.checkout_path,
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap();
+            assert_ne!(
+                own.id, fixture.project_id,
+                "equal roots on different devices stay separate"
+            );
+            assert!(matches!(
+                fixture.store().project_state(&own.id),
+                Err(hide_memory::MemoryError::ProjectMissing)
+            ));
+            assert!(
+                !fixture.home.join("project-memory.sqlite3").exists(),
+                "the device receives no store copy"
+            );
 
-        fixture.answer(&[]);
-        let (reports, _) = fixture.pass_over(
-            key,
-            false,
-            true,
-            vec![
-                (core, core_link),
-                (crate::node::test_node(), Arc::clone(&fixture.node)),
-            ],
-            Vec::new(),
-        );
-        assert_eq!(reports, ["analyzing", "learned one"]);
-        let learned = fixture
-            .store()
-            .item_by_number(&fixture.project_id, 2)
-            .unwrap()
-            .expect("the node's session taught a card");
-        assert_eq!(learned.title, "Tests run with nextest");
+            fixture.answer(&[]);
+            let (nodes, unreached) = runtime.memory_nodes();
+            let (reports, _) = fixture.pass_over(key, false, true, nodes, unreached);
+            assert_eq!(reports, ["analyzing", "learned one"]);
+            let store = fixture.store();
+            let learned = store
+                .item_by_number(&fixture.project_id, 2)
+                .unwrap()
+                .expect("the device's session taught a card");
+            assert_eq!(learned.title, "Tests run with nextest");
+            assert_eq!(
+                store
+                    .item_by_number(&fixture.project_id, 1)
+                    .unwrap()
+                    .unwrap()
+                    .provided_session_count,
+                1,
+                "the signed device receipt reached the same store"
+            );
+        }
     }
 
     #[test]

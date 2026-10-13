@@ -18,20 +18,24 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v8";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v9";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
 const DEADLINE: Duration = Duration::from_secs(60);
 
 const INPUT: &str = concat!(
-    "확인된 최신 코딩 에이전트 세션 이벤트를 분석하세요. ",
+    "확인된 최신 에이전트 세션 이벤트를 분석하세요. ",
     "<previous-goal>이 있으면 그것이 이 세션의 지금 목표이고, <new-operator-requests>는 직전 호출 이후 운영자가 새로 한 요청입니다. ",
-    "<initial-operator-requests>가 있으면 목표가 아직 없는 세션이므로 운영자의 첫 요청 3개와 최근 요청 8개, 생략 표시로 목표를 정하세요. ",
+    "<initial-operator-requests>가 있으면 운영자의 첫 요청 3개와 최근 요청 8개, 생략 표시로 실제 맡긴 일이 있는지 판단하세요. ",
 );
 
 const GOAL: &str = concat!(
     "goal은 이 세션이 끝나면 무엇이 되어 있어야 하는지를 말하는 8~30자 한국어 결과물 명사구입니다. ",
+    "이전 goal이 없고 운영자가 아직 일을 맡기지 않았으면 goal은 null이고 goal_changed는 false입니다. ",
+    "인사, 이름이나 정체성 질문, 무엇을 할 수 있는지 묻는 말만으로 목표를 지어내지 마세요. '작업 없음' 같은 대체 문구도 쓰지 마세요. ",
+    "실제 구현, 조사, 문서 작성, 검증 등 할 일을 요청했다면 첫 goal을 문자열로 정하세요. ",
+    "이전 goal이 있으면 null을 반환할 수 없고, 옆길 대화에서도 그 goal을 유지하세요. ",
     "PR 번호, 커밋, 브랜치 이름, 명령어, 파일 경로를 넣지 말고, 수정·머지·검증·확인·배포 같은 단계 말로 끝내지 마세요. ",
     "제품·도구 이름은 살리고, 여러 일을 맡겼으면 묶음 이름 하나로 부르고, 다른 에이전트의 일을 지켜보는 세션이면 그 일의 결과물을 쓰세요. ",
     "goal_changed는 운영자가 이전 goal을 품는 더 큰 일이나 무관한 새 일을 시켰을 때만 true입니다. ",
@@ -54,6 +58,7 @@ static START_PROMPT: LazyLock<String> = LazyLock::new(|| {
         "{\"goal\":\"...\",\"goal_changed\":false,\"line\":\"...\"}. ",
         GOAL,
         "line은 40자 이내의 한 줄이고 goal을 되풀이하지 않습니다: 에이전트가 이번 턴에 하는 일을 쓰고, 앞선 턴이 어떻게 끝났는지는 판정하지 마세요. ",
+        "goal이 null이어도 line은 이번 대화에서 하는 일만 쓰고, 단순 인사처럼 알릴 내용이 없으면 빈 문자열로 두세요. 없는 작업이나 다음 작업 지시를 만들어 쓰지 마세요. ",
         DATA,
     ]
     .concat()
@@ -84,6 +89,7 @@ static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
         "에이전트가 시작했거나 맡긴 일이 아직 돌고 있으면, 턴이 \"진행 중\"이라고 말했거나 진행 보고나 답만 했어도 waiting입니다. ",
         "4. unfinished: 요청한 일을 다 하지 못하고 기다리는 것 없이 멈췄으며 원인을 밝히지 않았습니다(포기, 돌고 있는 일 없는 중간 보고, 애매한 멈춤). ",
         "5. done: 요청한 일을 끝냈다고 보고했고, 결과를 기다리는 일이 남아 있지 않습니다. 끝냈다고 보고한 것이 아니면 done이 아니라 unfinished입니다. ",
+        "goal이 null인 대화도 line과 end는 실제 턴으로 판단하세요. 단순 인사나 이름 질문에 답했고 요구한 다음 행동이 없으면 line은 빈 문자열, end는 done입니다. 맡긴 일이 없다는 이유로 unfinished나 '작업 지시 대기'를 만들지 마세요. ",
         "승인 프롬프트처럼 Herdr가 이미 아는 상태는 분류하지 마세요. ",
         DATA,
     ]
@@ -97,7 +103,7 @@ static START_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
         "additionalProperties": false,
         "required": ["goal", "goal_changed", "line"],
         "properties": {
-            "goal": {"type": "string", "minLength": 8, "maxLength": 30},
+            "goal": {"type": ["string", "null"], "minLength": 8, "maxLength": 30},
             "goal_changed": {"type": "boolean"},
             "line": {"type": "string"}
         }
@@ -114,7 +120,7 @@ static END_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
         "additionalProperties": false,
         "required": ["goal", "goal_changed", "line", "end"],
         "properties": {
-            "goal": {"type": "string", "minLength": 8, "maxLength": 30},
+            "goal": {"type": ["string", "null"], "minLength": 8, "maxLength": 30},
             "goal_changed": {"type": "boolean"},
             "line": {"type": "string"},
             "end": {"type": "string", "enum": ["question", "blocked", "waiting", "unfinished", "done"]}
@@ -151,7 +157,8 @@ pub(crate) fn request(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StartAnswer {
-    goal: String,
+    #[serde(deserialize_with = "Option::<String>::deserialize")]
+    goal: Option<String>,
     goal_changed: bool,
     line: String,
 }
@@ -159,7 +166,8 @@ struct StartAnswer {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EndAnswer {
-    goal: String,
+    #[serde(deserialize_with = "Option::<String>::deserialize")]
+    goal: Option<String>,
     goal_changed: bool,
     /// For a question, the one action the operator is asked to take, and for
     /// a block its cause, written before the verdict. Either without one is
@@ -219,7 +227,12 @@ pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
             )
         }
     };
-    let goal = normalize_goal(&goal).ok_or_else(|| anyhow!("provider_invalid_goal"))?;
+    let goal = goal
+        .map(|goal| normalize_goal(&goal).ok_or_else(|| anyhow!("provider_invalid_goal")))
+        .transpose()?;
+    if goal.is_none() && goal_changed {
+        return Err(anyhow!("provider_invalid_goal_change"));
+    }
     // Every surface draws it in one line, so the prompt's 40-character rule
     // is enforced here whatever the model did with it.
     let line = normalize_text_field(&line, true)

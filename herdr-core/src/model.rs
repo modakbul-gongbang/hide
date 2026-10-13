@@ -2570,13 +2570,10 @@ pub struct ProjectMemorySnapshot {
     pub search: Option<MemorySearchSnapshot>,
 }
 
-/// Why a Project's Memory is not kept here.
+/// Why a Project's Memory cannot be read.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum MemoryUnavailableSnapshot {
-    /// The Project's sessions run on a connected device; Memory is kept
-    /// only for this Mac's (B16).
-    RemoteDevice { device_name: String },
     /// The Project left the catalog.
     Unregistered,
     /// The store could not be read; the reason is in the diagnostic log.

@@ -273,7 +273,7 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
 }
 
 #[test]
-fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
+fn an_unregistered_device_is_refused_and_reads_no_local_session() {
     let fixture = fixture();
     let shared = shared(&fixture);
     shared.lock().unwrap().snapshot.navigator.devices = vec![
@@ -299,13 +299,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
     let sessions = runtime.snapshot.project_sessions.clone().unwrap();
     assert_eq!(
         sessions.unavailable_reason.as_deref(),
-        Some(
-            format!(
-                "Sessions on build-box are not available here. Hide reads Codex and Claude Code sessions only on {}.",
-                crate::node::TEST_NODE
-            )
-            .as_str()
-        )
+        Some("This device is no longer registered.")
     );
     assert!(sessions.rows.is_empty());
     assert!(!sessions.loading);
@@ -602,7 +596,7 @@ fn the_empty_refresh_and_archive_open_keep_their_focused_checkout_meaning() {
         runtime.dispatch_json(&serde_json::to_vec(&event).unwrap());
         assert_eq!(
             runtime.snapshot.sessions.unavailable_reason.as_deref(),
-            Some("Choose a local Project to view sessions")
+            Some("Choose a connected Project to view sessions")
         );
     }
     let event = serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "archive_open", "payload": {"kind": "session", "id": "s"}});

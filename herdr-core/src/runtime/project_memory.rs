@@ -6,7 +6,7 @@
 //! Memory is its own snapshot section, keyed by the Project a shell opens;
 //! nothing here follows the focused checkout or the Overview's Sessions.
 //! The Project's folder is read by the node of the machine that holds it:
-//! this machine's or a node that dials in (PRD core-host-node-move B14).
+//! this machine's or any linked device's (PRD core-host-node-move B14).
 //! Every store read and write runs on a worker; the lock only starts it and
 //! applies its answer.
 
@@ -92,9 +92,9 @@ pub(super) struct OpenedMemoryLoad {
 }
 
 impl Runtime {
-    /// Checks a `hide memory` caller like a Factory command does and takes
-    /// what the command needs (B16, D-22): a caller on this machine or on a
-    /// node that dials in is answered, its Project read by its own node (PRD
+    /// Checks a `hide memory` caller and takes what the command needs
+    /// (B16, D-22): a caller on any linked machine is answered, its Project
+    /// read by its own node (PRD
     /// core-host-node-move B14), and an agent pane's own session is the one a
     /// `show` is recorded for.
     pub(crate) fn prepare_memory(
@@ -104,9 +104,7 @@ impl Runtime {
         expected: &crate::workspace_control::Context,
         command: crate::memory_command::MemoryCommand,
     ) -> Result<crate::memory_command::PreparedMemory, String> {
-        let (node, sessions_node) = self
-            .linked_node(device)
-            .map_err(|_| "memory_device_unsupported".to_owned())?;
+        let (node, sessions_node) = self.memory_node(device).map_err(str::to_owned)?;
         // The caller's checkout as it is now; Memory needs no window, so
         // the Views a Workspace query also checks do not matter here.
         let context = self
@@ -234,10 +232,8 @@ impl Runtime {
     }
 
     /// Where a catalog Project's Memory is read from, with the machine that
-    /// holds it, or why it is not kept: Memory is kept for the Projects of
-    /// this machine and of a node that dials in, never of a device the core
-    /// dials (B16; PRD core-host-node-move B14, Q20). A node whose link is
-    /// down keeps its Projects' Memory; reading it waits for the link.
+    /// reads its files. Every registered device keeps its Projects' Memory
+    /// in the core's store; reading waits for its link and reader.
     fn memory_folder(
         &self,
         workspace_id: &str,
@@ -251,10 +247,7 @@ impl Runtime {
             Err("link_down") => crate::node::NodeId::parse(&workspace.device_id).ok(),
             Err(_) => None,
         };
-        let Some(node) = node else {
-            let device_name = self.device_name(&workspace.device_id);
-            return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
-        };
+        let node = node.ok_or(MemoryUnavailableSnapshot::Unregistered)?;
         Ok((node, workspace.path.clone()))
     }
 
@@ -340,7 +333,7 @@ impl Runtime {
         let Some(context) = self.worker_context.clone() else {
             return;
         };
-        let sessions_node = match self.linked_node(node.as_str()) {
+        let sessions_node = match self.memory_node(node.as_str()) {
             Ok((_, link)) => link,
             Err(reason) => {
                 crate::diagnostic!(json!({
@@ -594,18 +587,22 @@ impl Runtime {
             Err(_) => {
                 self.set_error(
                     "memory.project_unavailable",
-                    "Project Memory is kept only for the Projects of this computer and of computers that connect to it",
+                    "This Project is no longer registered",
                     false,
                 );
                 return true;
             }
         };
-        let sessions_node = match self.linked_node(node.as_str()) {
+        let sessions_node = match self.memory_node(node.as_str()) {
             Ok((_, link)) => link,
-            Err(_) => {
+            Err(reason) => {
+                crate::diagnostic!(json!({
+                    "component": "memory", "kind": "memory.action_unreachable",
+                    "workspace_id": payload.workspace_id, "device": node.as_str(), "reason": reason,
+                }));
                 self.set_error(
                     "memory.project_unreachable",
-                    "The computer that holds this Project is not connected",
+                    crate::memory_command::next_action(reason),
                     true,
                 );
                 return true;

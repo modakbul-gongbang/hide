@@ -1538,7 +1538,7 @@ export type MemoryCard = {
 export type ProjectMemory = {
   workspace_id: string;
   /** Why this Project has no Memory here; null when it has. */
-  unavailable: { reason: "remote_device"; device_name: string } | { reason: "unregistered" } | { reason: "unreadable" } | null;
+  unavailable: { reason: "unregistered" } | { reason: "unreadable" } | null;
   loading: boolean;
   enabled: boolean;
   capacity_reached: boolean;

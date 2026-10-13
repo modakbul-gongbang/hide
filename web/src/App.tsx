@@ -1,6 +1,6 @@
 import { InterfaceLanguageBoundary, translate, useInterfaceTranslation } from "./i18n/client";
 import { agentCapacityNotice } from "./agentLayout";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { createActions, type Actions } from "./actions";
 import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { BrowserHost } from "./BrowserDisplay";
@@ -27,6 +27,7 @@ import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
 import { TitleRow } from "./TitleRow";
 import { readEditorAvailability } from "./host";
+import { RegionFailed, RenderBoundary, ShellFailed, SidebarFailed, TitleRowFailed } from "./RenderBoundary";
 import { focusedRemoteDevice, frontCheckout } from "./snapshot";
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
@@ -236,35 +237,58 @@ export function App() {
     void refreshRecoveryDrafts();
   }, [connection, openDocuments, host]);
 
+  // Each part fails on its own and this component, which owns the socket,
+  // stays mounted (`RenderBoundary`). A notice, an overlay or the browser
+  // displays' bridge that cannot draw is left out on its own, since nothing
+  // in its place would be something to act on.
+  const notices: [string, ReactNode][] = [
+    ["connection", <ConnectionBadge actions={actions} />],
+    ["notice", <NoticeBar actions={actions} />],
+    ["agent_close_notice", <AgentCloseNotice actions={actions} />],
+    ["draft_recovery", <DraftRecoveryLine actions={actions} />],
+    ["workspace_notices", <WorkspaceNotices actions={actions} />],
+  ];
+  const overlays: [string, ReactNode][] = [
+    ["overview", <OverviewModal actions={actions} />],
+    ["cycle", <CycleOverlay />],
+    ["confirm_close", <ConfirmClose actions={actions} />],
+    ["confirm_trash", <ConfirmTrash actions={actions} />],
+    ["palette", <Palette actions={actions} />],
+    ["start_panel", <StartPanelHost actions={actions} />],
+    ["shortcuts", <ShortcutSheetGate actions={actions} />],
+    ["settings", <SettingsGate actions={actions} />],
+    ["first_run", <FirstRunWizard actions={actions} />],
+    ["workspace_dialogs", <WorkspaceDialogs actions={actions} />],
+    ["add_project", <AddProjectDialog actions={actions} />],
+    ["browser", <BrowserHost actions={actions} />],
+  ];
+  const leftOut = ([region, node]: [string, ReactNode]) => (
+    <RenderBoundary key={region} region={region} fallback={null}>
+      {node}
+    </RenderBoundary>
+  );
   return (
     <TooltipProvider>
       <InterfaceLanguageBoundary />
-      <div className="relative flex h-full flex-col bg-background text-foreground">
-        <TitleRow actions={actions} />
-        <ConnectionBadge actions={actions} />
-        <NoticeBar actions={actions} />
-        <AgentCloseNotice actions={actions} />
-        <DraftRecoveryLine actions={actions} />
-        <WorkspaceNotices actions={actions} />
-        <div className="flex min-h-0 flex-1">
-          <Sidebar actions={actions} />
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <CenterScreen actions={actions} />
-          </main>
+      <RenderBoundary region="shell" fallback={<ShellFailed />}>
+        <div className="relative flex h-full flex-col bg-background text-foreground">
+          <RenderBoundary region="title" fallback={<TitleRowFailed />}>
+            <TitleRow actions={actions} />
+          </RenderBoundary>
+          {notices.map(leftOut)}
+          <div className="flex min-h-0 flex-1">
+            <RenderBoundary region="sidebar" fallback={<SidebarFailed />}>
+              <Sidebar actions={actions} />
+            </RenderBoundary>
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <RenderBoundary region="screen" fallback={<RegionFailed />}>
+                <CenterScreen actions={actions} />
+              </RenderBoundary>
+            </main>
+          </div>
+          {overlays.map(leftOut)}
         </div>
-        <OverviewModal actions={actions} />
-        <CycleOverlay />
-        <ConfirmClose actions={actions} />
-        <ConfirmTrash actions={actions} />
-        <Palette actions={actions} />
-        <StartPanelHost actions={actions} />
-        <ShortcutSheetGate actions={actions} />
-        <SettingsGate actions={actions} />
-        <FirstRunWizard actions={actions} />
-        <WorkspaceDialogs actions={actions} />
-        <AddProjectDialog actions={actions} />
-        <BrowserHost actions={actions} />
-      </div>
+      </RenderBoundary>
     </TooltipProvider>
   );
 }

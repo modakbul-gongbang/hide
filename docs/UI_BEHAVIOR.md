@@ -40,6 +40,16 @@ The desktop page's connecting and failure states keep a drag strip of the same h
 Window-wide notices (the connection badge, the notice line, the agent close notice, draft recovery and Workspace notices) run the window's width under the row.
 Windows, Linux and a browser tab keep their own window frame and draw the same row with no traffic-light space.
 
+### A part that cannot be drawn
+
+Web owner: `web/src/RenderBoundary.tsx`, `web/src/App.tsx`.
+
+A part of the window that fails to draw takes no other part with it: the top row, each window-wide notice, the sidebar, the screen in the center, each overlay and the browser displays' bridge fail on their own, and the page keeps its connection to the core.
+The sidebar, at its own width, and the center screen show one quiet line in their place, `이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.`; the top row keeps an empty strip of its height the window is dragged from, and a notice, an overlay or the bridge that fails is left out.
+A part is drawn again on the next change to the core's snapshot or to the page's own state, a new diagnostic not counted, and nothing listens for that change while every part draws.
+The failure is a diagnostic naming the part and the error, once per error until the part draws again; there is no banner.
+Only when the window's frame itself cannot draw does the line take the whole window, under the drag strip.
+
 ### The three columns
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
@@ -512,7 +522,7 @@ The open session's row is the list's one Tab stop; the arrows, Home, and End mov
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it unavailable, and keeps its reason, Retry, and Copy source location under it, copying the provider file's own path.
 A session whose file is no longer found after the history listed it stays listed the same way, with an explanation that it may have been moved or deleted, and its last location to copy.
-The list place shows one small mark per state: loading, no sessions yet, no matching sessions (with Clear filters), sessions could not be read (with the reason and Retry), and on a device Project, sessions unavailable with the device's reason and no Retry.
+The list place shows one small mark per state: loading, no sessions yet, no matching sessions (with Clear filters), sessions could not be read (with the reason and Retry), and on a disconnected device Project, sessions unavailable with the device's reason and no Retry.
 The open session shows its row's provider, checkout, and time with Copy source location, its request as the title, then each request and answer in order as plain text; injected context, where Project Memory travels, is not shown.
 A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again and then the session.
 A session the link record joined to pull requests carries a chip for each on its row and on the open session's head, `#317 만듦` for one it made and `#317` for one it worked on, which opens the PRs tab with that pull request's panel (PRD link-graph B36); a session with none has no chip, and a chip that arrives while the record fills just appears.
@@ -528,8 +538,9 @@ The core opens one Project's Memory per daemon; the Tools column, whatever tool 
 Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI asks now with its logo (the listed agent standing in while Runs on is past the usage limit or cannot answer); with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
 While a pass analyzes the Project, a small `분석 중` chip sits beside the switch; with Hide AI off or unable to run, the chip dims and one line with `Hide AI 설정 열기` says verified cards are still used; when every agent is past the usage limit the same dimmed state reads "Hide AI is paused: every agent is past your usage limit this week. Saved cards are still used." (PRD hide-ai-usage-limit D-06).
-A Project on an SSH device, one Hide connects to, shows one line that Memory is not kept for SSH devices' sessions and names the device; nothing else is drawn.
-A Project on a computer that connects to Hide on its own has Memory as this machine's Projects do (PRD core-host-node-move B14).
+A Project on any linked device shows the same Memory controls and cards as this machine's Projects, read from the core's store with the device's own Project identity.
+The disclosure says cards stay in Hide's Memory, and the delete confirmation removes them from this Project's Memory; neither claims the screen's device owns the store.
+An unavailable link or Memory reader uses the existing unreadable state; its reason is recorded in the diagnostic log.
 `물어볼 것` appears, and the tab's name carries a dot, while the Project has a suggestion, an unresolved document comparison or a failed placement.
 Each compact row has a one-line title and one-line reason, truncating long text; `Compare` reads and opens the document excerpt and original operator words with their dates only when requested.
 A newer operator decision offers `Fix the doc` and `Card is wrong`; unknown or equal dates first offer `Card is right` and `Doc is right`, and cannot be selected until answered.
@@ -756,7 +767,7 @@ The core hands the web a source-neutral task (the id the source shows, URL, titl
 
 Every card is an issue; a worktree or a pull request is never a card of its own.
 An issue's stage is its checkout's: 완료 when the worktree is merged (as the Agents view says), 리뷰 with an open pull request, and 진행 중 otherwise; agents and the issue's own state never move it.
-An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards.
+An issue is linked to a checkout by the branch's issue link or by a closing reference in the pull request's body, and a pull request that closes two issues shows the same chip on both cards; the checkout's agents ride only on the issue the checkout works on, and the other card carries the chip without agent rows.
 Git ancestry against the base the core resolves, in the local branch or in its `origin/` copy as of the last fetch, reads a branch with no commits of its own as merged once its base resolves, which is why merged also needs the link record and why a Local issue is never closed by a merge, only by the operator.
 백로그 holds the open issues no checkout works on, most recently changed first; past 20 cards the rest wait behind `+N · 최근 갱신 순`.
 The primary checkout or a folder is a card only while an agent works there on a linked issue; an agent there with no issue is on the Agents view, not an issue.
@@ -2053,6 +2064,7 @@ Pane focus, active tab, tab order, zoom state, and disappearing anchors all upda
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.
 There the operator chose `모두 닫기` as the Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
 Escape closes the innermost open layer and returns focus to whatever held it before that layer opened, including a terminal that was focused when a sheet, menu, or overlay opened over it.
+A context menu returns focus to its real target; a delayed focus return from any layer leaves a newer control or layer's focus in place.
 A tooltip or hover card is not a layer: an Escape pressed while one shows still reaches the terminal or the screen it was meant for, and closes the tooltip on its way, whether the tooltip's own dismiss or the shell answers the press.
 A disabled control cannot activate, and destructive meaning always comes from the control's role rather than from its text color alone.
 Hover and focus are local presentation state: they never publish core snapshots, dispatch core events, or trigger Git/disk work by themselves.

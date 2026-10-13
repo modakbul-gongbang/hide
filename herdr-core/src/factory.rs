@@ -2252,7 +2252,7 @@ impl Machines for CoreMachines {
         let link = match node {
             None => core.own_node(),
             Some(node) => {
-                core.linked_node(node)
+                core.factory_linked_node(node)
                     .map_err(|reason| Failure::environment("machine", EnvSignal::NodeLink, reason))?
                     .1
             }

@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MonitorSmartphoneIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, FileIcon, LoaderCircleIcon, MoreHorizontalIcon, SettingsIcon, SparklesIcon, Trash2Icon, Undo2Icon, UserIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentLogo } from "./components/agent-logo";
@@ -88,17 +88,6 @@ function MemoryBody({ project, actions }: { project: ProjectMemory; actions: Act
     return refusal?.reason === "past_limit" && !refusal.using;
   });
   const unavailable = project.unavailable;
-  if (unavailable?.reason === "remote_device") {
-    return (
-      <div className="flex flex-col gap-md overflow-auto p-lg" data-memory="remote">
-        <Header project={project} actions={actions} busy={busy} />
-        <p className="flex gap-xs break-keep text-caption text-subtle-foreground">
-          <MonitorSmartphoneIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0" />
-          {t("memory.remoteDevice", { device: unavailable.device_name })}
-        </p>
-      </div>
-    );
-  }
   if (unavailable) {
     return (
       <div className="flex flex-col items-start gap-sm p-lg" data-memory={unavailable.reason}>

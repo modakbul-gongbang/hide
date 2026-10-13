@@ -353,9 +353,9 @@ describe("the Memory tab", () => {
     expect(container.querySelector("[data-memory-ai-chip]")?.textContent).toBe("Hide AI · Codex");
   });
 
-  it("says a device's Project keeps no Memory here", async () => {
-    await render(memory({ unavailable: { reason: "remote_device", device_name: "mini" } }));
-    expect(container.textContent).toContain("This pane runs on mini.");
+  it("says when a Project's Memory could not be read", async () => {
+    await render(memory({ unavailable: { reason: "unreadable" } }));
+    expect(container.querySelector('[data-memory="unreadable"]')).not.toBeNull();
     expect(container.querySelector("[data-memory-cards]")).toBeNull();
   });
 });

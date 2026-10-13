@@ -35,8 +35,8 @@ const SESSION_NOT_LISTED: &str =
 #[derive(Default)]
 pub(super) struct ProjectSessionsWork {
     /// The node and folder the history is read from while the named Project
-    /// can be read (`Runtime::linked_node`); `None` for one on a device the
-    /// core dials, on a node that is not linked, or gone from the catalog.
+    /// can be read (`Runtime::linked_node`); `None` while its node is not
+    /// linked or its Project is gone from the catalog.
     pub(super) folder: Option<(NodeId, String)>,
     /// The Project identity (`hide_project`) the last history answered for;
     /// a session is read under it.
@@ -130,10 +130,9 @@ impl Runtime {
     }
 
     /// Where the named Project's history is read from, or why it is not read:
-    /// sessions are read from the provider folders of this machine and of a
-    /// node that dials in (PRD core-host-node-move B14), so a Project on an
-    /// SSH device says so rather than showing another machine's sessions in
-    /// its place (B7).
+    /// sessions are read from the provider folders of the Project's own
+    /// node, on this machine or any linked device (B14), never another
+    /// machine's session files in its place (B7).
     fn project_sessions_folder(
         &self,
         device_id: &str,
@@ -144,21 +143,13 @@ impl Runtime {
             Err("link_down") => {
                 return Err(format!("{} is not connected.", self.device_name(device_id)));
             }
-            Err(_) => return Err(self.device_sessions_reason(device_id)),
+            Err(_) => return Err("This device is no longer registered.".to_owned()),
         };
         let workspace = self
             .catalog_workspaces()
             .find(|workspace| workspace.id == workspace_id && workspace.device_id == device_id)
             .ok_or_else(|| "This Project is no longer registered.".to_owned())?;
         Ok((node, workspace.path.clone()))
-    }
-
-    fn device_sessions_reason(&self, device_id: &str) -> String {
-        let device = self.device_name(device_id);
-        let here = self.device_name(self.node.as_str());
-        format!(
-            "Sessions on {device} are not available here. Hide reads Codex and Claude Code sessions only on {here}."
-        )
     }
 
     /// Starts the history read; true when it could not start and the

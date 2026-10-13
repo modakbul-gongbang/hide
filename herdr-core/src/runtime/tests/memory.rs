@@ -547,8 +547,8 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
 }
 
 #[test]
-fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
-    // B16: "Memory는 이 Mac의 세션에만 씁니다. 이 pane은 mini에서 돌아갑니다."
+fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
+    // A disconnected device retains its node-scoped Project, awaiting its link.
     let mut runtime = runtime();
     let mut project = workspace(
         "remote:mini:workspace:w",
@@ -563,8 +563,7 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     );
     project.device_id = "mini".into();
     project.remote_target_id = Some("mini".into());
-    // A device the core dials keeps no Memory, connected or not (PRD
-    // core-host-node-move Q20); only a node that dials in has it.
+
     runtime
         .snapshot
         .ui_state
@@ -601,8 +600,5 @@ fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
     });
 
     assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));
-    assert!(matches!(
-        opened(&runtime).unwrap().unavailable,
-        Some(MemoryUnavailableSnapshot::RemoteDevice { .. })
-    ));
+    assert_eq!(opened(&runtime).unwrap().unavailable, None);
 }
