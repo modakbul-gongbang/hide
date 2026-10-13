@@ -872,8 +872,10 @@ impl LabelWorker {
             Err(ReadFailure::Refused(reason)) => {
                 self.log_failure(pane_id, "read.refused", &reason);
                 if let Some(pane) = self.panes.get_mut(pane_id)
-                    && pane.agent.requires_native_file_proof()
+                    && pane.agent.requires_native_proof()
                 {
+                    // Database proofs can also be temporarily refused while
+                    // their native writer commits or replaces a companion.
                     pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
                 }
                 return self.invalidate_turn_read(pane_id);

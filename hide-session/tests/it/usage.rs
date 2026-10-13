@@ -106,6 +106,47 @@ fn usage_opencode_refuses_oversized_identifiers_before_materializing_them() {
 }
 
 #[test]
+fn usage_opencode_closed_wal_database_is_read_without_sidecars() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_fixture(home.path());
+    db.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+    opencode_message(&db, "msg-a", true, 100);
+    opencode_part(&db, "part-a", "msg-a", Some(0.1));
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "usage::usage_opencode_closed_wal_reader_role",
+            "--nocapture",
+        ])
+        .env("USAGE_CLOSED_WAL_FIXTURE", home.path());
+    let result = hide_platform::process::run_to_end(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(result.code, Some(0), "{} {}", result.stdout, result.stderr);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn usage_opencode_closed_wal_reader_role() {
+    let Some(root) = std::env::var_os("USAGE_CLOSED_WAL_FIXTURE") else {
+        return;
+    };
+    let home = std::path::PathBuf::from(root);
+    let path = home.join(".local/share/opencode/opencode.db");
+    let (events, _) = opencode_drain(&home, &path, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].recorded_cost_micro_usd, Some(100_000));
+}
+
+#[test]
 fn usage_opencode_wal_reader_does_not_write_database_or_sidecars() {
     let home = tempfile::tempdir().unwrap();
     let (path, db) = opencode_fixture(home.path());

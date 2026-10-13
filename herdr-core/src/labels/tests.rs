@@ -349,6 +349,57 @@ fn task(label: Option<AgentLabel>) -> Option<String> {
 }
 
 #[test]
+fn an_opencode_refusal_recovers_native_proof_without_another_state_report() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let journal = directory.join("opencode.db-journal");
+    std::fs::write(&journal, b"unfinished native transaction").unwrap();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .is_none()
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    std::fs::remove_file(journal).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(5));
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        1,
+        "no immediate retry loop"
+    );
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_session_id)
+            .as_deref(),
+        Some("ses_0a1b2c3d4e5f60718293a4b5c6")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
 fn a_titles_only_opencode_session_keeps_its_native_title_and_generated_goal() {
     let harness = Harness::new();
     let directory = harness.home.path().join(".local/share/opencode");

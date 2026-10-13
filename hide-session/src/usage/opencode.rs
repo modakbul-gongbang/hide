@@ -161,8 +161,16 @@ fn active(
 }
 
 pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refusal> {
+    crate::opencode::with_read(home, |db| read_connection(home, db, saved))
+        .map_err(|_| Refusal::Database)?
+}
+
+fn read_connection(
+    home: &Path,
+    db: &Connection,
+    saved: Option<Checkpoint>,
+) -> Result<Step, Refusal> {
     let started = Instant::now();
-    let db = crate::opencode::open(home).map_err(|_| Refusal::Database)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
         READ_BYTES as i32,
@@ -274,7 +282,7 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
         match data
             .as_deref()
             .ok_or("record_capacity")
-            .and_then(|data| active(&db, &id, updated, session, data))
+            .and_then(|data| active(db, &id, updated, session, data))
         {
             Ok(active) => step.checkpoint.database.active = active,
             Err("database_budget") => return Err(Refusal::Database),

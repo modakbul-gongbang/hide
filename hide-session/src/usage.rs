@@ -248,7 +248,7 @@ pub fn list(home: &Path, agent: Agent, since_ms: u64) -> Result<Candidates, Refu
     Ok(out)
 }
 
-fn checked_file(home: &Path, agent: Agent, path: &Path) -> Result<fs::File, Refusal> {
+fn checked_path(home: &Path, agent: Agent, path: &Path) -> Result<PathBuf, Refusal> {
     let canonical =
         hide_platform::fs::identity::canonical(path).map_err(|_| Refusal::Unreadable)?;
     let allowed = roots(home, agent)?.into_iter().any(|root| {
@@ -263,6 +263,11 @@ fn checked_file(home: &Path, agent: Agent, path: &Path) -> Result<fs::File, Refu
     if !allowed {
         return Err(Refusal::OutsideRoot);
     }
+    Ok(canonical)
+}
+
+fn checked_file(home: &Path, agent: Agent, path: &Path) -> Result<fs::File, Refusal> {
+    let canonical = checked_path(home, agent, path)?;
     let file = crate::open_session_file_nofollow(path).map_err(|_| Refusal::Unreadable)?;
     // Check the opened descriptor too, so a parent link swapped after the
     // canonical check cannot redirect this read outside the allowed root.
@@ -284,7 +289,9 @@ pub fn read(
 ) -> Result<Step, Refusal> {
     let started = Instant::now();
     if agent == Agent::OpenCode {
-        checked_file(home, agent, path)?;
+        // The shared OpenCode guard owns every open/close of its database.
+        // A preliminary File here would release a peer's POSIX SQLite lock.
+        checked_path(home, agent, path)?;
         return opencode::read(home, saved);
     }
     if agent == Agent::Cursor {
