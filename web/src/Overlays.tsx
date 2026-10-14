@@ -139,8 +139,9 @@ function KindMark({ item, title }: { item: CycleItem; title: string }) {
  */
 export function ConfirmClose({ actions }: { actions: Actions }) {
   const pending = useUiStore((s) => s.pendingClose);
-  const rest = useShellStore((s) => s.rest);
-  useShellStore((s) => s.agents);
+  // The sheet re-derives from the snapshot only while it is open; closed, this always-mounted gate ignores it.
+  const rest = useShellStore((s) => (pending ? s.rest : null));
+  useShellStore((s) => (pending ? s.agents : null));
   const target = pending ? actions.closeTarget(pending) : null;
   const gone = pending != null && target === null;
   useEffect(() => {

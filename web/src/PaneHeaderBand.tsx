@@ -21,6 +21,7 @@ import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
 import { useRelationProgress } from "./PaneRelations";
 import { lineText } from "./agentRow";
+import { allAgents, agentsByPane, deviceFacts } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
 
 const LABELS: Record<string, MessageKey> = {
@@ -83,10 +84,9 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const { t } = useInterfaceTranslation();
   const relation = useUiStore((state) => state.relation);
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
-  const rest = useShellStore((state) => state.rest);
   const agents = usePaneAgents();
-  const children = useMemo(() => paneChildren(paneId, agents, rest), [paneId, agents, rest]);
-  const childConnection = children?.unavailableDevice ? rest?.status?.remote?.find((row) => row.target_id === children.unavailableDevice)?.message ?? t("devices.rail.notConnected") : null;
+  const { children, devices } = usePaneChildren(paneId, agents);
+  const childConnection = children?.unavailableDevice ? devices?.status?.remote?.find((row) => row.target_id === children.unavailableDevice)?.message ?? t("devices.rail.notConnected") : null;
   const band = header?.band;
   // Before any early return: a hook runs on every render.
   const unreachable = useUnreachable(band?.action?.kind === "child" ? band.action.pane_id : null);
@@ -130,10 +130,8 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
  */
 function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTree }: { paneId: string; band: NonNullable<PaneHeader["band"]>; navigation: string | null; unreachable: string | null; failed: boolean; actions: Actions; hasTree: boolean }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((state) => state.rest);
-  const local = useShellStore((state) => state.agents);
-  const agents = rows(rest, local);
-  const self = agents.find((agent) => agent.pane_id === paneId);
+  const agents = usePaneAgents();
+  const self = agentsByPane(agents).get(paneId);
   const raised = band.raised ?? null;
   const verb = raised?.verb ?? (band.kind === "answer" ? "answer" : "approval");
   const what = askWhat(t, verb, raised ? raised.what : band.reason ?? (band.facts ? bandReason(band, t) : null));
@@ -176,16 +174,21 @@ function useUnreachable(paneId: string | null): string | null {
   });
 }
 
-function rows(rest: SnapshotRest | null, local: AgentRow[]): AgentRow[] {
-  return [...local, ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.agents ?? [])];
+/** Every agent row this page knows, including a device's retained topology; it changes only when a row does. */
+export function usePaneAgents(): AgentRow[] {
+  return useShellStore((state) => allAgents(state.agents, state.rest?.status?.remote));
 }
 
-/** Every agent row this page knows, including a device's retained topology. */
-export function usePaneAgents(): AgentRow[] {
-  const rest = useShellStore((state) => state.rest);
-  const local = useShellStore((state) => state.agents);
-  const remote = rest?.status?.remote;
-  return useMemo(() => [...local, ...(remote ?? []).flatMap((row) => row.session?.agents ?? [])], [local, remote]);
+/**
+ * This pane's child rows. Only a pane that is a parent reads the device
+ * connection rows its totals depend on; every other pane stays out of the rest
+ * of the snapshot, so it neither re-renders nor recomputes when it moves.
+ */
+function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneChildren | null; devices: SnapshotRest | null } {
+  const parent = (agentsByPane(agents).get(paneId)?.lineage_child_pane_ids?.length ?? 0) > 0;
+  const devices = useShellStore((state) => (parent ? deviceFacts(state.rest) : null));
+  const children = useMemo(() => paneChildren(paneId, agents, devices), [paneId, agents, devices]);
+  return { children, devices };
 }
 
 /**
@@ -196,12 +199,9 @@ export function usePaneAgents(): AgentRow[] {
  */
 export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
   const agents = usePaneAgents();
-  const family = useMemo(() => {
-    const byPane = new Map(agents.map((row) => [row.pane_id, row]));
-    const agent = byPane.get(paneId);
-    return agent && childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined;
-  }, [agents, paneId]);
-  const agent = agents.find((row) => row.pane_id === paneId);
+  const byPane = agentsByPane(agents);
+  const agent = byPane.get(paneId);
+  const family = useMemo(() => agent && childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined, [agent, byPane]);
   if (!agent || (family ? family.length === 0 : !agent.state.pr)) return null;
   return <PaneAgentPrMark agent={agent} family={family} actions={actions} />;
 }
