@@ -391,8 +391,9 @@ fn run_coordinator(
         // nothing else (PRD labels-in-hided B29). The usage reader also runs
         // while background Memory analysis needs the weekly figure (PRD
         // project-memory-v2 D-10 b).
+        let window_attached = window_reads(&context, worktree_reader.as_mut());
         let run_background_reads =
-            subscription.is_some() && !defer_background_reads && read_ui_attached(&context);
+            subscription.is_some() && !defer_background_reads && window_attached;
         let read_usage = subscription.is_some()
             && !defer_background_reads
             && (run_background_reads || read_memory_reads_usage(&context));
@@ -1770,6 +1771,21 @@ fn read_memory_reads_usage(context: &SessionSyncContext) -> bool {
 
 /// Whether a window draws the snapshot; a gone runtime reads as attached,
 /// and the loop's own check ends the coordinator.
+/// Whether a renderer is attached, so the readers only a window uses run on
+/// this wake. With none, the worktree reader's Git watch is ended too
+/// (`WorktreeReader::rest`): nothing takes its reports while the window is
+/// closed, and the next read after a renderer is back starts it again.
+fn window_reads(
+    context: &SessionSyncContext,
+    worktree_reader: Option<&mut crate::worktrees::WorktreeReader>,
+) -> bool {
+    let attached = read_ui_attached(context);
+    if !attached && let Some(reader) = worktree_reader {
+        reader.rest();
+    }
+    attached
+}
+
 fn read_ui_attached(context: &SessionSyncContext) -> bool {
     context
         .runtime
@@ -3320,6 +3336,151 @@ mod pending_core_tests {
         assert!(matches!(read_github_request(&context), Some(None)));
         assert!(runtime.lock().unwrap().release_effects());
         assert!(matches!(read_github_request(&context), Some(Some(_))));
+    }
+}
+
+#[cfg(test)]
+mod window_reads_tests {
+    use super::*;
+    use crate::model::CoreOptions;
+    use hide_node_link::cleanup::RepositoryDirs;
+    use hide_node_link::protocol::Call;
+    use hide_node_link::worktrees::GitWatchReport;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::{Sender, channel};
+
+    /// A node whose every project is its own repository and whose Git watch
+    /// says it is watching, then reports a heartbeat each time the test ticks
+    /// until the watch is stopped, and then says it ended.
+    struct WatchingNode {
+        started: AtomicUsize,
+        tick: Mutex<std::sync::mpsc::Receiver<()>>,
+        ended: Mutex<Sender<()>>,
+    }
+
+    impl crate::node_access::NodeLink for WatchingNode {
+        fn call(
+            &self,
+            call: Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            self.call_with_progress(call, timeout, &mut |_| true)
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            _timeout: Duration,
+            progress: &mut dyn FnMut(Value) -> bool,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            match call {
+                Call::Repository { path } => Ok(json!(RepositoryDirs {
+                    root: path.clone(),
+                    git_dir: format!("{path}/.git"),
+                    common_dir: format!("{path}/.git"),
+                })
+                .into()),
+                Call::GitWatch { .. } => {
+                    self.started.fetch_add(1, Ordering::SeqCst);
+                    let mut report = serde_json::to_value(GitWatchReport::Watching {
+                        unwatched: Vec::new(),
+                    })
+                    .unwrap();
+                    while progress(report) {
+                        if self.tick.lock().unwrap().recv().is_err() {
+                            break;
+                        }
+                        report = serde_json::to_value(GitWatchReport::Quiet).unwrap();
+                    }
+                    let _ = self.ended.lock().unwrap().send(());
+                    Ok(Value::Null.into())
+                }
+                _ => Err(crate::node_access::LinkError::Unknown(
+                    "not part of this fixture".to_owned(),
+                )),
+            }
+        }
+    }
+
+    /// The last renderer leaving, dispatched as the daemon sends it, ends the
+    /// node's Git watch on the coordinator's next wake; the first renderer
+    /// back starts it again on the next read.
+    #[test]
+    fn the_git_watch_ends_while_no_renderer_is_attached_and_starts_when_one_is() {
+        let options: CoreOptions = serde_json::from_value(json!({
+            "schema_version": crate::model::SCHEMA_VERSION,
+            "node_id": "test-node",
+            "app_state_path": ""
+        }))
+        .expect("workerless core options");
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            options,
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                codex_home: None,
+            },
+            Arc::new(hide_node::Local::of_process()),
+            crate::node::test_devices(),
+        )));
+        let socket_path = std::env::temp_dir().join("hide-window-reads-unused.sock");
+        let context = SessionSyncContext::local(
+            &LiveContext {
+                socket_path: socket_path.clone(),
+                runtime: Arc::downgrade(&runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            Arc::new(hide_node::Local::of_process()),
+        );
+        let (ended, watch_ended) = channel();
+        let (heartbeat, tick) = channel();
+        let node = Arc::new(WatchingNode {
+            started: AtomicUsize::new(0),
+            tick: Mutex::new(tick),
+            ended: Mutex::new(ended),
+        });
+        let mut reader = crate::worktrees::WorktreeReader::new(node.clone());
+        // Dropped before the reader, so a watch still running at the end
+        // returns and the reader's end does not wait for it.
+        let heartbeat = heartbeat;
+        let request = crate::worktrees::WorktreeRequest {
+            projects: vec![crate::worktrees::WorktreeProjectRequest {
+                root_path: std::path::PathBuf::from("/a"),
+                bases: Default::default(),
+                base_override: None,
+                generation: 0,
+            }],
+            generation: 0,
+            removals: 0,
+        };
+        let attached = |attached: bool| {
+            let event = serde_json::to_vec(&json!({
+                "schema_version": 2, "kind": "ui_attached", "payload": {"attached": attached}
+            }))
+            .unwrap();
+            runtime.lock().unwrap().dispatch_json(&event);
+        };
+        assert!(window_reads(&context, Some(&mut reader)));
+        let _ = reader.read_if_due(request.clone());
+        assert_eq!(node.started.load(Ordering::SeqCst), 1);
+
+        attached(false);
+        assert!(!window_reads(&context, Some(&mut reader)));
+        heartbeat.send(()).unwrap();
+        watch_ended
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the node's watch ended once no renderer was attached");
+
+        attached(true);
+        assert!(window_reads(&context, Some(&mut reader)));
+        let _ = reader.read_if_due(request);
+        assert_eq!(
+            node.started.load(Ordering::SeqCst),
+            2,
+            "the watch starts again on the first read with a renderer back"
+        );
     }
 }
 
