@@ -1,10 +1,10 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CHILD, RICH } from "./gallery/cmdkSceneData";
+import { CHILD, PR_260, RICH, requestWith } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries as drawSearchEntries, type SearchEntry } from "./search";
-import type { AgentRequest, SnapshotRest } from "./snapshot";
+import type { SnapshotRest } from "./snapshot";
 
 const { t } = initializeInterfaceI18n("en");
 const ko = initializeInterfaceI18n("ko").t;
@@ -42,14 +42,6 @@ const REST = {
     ],
   },
 } as unknown as SnapshotRest;
-
-/** The core's request block for an agent whose session made each pull request in `numbers`. */
-function agentRequest(numbers: number[]): AgentRequest {
-  return {
-    verb: "review", verb_since_unix_ms: 0, request: null, later_by: null, reply: null,
-    pull_requests: numbers.map((number) => ({ number, title: `PR ${number}`, url: `https://github.com/acme/hide/pull/${number}`, badge: "open", checks: "pending", head_branch: `fix/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null })),
-  };
-}
 
 /** The one command every screen has; the tests below read the rows around it. */
 const START_AGENT = "command:start-agent";
@@ -276,16 +268,16 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
   });
 
   it("lists after the pull request the agents the core ties to it, and not the ones it does not", () => {
-    // The agent in `main` made pull request 275; nothing in its name, place or state holds the digits.
+    // The child works on pull request 275 in its checkout; nothing in its name, place or state holds the digits.
+    const sections = (rest: typeof RICH, query: string) => groupEntries(filterEntries(searchEntries(rest, t), query)).map((section) => [section.group.id, section.entries.map((entry) => entry.id)]);
+    expect(sections(RICH, "#275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
+    expect(sections(RICH, "275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
     const tied = structuredClone(RICH) as typeof RICH;
-    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: agentRequest([275]) } : row.pane_id === "p-parent" ? { ...row, request: agentRequest([260]) } : row));
-    const sections = (query: string) => groupEntries(filterEntries(searchEntries(tied, t), query)).map((section) => [section.group.id, section.entries.map((entry) => entry.id)]);
-    expect(sections("#275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", ["agent:p-dag"]]]);
-    expect(sections("275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", ["agent:p-dag"]]]);
-    expect(sections("260").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:260"]], ["agents", ["agent:p-parent"]]]);
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: requestWith("review", [PR_260]) } : row));
+    expect(sections(tied, "260").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:260"]], ["agents", ["agent:p-dag"]]]);
     // An issue's number is not a pull request's: the issue row alone.
-    expect(sections("273")[0]).toEqual(["issues", ["issue:github:acme/hide#273"]]);
-    expect(filterEntries(searchEntries(tied, t), "273").map((entry) => entry.id)).not.toContain("agent:p-dag");
+    expect(sections(RICH, "273")[0]).toEqual(["issues", ["issue:github:acme/hide#273"]]);
+    expect(filterEntries(searchEntries(RICH, t), "273").map((entry) => entry.id)).not.toContain(`agent:${CHILD.pane_id}`);
   });
 
   it("reads #273 and 273 as numbers and nothing else", () => {

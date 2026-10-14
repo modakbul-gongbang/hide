@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { READ_AT, RICH } from "./gallery/cmdkSceneData";
+import { PR_260, PR_275, READ_AT, RICH, requestWith } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { searchEntries } from "./search";
 import { detailOf } from "./searchDetail";
@@ -32,10 +32,10 @@ describe("the palette's detail pane in the operator's language", () => {
 
   it("names the pull requests the core ties to an agent, and has no line for an agent with none", () => {
     const { t } = initializeInterfaceI18n("ko");
-    const pull = (number: number) => ({ number, title: `PR ${number}`, url: `https://github.com/acme/hide/pull/${number}`, badge: "open", checks: "pending", head_branch: `fix/${number}`, closing_issues: [], live: true, duty: false, created: false, settled_at_unix_ms: null }) as const;
     const tied = structuredClone(RICH) as typeof RICH;
-    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: [pull(275), pull(260)] } } : row));
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: requestWith("review", [PR_275, PR_260]) } : row));
     const agentFacts = (pane: string) => detailOf(tied, searchEntries(tied, t).find((row) => row.id === `agent:${pane}`)!, now, t, "ko").facts;
+    expect(agentFacts("p-child")).toContainEqual(["PR", "#275"]);
     expect(agentFacts("p-dag")).toContainEqual(["PR", "#275, #260"]);
     expect(agentFacts("p-parent").map(([label]) => label)).not.toContain("PR");
   });
