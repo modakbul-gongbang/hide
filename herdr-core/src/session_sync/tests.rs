@@ -596,6 +596,173 @@ fn remove_fixture(folder: tempfile::TempDir, runtime: Arc<Mutex<Runtime>>) {
     folder.close().expect("remove fixture directory");
 }
 
+/// Hold the host protocol, not a helper inside the coordinator. Both the
+/// startup and Settings paths must publish Herdr's layout before release.
+#[test]
+fn held_hook_diagnosis_does_not_hold_startup_or_settings_topology() {
+    use crate::node_access::{LinkAnswer, LinkError, NodeLink};
+    use hide_node_link::protocol::Call;
+    use std::sync::{Condvar, mpsc};
+
+    struct Host {
+        held: Mutex<bool>,
+        released: Condvar,
+        started: mpsc::Sender<()>,
+        finished: mpsc::Sender<()>,
+    }
+    impl NodeLink for Host {
+        fn call(&self, call: Call, _: Duration) -> Result<LinkAnswer, LinkError> {
+            if matches!(call, Call::HookDiagnosis) {
+                let mut held = self.held.lock().unwrap();
+                self.started.send(()).unwrap();
+                while *held {
+                    held = self.released.wait(held).unwrap();
+                }
+                self.finished.send(()).unwrap();
+                return Ok(json!({"runtimes": [], "last_report_failure": null}).into());
+            }
+            Err(LinkError::NotConnected(
+                "private fixture denies other host work".into(),
+            ))
+        }
+    }
+    struct Release(Arc<Host>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.held.lock().unwrap() = false;
+            self.0.released.notify_all();
+        }
+    }
+    struct Server {
+        closer: hide_platform::ipc::ListenerCloser,
+        worker: Option<thread::JoinHandle<()>>,
+    }
+    impl Drop for Server {
+        fn drop(&mut self) {
+            self.closer.close();
+            self.worker.take().unwrap().join().unwrap();
+        }
+    }
+
+    let folder = tempfile::Builder::new()
+        .prefix("hook-sync-")
+        .tempdir_in(socket_parent())
+        .unwrap();
+    let socket = folder.path().join("herdr.sock");
+    let listener = LocalListener::bind(&socket).unwrap();
+    let closer = listener.closer();
+    let (streams, subscription) = mpsc::channel();
+    let server = Server {
+        closer,
+        worker: Some(thread::spawn(move || {
+            while let Ok(stream) = listener.accept() {
+                let mut reader = std::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let mut stream = reader.into_inner();
+                let result = match request["method"].as_str().unwrap() {
+                    "events.subscribe" => json!({"type": "subscription_started"}),
+                    "session.snapshot" => {
+                        json!({"type": "session_snapshot", "snapshot": snapshot()})
+                    }
+                    "agent.list" => json!({"type": "agent_list", "agents": []}),
+                    "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                        "pane_id": request["params"]["pane_id"], "foreground_processes": []
+                    }}),
+                    method => panic!("unexpected fixture method {method}"),
+                };
+                let response = wire::checked_response_fixture(&request["id"], result);
+                writeln!(stream, "{response}").unwrap();
+                if request["method"] == "events.subscribe" {
+                    streams.send(stream).unwrap();
+                }
+            }
+        })),
+    };
+    let runtime = runtime_for_fixture(&socket, &folder.path().join("state.json"));
+    let (started, calls) = mpsc::channel();
+    let (finished, answers) = mpsc::channel();
+    let host = Arc::new(Host {
+        held: Mutex::new(true),
+        released: Condvar::new(),
+        started,
+        finished,
+    });
+    let mut context = context_for_fixture(&runtime, &socket);
+    context.node = Some(host.clone());
+    let pump = crate::kit::KitPump::spawn(
+        Arc::downgrade(&runtime),
+        ChangeNotifier::noop(),
+        host.clone(),
+        None,
+        crate::node::test_node(),
+    )
+    .unwrap();
+    let handle = spawn(context, None).unwrap();
+    // This guard releases before the owners join, including on assertion failure.
+    let release = Release(host.clone());
+    calls
+        .recv_timeout(Duration::from_secs(10))
+        .expect("startup diagnosis entered host");
+    let mut stream = subscription
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Herdr subscribes while startup diagnosis is held");
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        !runtime.lock().unwrap().snapshot().pane_layouts.is_empty()
+    });
+    drop(release);
+    answers
+        .recv_timeout(Duration::from_secs(10))
+        .expect("startup diagnosis released");
+    {
+        let mut guard = runtime.lock().unwrap();
+        guard.dispatch_json(
+            &serde_json::to_vec(&json!({"schema_version": SCHEMA_VERSION,
+            "kind": "ui_attached", "payload": {"attached": true}}))
+            .unwrap(),
+        );
+    }
+    // Wait for the first read's result before arming the next one.
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        runtime.lock().unwrap().snapshot().status.herdr.state == "connected"
+    });
+    *host.held.lock().unwrap() = true;
+    let release = Release(host.clone());
+    runtime.lock().unwrap().dispatch_json(
+        &serde_json::to_vec(&json!({
+            "schema_version": SCHEMA_VERSION, "kind": "ai_settings", "payload": {"observing": true}
+        }))
+        .unwrap(),
+    );
+    calls
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Settings diagnosis entered host");
+    let mut layout = snapshot()["layouts"][0].clone();
+    layout["zoomed"] = json!(true);
+    writeln!(
+        stream,
+        "{}",
+        json!({"event":"layout_updated", "data":{"type":"layout_updated", "layout":layout}})
+    )
+    .unwrap();
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .pane_layouts
+            .iter()
+            .any(|layout| layout.zoomed)
+    });
+    drop(release);
+    drop(handle);
+    drop(pump);
+    drop(stream);
+    drop(server);
+    remove_fixture(folder, runtime);
+}
+
 #[test]
 fn split_is_published_only_after_the_authoritative_layout_arrives() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");

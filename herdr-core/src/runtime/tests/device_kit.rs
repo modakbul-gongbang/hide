@@ -1738,6 +1738,118 @@ fn this_machines_kit_runs_on_its_own_node() {
     );
 }
 
+/// The node protocol is held until the test supplies each reply. No host
+/// filesystem, provider or operator hook is reached by these lifecycle tests.
+type HeldKitCall = (
+    Call,
+    std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
+);
+
+struct HeldKitHost(std::sync::mpsc::Sender<HeldKitCall>);
+
+impl NodeLink for HeldKitHost {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let (reply, answer) = std::sync::mpsc::channel();
+        self.0
+            .send((call, reply))
+            .map_err(|_| LinkError::NotConnected("fixture ended".into()))?;
+        answer
+            .recv_timeout(timeout.min(Duration::from_secs(10)))
+            .map_err(|error| LinkError::Unknown(error.to_string()))?
+            .map(LinkAnswer::Parsed)
+            .map_err(LinkError::Unknown)
+    }
+}
+
+fn diagnosis_status(status: hide_agent_hooks::HookStatus) -> hide_agent_hooks::Diagnosis {
+    super::agent_connection::diagnosis(status, hide_agent_hooks::HookStatus::NotInstalled)
+}
+
+#[test]
+fn local_hook_diagnosis_and_merged_installs_have_one_ordered_owner() {
+    let shared = device_runtime(None, None);
+    let (requests, calls) = std::sync::mpsc::channel();
+    let pump = crate::kit::KitPump::spawn(
+        shared.weak(),
+        crate::handle::ChangeNotifier::noop(),
+        Arc::new(HeldKitHost(requests)),
+        None,
+        shared.lock().unwrap().node.clone(),
+    )
+    .unwrap();
+    let (call, reply) = calls.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(call, Call::HookDiagnosis));
+    for _ in 0..50 {
+        shared.lock().unwrap().queue_local_kit_launch();
+    }
+    let before = diagnosis_status(hide_agent_hooks::HookStatus::NotInstalled);
+    reply
+        .send(Ok(serde_json::to_value(before).unwrap()))
+        .unwrap();
+    let (call, reply) = calls.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(
+        call,
+        Call::Kit {
+            action: KitAction::Apply,
+            ..
+        }
+    ));
+    reply
+        .send(Ok(serde_json::to_value(report(&[])).unwrap()))
+        .unwrap();
+    let (call, reply) = calls.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(call, Call::HookDiagnosis));
+    let after = diagnosis_status(hide_agent_hooks::HookStatus::Off);
+    reply
+        .send(Ok(serde_json::to_value(&after).unwrap()))
+        .unwrap();
+    wait(&shared, "post-install hook diagnosis", |runtime| {
+        runtime.hook_diagnosis.as_ref() == Some(&after)
+    });
+    drop(pump);
+    assert!(
+        calls.try_recv().is_err(),
+        "no duplicate install or off-screen refresh remains"
+    );
+    assert_eq!(shared.lock().unwrap().hook_diagnosis.as_ref(), Some(&after));
+}
+
+#[test]
+fn stopping_local_kit_joins_the_held_diagnosis_without_publishing_or_starting_pending_work() {
+    let shared = device_runtime(None, None);
+    let (requests, calls) = std::sync::mpsc::channel();
+    let pump = crate::kit::KitPump::spawn(
+        shared.weak(),
+        crate::handle::ChangeNotifier::noop(),
+        Arc::new(HeldKitHost(requests)),
+        None,
+        shared.lock().unwrap().node.clone(),
+    )
+    .unwrap();
+    let (call, reply) = calls.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(call, Call::HookDiagnosis));
+    shared.lock().unwrap().queue_local_kit_launch();
+    pump.stop();
+    let dropping = std::thread::spawn(move || drop(pump));
+    // Shutdown must not hold Runtime while the host is still answering.
+    assert!(shared.try_lock().is_ok());
+    reply
+        .send(Ok(serde_json::to_value(diagnosis_status(
+            hide_agent_hooks::HookStatus::Off,
+        ))
+        .unwrap()))
+        .unwrap();
+    dropping.join().unwrap();
+    assert!(
+        shared.lock().unwrap().hook_diagnosis.is_none(),
+        "a retiring owner's reply is stale"
+    );
+    assert!(
+        calls.try_recv().is_err(),
+        "stopping cancels the pending install"
+    );
+}
+
 /// PRD codex-daemon-apply B11 on this machine: the turn-off needs no helper
 /// connection here and goes to the core's own node as the kit's reinstall
 /// with `codex_daemon_off`, whose answer settles this machine's row.
