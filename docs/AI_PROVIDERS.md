@@ -385,6 +385,48 @@ The retained table is capped at 2 MiB and 2,048 models and is stale after 60 day
 The price worker asks only the own node for the fixed public URL; devices refuse this call and the core has no HTTP client.
 The price worker is joined on shutdown, and diagnostics contain fixed codes and counts rather than source paths or response bodies.
 
+## Counting Hide AI's own usage
+
+Hide AI's background calls (agent summaries, Memory, Factory judgments, issue drafts and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
+Each router built for one of those features carries an `AiUsageSink`, and the router tells it once per attempt that reached a provider.
+The Settings probe has no sink: it asks a CLI whether it is ready and is not a feature call.
+An agent pane that Hide starts (a Factory worker, a Memory promotion) is a native session, so its own transcript already counts it and the sink never hears of it.
+
+What counts is the attempt, not the request:
+
+- A response with usage is told with its per-model tokens, whether or not the answer then passes schema validation. A rejected answer cost the same tokens, and a retry or a fallback is its own attempt.
+- Callers joined onto one in-flight request are told once.
+- A `Timeout` or a `CompletionUnknown` is told as an **unknown call**: it was submitted and its end is unknown.
+- A response that arrives without usage (Gemini CLI, Pi, Grok today) is also an unknown call.
+- A backend-side `InvalidOutput` or any other failure that carries no usage is not told at all.
+
+An unknown call is a count on its day, provider and feature. It adds nothing to an amount and makes the day's known amounts a lower bound; the popover marks them `≥` and the table footnotes them.
+
+Claude's tokens come from the result frame.
+With one model in `modelUsage`, the frame's whole `usage` is that model's, including its cache categories.
+With several models, each model's own `modelUsage` entry is used, and their sum has to equal `usage` in every category or the call is unknown rather than guessed.
+When several models ran and `usage.cache_creation` reports one-hour writes, the one-hour share cannot be attributed to a model: the call keeps its writes as five-minute writes and is marked a lower bound, so its price is partial.
+Input and output are required; missing cache fields count as zero; one-hour writes above all cache writes make the call unknown.
+Codex's tokens come from the last `tokenUsage.total` of the app-server turn and the model from the `thread/start` response: input is `inputTokens` minus cached and cache-write tokens (a negative result makes the call unknown), and reasoning above output makes the call unknown.
+Grok reports no usage the code can read, so its calls are unknown (D-06 of the `hide-ai-usage-split` PRD).
+
+The ledger worker owns the writes.
+A router thread only appends to a bounded in-memory queue (256 attempts) under its own mutex: no I/O, no runtime lock and no clock read beyond the attempt time.
+Past the bound the oldest attempt is dropped and counted as an unknown call on its day, with an `ai_usage_queue_full` diagnostic.
+The worker drains the queue at most once a second and writes the batch in one transaction into `ai_daily(day, provider, model, feature)`, a table of the same `usage.sqlite3` that holds totals and an unknown count and nothing that names a request, prompt, subject or path.
+Feature ids outside the closed list (labels, memory, factory, issue) are counted as `other` and named once in an `ai_usage_feature_unmapped` diagnostic, so a new feature is counted from its first call.
+A usage report that contradicts itself (an invalid model name, one-hour writes above all writes, reasoning above output) makes that attempt one unknown call with an `ai_usage_tokens_invalid` diagnostic.
+The table is capped at 40,000 rows; a combination that has no row yet is refused past the cap with `ai_usage_row_capacity`, an existing row still takes calls, and the earliest refused day is kept in a one-row `ai_state` table so every day since reads as incomplete until it ages out of retention.
+Rows age out with the daily retention horizon, 512 per maintenance turn.
+`user_version` is not raised: the tables are created `IF NOT EXISTS` on open, and a store from before this change simply has none.
+
+Nothing is backfilled: a call made before this change left no record, so the table counts from its first row.
+The full history names that day, and an earlier day reads "Before counting" rather than "No records".
+The projection prepares Hide AI on the all-agents range only, adds it to the headline day amounts, bars, grass levels and totals, and computes every agent's contribution over session tokens alone.
+Costs go through the same price table as a session call, by provider, and the popover shows tokens and a share but no money.
+Per call, Hide AI adds one queue append on a router thread; the worker's extra work is one batched write a second at most, and a publish only while a usage page is visible and the rows changed.
+Those costs are by construction, not measured: no CPU, memory or snapshot-size figure has been taken for this feature.
+
 ## Selection and fallback
 
 A request is asked of the chosen provider and then of each provider in the `fallback` list, in that order, once each, and of nothing else (`RouterConfig::priority` is exactly that list).
@@ -478,4 +520,9 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - Cursor and OpenCode cannot be selected until a read-only one-shot mode is documented for them.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
+- Hide AI's counting is partial by design.
+  An `InvalidOutput` that did spend tokens (for example a Claude result with no structured output, or `claude_api_4xx`) is not counted, because the error path carries no usage; an error frame's usage is not read either.
+  Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
+  A call that ran several models is counted as one call per model entry, so the call count can exceed the attempts.
+  Calls before this feature are not backfilled.
 - Weekly usage in the toolbar reads Codex's usage endpoint, with Codex session JSONL as an offline fallback only, and Claude Code's `/usage` text; the router's daily rollup is a log line, not a popover value.

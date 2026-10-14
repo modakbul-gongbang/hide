@@ -1708,6 +1708,10 @@ Cost is an estimate at public API rates, not the account's bill; its tooltip sta
 An unpriced model or incomplete native usage makes a known subtotal a lower bound with its reason; a wholly unpriced amount says `Price unavailable`, a missing price table says `Pricing pending`, and a table older than sixty days is marked stale.
 No calls means No data, never a zero dollar amount; a known free price remains zero.
 
+Under the summary one quiet line reads `Of this, Hide AI` with its new tokens and its share of that day, with no money: Hide AI's own background calls (agent summaries, Memory, Factory, issues and worktrees) that no session file records.
+Hide AI is inside the headline totals, bars and grass, so the line explains part of the number above it.
+Unknown calls make the amount a lower bound, drawn `≥` with a mark and spoken as "at least"; a day with none says `No records`, a day before counting began says `Before counting`, and the line follows the inspected day.
+
 Below the summary, a `7 days` / `30 days` segmented choice switches between seven daily bars and thirty 12-pixel contribution squares; thirty days is the initial view.
 The bars show the most recent seven civil dates, labeled by weekday with Today at the end, and scale new tokens against the largest day in that period.
 The squares show the most recent thirty civil dates in Sunday-first columns, with no calendar numbers or weekday labels.
@@ -1738,6 +1742,10 @@ Full history opens Overview's global Usage tab, not a per-project ledger.
 The table starts at the most recent thirty days, with seven-day and retained-year choices and an agent filter.
 The retained year is the existing core projection's bound; Full history does not claim to expose an unlimited lifetime ledger.
 Each recorded date has a summary row, followed by agent rows when expanded; today starts expanded.
+Under the agent rows an expanded date has a `Hide AI` row with the same columns, itself expandable into one row per feature (agent summaries, Memory, Factory, issues and worktrees, other) with its call count and the providers that served it, and a `Calls with no reported usage` row that has a count and no amount.
+The agent filter has a `Hide AI` choice that lists only the days Hide AI was counted on, with its rows already open; a date of only unknown calls is still a date.
+A footnote under the table says the amounts are lower bounds when any unknown call is in the period, and names the day Hide AI is counted from, since earlier days are not backfilled.
+Choosing one agent hides Hide AI, which belongs to the all-agents range only.
 Columns are Date / Agent, estimated cost, new tokens, input, output, cache write, cache read and all tokens, with period totals and an exact-number toggle.
 Year-view dates include the year, and changing the filter or page clears expanded rows.
 At most thirty recorded dates are mounted per page, with agent rows only for expanded dates; an empty filter says there is no usage for the chosen agent and period.
