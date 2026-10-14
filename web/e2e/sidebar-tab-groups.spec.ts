@@ -149,7 +149,7 @@ test("long manual tab names keep their hint and line inside the sidebar at 240 a
         await expect.poll(async () => Math.round((await page.locator("nav[data-sidebar]").boundingBox())!.width)).toBe(width + 48);
         await expect(glyph(page, herdr.tab)).toHaveAccessibleName(`${name}, 2 agents`);
         expect(await segment(page, herdr.tab).evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-        const label = page.locator("[data-sidebar-tab-name]");
+        const label = page.locator("[data-sidebar-tab-name] > span");
         await page.evaluate(() => document.fonts.ready);
         expect(await label.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
         await glyph(page, herdr.tab).hover();
