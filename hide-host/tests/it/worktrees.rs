@@ -38,7 +38,14 @@ fn a_locked_worktree_is_named_with_its_reason_and_manual_unlock_action_before_re
             linked.to_str().unwrap(),
         ],
     );
-    let facts = hide_host::worktrees::read(&root, &Default::default(), None).unwrap();
+    let facts = hide_host::worktrees::read(
+        &root,
+        &Default::default(),
+        None,
+        &hide_host::worktrees::Measured::default(),
+        false,
+    )
+    .unwrap();
     assert_eq!(facts.worktrees[1].lock_reason.as_deref(), Some(reason));
     let mut request = removal(&root, &linked);
     request.discard_changes = true;

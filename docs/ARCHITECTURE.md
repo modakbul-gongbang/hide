@@ -848,6 +848,8 @@ Oldest entries beyond a retention cap are removed with a diagnostic, and the exi
 A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.
 The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
 A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
+A lineage edge or a file's cursor can name a session the ledger holds no row for: a spawn known before its file is read, a Pi or omp child its spawn names by its file where its reader names it by its own id, a session retention removed while its file's cursor stays.
+Such a session has no record of its own: a tree lists only the children the ledger records, and its label context carries its parent's name and no work, never a failed write (`a_session_the_ledger_never_recorded_fails_no_write_and_stops_no_context`).
 
 START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v9`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
 An unassigned session has no goal chapter; an accepted goal creates its first chapter without inventing a title for a greeting.

@@ -1014,11 +1014,15 @@ impl LinkStore {
         if record.outputs.len() > REQUEST_LIMIT {
             return Err("ledger_output_capacity".into());
         }
+        // A child is part of the record once the ledger records it: a spawn
+        // is known before its file is read, and a Pi or omp child is named
+        // by its file where its reader names it by its own id.
         let mut statement = self
             .connection
             .prepare(
-                "SELECT device,agent,id FROM session_parents \
-            WHERE parent_device=?1 AND parent_agent=?2 AND parent_id=?3 LIMIT ?4",
+                "SELECT p.device,p.agent,p.id FROM session_parents p JOIN sessions s \
+            ON s.device=p.device AND s.agent=p.agent AND s.id=p.id \
+            WHERE p.parent_device=?1 AND p.parent_agent=?2 AND p.parent_id=?3 LIMIT ?4",
             )
             .map_err(failed)?;
         let children = statement
@@ -1118,14 +1122,36 @@ impl LinkStore {
         Ok(missed_items)
     }
 
+    /// What a later turn of `session` continues. A session the ledger has
+    /// not recorded, one whose file no read has reached yet or one retention
+    /// removed, has no work to continue, only the parent that started it.
     pub fn ledger_context(&self, session: &SessionIdentity) -> Result<LedgerContext, String> {
+        let parent_name = self
+            .connection
+            .query_row(
+                "SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3",
+                params![session.device_id, session.agent, session.session_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(failed)?;
+        if self.session(&key(session))?.is_none() {
+            return Ok(LedgerContext {
+                parent_name,
+                ..LedgerContext::default()
+            });
+        }
         // The same descendant-to-spawn-turn attribution decides both the
         // visible verdict and which tasks a later turn may continue.
         let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
         Ok(LedgerContext {
-            parent_name: self.connection.query_row("SELECT parent_name FROM session_parents WHERE device=?1 AND agent=?2 AND id=?3", params![session.device_id,session.agent,session.session_id], |r| r.get(0)).optional().map_err(failed)?,
+            parent_name,
             open_tasks: record.tasks.into_iter().filter(|task| !task.done).collect(),
-            open_missed: record.missed.into_iter().filter(|missed| missed.status == MissedStatus::Open).collect(),
+            open_missed: record
+                .missed
+                .into_iter()
+                .filter(|missed| missed.status == MissedStatus::Open)
+                .collect(),
         })
     }
 
