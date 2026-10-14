@@ -336,6 +336,15 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
 
 /** Herdr states in which a catalog will not change on its own soon. */
 const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "unreachable", "stale", "incompatible"]);
+const FAILED_HERDR = new Set([...SETTLED_HERDR].filter(state => state !== "connected"));
+
+/** Whether the local saved choice is pending, rather than failed or restored. */
+export function waitingForSavedWorkspace(rest: SnapshotRest | null): boolean {
+  // Herdr can connect before the asynchronous catalog and persisted View
+  // arrive. The core retains a saved choice until its path facts settle;
+  // absence during that restore must not choose Main permanently.
+  return Boolean(rest && !focusedRemoteDevice(rest) && !FAILED_HERDR.has(rest.status?.herdr?.state ?? "") && rest.ui_state?.focused_checkout_id && !rest.workspace_view);
+}
 
 /**
  * The first screen (S6 B19, D-11): the Workspace in front when the core
@@ -348,8 +357,9 @@ const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "u
  */
 export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "workspace" | "main" | null {
   if (!rest) return null;
-  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   const device = focusedRemoteDevice(rest);
+  if (waitingForSavedWorkspace(rest)) return null;
+  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   if (!device) {
     const state = rest.status?.herdr?.state;
     return state && SETTLED_HERDR.has(state) ? "main" : null;

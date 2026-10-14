@@ -43,7 +43,12 @@ async function savedFront(daemon: Daemon, pattern: RegExp): Promise<void> {
       }
       Object.values(node).forEach(walk);
     };
-    walk(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "workspace-views.json"), "utf8")));
+    const saved = JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "workspace-views.json"), "utf8")) as {
+      workspaces: { layout: unknown }[];
+    };
+    // Hidden tab presentations retain their own fronts. The restart must
+    // persist the operator's projected layout, not flatten every owner.
+    saved.workspaces.forEach((workspace) => walk(workspace.layout));
     return fronts;
   };
   await expect.poll(savedFronts).toEqual([expect.stringMatching(pattern)]);

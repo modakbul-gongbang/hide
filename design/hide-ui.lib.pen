@@ -17766,7 +17766,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "HideTabStrip: 180 preferred, equal title compression through 104, then a leading 40 identity. Only the active tab adds the 24 toolbar close for 64 total. Compact marks retain notice, dirty and preview meaning; overflow keeps a contiguous active range.",
+          "content": "180 preferred, equal title compression through 104, then compact and marks. Two or more agent panes add a neutral pane icon and count beside the title. Shells and internal subagents do not count. The count folds at compact/mark density, while renaming, or below 48 of title room; tooltip and accessible name retain the count.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -17894,6 +17894,38 @@
               "fontWeight": "600"
             },
             {
+              "type": "frame",
+              "id": "ntwEP",
+              "x": 0,
+              "y": 0,
+              "name": "Agent pane count",
+              "enabled": false,
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "UYGtT",
+                  "name": "Pane icon",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "layout-panel-left",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "kO8JQ",
+                  "name": "Pane count",
+                  "fill": "$--muted-foreground",
+                  "content": "2",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
               "id": "awt-keycap",
               "type": "ref",
               "ref": "Ec2W1",
@@ -18002,6 +18034,48 @@
               "enabled": false
             },
             "awt-close": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "u2zGfR",
+          "type": "ref",
+          "ref": "adaptive-work-tab-master",
+          "name": "State / Agent panes 2",
+          "width": 180,
+          "descendants": {
+            "awt-tab-label": {
+              "content": "pane 작업"
+            },
+            "ntwEP": {
+              "enabled": true
+            },
+            "kO8JQ": {
+              "content": "2"
+            },
+            "awt-keycap": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "M7BD4c",
+          "type": "ref",
+          "ref": "adaptive-work-tab-master",
+          "name": "State / Agent panes 12",
+          "width": 180,
+          "descendants": {
+            "awt-tab-label": {
+              "content": "pane 작업"
+            },
+            "ntwEP": {
+              "enabled": true
+            },
+            "kO8JQ": {
+              "content": "12"
+            },
+            "awt-keycap": {
               "enabled": false
             }
           }
@@ -40838,6 +40912,286 @@
                   "fontWeight": "400"
                 },
                 {
+                  "type": "text",
+                  "id": "ath-tb-disconnected",
+                  "name": "⊘",
+                  "content": "⊘",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400",
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-tb-counts",
+                  "name": "Child state counts",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-raised",
+                      "name": "raised",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-raised-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ath-tb-raised-symbol",
+                              "name": "!",
+                              "content": "!",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-raised-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-working",
+                      "name": "working",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-working-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ath-tb-working-symbol",
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-working-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--agent-working",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-result",
+                      "name": "result",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-result-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ath-tb-result-symbol",
+                              "name": "✓",
+                              "content": "✓",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-result-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-waiting",
+                      "name": "waiting",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-waiting-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ath-tb-waiting-symbol",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-waiting-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--agent-working",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-unknown",
+                      "name": "unknown",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-unknown-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ath-tb-unknown-symbol",
+                              "name": "~",
+                              "content": "~",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-unknown-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-tb-idle",
+                      "name": "idle",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-tb-idle-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ath-tb-idle-symbol",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "justifyContent": "center"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-tb-idle-n",
+                          "name": "1",
+                          "content": "1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "enabled": false,
+                      "layout": "horizontal",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "enabled": false,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    "$--spacing-xs"
+                  ],
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "left": 1
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
                   "type": "icon",
                   "id": "ath-tb-chev",
                   "name": "Glyph",
@@ -41717,6 +42071,174 @@
             },
             {
               "type": "frame",
+              "id": "ath-l-tb-counts-cell",
+              "name": "Tree button with child states",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-counts-cap",
+                  "name": "Tree button with child state",
+                  "content": "Tree button with child states",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-counts",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "5"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-working": {
+                      "enabled": true
+                    },
+                    "ath-tb-result": {
+                      "enabled": true
+                    },
+                    "ath-tb-waiting": {
+                      "enabled": true
+                    },
+                    "ath-tb-unknown": {
+                      "enabled": true
+                    },
+                    "ath-tb-idle": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-raised-cell",
+              "name": "Ask band compact child button",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-raised-cap",
+                  "name": "Ask band compact child butto",
+                  "content": "Ask band compact child button",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-raised",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "8"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-raised": {
+                      "enabled": true
+                    },
+                    "ath-tb-raised-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-unknown-cell",
+              "name": "Tree button with unknown child",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-unknown-cap",
+                  "name": "Tree button with unknown chi",
+                  "content": "Tree button with unknown child",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-unknown",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "1"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-unknown": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-disconnected-cell",
+              "name": "Unavailable child states, topology kept",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-disconnected-cap",
+                  "name": "Unavailable child states, to",
+                  "content": "Unavailable child states, topology kept",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-disconnected",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "5"
+                    },
+                    "ath-tb-disconnected": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
               "id": "ath-l-row-root-cell",
               "name": "Root, opened",
               "children": [
@@ -42501,6 +43023,174 @@
                   "descendants": {
                     "ath-tb-n": {
                       "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-counts-cell",
+              "name": "Tree button with child states",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-counts-cap",
+                  "name": "Tree button with child state",
+                  "content": "Tree button with child states",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-counts",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "5"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-working": {
+                      "enabled": true
+                    },
+                    "ath-tb-result": {
+                      "enabled": true
+                    },
+                    "ath-tb-waiting": {
+                      "enabled": true
+                    },
+                    "ath-tb-unknown": {
+                      "enabled": true
+                    },
+                    "ath-tb-idle": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-raised-cell",
+              "name": "Ask band compact child button",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-raised-cap",
+                  "name": "Ask band compact child butto",
+                  "content": "Ask band compact child button",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-raised",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "8"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-raised": {
+                      "enabled": true
+                    },
+                    "ath-tb-raised-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-unknown-cell",
+              "name": "Tree button with unknown child",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-unknown-cap",
+                  "name": "Tree button with unknown chi",
+                  "content": "Tree button with unknown child",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-unknown",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "1"
+                    },
+                    "ath-tb-counts": {
+                      "enabled": true
+                    },
+                    "ath-tb-unknown": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-disconnected-cell",
+              "name": "Unavailable child states, topology kept",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-disconnected-cap",
+                  "name": "Unavailable child states, to",
+                  "content": "Unavailable child states, topology kept",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-disconnected",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--background",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "5"
+                    },
+                    "ath-tb-disconnected": {
+                      "enabled": true
                     }
                   }
                 }

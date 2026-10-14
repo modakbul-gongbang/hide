@@ -146,6 +146,8 @@ pub(crate) struct Handshake {
     pub(crate) schema_version: u32,
     pub(crate) client_kind: Option<String>,
     pub(crate) have_revision: Option<u64>,
+    /// Absent keeps the schema-2 complete-rest transition contract.
+    pub(crate) snapshot_format: Option<String>,
     /// The `core_instance` of the daemon frame before the snapshot the
     /// client's revision came from. A revision counts only on the core that
     /// numbered it: a core moved, rolled back or updated numbers its own.
@@ -155,6 +157,14 @@ pub(crate) struct Handshake {
     pub(crate) have_terminal_sequence: Option<u64>,
     /// The epoch of the hub that gave the cursor.
     pub(crate) have_terminal_epoch: Option<String>,
+}
+
+impl Handshake {
+    fn supported_snapshot_format(&self) -> bool {
+        self.snapshot_format
+            .as_deref()
+            .is_none_or(|format| format == "semantic-rest-v1")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -678,7 +688,7 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
         refuse(&mut socket, CloseReason::InvalidToken, None).await;
         return;
     };
-    if handshake.schema_version != SCHEMA_VERSION {
+    if handshake.schema_version != SCHEMA_VERSION || !handshake.supported_snapshot_format() {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
@@ -786,7 +796,7 @@ async fn client_loop(
             return;
         }
     };
-    if handshake.schema_version != SCHEMA_VERSION {
+    if handshake.schema_version != SCHEMA_VERSION || !handshake.supported_snapshot_format() {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
@@ -852,6 +862,7 @@ async fn screen_loop(
         Some(core) if Some(core) != own_core => 0,
         _ => handshake.have_revision.unwrap_or(0),
     };
+    let granular = handshake.snapshot_format.as_deref() == Some("semantic-rest-v1");
     let mut notify = state.core.notify.subscribe();
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
@@ -902,7 +913,7 @@ async fn screen_loop(
             return;
         }
     }
-    let Ok(first) = send_snapshot(&mut socket, &state, &mut have_revision).await else {
+    let Ok(first) = send_snapshot(&mut socket, &state, &mut have_revision, granular).await else {
         client_gone(&state, connection, renderer, desktop);
         return;
     };
@@ -940,7 +951,7 @@ async fn screen_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                match send_snapshot(&mut socket, &state, &mut have_revision).await {
+                match send_snapshot(&mut socket, &state, &mut have_revision, granular).await {
                     // A whole snapshot resets the client's terminals too.
                     Ok(FrameKind::Snapshot) => {
                         if let Some(terminals) = &terminals {
@@ -3555,17 +3566,15 @@ pub fn classify_frame(have_revision: u64, payload_revision: Option<u64>) -> Opti
     Some(FrameKind::Delta)
 }
 
-async fn read_delta(state: &AppState, have_revision: u64) -> Result<Value, ()> {
-    let snapshot = state
-        .core
-        .snapshot(have_revision)
-        .map_err(|error| log_snapshot_failure("core", &error))?;
-    if snapshot.bytes.is_empty() {
-        log_snapshot_failure("empty", "the core returned no bytes");
-        return Err(());
-    }
-    serde_json::from_slice(&snapshot.bytes)
-        .map_err(|error| log_snapshot_failure("decode", &error.to_string()))
+async fn read_delta(
+    state: &AppState,
+    have_revision: u64,
+) -> Result<herdr_core::SnapshotDeltaPayload, ()> {
+    let core = Arc::clone(&state.core);
+    tokio::task::spawn_blocking(move || core.snapshot(have_revision))
+        .await
+        .map_err(|error| log_snapshot_failure("reader", &error.to_string()))?
+        .map_err(|error| log_snapshot_failure("core", &error))
 }
 
 /// A frame the daemon could not produce ends the client's loop, so the
@@ -3586,32 +3595,46 @@ async fn send_snapshot(
     socket: &mut WebSocket,
     state: &AppState,
     have_revision: &mut u64,
+    granular: bool,
 ) -> Result<FrameKind, ()> {
     let mut payload = read_delta(state, *have_revision).await?;
-    let kind = match classify_frame(
-        *have_revision,
-        payload.get("revision").and_then(Value::as_u64),
-    ) {
+    let kind = match classify_frame(*have_revision, Some(payload.revision)) {
         Some(kind) => kind,
         None => {
             payload = read_delta(state, 0).await?;
             FrameKind::Snapshot
         }
     };
-    if let Some(revision) = payload.get("revision").and_then(Value::as_u64) {
-        *have_revision = revision;
-    }
-    let envelope = json!({
-        "type": match kind {
-            FrameKind::Snapshot => "snapshot",
-            FrameKind::Delta => "delta",
-        },
-        "payload": payload,
-    });
+    let revision = payload.revision;
+    // One encoding, on a transport worker, after typed ownership has left
+    // both Runtime and the dispatch owner thread.
+    let envelope = tokio::task::spawn_blocking(move || {
+        #[derive(serde::Serialize)]
+        struct Envelope<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            payload: herdr_core::SnapshotDeltaWire<'a>,
+        }
+        serde_json::to_string(&Envelope {
+            kind: match kind {
+                FrameKind::Snapshot => "snapshot",
+                FrameKind::Delta => "delta",
+            },
+            payload: if granular {
+                herdr_core::SnapshotDeltaWire::granular(&payload)
+            } else {
+                herdr_core::SnapshotDeltaWire::borrow(&payload)
+            },
+        })
+    })
+    .await
+    .map_err(|error| log_snapshot_failure("encoder", &error.to_string()))?
+    .map_err(|error| log_snapshot_failure("encode", &error.to_string()))?;
     socket
-        .send(Message::Text(envelope.to_string().into()))
+        .send(Message::Text(envelope.into()))
         .await
         .map_err(|_| ())?;
+    *have_revision = revision;
     Ok(kind)
 }
 

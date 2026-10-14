@@ -48,7 +48,7 @@ const finishedAndRead = (row: AgentRow) => row.status_code === "done" && !row.un
  * is the parent's name with the tree icon and its direct child count, its
  * body the same tree rows two levels deep, each with its own PR mark and,
  * folded, its descendant mark, and its last line opens the Agents graph.
- * Opened from a band's "외 N건" (`raised`), the raised descendants come
+ * Opened from a band's child trigger or "외 N건" (`raised`), the raised descendants come
  * first, their branches open, each with its verb, what and Open. A
  * grandchild with children re-roots the popover on itself. Arrows move,
  * Right and Left open and fold, Enter opens the pane, Escape closes and
@@ -67,7 +67,7 @@ export function AgentTreePopover({
 }: {
   parent: AgentRow;
   agents: readonly AgentRow[];
-  /** Opened from a band's "외 N건": raised descendants first, with their asks. */
+  /** Opened for raised descendants: their branches first, with their asks. */
   raised?: boolean;
   onOpenChild: (paneId: string, label: string) => void;
   onGraph: (() => void) | null;
@@ -81,8 +81,13 @@ export function AgentTreePopover({
   const [opening, setOpening] = useState<string | null>(null);
   const byPane = useMemo(() => new Map(agents.map((row) => [row.pane_id, row])), [agents]);
   const root = byPane.get(rootId) ?? parent;
-  // Each ask is drawn on the row it raised: a draft names the parent holding it, yet sits on its own row.
-  const asks = useMemo(() => new Map((raised ? parent.raised ?? [] : []).map((ask) => [ask.raised_pane_id, ask])), [raised, parent.raised]);
+  // The core stores asks on the lineage root, but gives every ancestor its
+  // subtree mark. A nested pane uses those same asks within its own subtree.
+  const asks = useMemo(() => {
+    const lineageRoot = byPane.get(parent.lineage_path_pane_ids?.[0] ?? parent.pane_id) ?? parent;
+    const rows = raised ? lineageRoot.raised ?? [] : [];
+    return new Map(rows.filter((ask) => lineageRoot.pane_id === parent.pane_id || byPane.get(ask.raised_pane_id)?.lineage_path_pane_ids?.includes(parent.pane_id)).map((ask) => [ask.raised_pane_id, ask]));
+  }, [raised, parent, byPane]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [shownAll, setShownAll] = useState<Set<string>>(() => new Set());
   const [finishedShown, setFinishedShown] = useState<Set<string>>(() => new Set());
@@ -97,10 +102,10 @@ export function AgentTreePopover({
 
   useEffect(() => {
     if (!open) return;
-    // Opened from 외 N건, the raised branches start open; otherwise folded.
+    // Opened with raised requests, their branches start open; otherwise folded.
     const start = new Set<string>();
     if (raised) {
-      for (const ask of parent.raised ?? []) {
+      for (const ask of asks.values()) {
         let at = byPane.get(ask.raised_pane_id);
         while (at?.lineage_parent_pane_id && at.lineage_parent_pane_id !== parent.pane_id) {
           start.add(at.lineage_parent_pane_id);
@@ -321,23 +326,23 @@ function TreeItem({
       data-tree-pane={child.pane_id}
       data-agent-child={child.pane_id}
       data-depth={line.depth}
-      aria-label={[child.identity_label, child.agent_kind, statusText(t, child.status_code), ask ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
-      className={cn("items-stretch gap-none py-none", ask && "ring-1 ring-inset ring-foreground")}
+      aria-label={[child.identity_label, child.agent_kind, reason ?? statusText(t, child.status_code), ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
+      className={cn("items-stretch gap-none py-none", ask && !unavailable && "ring-1 ring-inset ring-foreground")}
     >
       <TreeRails place={place} />
       <TreeChevron name={child.identity_label} open={line.hasChildren ? line.open : null} onToggle={onToggle} hangs={line.depth > 1} popup={line.depth >= 2} data-tree-chevron={child.pane_id} />
       <span className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
         <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
-          <StatusMark symbol={child.symbol} className={markTone(child)} />
+          <StatusMark symbol={unavailable ? "⊘" : child.symbol} className={unavailable ? "text-muted-foreground" : markTone(child)} />
           <AgentMark kind={child.agent_kind} />
           <span className="min-w-0 flex-1 truncate text-foreground" title={child.identity_label}>
             {child.identity_label}
           </span>
           <AgentPrHover agent={child} staleness={staleness} />
-          {line.hasChildren && !line.open ? <DescendantMark agent={child} /> : null}
-          <Elapsed since={child.state.request_since} className="shrink-0 font-mono text-micro text-muted-foreground" />
+          {line.hasChildren && !line.open && !unavailable ? <DescendantMark agent={child} /> : null}
+          {unavailable ? null : <Elapsed since={child.state.request_since} className="shrink-0 font-mono text-micro text-muted-foreground" />}
         </span>
-        {ask ? (
+        {ask && !unavailable ? (
           <span className="flex min-w-0 items-center gap-xs">
             <AskLine ask={{ verb: ask.verb, what: ask.what, more: 0 }} className="flex-1" />
             <button
@@ -354,7 +359,7 @@ function TreeItem({
             </button>
           </span>
         ) : null}
-        {ask?.unreceived_by && minutes !== null ? (
+        {ask?.unreceived_by && minutes !== null && !unavailable ? (
           <span className="truncate text-caption text-muted-foreground">{t("agentSessions.unreceived", { name: ask.unreceived_by, minutes })}</span>
         ) : null}
         {branch || (device !== parentDevice && deviceLabel) ? (

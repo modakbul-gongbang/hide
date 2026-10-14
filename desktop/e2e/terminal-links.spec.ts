@@ -392,6 +392,7 @@ test("terminal HTML opens a rendered page and right-click offers actions for the
     .filter((child) => "webContents" in child)
     .some((child) => (child as Electron.WebContentsView).webContents.getTitle() === "Terminal HTML"))).toBe(true);
   await screenshot(page, "terminal-html-rendered");
+  if (process.platform === "darwin") await nativeCapture("terminal-html-rendered-native");
 
   await page.mouse.click(point.x, point.y, { button: "right" });
   await expect(page.getByRole("menuitem", { name: "Open in browser", exact: true })).toBeVisible();
@@ -401,6 +402,7 @@ test("terminal HTML opens a rendered page and right-click offers actions for the
   await expect(page.locator('[data-view-tab-bar] [role="tab"][data-tab-kind="file"][aria-label*="report.HTML"]')).toBeVisible();
   await expect(page.locator(".cm-activeLine").first()).toHaveText("<h1>Rendered terminal report</h1>");
   await screenshot(page, "terminal-html-source");
+  if (process.platform === "darwin") await nativeCapture("terminal-html-source-native");
 
   point = await pointOf(page, paneId, "HTML source label", { offset: 2 });
   await hoverLink(page, paneId, point);

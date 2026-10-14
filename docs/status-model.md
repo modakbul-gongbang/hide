@@ -271,10 +271,12 @@ The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows`
 The shell shows five siblings per parent and folds the rest behind `N개 더` (`web/src/sidebarTree.ts`).
 A grandchild's own children open in the tree popover instead of a third level.
 A delegated row whose checkout differs from its parent's carries `row.state.branch_badge` (`agent_state/axes.rs::apply_lineage`): that checkout's branch, or its label when it has none, the name the sidebar gives the checkout; a device checkout's label is its folder name, so the label alone would name a folder there.
-The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's tree button, a grandchild's chevron and an ask band's `외 N건`.
+The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's second-row tree button, a grandchild's chevron and an ask band's fallback `외 N건` when that tree button is unavailable.
+The second-row button separates the live direct child total and `direct_child_counts` from the subtree's operator-raised `descendant_mark.count`; ordinary child requests do not become raised asks.
+Its compact ask-band form keeps only the total and raised count, while its tooltip names every count; unknown children are excluded from the resting remainder.
 Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
-Opened from an ask band it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
+Opened from a pane button with a raised mark, or the fallback ask-band button, it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
 A pending or failed move shows at its footer with the retry rules of the relation, and the last line opens the Overview Agents graph.
 Disappearing children leave immediately and an empty popover closes.
 
@@ -706,6 +708,24 @@ The existing runtime tick advances that window without adding a timer or per-sna
 Closing a pane prunes its resolution and input record.
 Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
 
+### The Sessions work record
+
+Sessions rows keep their live group and navigation and add a record action and a warning-coloured flag for open missed work.
+The record's title follows the same summary/native/manual rules, with the current status, own task verdict, created outputs, missed work, own chapters and expandable children in that order.
+An assigned task is Done only after its last END is Done and all assigned PRs are merged; review, failed CI, unfinished, blocked and question remain distinct states, while waiting uses Doing.
+Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
+Children show three visual indentation levels, five siblings initially and a More action for the rest.
+
+Missed items are durable Open, Resolved, Issue or Dismissed records.
+Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
+The Sessions top group includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the project's Copied history window (90 days by default).
+It is folded by default, scoped with the visible checkout, project or Home, and renewed live activity returns the item to its live session row.
+
+With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request newest first.
+It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
+This record does not change the phone surface or the live Sessions grouping rules.
+Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, and the isolated session-work-ledger browser and desktop flows.
+
 ### Delegated escalation
 
 `agent_state/escalation.rs` reads the existing doorbell and watch decisions rather than adding delivery clocks.
@@ -730,15 +750,18 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 
 `agent_state/header.rs` publishes a working-line flag and at most one band per pane.
 Connection or sleep availability wins, then the pane's own demand, then the lead raised descendant, then the ordinary task verb.
-Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
-An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the verb in its colour, what to do (for the pane's own Answer, the row's second line, so a native question reads as itself), who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, `외 N건` for the other asks, and Open.
+Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has a thin blue line, while CI wait, child wait and Idle have no task band, although their live children can fill the overlay slot.
+An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the compact child total and operator-raised count, the verb in its colour, what to do (for the pane's own Answer, the row's second line, so a native question reads as itself), who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, and Open.
+The duplicate `외 N건` is absent when the child trigger supplies raised-tree access, and remains as a fallback otherwise.
 Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
 PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The tree button with the direct child total and state counts starts the second-row overlay, sharing that slot with a core band or, without one, the core-ranked child's existing line.
+An unavailable device anywhere in that known subtree overrides the retained state totals and activity line with a dim disconnected mark and the existing connection reason, while preserving topology access.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
 Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test.tsx`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.
 

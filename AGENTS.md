@@ -29,6 +29,11 @@ Every agent Hide supports and every feature works on macOS, Windows and Linux; d
 A system-specific difference is written once in its layer (`hide-platform` for the Rust side, `desktop/src/main/` for the desktop host) and proved on that system's CI lane, not assumed from macOS.
 A gap is allowed only as a cell in `docs/INSTALL.md`, What each system supports, with its reason and what would close it, changed in the same pull request as the behavior.
 
+## Explaining To The Operator
+
+When you tell the operator about a problem and its fix, in a reply, a letter or a pull request's `Summary`, say in plain words what is wrong and what changes, core first and short.
+Leave out the technical detail and the comparison of alternatives unless the operator asks for them; a pull request keeps the files to watch and the proof in `Review` and `Evidence`.
+
 ## Before Opening A Pull Request
 
 `main` takes pull-request merges only, and the `verify` workflow has to pass; this repository currently uses merge commits, and no one, maintainer included, can push around branch protection.

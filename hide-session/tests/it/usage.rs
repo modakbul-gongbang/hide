@@ -47,9 +47,9 @@ fn pi_or_omp_usage(agent: Agent) {
         "{\"type\":\"session\",\"id\":\"native-session\",\"cwd\":\"/work/app\"}\n",
         "{\"type\":\"message\",\"id\":\"native-message\",\"timestamp\":\"2026-10-01T12:00:00Z\",\"message\":{\"role\":\"assistant\",\"model\":\"native-model\",\"provider\":\"openai-codex\",\"usage\":{\"input\":10,\"output\":20,\"cacheRead\":900,\"cacheWrite\":30,\"cost\":{\"total\":0.25}}}}\n"
     )).unwrap();
-    let first = usage::read(home.path(), agent, &file, None).unwrap();
-    assert_eq!(first.events.len(), 1);
-    let event = &first.events[0];
+    let (first, checkpoint) = usage_drain(home.path(), agent, &file, None);
+    assert_eq!(first.len(), 1);
+    let event = &first[0];
     assert_eq!(
         (
             event.tokens.input,
@@ -64,11 +64,11 @@ fn pi_or_omp_usage(agent: Agent) {
     let copy = root.join("copy.jsonl");
     fs::copy(&file, &copy).unwrap();
     assert_eq!(
-        usage::read(home.path(), agent, &copy, None).unwrap().events[0].key,
+        usage_drain(home.path(), agent, &copy, None).0[0].key,
         event.key
     );
     assert!(
-        usage::read(home.path(), agent, &file, Some(first.checkpoint))
+        usage::read(home.path(), agent, &file, Some(checkpoint))
             .unwrap()
             .events
             .is_empty()
@@ -141,7 +141,7 @@ fn usage_opencode_closed_wal_reader_role() {
     };
     let home = std::path::PathBuf::from(root);
     let path = home.join(".local/share/opencode/opencode.db");
-    let (events, _) = opencode_drain(&home, &path, None);
+    let (events, _) = usage_drain(&home, Agent::OpenCode, &path, None);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].recorded_cost_micro_usd, Some(100_000));
 }
@@ -222,7 +222,7 @@ fn usage_opencode_wal_reader_role() {
         ));
         return;
     }
-    let (events, _) = opencode_drain(&home, &path, None);
+    let (events, _) = usage_drain(&home, Agent::OpenCode, &path, None);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].recorded_cost_micro_usd, Some(100_000));
     println!("usage WAL read completed");
@@ -245,6 +245,10 @@ fn usage_rewritten_file_rescans_and_large_batches_resume_without_loss() {
     assert_ne!(rewritten.events[0].key, first.events[0].key);
 
     fs::write(&path, CLAUDE.repeat(12_000)).unwrap();
+    assert_eq!(
+        usage_drain(home.path(), Agent::Claude, &path, None).0.len(),
+        12_000
+    );
     let mut saved = None;
     let mut count = 0;
     let mut steps = 0;
@@ -397,9 +401,9 @@ fn usage_codex_cache_and_reasoning_are_not_added_twice() {
         "{\"type\":\"turn_context\",\"payload\":{\"model\":\"model-a\"}}\n",
         "{\"type\":\"event_msg\",\"timestamp\":\"2026-10-01T12:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"output_tokens\":10,\"reasoning_output_tokens\":3},\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"output_tokens\":10,\"reasoning_output_tokens\":3}}}}\n"
     )).unwrap();
-    let step = usage::read(home.path(), Agent::Codex, &path, None).unwrap();
-    assert_eq!(step.events.len(), 1);
-    let t = &step.events[0].tokens;
+    let (events, _) = usage_drain(home.path(), Agent::Codex, &path, None);
+    assert_eq!(events.len(), 1);
+    let t = &events[0].tokens;
     assert_eq!(
         (t.input, t.output, t.cache_read, t.reasoning),
         (20, 10, 80, Some(3))
@@ -483,11 +487,10 @@ fn usage_codex_native_responses_exclude_inherited_records_and_repeated_notificat
         records.iter().map(|r| format!("{r}\n")).collect::<String>(),
     )
     .unwrap();
-    let step = usage::read(home.path(), Agent::Codex, &path, None).unwrap();
-    assert!(step.skipped.is_empty());
-    assert_eq!(step.events.len(), 1);
-    assert_eq!(step.events[0].session, "child");
-    assert_eq!(step.events[0].tokens.input, 20);
+    let (events, _) = usage_drain(home.path(), Agent::Codex, &path, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, "child");
+    assert_eq!(events[0].tokens.input, 20);
 }
 
 #[test]
@@ -560,15 +563,19 @@ fn opencode_part(db: &rusqlite::Connection, id: &str, message: &str, cost: Optio
     .unwrap();
 }
 
-fn opencode_drain(
+// A read is one bounded page, even for a two-line Pi/omp session: the
+// metadata can exhaust its time slice before the message is consumed.
+// Complete accounting follows its checkpoint, not a retry of the read.
+fn usage_drain(
     home: &std::path::Path,
+    agent: Agent,
     path: &std::path::Path,
     checkpoint: Option<usage::Checkpoint>,
 ) -> (Vec<usage::Event>, usage::Checkpoint) {
     let mut saved = checkpoint;
     let mut events = Vec::new();
     for _ in 0..100 {
-        let step = usage::read(home, Agent::OpenCode, path, saved).unwrap();
+        let step = usage::read(home, agent, path, saved).unwrap();
         assert!(step.read_bytes <= 1024 * 1024);
         assert!(step.skipped.is_empty(), "{:?}", step.skipped);
         assert!(
@@ -597,7 +604,7 @@ fn usage_opencode_reads_steps_not_overwritten_message_tokens_or_accumulated_cost
     opencode_message(&db, "msg-c", false, 100);
     opencode_part(&db, "part-d", "msg-c", Some(0.3));
     let before = fs::read(&path).unwrap();
-    let (events, checkpoint) = opencode_drain(home.path(), &path, None);
+    let (events, checkpoint) = usage_drain(home.path(), Agent::OpenCode, &path, None);
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(events.len(), 3);
     assert_eq!(events.iter().map(|e| e.tokens.input).sum::<u64>(), 60);
@@ -621,7 +628,7 @@ fn usage_opencode_reads_steps_not_overwritten_message_tokens_or_accumulated_cost
     // still arrives in the next cycle, including a lexically earlier id.
     opencode_message(&db, "msg-0", true, 100);
     opencode_part(&db, "part-0", "msg-0", Some(0.4));
-    let (next, _) = opencode_drain(home.path(), &path, Some(checkpoint));
+    let (next, _) = usage_drain(home.path(), Agent::OpenCode, &path, Some(checkpoint));
     assert!(
         next.iter()
             .any(|e| e.recorded_cost_micro_usd == Some(400_000))
@@ -634,13 +641,13 @@ fn usage_opencode_vacuum_rescans_without_changing_native_event_identity() {
     let (path, db) = opencode_fixture(home.path());
     opencode_message(&db, "msg-a", true, 100);
     opencode_part(&db, "part-a", "msg-a", Some(0.1));
-    let (first, checkpoint) = opencode_drain(home.path(), &path, None);
+    let (first, checkpoint) = usage_drain(home.path(), Agent::OpenCode, &path, None);
     db.execute_batch("VACUUM").unwrap();
     let next = usage::read(home.path(), Agent::OpenCode, &path, Some(checkpoint)).unwrap();
     assert!(next.rescanned);
     let mut events = next.events;
     if next.has_more {
-        events.extend(opencode_drain(home.path(), &path, Some(next.checkpoint)).0);
+        events.extend(usage_drain(home.path(), Agent::OpenCode, &path, Some(next.checkpoint)).0);
     }
     assert_eq!(first, events);
 }

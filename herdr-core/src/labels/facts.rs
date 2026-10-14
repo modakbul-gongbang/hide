@@ -259,6 +259,18 @@ impl SessionFacts {
                 .is_none_or(|verdict| verdict.requester.is_operator())
     }
 
+    /// Work is given by the operator for roots, and by the parent for
+    /// delegated sessions. Reuse the kept input verdict and canonical letter.
+    pub(crate) fn feeds_work(&self, event: &LabelEvent, parent: Option<&str>) -> bool {
+        if let Some((sender, kind)) = hide_session::envelope_header(&event.text) {
+            return parent == Some(sender.as_str()) && kind == "request";
+        }
+        match parent {
+            Some(_) => self.first_request_offset == Some(event.offset) && event.sender.is_none(),
+            None => event.sender.is_none() && self.feeds_analysis(event.offset),
+        }
+    }
+
     /// A rewritten conversation: the offsets the requesters were kept by no
     /// longer name the same messages.
     pub(crate) fn forget_offsets(&mut self) {
@@ -632,5 +644,47 @@ mod tests {
         assert_eq!(facts.sightings.len(), MAX_SIGHTINGS);
         assert_eq!(facts.sightings.first().unwrap().number, 6);
         assert_eq!(facts.sightings.last().unwrap().number, 25);
+    }
+    #[test]
+    fn delegated_work_uses_the_parent_without_promoting_direct_operator_input_or_reports() {
+        let mut facts = SessionFacts::default();
+        let initial = human("initial delegated request", 500, 1);
+        let direct = human("operator types into child", 10_100, 2);
+        let parent = human(
+            "Hide letter letter-1 from lead (claude) [request]\nContinue work",
+            10_200,
+            3,
+        );
+        let report = human(
+            "Hide letter letter-2 from lead (claude) [report]\nStatus",
+            10_300,
+            4,
+        );
+        let peer = human(
+            "Hide letter letter-3 from peer (codex) [request]\nOther work",
+            10_400,
+            5,
+        );
+        fold(
+            &mut facts,
+            &[
+                initial.clone(),
+                direct.clone(),
+                parent.clone(),
+                report.clone(),
+                peer.clone(),
+            ],
+            &[submit(1, 10_000, false)],
+            &mut None,
+        );
+        assert!(facts.feeds_work(&initial, Some("lead")));
+        assert!(facts.feeds_work(&parent, Some("lead")));
+        for event in [&direct, &report, &peer] {
+            assert!(!facts.feeds_work(event, Some("lead")));
+        }
+        assert!(facts.feeds_work(&direct, None));
+        for event in [&parent, &report, &peer] {
+            assert!(!facts.feeds_work(event, None));
+        }
     }
 }

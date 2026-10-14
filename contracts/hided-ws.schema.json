@@ -24,6 +24,10 @@
         "schema_version": { "type": "integer", "const": 2 },
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
+        "snapshot_format": {
+          "description": "Explicitly requests independently retained rest fields, with nested navigator, terminal and status omissions. Missing keeps schema-2 complete-rest replacement. Unknown formats close with schema_mismatch (4003).",
+          "const": "semantic-rest-v1"
+        },
         "have_core": {
           "description": "The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.",
           "type": "string",
@@ -147,6 +151,10 @@
         "payload": {
           "type": "object",
           "properties": {
+            "rest_format": {
+              "description": "Present only after snapshot_format negotiation. Each rest field replaces one semantic value; omissions retain, explicit null/empty values clear. Navigator, terminal and status merge their independently revisioned fields. Cursor zero/reset carries all fields.",
+              "const": "semantic-rest-v1"
+            },
             "usage": {
               "description": "The independently revisioned top-level usage section in a snapshot or delta. Delta omission preserves the previous value; an empty nodes array clears it. A fresh snapshot, including a future-cursor reset, always carries the complete section. Usage-only changes do not resend rest.",
               "$ref": "#/$defs/usageSnapshot"

@@ -298,6 +298,7 @@ mod tests {
             }],
             prs,
             prs_read: true,
+            outputs: Vec::new(),
         }
     }
 

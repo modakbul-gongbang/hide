@@ -444,6 +444,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
 #[test]
 fn selecting_a_hidden_view_reveals_only_when_requested() {
     let (mut runtime, _dir) = caller_fixture();
+    runtime.sync_agent_lineage_layouts();
     let key = (crate::node::TEST_NODE, "/checkouts/b");
     let layout = &mut runtime
         .workspace_views
@@ -477,8 +478,8 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
     assert!(
-        !views_of(&runtime, key),
-        "a background select leaves File Views off"
+        views_of(&runtime, key),
+        "B6: the caller's result is visible when its checkout is shown"
     );
     assert_eq!(called(&runtime), 0, "a background select calls no column");
     runtime
@@ -497,7 +498,9 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap();
     assert_eq!(
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some("workspace-b")
+        Some("workspace-b"),
+        "{:?}",
+        runtime.snapshot.status.last_error
     );
     assert!(views_of(&runtime, key), "a reveal turns File Views on");
     // The shell shows a called File Views in a narrow body; a call from the
@@ -536,6 +539,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let root = dir.path().to_string_lossy().into_owned();
     runtime.snapshot.navigator.workspaces[1].path = root.clone();
     runtime.snapshot.navigator.workspaces[1].checkouts[0].path = root.clone();
+    runtime.sync_agent_lineage_layouts();
     let path = dir.path().join("보고서.md");
     std::fs::write(&path, "hello\n").unwrap();
     let expected = runtime

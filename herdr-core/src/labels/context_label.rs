@@ -72,8 +72,7 @@ static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
     [
         INPUT,
         "<latest-exchange>는 에이전트가 방금 멈춘 턴이며 line과 end는 여기서 정합니다. ",
-        "Markdown 없이 정확히 네 개의 필드를 이 순서로 가진 JSON 객체 하나만 반환하세요: ",
-        "{\"goal\":\"...\",\"goal_changed\":false,\"line\":\"...\",\"end\":\"question|blocked|waiting|unfinished|done\"}. ",
+        "Markdown 없이 goal, goal_changed, line, end, work 필드를 가진 JSON 객체 하나만 반환하세요. ",
         GOAL,
         "line은 40자 이내의 한 줄이고 goal을 되풀이하지 않습니다: ",
         "턴의 결과를 쓰고, question이면 운영자가 답하거나 할 일을 명령형으로(\"~하세요\", \"~을 선택\"), blocked이면 막은 원인을, waiting이면 무엇을 기다리는지, unfinished이면 남은 일을 쓰세요. ",
@@ -91,6 +90,17 @@ static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
         "5. done: 요청한 일을 끝냈다고 보고했고, 결과를 기다리는 일이 남아 있지 않습니다. 끝냈다고 보고한 것이 아니면 done이 아니라 unfinished입니다. ",
         "goal이 null인 대화도 line과 end는 실제 턴으로 판단하세요. 단순 인사나 이름 질문에 답했고 요구한 다음 행동이 없으면 line은 빈 문자열, end는 done입니다. 맡긴 일이 없다는 이유로 unfinished나 '작업 지시 대기'를 만들지 마세요. ",
         "승인 프롬프트처럼 Herdr가 이미 아는 상태는 분류하지 마세요. ",
+        "work는 {\"task\":{\"kind\":\"new\",\"name\":\"작업명\"}|{\"kind\":\"continue\",\"ids\":[\"task-id\"]}|{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null} 입니다. ",
+        "<work-author>true</work-author>일 때만 이번 사람 요청을 작업으로 판정하세요. 운영자나 위임한 부모의 요청이며 다른 에이전트의 편지는 제외됩니다. ",
+        "구체적인 결과물을 새로 시켰으면 new와 80자 이내 작업명, <open-tasks>의 기존 일을 이어가면 continue와 실제 ID 최대 2개, 질문·설명·진행 확인은 none입니다. ",
+        "work-author가 false이면 task는 none입니다. 같은 일의 검증·버그 수정·머지·설치는 기존 작업을 이어갑니다. ",
+        "missed에는 이번 마지막 assistant 답에서 직접 남았다고 보고한 일(leftover), 본 작업과 별도로 발견했다고 보고한 문제(problem), 이슈나 후속 작업으로 남기자고 제안했으나 아직 처리하지 않은 일(follow_up)만 넣으세요. ",
+        "각 항목은 {\"kind\":\"leftover|problem|follow_up\",\"text\":\"80자 이내의 한 줄\"}이고 한 턴 최대 3개입니다. 원하면/필요하면 가능하다는 선택적 제안은 놓친 일이 아닙니다. ",
+        "<open-missed>의 항목을 이번 턴에서 실제 처리했다고 보고했으면 resolved에 {\"id\":\"실제 ID\",\"issue_number\":null 또는 번호}로 넣고, 아직 처리하지 않은 항목을 반복해서 missed에 넣지 마세요. ",
+        "output_task_id는 이번 턴에 이어간 작업이 둘일 때 결과물이 귀속될 한 실제 작업 ID이고, 근거 없으면 null입니다. ",
+        "end는 마지막 답 전체에서 정하고, open-tasks와 open-missed는 work의 ID 판정에만 쓰세요. ",
+        "사용자의 구체적인 승인·선택·정보를 요구한 문장은 본 작업의 진행이 아니라 별도의 후속 결정에 관한 것이어도 1번 question입니다. ",
+        "그 요구를 missed에 옮겨 적고 end를 waiting으로 정하면 틀립니다. CI·빌드 대기도 보고했다면 question이 우선이며 line에 사용자가 할 결정을 쓰세요. ",
         DATA,
     ]
     .concat()
@@ -118,12 +128,25 @@ static END_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["goal", "goal_changed", "line", "end"],
+        "required": ["goal", "goal_changed", "line", "end", "work"],
         "properties": {
             "goal": {"type": ["string", "null"], "minLength": 8, "maxLength": 30},
             "goal_changed": {"type": "boolean"},
             "line": {"type": "string"},
-            "end": {"type": "string", "enum": ["question", "blocked", "waiting", "unfinished", "done"]}
+            "end": {"type": "string", "enum": ["question", "blocked", "waiting", "unfinished", "done"]},
+            "work":{
+                "type":"object","additionalProperties":false,"required":["task","missed","resolved","output_task_id"],
+                "properties":{
+                    "task":{"oneOf":[
+                        {"type":"object","additionalProperties":false,"required":["kind","name"],"properties":{"kind":{"const":"new"},"name":{"type":"string","minLength":1,"maxLength":80}}},
+                        {"type":"object","additionalProperties":false,"required":["kind","ids"],"properties":{"kind":{"const":"continue"},"ids":{"type":"array","minItems":1,"maxItems":2,"uniqueItems":true,"items":{"type":"string"}}}},
+                        {"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"none"}}}
+                    ]},
+                    "missed":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["kind","text"],"properties":{"kind":{"type":"string","enum":["leftover","problem","follow_up"]},"text":{"type":"string","minLength":1,"maxLength":80}}}},
+                    "resolved":{"type":"array","maxItems":200,"items":{"type":"object","additionalProperties":false,"required":["id","issue_number"],"properties":{"id":{"type":"string"},"issue_number":{"type":["integer","null"],"minimum":1}}}},
+                    "output_task_id":{"type":["string","null"]}
+                }
+            }
         }
     })
 });
@@ -175,6 +198,7 @@ struct EndAnswer {
     /// unfinished turn.
     line: String,
     end: StoppedEnd,
+    work: crate::links::ledger::TurnJudgment,
 }
 
 /// How a stopped turn stands; `working` is not one of them, so an end
@@ -205,7 +229,7 @@ impl From<StoppedEnd> for LabelEnd {
 /// verdict. The shape is already guaranteed; what is judged here is whether
 /// the content is usable.
 pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
-    let (goal, goal_changed, line, end) = match phase {
+    let (goal, goal_changed, line, end, work) = match phase {
         AnalysisPhase::TurnStart => {
             let answer: StartAnswer =
                 serde_json::from_value(value).context("provider_invalid_analysis")?;
@@ -214,6 +238,7 @@ pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
                 answer.goal_changed,
                 answer.line,
                 LabelEnd::Working,
+                None,
             )
         }
         AnalysisPhase::TurnEnd => {
@@ -224,6 +249,7 @@ pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
                 answer.goal_changed,
                 answer.line,
                 answer.end.into(),
+                Some(answer.work),
             )
         }
     };
@@ -254,12 +280,20 @@ pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
         goal_changed,
         line,
         end,
+        work,
     })
 }
 
 /// The same judgment over raw text, for tests.
 #[cfg(test)]
 pub(crate) fn parse_text(phase: AnalysisPhase, raw: &str) -> Result<Analysis> {
-    let value: Value = serde_json::from_str(raw.trim()).context("provider_invalid_analysis")?;
+    let mut value: Value = serde_json::from_str(raw.trim()).context("provider_invalid_analysis")?;
+    // The older label-only fixtures exercise goal/line/end decisions. Give
+    // those fixtures the explicit non-task judgment required by v9; the
+    // production parser itself still rejects a missing work object.
+    if phase == AnalysisPhase::TurnEnd && value.get("work").is_none() {
+        value["work"] =
+            json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
+    }
     parse(phase, value)
 }

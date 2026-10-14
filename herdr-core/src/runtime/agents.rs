@@ -1676,6 +1676,11 @@ impl Runtime {
         }
 
         if changed {
+            if !self.ai_settings.as_ref().is_some_and(|settings| {
+                settings.enabled && settings.chosen && settings.agent_summary
+            }) {
+                self.cancel_session_issue_draft();
+            }
             self.refresh_background_ai();
         }
         true

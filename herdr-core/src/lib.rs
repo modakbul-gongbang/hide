@@ -78,6 +78,10 @@ pub use handle::Core;
 pub use model::{
     CoreOptions, DeviceRegistration, LinkOrigin, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload,
 };
+pub use model::{
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RemoteStatusSnapshot, RestSections,
+    RightPanelSection, SnapshotDeltaWire,
+};
 pub use runtime::WorkspaceRemoteRoute;
 pub use runtime::core_move::{MoveProject, MoveSource, MoveSourceRefusal, ReleaseSource};
 pub use runtime::serialize_snapshot_delta;

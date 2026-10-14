@@ -20,27 +20,10 @@ pub const MAX_RANGE: u64 = 4 * 1024 * 1024;
 /// Reads at most `length` bytes (and never more than `MAX_RANGE`) of the
 /// regular file `relative` from `offset`. An offset past the end reads none.
 pub fn read(dir: &Dir, relative: &Path, offset: u64, length: u64) -> HostResult<Range> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use cap_std::fs::OpenOptionsExt;
-        // A FIFO must not stall the reader waiting for a writer.
-        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
-    }
+    let mut file = open_regular(dir, relative)?;
     let failed =
         |error: &std::io::Error| HostError::io(error, "The selected file could not be read");
-    let mut file = dir
-        .open_with(relative, &options)
-        .map_err(|error| failed(&error))?
-        .into_std();
     let metadata = file.metadata().map_err(|error| failed(&error))?;
-    if !metadata.is_file() {
-        return Err(HostError::new(
-            ErrorCode::NotAFile,
-            "Only existing regular files can be read",
-        ));
-    }
     let total = metadata.len();
     let start = offset.min(total);
     let wanted = length.min(MAX_RANGE).min(total - start);
@@ -57,6 +40,33 @@ pub fn read(dir: &Dir, relative: &Path, offset: u64, length: u64) -> HostResult<
         data: base64::engine::general_purpose::STANDARD.encode(&bytes),
         file: stamp(&file, &metadata).map_err(|error| failed(&error))?,
     })
+}
+
+/// Capability-confined, nonblocking regular-file open shared by viewers and
+/// session issue templates. Special files cannot occupy a helper worker.
+pub(crate) fn open_regular(dir: &Dir, relative: &Path) -> HostResult<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        // A FIFO must not stall the reader waiting for a writer.
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    let failed =
+        |error: &std::io::Error| HostError::io(error, "The selected file could not be read");
+    let file = dir
+        .open_with(relative, &options)
+        .map_err(|error| failed(&error))?
+        .into_std();
+    let metadata = file.metadata().map_err(|error| failed(&error))?;
+    if !metadata.is_file() {
+        return Err(HostError::new(
+            ErrorCode::NotAFile,
+            "Only existing regular files can be read",
+        ));
+    }
+    Ok(file)
 }
 
 /// Which file this is and when it last changed, so a later read can tell

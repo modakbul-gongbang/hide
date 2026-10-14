@@ -76,7 +76,13 @@ fn run_coordinator(
     let mut agents_refresh_owed = false;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
-    let mut catalog_cache: Option<CatalogCache> = None;
+    let mut catalog_cache = CatalogState {
+        wake: Some(RepublishWaker {
+            sender: sender.clone(),
+            pending: Arc::clone(&republish_pending),
+        }),
+        ..Default::default()
+    };
     // Herdr events received since the last publish, for the stage records of
     // Hide-started operations (PRD instant-pane-topology D-14).
     let mut arrivals: Vec<HerdrArrival> = Vec::new();
@@ -218,6 +224,7 @@ fn run_coordinator(
                     }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
+                    catalog_cache.connection = subscription_generation;
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
                     active_tab_reads.clear();
                     if let Err(message) = sync_reader.reset() {
@@ -1203,7 +1210,7 @@ fn stand_in_unconfirmed_cwds(
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
-    catalog_cache: &mut Option<CatalogCache>,
+    catalog_cache: &mut CatalogState,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
     arrivals: &mut Vec<HerdrArrival>,
@@ -1323,54 +1330,75 @@ fn publish_replica(
         unconfirmed_created_purposes,
         created_tab_clamps,
         runtime_paths,
+        accepted_tabs,
     ) = match runtime.lock() {
-        Ok(guard) => (
-            guard.node().clone(),
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-            guard.created_tab_clamps(),
-            guard.catalog_paths(),
-        ),
+        Ok(mut guard) => {
+            guard.begin_catalog_coordinator();
+            (
+                guard.node().clone(),
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.created_tab_clamps(),
+                guard.catalog_paths(),
+                guard
+                    .snapshot()
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.checkouts)
+                    .flat_map(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .filter_map(|tab| Some((tab.id.clone()?, checkout.path.clone())))
+                    })
+                    .collect::<HashMap<_, _>>(),
+            )
+        }
         Err(_) => return false,
     };
     drop(runtime);
 
-    // The node is asked about every path the catalog and the reconcile read,
-    // here and outside the lock; a set it answered recently is not asked
-    // again until the catalog's own refresh interval runs out.
+    // The reader owns the only blocking work. Its answer describes facts,
+    // never a session to replay; build from the current replica below.
     let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
     wanted.extend(Runtime::session_cwds(&payload));
     wanted.extend(created_tab_clamps.iter().map(|clamp| clamp.path.clone()));
-    let recent = catalog_cache.as_ref().filter(|cache| {
-        cache.asked == wanted && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    let reader = catalog_cache
+        .reader
+        .get_or_insert_with(|| path_facts::PathReader::new(context, catalog_cache.wake.clone()));
+    let answer = reader.poll(path_facts::Request {
+        connection: catalog_cache.connection,
+        paths: wanted.clone(),
     });
-    let recent_at = recent.map(|cache| cache.built_at);
-    let (paths, asked) = match recent {
-        Some(cache) => (Arc::clone(&cache.paths), cache.asked.clone()),
-        None => match context
-            .node()
-            .ok_or_else(|| "this target has no node".to_owned())
-            .and_then(|link| workspace::PathIndex::ask(link.as_ref(), wanted.clone()))
-        {
-            Ok(paths) => (Arc::new(paths), wanted),
-            Err(error) => {
-                crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "catalog.path_facts_failed",
-                    "target": context.log_target(),
-                    "message": error,
-                }));
-                // The previous answer stands, the runtime's own before this
-                // coordinator has one, read by names where it is silent, and
-                // the next publish asks again.
-                let previous = catalog_cache
-                    .as_ref()
-                    .map(|cache| Arc::clone(&cache.paths))
-                    .unwrap_or(runtime_paths);
-                (previous, BTreeSet::new())
+    let mut built_at = catalog_cache
+        .as_ref()
+        .map(|cache| cache.built_at)
+        .unwrap_or_else(Instant::now);
+    let previous = catalog_cache
+        .as_ref()
+        .map(|cache| Arc::clone(&cache.paths))
+        .unwrap_or(runtime_paths);
+    let paths = match answer {
+        Some(Ok(paths)) => {
+            built_at = Instant::now();
+            if *previous == paths {
+                previous
+            } else {
+                Arc::new(paths)
             }
-        },
+        }
+        Some(Err(error)) => {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "catalog.path_facts_failed",
+                "target": context.log_target(),
+                "message": error,
+            }));
+            previous
+        }
+        None => previous,
     };
 
     // The catalog is built here, outside the lock, from the cwd the runtime
@@ -1395,30 +1423,44 @@ fn publish_replica(
         clamped = copy;
         &clamped
     };
-    let spaces = Runtime::session_spaces(birth_free, &paths);
+    let mut spaces = Runtime::session_spaces(birth_free, &paths);
+    // An unanswered cwd has no authority to invent a folder project. Known
+    // tabs retain their accepted checkout in the runtime's reconcile.
+    for space in &mut spaces {
+        space.cwds.retain(|cwd| paths.knows(cwd));
+        for layout in &birth_free.layouts {
+            if layout.workspace_id == space.id
+                && let Some(path) = accepted_tabs.get(&layout.tab_id)
+                && layout.panes.iter().any(|pane| {
+                    Runtime::pane_cwd(birth_free, &pane.pane_id)
+                        .is_some_and(|cwd| !paths.knows(&cwd))
+                })
+                && !space.cwds.contains(path)
+            {
+                space.cwds.push(path.clone());
+            }
+        }
+    }
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         Arc::ptr_eq(&cache.paths, &paths)
             && cache.registrations == registrations
             && cache.spaces == spaces
             && cache.worktrees == worktrees
-            && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
         let workspaces =
             workspace::build_catalog(&node, &registrations, &spaces, &worktrees, &paths);
-        // An answer reused from the cache keeps its age, so the node is asked
-        // again once the interval runs out however often the session moves.
-        let built_at = recent_at.unwrap_or_else(Instant::now);
-        *catalog_cache = Some(CatalogCache {
+        catalog_cache.cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
             workspaces,
-            asked,
             paths,
             built_at,
             purposes_synced: None,
         });
+    } else if let Some(cache) = catalog_cache.as_mut() {
+        cache.built_at = built_at;
     }
     let cache = catalog_cache
         .as_mut()
@@ -1435,6 +1477,7 @@ fn publish_replica(
     }
     let precomputed = PrecomputedCatalog {
         registrations,
+        worktrees: cache.worktrees.clone(),
         workspaces: cache.workspaces.clone(),
         paths: Arc::clone(&cache.paths),
     };
@@ -2184,6 +2227,7 @@ mod worktree_observer_tests {
             );
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
+                worktrees: runtime.worktree_catalog(),
                 workspaces: workspace::build_catalog(
                     &crate::node::test_node(),
                     &[],
@@ -2460,8 +2504,298 @@ mod focus_readback_order_tests {
         )
     }
 
+    struct HeldPaths {
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        local: hide_node::Local,
+    }
+
+    impl crate::node_access::NodeLink for HeldPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            if matches!(call, hide_node_link::protocol::Call::PathFacts { .. }) {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            self.local.call(call, timeout)
+        }
+    }
+
+    #[test]
+    fn confirmed_layout_and_known_checkout_publish_while_path_facts_are_held() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let before = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        let herdr = FakeHerdr::start("held-path-topology", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut cache = CatalogState::default();
+        assert!(publish_replica(
+            &context,
+            &mut first.clone(),
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        let mut changed = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", true)).unwrap();
+        changed.state.panes[0].cwd = Some("/unverified/new-checkout".to_owned());
+        assert!(publish_replica(
+            &context,
+            &mut changed,
+            &mut cache,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
+        ));
+        let (panes, focused, zoomed) = view(&runtime);
+        assert_eq!(panes, ["w1:p1"]);
+        assert_eq!(focused.as_deref(), Some("w1:p1"));
+        assert_eq!(zoomed.as_deref(), Some("w1:p1"));
+        let after = runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .clone();
+        assert_eq!(after[0].path, before[0].path);
+        assert_eq!(after[0].checkouts[0].path, before[0].checkouts[0].path);
+        assert!(
+            asked.try_recv().is_err(),
+            "only one read runs while inputs move"
+        );
+        release.send(()).unwrap();
+        // The owner cancels remaining chunks and joins this released read.
+        drop(cache);
+    }
+
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
     /// to say go, after telling it the question has arrived.
+    #[test]
+    fn path_reader_discards_old_connection_and_starts_only_latest_paths() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&first);
+        let herdr = FakeHerdr::start("path-reader-fence", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldPaths {
+            started,
+            release: Mutex::new(held),
+            local: hide_node::Local::of_process(),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let request = |connection, path: &str| path_facts::Request {
+            connection,
+            paths: BTreeSet::from([path.to_owned()]),
+        };
+        assert!(reader.poll(request(1, "/fixture/old")).is_none());
+        asked.recv_timeout(Duration::from_secs(30)).unwrap();
+        for path in ["/fixture/middle", "/fixture/latest"] {
+            assert!(reader.poll(request(2, path)).is_none());
+        }
+        assert!(asked.try_recv().is_err(), "only one active node call");
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(
+                reader.poll(request(2, "/fixture/latest")).is_none(),
+                "old facts are fenced"
+            );
+            if asked.try_recv().is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        release.send(()).unwrap();
+        let facts = loop {
+            if let Some(facts) = reader.poll(request(2, "/fixture/latest")) {
+                break facts.unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        };
+        assert!(facts.knows("/fixture/latest"));
+        assert!(!facts.knows("/fixture/old"));
+        assert!(!facts.knows("/fixture/middle"));
+        assert!(
+            asked.try_recv().is_err(),
+            "no unchanged read follows acceptance"
+        );
+    }
+
+    struct FailedPaths(&'static str);
+
+    impl crate::node_access::NodeLink for FailedPaths {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            assert!(matches!(
+                call,
+                hide_node_link::protocol::Call::PathFacts { .. }
+            ));
+            Err(crate::node_access::LinkError::Unknown(self.0.to_owned()))
+        }
+    }
+
+    #[test]
+    fn unchanged_or_failed_paths_keep_accepted_catalog_without_a_notification() {
+        for failure in [
+            Some("node disconnected during read"),
+            Some("node path facts deadline reached"),
+            None,
+        ] {
+            let mut replica =
+                SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+            let runtime = runtime_with(&replica);
+            let before = runtime
+                .lock()
+                .unwrap()
+                .snapshot()
+                .navigator
+                .workspaces
+                .clone();
+            let herdr = FakeHerdr::start("failed-path-catalog", |method, _| {
+                panic!("unexpected {method}")
+            });
+            let mut context = context_for(&runtime, &herdr);
+            if let Some(failure) = failure {
+                context.node = Some(Arc::new(FailedPaths(failure)));
+            }
+            let (core, notifier) = crate::Core::for_runtime_fixture(Arc::clone(&runtime));
+            let callbacks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let witness = Arc::clone(&callbacks);
+            core.on_change(move || {
+                witness.fetch_add(1, Ordering::SeqCst);
+            });
+            context.notifier = notifier;
+            let (sender, ready) = channel();
+            let mut cache = CatalogState {
+                wake: Some(RepublishWaker {
+                    sender,
+                    pending: Arc::new(AtomicBool::new(false)),
+                }),
+                ..Default::default()
+            };
+            let publish = |replica: &mut SessionReplica, cache: &mut CatalogState| {
+                assert!(publish_replica(
+                    &context,
+                    replica,
+                    cache,
+                    &mut None,
+                    &mut None,
+                    &mut Vec::new()
+                ));
+            };
+            publish(&mut replica, &mut cache);
+            ready.recv_timeout(Duration::from_secs(30)).unwrap();
+            let revision = core.snapshot_delta_payload(0).unwrap().revision;
+            callbacks.store(0, Ordering::SeqCst);
+            // Consume the actual worker's refused/timed-out answer. The
+            // accepted catalog and small selection remain its caller's state.
+            publish(&mut replica, &mut cache);
+            let mut guard = runtime.lock().unwrap();
+            assert_eq!(guard.snapshot().navigator.workspaces, before);
+            assert_eq!(guard.snapshot().terminal.pane_id.as_deref(), Some("w1:p1"));
+            assert_eq!(guard.snapshot_delta_payload(revision).revision, revision);
+            assert_eq!(callbacks.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    struct HeldChunk {
+        started: std::sync::mpsc::Sender<usize>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl crate::node_access::NodeLink for HeldChunk {
+        fn call(
+            &self,
+            call: hide_node_link::protocol::Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            let hide_node_link::protocol::Call::PathFacts { paths } = call else {
+                panic!("unexpected node call");
+            };
+            self.started.send(paths.len()).unwrap();
+            if paths.len() == hide_node_link::catalog::PATH_FACTS_LIMIT {
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+            }
+            Ok(crate::node_access::LinkAnswer::Parsed(json!(
+                hide_node_link::catalog::PathFacts::default()
+            )))
+        }
+    }
+
+    #[test]
+    fn ending_catalog_owner_cancels_remaining_chunks_and_joins_the_read() {
+        let replica = SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).unwrap();
+        let runtime = runtime_with(&replica);
+        let herdr = FakeHerdr::start("chunked-path-owner", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let mut context = context_for(&runtime, &herdr);
+        let (started, asked) = channel();
+        let (release, held) = channel();
+        context.node = Some(Arc::new(HeldChunk {
+            started,
+            release: Mutex::new(held),
+        }));
+        let mut reader = path_facts::PathReader::new(&context, None);
+        let limit = hide_node_link::catalog::PATH_FACTS_LIMIT;
+        assert!(
+            reader
+                .poll(path_facts::Request {
+                    connection: 1,
+                    paths: (0..limit + 1)
+                        .map(|n| format!("/fixture/chunk-{n:05}"))
+                        .collect(),
+                })
+                .is_none()
+        );
+        assert_eq!(asked.recv_timeout(Duration::from_secs(30)).unwrap(), limit);
+        // The first bounded node call may finish; there is no second call
+        // after the owner ends, and dropping the reader reclaims its worker.
+        drop(runtime);
+        release.send(()).unwrap();
+        drop(reader);
+        assert!(
+            asked.try_recv().is_err(),
+            "no remaining chunk escaped its owner"
+        );
+    }
+
     fn holding_herdr(
         focused: &'static str,
     ) -> (
@@ -2528,7 +2862,7 @@ mod focus_readback_order_tests {
             publish_replica(
                 &context,
                 &mut closed,
-                &mut None,
+                &mut CatalogState::default(),
                 &mut None,
                 &mut None,
                 &mut Vec::new(),
@@ -2576,7 +2910,7 @@ mod focus_readback_order_tests {
         assert!(publish_replica(
             &context,
             &mut moved,
-            &mut None,
+            &mut CatalogState::default(),
             &mut None,
             &mut None,
             &mut Vec::new()

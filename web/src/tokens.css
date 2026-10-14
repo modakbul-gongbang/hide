@@ -1,4 +1,6 @@
 /* Generated from design/tokens.json by scripts/gen-tokens.mjs. Do not edit. */
+@custom-variant agent-tab-count-room (@container tab-title (min-width: 48px));
+
 @theme static {
   --color-*: initial;
   --text-*: initial;

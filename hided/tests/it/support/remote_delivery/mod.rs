@@ -2,6 +2,7 @@
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
 pub mod renderer;
+pub mod responsive;
 use super::run::{Run, finish};
 use super::ssh_server as ssh;
 
@@ -480,6 +481,7 @@ pub struct Fixture {
     pub state: PathBuf,
     pub hide: PathBuf,
     pub hooks: PathBuf,
+    source_cli: PathBuf,
     root: PathBuf,
     removed: bool,
     ipc: tempfile::TempDir,
@@ -494,20 +496,34 @@ impl Fixture {
     /// directory, a failing one keeps it for the lane to upload. The only way
     /// to start a fixture, so no test has to remember either half.
     pub fn journey(body: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
-        let mut fixture = Self::start()?;
+        let mut fixture = Self::start(false)?;
         let journey = body(&mut fixture);
         finish(&mut fixture, journey)
     }
 
-    fn start() -> Result<Self> {
+    pub fn measurement_journey(body: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let mut fixture = Self::start(true)?;
+        let journey = body(&mut fixture);
+        finish(&mut fixture, journey)
+    }
+
+    fn start(measurement: bool) -> Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let bin = PathBuf::from(
             std::env::var_os("HIDE_E2E_HERDR_BIN")
                 .context("set HIDE_E2E_HERDR_BIN to the pinned binary")?,
         );
-        let source_cli = std::env::var_os("HIDE_E2E_CLI_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| repository.join("target/debug"));
+        let source_cli = match std::env::var_os("HIDE_E2E_CLI_DIR") {
+            Some(path) => PathBuf::from(path).canonicalize()?,
+            None if measurement => bail!("measurement requires HIDE_E2E_CLI_DIR"),
+            None => repository.join("target/debug"),
+        };
+        if measurement {
+            ensure!(
+                source_cli.ends_with("target/release"),
+                "measurement requires worktree release binaries"
+            );
+        }
         for name in ["hide", "hided", "hide-agent-hooks"] {
             ensure!(
                 source_cli.join(name).is_file(),
@@ -589,6 +605,11 @@ impl Fixture {
                 .args(["init", "-q"]);
             successful(command)?;
         }
+        if measurement {
+            for environment in [&local_env, &remote_env] {
+                responsive::prepare_account(environment)?;
+            }
+        }
         // RemoteRead's production PATH is the account's .local/bin plus system
         // tools. This private account carries only this pinned Herdr there.
         fs::create_dir_all(remote_env.home.join(".local/bin"))?;
@@ -658,6 +679,7 @@ impl Fixture {
             state,
             hide: cli.join("hide"),
             hooks: cli.join("hide-agent-hooks"),
+            source_cli,
             root,
             removed: false,
             ipc,

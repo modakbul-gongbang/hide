@@ -1,4 +1,23 @@
 {
+  "session-record": {
+    "description": "The approved Sessions work record, summaries off, missed-work issue preview and search states.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-session-record",
+    "scene": "session-record",
+    "selector": "[data-gallery-scene=session-record]",
+    "measurement": "web/e2e/session-record-geometry.mjs",
+    "frames": [
+      { "node": "swr-record-l", "theme": "light", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-record-d", "theme": "dark", "width": 420, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "swr-off-l", "theme": "light", "width": 360, "scale": 1, "content": "reference", "state": "off" },
+      { "node": "swr-off-d", "theme": "dark", "width": 360, "scale": 1, "content": "reference", "state": "off" }
+    ],
+    "conditions": { "themes": ["light", "dark"], "widths": [420, 300], "contents": ["reference", "long"], "scales": [1, 1.3076923076923077] },
+    "states": { "rest": "Approved record at rest", "off": "Native title and raw requests only", "loading": "First read skeleton", "failed": "Read failure and retry", "draft": "Editable issue draft", "ended": "Folded missed-work group", "search": "Separate session search group" },
+    "urlStates": ["off", "loading", "failed", "draft", "ended", "search"],
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
+    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow Tools column? Native behavior is verified separately."]
+  },
   "session-panel": {
     "description": "The approved Pen round 2 Sessions panel (agent-hierarchy-screens D-44): Needs You, Working, Done, Idle and Resolved, one tree level, own PR chips and the folded descendant mark.",
     "file": "design/hide-screens.pen",
@@ -56,7 +75,7 @@
     ]
   },
   "pane-header": {
-    "description": "The approved Pen round 2 pane header (agent-hierarchy-screens D-14, D-43): ancestor path, own PR chip and tree button after the title, and the ask band.",
+    "description": "The approved B2 pane header: identity and own PR on the first row, child total and core state counts on the second-row overlay, compact counts beside an ask band.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "pane-header",
@@ -65,7 +84,6 @@
     "frames": [
       {
         "node": "sfu-ph-board-l",
-        "referenceNode": "S2Cn0e",
         "theme": "light",
         "width": 761,
         "scale": 1,
@@ -74,7 +92,6 @@
       },
       {
         "node": "sfu-ph-board-d",
-        "referenceNode": "Ef3CX",
         "theme": "dark",
         "width": 761,
         "scale": 1,
@@ -96,7 +113,7 @@
       ]
     },
     "states": {
-      "rest": "Bands and header identities.",
+      "rest": "Core bands, child counts and representative lines, unknown and zero-child header identities.",
       "children": "The tree button popover."
     },
     "rules": {
@@ -104,9 +121,10 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is the Pen round 2 pane header board (Light); Dark must keep its hierarchy with the theme tokens.",
-      "Does the ask band read verb, what, who, wait, 외 N건 and 열기 on a quiet fill with the warning rail?",
-      "Do the ancestor path, the own PR chip and the tree button sit after the title, with only menu, zoom and close at the end?"
+      "B2 was approved from the interactive HTML comparison; this board records its layout in both themes using the existing tokens. Compare each state's production and native captures with the approved arrangement.",
+      "Does the ask band retain its request and Open action beside the compact total and ! count, with no duplicate 외 N건 trigger? Does the request keep readable space at narrow widths and enlarged text?",
+      "Do the ancestor path, fork and own PR remain on the first row, with child counts on the second row and a core-ranked child line only when no core band takes that slot?",
+      "Are ordinary child requests distinct from operator-raised requests, unknown distinct from resting, and reported results distinct from verified task delivery? Does an empty parent lose the child row without changing the terminal grid?"
     ]
   },
   "projects-sidebar": {

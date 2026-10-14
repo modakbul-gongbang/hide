@@ -47,6 +47,7 @@ const DEVICE_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// What every coordinator's worker shares: the store and the analyzer.
 pub(crate) struct LabelServices {
+    pub(crate) ledger: Arc<Mutex<Option<crate::links::worker::LinkClient>>>,
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
     /// How the agent Hide AI runs on stood at the analyzer's last job.
@@ -84,6 +85,7 @@ impl LabelServices {
             gate,
         )?;
         Ok(Self {
+            ledger: Arc::default(),
             store,
             analyzer: Arc::new(analyzer),
             standing,
@@ -116,6 +118,7 @@ impl LabelServices {
                     herdr_socket: Some(socket_path.display().to_string()),
                 },
                 input: Arc::clone(&self.input),
+                ledger: Arc::clone(&self.ledger),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -153,6 +156,7 @@ impl LabelServices {
                     herdr_socket: None,
                 },
                 input: Arc::clone(&self.input),
+                ledger: Arc::clone(&self.ledger),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),

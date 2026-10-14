@@ -74,6 +74,15 @@ export function buildAgentTreeParts(tokens) {
   }, [
     icon('ath-tb-tree', 'list-tree', {size: ICON, fill: '$--muted-foreground'}),
     caption('ath-tb-n', '8', '$--subtle-foreground', {mono: true}),
+    {...caption('ath-tb-disconnected', '⊘', '$--muted-foreground', {mono: true}), enabled: false},
+    frame('ath-tb-counts', 'Child state counts', {enabled:false,layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center',padding:[0,0,0,'$--spacing-xs'],stroke:'$--border',strokeWidth:{left:HAIR},strokeAlignment:'inner'}, [
+      ...[['raised','!','$--warning'],['working','●','$--agent-working'],['result','✓','$--success'],['waiting','○','$--agent-working'],['unknown','~','$--muted-foreground'],['idle','○','$--muted-foreground']].map(([key,symbol,fill])=>frame(`ath-tb-${key}`,key,{enabled:false,layout:'horizontal',alignItems:'center'},[
+        frame(`ath-tb-${key}-mark`,'Status mark',{width:MARK,height:MARK,layout:'horizontal',alignItems:'center',justifyContent:'center'},[
+          ...(['●','○'].includes(symbol) ? [{type:'ellipse',id:`ath-tb-${key}-symbol`,width:DOT,height:DOT,...(symbol==='●'?{fill}:{stroke:fill,strokeWidth:HAIR,strokeAlignment:'inner'})}] : [caption(`ath-tb-${key}-symbol`,symbol,fill,{size:'$--text-micro',mono:true})]),
+        ]),
+        caption(`ath-tb-${key}-n`,'1',fill,{size:'$--text-micro',mono:true}),
+      ])),
+    ]),
     icon('ath-tb-chev', 'chevron-down', {size: ICON, fill: '$--muted-foreground'}),
   ]);
 
@@ -125,6 +134,10 @@ export function buildAgentTreeParts(tokens) {
     const buttons = [
       cell('Tree button rest', ref(id('tb-rest'), AGENT_TREE_MASTERS.treeButton, 'Tree button')),
       cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'}, {'ath-tb-n': {content: '2'}})),
+      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'5'},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result','waiting','unknown','idle'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
+      cell('Ask band compact child button', ref(id('tb-raised'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'8'},'ath-tb-counts':{enabled:true},'ath-tb-raised':{enabled:true},'ath-tb-raised-n':{content:'2'}})),
+      cell('Tree button with unknown child', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'1'},'ath-tb-counts':{enabled:true},'ath-tb-unknown':{enabled:true}})),
+      cell('Unavailable child states, topology kept', ref(id('tb-disconnected'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'5'},'ath-tb-disconnected':{enabled:true}})),
     ];
     const rows = [
       cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),

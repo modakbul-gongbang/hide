@@ -2869,6 +2869,19 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
                 .join(forward["intent"].as_str().context("intent")?),
             SOURCE_NODE,
         )?;
+        ensure!(
+            kept_before["source"]["workspace_views"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|view| view["owner"].is_string()
+                    && view["presentations"]
+                        .as_object()
+                        .is_some_and(|presentations| presentations
+                            .values()
+                            .any(|parked| parked["views"] != view["views"]))),
+            "the move fixture must compare distinct current and parked tab presentations: {kept_before:#}"
+        );
         let shown_after = wait_for("the window as it was, through the new core", || {
             let shown = window_shows(&fixture, TARGET_NODE)?;
             Ok(shown.filter(|shown| *shown == shown_before))
@@ -3281,7 +3294,7 @@ fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
             .into_iter()
             .flatten()
             .filter(|row| row["device_id"].as_str().and_then(|device| machine_of(device, own).ok()) == Some(machine))
-            .map(|row| unqualified(&json!({"path": row["path"], "views": row["views"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"]})))
+            .map(|row| unqualified(&json!({"path": row["path"], "views": row["views"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"], "visibility": row["view_visibility"], "owner": row["view_owner"], "presentations": row["view_presentations"], "next_id": row["view_next_id"]})))
             .collect();
         let label_records: serde_json::Map<String, Value> = labels["targets"]
             .as_object()

@@ -116,7 +116,9 @@ use crate::error::HostError;
 /// call. Old helpers must not be asked for credentials by a newer core.
 /// 31: pane proofs may carry one typed hook read and answer it directly.
 /// Older peers cannot decode the hook answer and are refused at Hello.
-pub const PROTOCOL_VERSION: u32 = 31;
+/// 32: link reads carry bounded raw requests and tool-output issue sightings.
+/// Older helpers cannot supply a session work record and are upgraded at Hello.
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -508,6 +510,12 @@ pub enum Call {
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
     },
+    /// The one original turn and bounded checkout issue templates used by
+    /// the operator's editable issue preview. No other turn is returned.
+    SessionWorkContext {
+        request: hide_session::label_transcript::WorkTurnRequest,
+        checkout_path: String,
+    },
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
         request: hide_session::session_activity::SessionActivityRequest,
@@ -777,6 +785,7 @@ impl Call {
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
             | Self::LabelTranscript { .. }
+            | Self::SessionWorkContext { .. }
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }

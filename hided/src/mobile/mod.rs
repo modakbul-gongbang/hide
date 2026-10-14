@@ -40,6 +40,13 @@ use projection::{AgentKey, Projection};
 use store::{MobileSettings, Notifications, PhoneRecord, PushMode, PushSubscription, ServeRecord};
 use tailscale::{Checklist, CliSource, CommandFailure, Ownership, StepState};
 
+fn projection_failed(stage: &str, message: &str) {
+    eprintln!(
+        "{}",
+        json!({"component": "hided", "kind": "mobile.projection_failed", "stage": stage, "message": message})
+    );
+}
+
 /// How often the checklist is read again while Settings > Mobile is open.
 const OBSERVE_INTERVAL: Duration = Duration::from_secs(3);
 /// How often the seven-day sweep runs.
@@ -1573,61 +1580,53 @@ impl Mobile {
             let core = Arc::clone(&self.config.core);
             let have_revision = cursor;
             let read = tokio::task::spawn_blocking(move || core.snapshot(have_revision)).await;
-            let value = match read {
-                Ok(Ok(reply)) if !reply.bytes.is_empty() => {
-                    serde_json::from_slice::<Value>(&reply.bytes).ok()
-                }
+            let payload = match read {
+                Ok(Ok(payload)) => payload,
                 Ok(Err(_)) => return,
-                _ => None,
-            };
-            if let Some(value) = value {
-                let revision = value.get("revision").and_then(Value::as_u64);
-                let full = crate::server::classify_frame(have_revision, revision);
-                match full {
-                    None => {
-                        // The daemon's revision went back or the window moved:
-                        // read everything again.
-                        cursor = 0;
-                        continue;
-                    }
-                    Some(kind) => {
-                        if let Some(revision) = revision {
-                            cursor = revision;
-                        }
-                        let full = matches!(kind, crate::server::FrameKind::Snapshot);
-                        if projection::merge_rest(&mut rest, &value, full) {
-                            let catalog = start::Catalog::of(&rest, self.node().as_str());
-                            self.catalog.send_if_modified(|current| {
-                                if **current == catalog {
-                                    false
-                                } else {
-                                    *current = Arc::new(catalog);
-                                    true
-                                }
-                            });
-                            self.answers.send_if_modified(|current| {
-                                let mut kept = current.as_ref().clone();
-                                let changed = start::record(
-                                    &mut kept,
-                                    start::answers_of(&rest, self.node().as_str()),
-                                );
-                                if changed {
-                                    *current = Arc::new(kept);
-                                }
-                                changed
-                            });
-                            let next = projection::project(&rest, self.node().as_str());
-                            changed = self.projection.send_if_modified(|current| {
-                                if **current == next {
-                                    false
-                                } else {
-                                    *current = Arc::new(next.clone());
-                                    true
-                                }
-                            });
-                        }
-                    }
+                Err(error) => {
+                    projection_failed("snapshot_worker", &error.to_string());
+                    return;
                 }
+            };
+            cursor = payload.revision;
+            match projection::update_inputs(&mut rest, &payload.current_rest, payload.have_revision)
+            {
+                Err(error) => {
+                    projection_failed("inputs", &error.to_string());
+                    return;
+                }
+                Ok(true) => {
+                    let catalog = start::Catalog::of(&rest, self.node().as_str());
+                    self.catalog.send_if_modified(|current| {
+                        if **current == catalog {
+                            false
+                        } else {
+                            *current = Arc::new(catalog);
+                            true
+                        }
+                    });
+                    self.answers.send_if_modified(|current| {
+                        let mut kept = current.as_ref().clone();
+                        let changed = start::record(
+                            &mut kept,
+                            start::answers_of(&rest, self.node().as_str()),
+                        );
+                        if changed {
+                            *current = Arc::new(kept);
+                        }
+                        changed
+                    });
+                    let next = projection::project(&rest, self.node().as_str());
+                    changed = self.projection.send_if_modified(|current| {
+                        if **current == next {
+                            false
+                        } else {
+                            *current = Arc::new(next.clone());
+                            true
+                        }
+                    });
+                }
+                Ok(false) => {}
             }
             let current = Arc::clone(&self.projection.borrow());
             if let Some((notices, seen)) = judge_pass(

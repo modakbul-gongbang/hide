@@ -527,15 +527,17 @@ fn accept_request_for(listener: &LocalListener, method: &str) -> (LocalStream, V
         if request["method"] == method {
             return (stream, request);
         }
-        assert_eq!(
-            request["method"], "agent.list",
-            "only an agent refresh may interleave while {method} is awaited"
-        );
-        write_result(
-            &mut stream,
-            &request,
-            json!({"type": "agent_list", "agents": []}),
-        );
+        let answer = match request["method"].as_str() {
+            Some("agent.list") => json!({"type": "agent_list", "agents": []}),
+            Some("pane.process_info") => json!({"type": "pane_process_info", "process_info": {
+                "pane_id": request["params"]["pane_id"], "foreground_processes": []
+            }}),
+            _ => panic!(
+                "unexpected capability read while {method} is awaited: {}",
+                request["method"]
+            ),
+        };
+        write_result(&mut stream, &request, answer);
     }
     panic!("the coordinator never asked for {method}");
 }
@@ -1769,7 +1771,6 @@ fn fresh_catalog() -> CatalogCache {
         spaces: Vec::new(),
         worktrees: crate::model::WorktreeCatalogSnapshot::default(),
         workspaces: Vec::new(),
-        asked: BTreeSet::new(),
         paths: Default::default(),
         built_at: Instant::now(),
         purposes_synced: None,
@@ -2188,6 +2189,7 @@ fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
     let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
     let (resync_asked, resync_seen) = std::sync::mpsc::channel::<()>();
     let (answer_resync, resync_answered) = std::sync::mpsc::channel::<()>();
+    let (initial_ready, initial_seen) = std::sync::mpsc::channel::<()>();
     let server = thread::spawn(move || {
         let (mut first_subscription, first_subscribe_request) =
             accept_request_for(&listener, "events.subscribe");
@@ -2203,6 +2205,12 @@ fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
             &first_snapshot_request,
             json!({"type": "session_snapshot", "snapshot": snapshot()}),
         );
+        // This contract is retention during resync, so establish an accepted
+        // initial catalog before disconnecting. Path facts now settle on a
+        // worker after the session snapshot itself is applied.
+        initial_seen
+            .recv_timeout(Duration::from_secs(30))
+            .expect("initial catalog accepted");
         writeln!(
             first_subscription,
             "{}",
@@ -2251,6 +2259,19 @@ fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
     let runtime = runtime_for_fixture(&socket_path, &state_path);
     let context = context_for_fixture(&runtime, &socket_path);
     let handle = spawn(context, None).expect("start session sync");
+    wait_until(Instant::now() + Duration::from_secs(30), || {
+        runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.label == "fixture")
+    });
+    initial_ready
+        .send(())
+        .expect("allow events_lost after initial catalog");
     resync_seen
         .recv_timeout(Duration::from_secs(10))
         .expect("events_lost leads to a fresh subscription and snapshot");

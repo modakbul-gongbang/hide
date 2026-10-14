@@ -54,7 +54,8 @@ Only when the window's frame itself cannot draw does the line take the whole win
 
 The Workspace body, under the top row, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
 No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
-File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
+Each Agent tab remembers whether File Views is on or off, while Tools, its tool and both widths are stored per Workspace; all survive a restart.
+A Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
 Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the named Sessions, Explorer and History tabs, in that order with the shown one marked.
 The tool tabs have one keyboard stop; Left, Right, Home and End choose another tool, and the Workspace remembers that choice.
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
@@ -79,14 +80,21 @@ File Views is never empty: closing its last view turns it off in the same transi
 With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
 Tools alone is an ordinary state.
 Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and changes no column in a window wide enough for them all.
+A file read opens File Views when its document is ready, in the Agent tab that requested it.
+Choosing another Agent tab while it reads keeps that tab's presentation intact, and closing a requesting tab drops only that tab's pending open.
+When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
+A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
+Closing that buffer's last current display does not cancel another tab's pending GUI open.
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
+Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
 Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
 The divider between File Views and Tools trades width between the two, so the agents keep theirs; the others change one column's width against Agent Views.
 No column gets narrower than its minimum: Agent Views 480px, File Views 360px, Tools 260px; File Views starts at 640px and Tools at its usual tool width until first resized.
-Turning File Views or Tools on or off, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once; a drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent resize nothing.
+Turning File Views or Tools on or off, including a tab's restored File Views visibility, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once.
+A drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent with the same File Views visibility resize nothing.
 Changing Workspace or column geometry during a column drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
 
 Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, Tools or a pane.
@@ -118,9 +126,9 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
 An explicit local `--reveal` brings that Workspace and the opened View forward and turns File Views on, showing it in a window too narrow for every column; without it, File Views keeps its state and its icon's badge counts the new view.
-A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds or selects the View for its own tab's bookmark and leaves the front of every View area as the operator left it (see View bookmarks per Agent tab).
+A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, updates its own presentation and preserves the operator's complete panel (see File Views per Agent tab).
 Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front as before and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
-`hide view split`, `move` and `close` change the shared layout, so they apply at once from any tab.
+`hide view split`, `move` and `close` apply to the caller's presentation, including while it is hidden.
 
 ### Agent areas
 
@@ -150,7 +158,11 @@ An unselected tab narrower than the title minimum draws its marks and a truncate
 Once every other tab is a mark, the selected tab gives up width from the title minimum, keeping its close control and a truncated title while it holds the icon identity plus two controls, and below that it becomes its marks with its close control; less than one control's width can then stay empty at the bar's end.
 The strip scrolls only when even that selected mark and the other marks overflow.
 The same width and tab count always draw the same strip whichever way the window was resized, a resize never paints an overflowing frame, and opening, closing or selecting a tab shares the bar again at once.
-A tab being renamed keeps the preferred width at every density, and each tab's tooltip and accessible name still give its agent, full title and state.
+A tab being renamed keeps the preferred width at every density, and each tab's tooltip and accessible name still give its agent, full title, state and agent pane count.
+Two or more agent panes in the same tab add a neutral pane icon and count beside the title; shell panes and an agent's internal subagents do not count.
+One agent pane shows no count beside the title.
+The count folds away while renaming, at compact and mark density, or when the title slot holds less than two small controls, leaving the title and close or shortcut control their room.
+The full count remains in the tooltip and accessible name at every density.
 Agent and View areas share the drag, divider and narrow-window controls described below.
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
@@ -212,28 +224,44 @@ No area gets narrower or shorter than its minimum, a divider stops where either 
 An area whose last view leaves disappears, and its neighbour takes the space.
 When the last view closes, File Views turns off and Tools stays as it was, with that state saved for the Workspace.
 
-### View bookmarks per Agent tab
+### File Views per Agent tab
 
-The View list, the layout, the columns' state and widths, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
-Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
-Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
-A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
-Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
-A new tab, a delegated child moved to its own tab and every tab right after an update have none.
-The area in use, the keyboard and the columns stay where they were; while File Views is off the bookmark still applies, so turning it on shows the tab's front.
-Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap File Views under the operator.
-When the front of a View area changes, the active tab remembers the new front.
-The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
-A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
-Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
-Connected device Workspaces follow the same rules; the visible tab of a device changes when its Herdr's answer lands, and an SSH device has one Agent area.
-The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
-Web owner: none, the shell draws each area's front as the snapshot names it.
-Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.
+Each Agent tab remembers its own View list, area layout, selected Views, active area and File Views visibility.
+Tools, column widths and document editing/saving remain shared by the Workspace.
+A tab with no saved presentation inherits the current list, layout, selection and visibility, with distinct display and browser-area identities.
+Empty presentations remember visibility without consuming View areas or opening an empty column.
+An older schema-2 entry retains its current Views and reads its saved fronts and visibility on first use.
 
-A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
-A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.
-Opening a file that is already shown moves to its view, so it is never refused.
+Showing a tab that no Agent area showed a moment before restores its complete presentation in the frame that shows the tab.
+The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
+Moving ordinary focus among tabs already shown in Agent areas keeps the current File Views panel.
+An explicit tab choice shows that tab's pending background result even when it is already shown in another Agent area.
+Hiding File Views preserves its documents, unsaved text and save state.
+Closing its last View leaves that tab's File Views off.
+
+A pane caller's file, diff or browser open and View actions affect its actual Agent tab.
+Without `--reveal`, a background open or selection keeps the operator's complete View list, layout, selection, visibility, Tools, widths and keyboard focus.
+`--beside` applies to the caller's presentation, and selecting A later shows A's background result with File Views on.
+Returning to B restores B's previous presentation without A's new Views in its strip.
+`--reveal` selects the caller's actual A tab and requested View together; a caller without a pane and a GUI action use the current checkout presentation.
+A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.
+
+Preview displays belong to their presentation, while matching checkout/path documents use one shared buffer.
+An A open cannot retarget or pin B's preview, and dirty-document close guards count hidden references.
+Browser copies have independent page identities: a same-URL A open leaves B's page, load and internal state intact.
+Hidden browser resources and area authority remain retained; a new hidden page may stay pending until first placement, and `--wait` proves only a real load.
+The desktop hides every retained page absent from the current presentation's placements.
+
+Presentations are saved with the Workspace and survive restart and core moves.
+Authoritative topology removes closed-tab records and resources while retaining other tabs' documents.
+An exclusively owned clean document closes with its tab; unsaved content remains recoverable and never enters another tab's strip automatically.
+An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
+Local and connected-device callers follow the same rules; the phone keeps its existing flow.
+No additional badge, notice or setting is introduced.
+The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout; a refused operation preserves existing content.
+Web owner: none, the shell draws the existing snapshot projection.
+Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
+Regression owners are `runtime/tests/view_bookmarks.rs`, `web/e2e/{view-bookmarks,file-view-visibility}.spec.ts` and `desktop/e2e/browser.spec.ts`.
 
 ### Opening, preview, and Open to the side
 
@@ -283,6 +311,8 @@ A view whose file cannot be read shows why, with Close view and Retry, and its t
 Each state belongs to its view alone, so one missing file never blanks another view or area.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, whether File Views and Tools are on, their widths, and the tool; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
+Herdr connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
+The unanswered-connection fallback does not settle a connected session's pending saved Workspace; a settled connection failure still opens All projects.
 A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
 A Workspace stored with the side panel that came before the columns restarts with File Views on when its panel was open or expanded and off when it was closed, docked whether or not it was pinned, its tools, tool, views, tabs and areas as they were and both widths at their defaults; one stored before the side panel, with a layout instead of a panel state, restarts with File Views on unless it showed the agents alone.
 
@@ -334,7 +364,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-A pane header is a quiet identity row: the ancestor path, provider, title, the fork mark, the pane's own PR mark, the tree button, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
+A pane header is a quiet identity row: the ancestor path, provider, title, the fork mark, the pane's own PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 Every place that draws an agent's mark (the pane header, the Agent tabs, the sidebar and Sessions rows, ⌘K and the recent-pane list, the link sessions, the Agents graph, the Overview lenses, the start picker and the footer's usage chips) draws the logo of that agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
@@ -345,20 +375,27 @@ The PR mark shows the pane's own PRs only, as Sessions draws them (below); a des
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
-The tree button, a tree icon and the direct child count with `자식 에이전트 N` as its tooltip, opens the tree popover (docs/status-model.md, The descendant mark and the tree popover).
-There is no status sentence, child-chip row or relationship sheet.
+The B2 tree button starts the second row over the terminal: a tree icon, the live direct child count, positive core state counts, and a chevron open the existing tree popover ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
+The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
+An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
+The tooltip and accessible name spell out every count, including those hidden by the compact form.
+If the parent or a known descendant's device is not connected, the button keeps the last topology total with a dim disconnected mark and its connection reason, and suppresses state totals and the representative activity line until the connection returns.
+When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space beside its provider.
+With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
-An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, `외 N건` for the other asks under this root, and Open.
-Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
+An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact child total and raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
+The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
+Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.
+The child button opens with the raised branches expanded whenever its core raised count is positive; `외 N건` remains only when this child button is unavailable, providing the same raised-tree access.
 Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge take its pull request's state colour (failed red, mergeable green, pending muted).
 Merge stands for a mergeable pull request and Review for a pending one, so a draft carries neither.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
-Working has a thin blue line; CI wait, waiting and idle have no band.
+Working has a thin blue line; CI wait, waiting and idle have no task band, although their children can fill the second row.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.
 Connection and sleep recovery controls stay in the body, and Not connected stays a chip.
-Bands overlay the terminal and change neither its viewport nor PTY grid.
+The child row and core bands share one overlay slot, with no third row, and change neither the terminal viewport nor PTY grid.
 Pending and failed moves appear at the initiating popover, ancestor step or band with the existing retry rules, plus the Agent-area notice when the source pane is no longer visible.
 
 The pane menu (from its overflow control or a right-click on the header) lists the parent and the other siblings as explicit Open items, then Copy pane name, Copy pane ID and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
@@ -687,6 +724,16 @@ No undo or close is added to Resolve.
 
 An empty scope has the quiet existing nothing-to-do line; an unlabelled row keeps its shape without an invented task sentence.
 An unavailable device keeps current connection reasoning and disables actions.
+
+Each Sessions row adds a record button and an open-missed-work flag; the flag opens the same record with its missed work in view.
+The record replaces the list inside Tools, with `Sessions로 돌아가기`, the title, status and child count, then verdict, outputs, missed work, own work by goal chapter and expandable children.
+Task disclosures show the saved original requests and output numbers; child disclosures show that child's own work instead of mixing it into the parent's chapters.
+Open missed items show `이슈로` and `무시`, and closed items are folded under `닫힘 N`, with Undo or Reopen where applicable.
+At narrow Tools widths, Korean missed-work text and the first line of a raw request wrap between words; titles truncate with their full text in a tooltip.
+The folded missed-work group above live Sessions includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the current scope and Copied history period.
+Untitled records use the same agent-name fallback as Sessions, including with summaries Off and after the pane ends; native session ids remain identity keys.
+With summaries Off, records retain native/manual titles, statuses, outputs, children and saved raw requests newest first, and hide every generated judgment and missed-work action.
+A first record read uses a small skeleton; a failed read shows Retry, and a disconnected device retains the last read dimmed until reconnection refreshes it.
 GitHub values that cannot be refreshed stay dimmed with their last-read time in the tooltip; failure is never a false zero.
 While Sessions is visible it shares the existing request-view observation so the core re-reads only projects with running checks, once a minute.
 Unchanged row, scope and PR inputs retain the rendered row tree; the elapsed clock updates only its own text.
@@ -819,6 +866,14 @@ Hover, focus and a half-second rest publish no snapshot and start no Git or disk
 
 The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
 New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project that has a source; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
+
+`이슈로` on a missed-work item opens this same editable New issue form with a title and body drafted from that item's original request, answer and repository templates.
+The note says it will create an issue without starting an agent, and the repository stays fixed to the originating session's device and project.
+Only `이슈 만들기` creates it; Cancel leaves the item unchanged, and a failed create keeps the entered form with Retry.
+An unavailable provider, login or usage allowance leaves the missed text as title and an empty body with the reason.
+When GitHub cannot be read, Retry checks the preview's connection while the same form stays open with the operator's edits; a successful check enables the separate Create action.
+After uncertain creation, Retry looks up the prior attempt first and links the already created issue when found.
+An offline session keeps the last record dimmed and disables `이슈로`, explaining that its device is not connected; reconnect refreshes the record.
 When that list holds projects of more than one machine, as the core's and a node's do after a core move, every row names its machine, this window's own as `이 Mac`, so two projects at the same name read apart from either window; a list from one machine names none.
 The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
@@ -1645,6 +1700,13 @@ On the web, the sidebar's Search row, which shows `Search` and the bound chord, 
 Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
 ### What a query finds
+
+A nonempty query also searches saved session goals, assigned task names and original requests in a separate `세션` group, including ended sessions within Copied history.
+Enter on that group opens the record in Tools; the existing Agents group still opens the live agent.
+With summaries Off it searches saved raw requests only, without generated goal or task matches.
+The core's bounded local record search runs independently of other groups, drops an answer for an older query and makes no GitHub request while typing.
+The session group carries its current loading or failure state; a successful search with no session matches draws no group, preserving the palette's existing no-match state when no other kind matches.
+The creator-session action in an output panel opens the same record.
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
 An agent is found by its title, by the name Herdr knows it by (`hide agent spawn --name`, `herdr agent rename`), by its place and by its state sentence; the core carries the Herdr name on the agent row (`herdr_name`), on this machine and on a device alike, and leaves it out when Herdr has none or has only a name Hide made up from a pane id (a task's `hide-claude-w9j-p52`, a wake's or a fork's), which would print the id the rule below keeps off every row.

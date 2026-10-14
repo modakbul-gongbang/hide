@@ -88,6 +88,7 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 /// registrations it came from so Runtime can reject a stale computation.
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
+    pub worktrees: crate::model::WorktreeCatalogSnapshot,
     pub workspaces: Vec<WorkspaceSnapshot>,
     /// What the core's own node said about every path the catalog and the
     /// reconcile read, so neither reads a folder under the runtime lock.
@@ -109,6 +110,7 @@ impl PrecomputedCatalog {
         let paths = workspace::paths_here(wanted);
         let spaces = Runtime::session_spaces(payload, &paths);
         Self {
+            worktrees: worktrees.clone(),
             workspaces: workspace::build_catalog(&node, &registrations, &spaces, worktrees, &paths),
             registrations,
             paths: Arc::new(paths),
@@ -258,7 +260,6 @@ pub(crate) struct CatalogCache {
     workspaces: Vec<WorkspaceSnapshot>,
     /// The paths `paths` answered, so a publish asking the same ones within
     /// `CATALOG_REFRESH_INTERVAL` reuses the answer; empty after a failed ask.
-    asked: BTreeSet<String>,
     paths: Arc<workspace::PathIndex>,
     built_at: Instant,
     /// The unconfirmed created purposes the purpose mirror last synced this
@@ -266,6 +267,23 @@ pub(crate) struct CatalogCache {
     /// such as an agent status change, has no purpose to mirror (PRD
     /// instant-pane-topology D-18).
     purposes_synced: Option<HashMap<String, String>>,
+}
+
+#[derive(Default)]
+struct CatalogState {
+    cache: Option<CatalogCache>,
+    reader: Option<path_facts::PathReader>,
+    connection: u64,
+    wake: Option<RepublishWaker>,
+}
+
+impl CatalogState {
+    fn as_ref(&self) -> Option<&CatalogCache> {
+        self.cache.as_ref()
+    }
+    fn as_mut(&mut self) -> Option<&mut CatalogCache> {
+        self.cache.as_mut()
+    }
 }
 
 pub(crate) struct SessionSyncHandle {
@@ -363,6 +381,7 @@ impl ActiveSubscription {
 }
 
 mod coordinator;
+mod path_facts;
 mod process_info;
 mod projection;
 mod replica;

@@ -327,9 +327,22 @@ impl PathIndex {
     /// Asks `node` what `paths` are, in parts of at most
     /// `PATH_FACTS_LIMIT`.
     pub fn ask(node: &dyn NodeLink, paths: BTreeSet<String>) -> Result<Self, String> {
+        Self::ask_while(node, paths, || true)
+    }
+
+    /// Check owner cancellation between bounded node calls, never accept a
+    /// partially read index as a complete answer.
+    pub(crate) fn ask_while(
+        node: &dyn NodeLink,
+        paths: BTreeSet<String>,
+        current: impl Fn() -> bool,
+    ) -> Result<Self, String> {
         let paths = paths.into_iter().collect::<Vec<_>>();
         let mut facts = PathFacts::default();
         for part in paths.chunks(PATH_FACTS_LIMIT) {
+            if !current() {
+                return Err("catalog owner ended during path read".to_owned());
+            }
             let answer: PathFacts = call_as(
                 node,
                 Call::PathFacts {

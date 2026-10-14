@@ -1,5 +1,113 @@
 use super::*;
 
+fn semantic(payload: &crate::model::SnapshotDeltaPayload) -> serde_json::Value {
+    serde_json::to_value(crate::model::SnapshotDeltaWire::granular(payload)).unwrap()
+}
+
+/// Selection changes must not copy or transmit populated local/device lists.
+#[test]
+fn semantic_selection_preserves_large_sections_and_legacy_complete_rest() {
+    use std::sync::Arc;
+    let mut runtime = runtime();
+    let rows = (0..40)
+        .map(|n| {
+            let id = format!("project-{n}");
+            let path = format!("/fixture/{id}");
+            let mut row = workspace(&id, &id, &path, vec![checkout(&id, &id, &path, None)]);
+            row.branches = (0..50).map(|b| format!("feature-{b}")).collect();
+            row
+        })
+        .collect::<Vec<_>>();
+    runtime.snapshot.navigator.workspaces = rows.clone();
+    let mut remote = super::device_catalog::connected_status("fixture-device");
+    remote.session = Some(super::device_catalog::session(rows));
+    runtime.snapshot.status.remote.push(remote);
+    let initial = runtime.snapshot_delta_payload(0);
+    runtime.snapshot.zoomed = Some("fixture:p1".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some("project-1".to_owned());
+    let selected = runtime.snapshot_delta_payload(initial.revision);
+    assert!(Arc::ptr_eq(
+        &initial.current_rest.navigator.workspaces.value,
+        &selected.current_rest.navigator.workspaces.value
+    ));
+    assert!(Arc::ptr_eq(
+        &initial.current_rest.status.remote.value,
+        &selected.current_rest.status.remote.value
+    ));
+    let wire = semantic(&selected);
+    assert_eq!(wire["rest"]["zoomed"], "fixture:p1");
+    assert_eq!(
+        wire["rest"]["navigator"],
+        serde_json::json!({"focused_checkout_id": "project-1"})
+    );
+    assert!(wire["rest"].get("status").is_none());
+    let legacy: serde_json::Value =
+        serde_json::from_slice(&serialize_snapshot_delta(&selected).unwrap()).unwrap();
+    assert_eq!(
+        legacy["rest"]["navigator"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .len(),
+        40
+    );
+    assert!(legacy["rest"]["status"]["remote"][0]["session"]["workspaces"].is_array());
+    assert!(legacy.get("rest_format").is_none());
+    assert!(
+        serde_json::to_vec(&wire).unwrap().len() * 20 < serde_json::to_vec(&legacy).unwrap().len()
+    );
+}
+
+/// A slow reader accumulates current replacements; reset restores every field.
+#[test]
+fn semantic_readers_converge_with_null_empty_reordering_and_future_reset() {
+    let mut runtime = runtime();
+    let first = runtime.snapshot_delta_payload(0);
+    runtime.snapshot.navigator.root_path = Some("/fixture/known".to_owned());
+    runtime.snapshot.status.last_error = Some(LastErrorSnapshot {
+        kind: "fixture".to_owned(),
+        message: "refused".to_owned(),
+        retryable: false,
+        occurred_at: 1,
+        request_id: None,
+    });
+    let active = runtime.snapshot_delta_payload(first.revision);
+    runtime.snapshot.navigator.root_path = None;
+    runtime.snapshot.navigator.workspaces.clear();
+    runtime.snapshot.status.last_error = None;
+    let fast = runtime.snapshot_delta_payload(active.revision);
+    let slow = runtime.snapshot_delta_payload(first.revision);
+    assert_eq!(fast.revision, slow.revision);
+    assert_eq!(
+        semantic(&fast).pointer("/rest/navigator/root_path"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        semantic(&slow).pointer("/rest/status/last_error"),
+        Some(&serde_json::Value::Null)
+    );
+    // Unchanged empty lists are omitted, not resent as a deletion.
+    assert!(
+        semantic(&fast)["rest"]["navigator"]
+            .get("workspaces")
+            .is_none()
+    );
+    let reset = runtime.snapshot_delta_payload(u64::MAX);
+    assert_eq!(reset.have_revision, 0);
+    assert_eq!(
+        semantic(&reset),
+        semantic(&runtime.snapshot_delta_payload(0))
+    );
+    assert_eq!(
+        semantic(&reset)["rest"]["navigator"]["workspaces"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        semantic(&reset).pointer("/rest/workspace_view"),
+        Some(&serde_json::Value::Null)
+    );
+    assert!(runtime.snapshot_delta_payload(fast.revision).rest.is_none());
+}
+
 #[test]
 fn pane_header_transitions_reach_the_wire_once_and_stay_quiet_when_unchanged() {
     let mut runtime = runtime();
@@ -256,16 +364,13 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
         body.contains("serialize_snapshot_delta(&payload)"),
         "the daemon's read must serialize through the free function: {body}"
     );
-    let between = body
-        .split_once("snapshot_delta_payload(")
-        .expect("the locked half")
-        .1
-        .split_once("serialize_snapshot_delta(")
-        .expect("the unlocked half after it")
-        .0;
+    let typed = body
+        .split_once("pub fn snapshot_delta_payload(")
+        .expect("the owner returns typed data")
+        .1;
     assert!(
-        between.lines().any(|line| line.trim() == "};"),
-        "the block scoping the runtime guard must close before serialization: {body}"
+        !typed.contains("serde_json") && !typed.contains("serialize_snapshot_delta"),
+        "the typed owner read must return before transport serialization: {typed}"
     );
 
     let source = std::fs::read_to_string(

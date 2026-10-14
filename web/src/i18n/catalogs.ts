@@ -34,8 +34,10 @@ import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
+import { sessionWorkCatalogs, sessionWorkEnglish } from "./resources/sessionWork";
 
 export const english = {
+  ...sessionWorkEnglish,
   ...agentSessionsEnglish,
   ...shellEnglish,
   ...editorSearchEnglish,
@@ -78,6 +80,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...sessionWorkCatalogs.ko,
     ...agentSessionsCatalogs.ko,
     ...shellCatalogs.ko,
     ...editorSearchCatalogs.ko,
@@ -115,6 +118,7 @@ export const catalogs = {
     ...projectSettingsCatalogs.ko,
   },
   "zh-CN": {
+    ...sessionWorkCatalogs["zh-CN"],
     ...agentSessionsCatalogs["zh-CN"],
     ...shellCatalogs["zh-CN"],
     ...editorSearchCatalogs["zh-CN"],
@@ -152,6 +156,7 @@ export const catalogs = {
     ...projectSettingsCatalogs["zh-CN"],
   },
   ja: {
+    ...sessionWorkCatalogs.ja,
     ...agentSessionsCatalogs.ja,
     ...shellCatalogs.ja,
     ...editorSearchCatalogs.ja,

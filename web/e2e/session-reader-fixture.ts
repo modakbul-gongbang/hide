@@ -5,7 +5,7 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { HerdrFixture } from "./herdr-fixture";
+import { labelMarker, type HerdrFixture } from "./herdr-fixture";
 import { copyFixtureShim } from "./shims/build";
 import { fixtureExecutable, fixtureProgram } from "./platform-fixture";
 
@@ -118,7 +118,7 @@ export function prepareNativeWriter(herdr: HerdrFixture, kind: NativeFileReader,
     fs.writeFileSync(path.join(herdr.root, "grok-summary-seed.json"), JSON.stringify({ info: { id: GROK_ID, cwd }, session_summary: GROK_TITLE, created_at: "2026-10-03T01:00:00Z", updated_at: "2026-10-03T01:00:00Z", num_messages: 3, current_model_id: "grok-build", generated_title: GROK_TITLE }, null, 2));
     fs.writeFileSync(path.join(herdr.root, "grok-session-seed.jsonl"), [
       grokRecord({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "요청 보기를 만들어줘" }, _meta: { promptIndex: 0 } }),
-      grokRecord({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "HIDE_E2E_LABEL {\"goal\":\"Generated Grok goal\",\"goal_changed\":true,\"line\":\"완료\",\"end\":\"done\"}" } }, { promptId: "p-0" }),
+      grokRecord({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: labelMarker({task:"Generated Grok goal",progress:"완료"}) } }, { promptId: "p-0" }),
       grokRecord({ sessionUpdate: "turn_completed", prompt_id: "p-0", stop_reason: "end_turn" }, {}, true),
     ].join(""));
     return session;
@@ -127,7 +127,7 @@ export function prepareNativeWriter(herdr: HerdrFixture, kind: NativeFileReader,
   const records = [
     { type: "session", version: 3, id: kind === "pi" ? PI_ID : OMP_ID, timestamp, cwd },
     { type: "message", id: "a0000001", parentId: null, timestamp, message: { role: "user", content: "요청 보기를 만들어줘" } },
-    { type: "message", id: "a0000002", parentId: "a0000001", timestamp, message: { role: "assistant", content: [{ type: "text", text: "HIDE_E2E_LABEL {\"goal\":\"Generated Pi goal\",\"goal_changed\":true,\"line\":\"완료\",\"end\":\"done\"}" }], stopReason: "stop" } },
+    { type: "message", id: "a0000002", parentId: "a0000001", timestamp, message: { role: "assistant", content: [{ type: "text", text: labelMarker({task:"Generated Pi goal",progress:"완료"}) }], stopReason: "stop" } },
     ...(kind === "pi" ? [{ type: "session_info", id: "a0000003", parentId: "a0000002", timestamp, name: PI_TITLE }] : [{ type: "title_change", id: "a0000003", parentId: "a0000002", timestamp, title: "Old audit title", source: "user" }]),
   ];
   fs.writeFileSync(path.join(herdr.root, `${kind}-session-seed.jsonl`), Buffer.concat([
@@ -223,7 +223,7 @@ export function prepareOpenCodeWriter(herdr: HerdrFixture): string {
   fs.writeFileSync(path.join(bin, "opencode-double.json"), JSON.stringify({
     herdr: herdr.bin, database, schema: OPENCODE_SCHEMA, id: OPENCODE_ID, title: OPENCODE_TITLE,
     child: `${OPENCODE_ID}child`, childTitle: OPENCODE_CHILD_TITLE, launches: path.join(herdr.root, "opencode-launches.jsonl"),
-    answer: "HIDE_E2E_LABEL {\"goal\":\"Generated OpenCode goal\",\"goal_changed\":true,\"line\":\"완료\",\"end\":\"done\"}",
+    answer: labelMarker({task:"Generated OpenCode goal",progress:"완료"}),
   }));
   fixtureProgram(bin, "opencode", OPENCODE_DOUBLE);
   return database;

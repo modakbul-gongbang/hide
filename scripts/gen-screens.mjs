@@ -35,7 +35,7 @@ export function generate(root, ownedSheets = []) {
   const generated = screenSheets(tokens, root);
 
   let children = existing ? [...existing.children] : [];
-  let placed = 0;
+  let placed = existing?.children.length ?? 0;
   for (const {name, build} of generated) {
     const found = children.find(node => node.name === name);
     const sheet = found ? {...build(), x: found.x, y: found.y} : {...build(), x: (placed % GRID_COLUMNS) * GRID_STRIDE_X, y: Math.floor(placed / GRID_COLUMNS) * GRID_STRIDE_Y};

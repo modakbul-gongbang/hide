@@ -152,18 +152,23 @@ When the behavior depends on the order of two events, the test fixes that order;
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
   A spec adding a GitHub or Git shim prepends it to `fixturePath`; explicit `extraEnv.PATH` remains authoritative.
+  A repository fixture declares its initial branch when the GitHub answers name one: `session-work-fixture.ts` creates `main` for its `main` pull requests, so the account's `init.defaultBranch` cannot change PR assignment or automatic session resolution.
   A claim about a real agent session needs the real CLI inside an otherwise isolated fixture: a shim on the pane's `PATH` that runs the CLI under the operator's `HOME`, while the server keeps its private one.
 - A fixture makes agent labels the way the product does, through the core and not through tokens: `labelAgent` in `web/e2e/herdr-fixture.ts` gives a pane a new Claude session and writes a synthetic transcript (`writeFixtureTranscript`) the core's label worker reads, and the fixture `claude` shim acts as the provider that answers the analysis with the label the spec asked for.
   The same session is read again only when the agent's state changes: a spec that needs a different label either gives the pane a new session, or, for a pane declared as another's child, appends a turn to its own session (`continueFixtureTranscript`) and changes its state, because a relationship holds only for the sessions it was written for.
   A spec drives status through Herdr's own `agent_status` with `setFixtureLifecycle` and `finishFixtureTurn` (which needs `elsewhereTab`, so the turn ends unseen), because nothing else produces working, blocked or done.
   No spec writes a label or status pane token; the lineage tokens `declareParent` writes (`parent_pane`, `child_session`, `parent_session`) are the only ones a fixture reports, so a spawned child is labelled before its parent is declared (`spawnAgent` with a label).
   `desktop/e2e/session-labels.spec.ts` is the reference for the session boundary.
+  Recorded native-format blobs keep their historical label marker; `claude-shim.c` fits the controlled provider response to the requested START or END schema, supplying `work.task.none` for an older marker in a reader journey that judges no work.
+  Work-ledger journeys name their work explicitly through `labelMarker`; the adapter does not replace an existing work judgment.
 
 ### Operating-system differences belong to one fixture helper
 
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path and the copy of the built no-op opener used by both fixtures.
+Its Windows `launcher.c` reads paths and arguments through the wide-character APIs and decodes the script's UTF-8 interpreter line explicitly, so a fixture never substitutes the account's ANSI code page for the caller's title or body.
+`web/e2e/platform-program.unit.ts` runs the real fixture program from a Unicode path and checks arguments, quoting and the child's exit status on every system; the lost-create-response journey also checks the title the fixture created before reconciling it.
 Put new operating-system differences in that shared boundary rather than repeating them in a spec.
 The Windows fixture boundaries also preserve these requirements:
 
@@ -275,6 +280,8 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
    A rule that depends on what Herdr said and in what order is tested through the runtime: dispatch an event, feed a session payload, read the snapshot (`herdr-core/src/runtime/tests/session_navigation.rs`, for example `view_authority_an_external_tab_focus_is_followed_and_reported` and `view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it`).
    Why: the unit test cannot see a pending request being superseded, and an e2e spec sees it only when the scheduler happens to produce it.
+   Native usage reads return one bounded page: an accounting fixture follows `has_more` and the checkpoint to completion (`usage_drain` in `hide-session/tests/it/usage.rs`), while a test of the page budget inspects each step itself.
+   A two-line session may yield after its metadata under load, so its first page is not a promise of the whole event set; token and identity expectations apply to the completed read without extending a read's time budget.
 2. **Decide Herdr's answers with `FakeHerdr`.**
    `herdr-core/src/fake_herdr.rs` is the one fake Herdr socket: the test supplies a responder by method, the fake checks each answer against the pinned schema, and `methods()`, `calls()` and `wait_for_requests` read what the core asked.
    Why: fifteen hand-written listeners used to differ in a socket detail, and the one that differed failed under load for weeks.

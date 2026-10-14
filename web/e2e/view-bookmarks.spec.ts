@@ -6,8 +6,8 @@ import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
-// PRD tab-view-bookmark: two Agent tabs of one checkout share File Views'
-// View list, and each remembers which View was in front for it.
+// CLI background Views: each Agent tab owns its list and selected View.
+// The operator's B presentation stays intact while A opens behind it.
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -95,20 +95,22 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await screenshot(page, "view-bookmarks-tab-1-front");
 
     // B12: while the operator is on tab 2, tab 1's agent opens c.md. The
-    // screen stays on b.md, c.md joins the strip, and tab 1 shows it later.
+    // screen and strip stay on B's a.md/b.md; tab 1 alone gets c.md.
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "c.md"], 3);
-    await expect(viewTabs(page)).toHaveCount(3);
+    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page).filter({ hasText: "c.md" })).toHaveCount(0);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await screenshot(page, "view-bookmarks-agent-open-behind");
     await agentTab(page, first).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/c\.md/);
+    await expect(viewTabs(page)).toHaveCount(2);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
 
     // B18: the bookmarks are in the file and survive a daemon restart.
-    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_bookmarks");
+    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_presentations");
     await expect.poll(() => savedAgentTabs(daemon!)).toContain(second);
     daemon = await daemon.restart();
     await page.goto("about:blank");

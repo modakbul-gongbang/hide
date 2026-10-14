@@ -92,6 +92,7 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        lock_recover(&self.runtime).cancel_session_issue_draft();
         // First: the Factory engine sends through delivery and ends the
         // verify runs and judgments it started (rule 14).
         if let Some(mut factory) = self.factory.take() {
@@ -345,7 +346,14 @@ impl Core {
         // history, and before any coordinator, so the first catalog and
         // GitHub answers reach it.
         let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
-            Ok(worker) => Some(worker),
+            Ok(worker) => {
+                if let Some(labels) = labels.as_ref()
+                    && let Ok(mut client) = labels.ledger.lock()
+                {
+                    *client = Some(worker.client());
+                }
+                Some(worker)
+            }
             Err(message) => {
                 crate::diagnostic!(
                     serde_json::json!({"component":"links","kind":"worker.start_failed","message":message})
@@ -830,16 +838,29 @@ impl Core {
     }
 
     pub fn snapshot_delta(&self, have_revision: u64) -> Vec<u8> {
+        self.snapshot_delta_payload(have_revision)
+            .and_then(|payload| {
+                crate::runtime::serialize_snapshot_delta(&payload)
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Typed ownership crosses the core owner boundary; transports serialize
+    /// it after this call, without occupying dispatch or holding Runtime.
+    pub fn snapshot_delta_payload(
+        &self,
+        have_revision: u64,
+    ) -> Result<crate::model::SnapshotDeltaPayload, String> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);
-            return Vec::new();
+            return Err("snapshot requested off the core owner thread".to_owned());
         }
         self.notifier.clear_announcement();
-        let payload = {
+        Ok({
             let mut runtime = lock_recover(&self.runtime);
             runtime.snapshot_delta_payload(have_revision)
-        };
-        crate::runtime::serialize_snapshot_delta(&payload).unwrap_or_default()
+        })
     }
 
     pub fn on_change<F>(&self, callback: F)

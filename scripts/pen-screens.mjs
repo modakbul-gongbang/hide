@@ -41,6 +41,7 @@ import {onboardingBoards} from './pen-screens-onboarding.mjs';
 import {settingsBoards, settingsParts} from './pen-screens-settings.mjs';
 import {projectSettingsScreens} from './pen-screens-project-settings.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
+import {sessionWorkScreens} from './pen-screens-session-work.mjs';
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
@@ -4947,5 +4948,9 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens, root)},
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
     {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
+    {name: 'Screen / Session record', build: () => {
+      const build = sessionWorkScreens({frame,text,icon,screenButton});
+      return screenSheet('screen-session-record','Screen / Session record','Sessions work record: verdict, outputs, missed work, own chapters and delegated children. Approved session-work-ledger D-10, D-18, D-20; production SessionRecord and NewIssueDialog.',build,build);
+    }},
   ];
 }

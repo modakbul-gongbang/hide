@@ -83,6 +83,7 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
 | --- | --- | --- | --- |
 | Playwright `_electron` through `desktop/e2e/fixture.ts` | The app it launched | Typing, chords and clicks through the renderer, without OS focus | Native input: a pinch, a native drag, IME composition (tag those `@needs-focus`) |
 | `screencapture -x -o -l <window-id>` | One window | A current frame of the candidate without activating it | Minimized, hidden, or off-Space windows |
+| `desktop/e2e/electron-window.ts` | The Electron process and sole BrowserWindow Playwright launched | The running candidate's renderer, without Screen Recording permission or OS focus; retains its PID, window id, bounds, build and capture method | OS window chrome, compositor presentation and native input; renderer captures do not prove those surfaces |
 | The window list below | PID to window id | Resolving the candidate's window id before each capture | |
 | open-computer-use (`ocu`, or its MCP server) | An app name or bundle id, never a PID | Reading the accessibility tree; `click` on an element index and `set_value` on a candidate whose name answers exactly one process | A packaged candidate while the operator's app runs; keyboard input into the renderer, which 0.3.5 does not deliver reliably to Chromium; `click_method: global` |
 | `herdr pane read <pane> --source recent --lines <N>` under the private socket | One pane | Terminal content without a screenshot | History of a Claude or Codex pane: they draw in the alternate screen, so `recent` is what is visible, and history comes from the transcript |
@@ -114,7 +115,7 @@ osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); ObjC.deepUnwrap(ObjC.ca
 
 - A visible claim needs a real capture of the candidate's window; a live process or a passing unit test is not UI evidence.
 - Record which build answered: `packaged` and `version` from `host.start`, or the installed bundle's `CFBundleShortVersionString`.
-- Missing Screen Recording or Accessibility permission (`ocu doctor`) blocks the check.
+- Missing Screen Recording or Accessibility permission (`ocu doctor`) blocks the respective OS capture or accessibility check.
   The grant has been seen to stop matching after the installed app was replaced; report the check as blocked rather than focusing the window to work around it.
 - Artifacts go under `agents/runs/<slug>/` ([AGENTS.md](../AGENTS.md#evidence-belongs-outside-the-repository)); the pull request states what was observed, how, and what was not.
 
