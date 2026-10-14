@@ -5,7 +5,7 @@ use crate::turns::{
 };
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
-    SessionError, SkipReason, parse_events_into,
+    SessionError, SkipReason, parse_events_followed,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -376,7 +376,9 @@ impl ConversationCursor {
             ..ParsedSession::default()
         };
         let mut found = crate::links::LinkAccumulator::default();
+        let mut consumed = 0;
         for fragment in appended.split_inclusive(|byte| *byte == b'\n') {
+            consumed += fragment.len();
             let line_start = offset.saturating_sub(pending.len() as u64 + discarded_bytes);
             offset += fragment.len() as u64;
             let complete = fragment.last() == Some(&b'\n');
@@ -443,12 +445,20 @@ impl ConversationCursor {
                     continue;
                 }
             }
-            let line = parse_events_into(
+            let line = parse_events_followed(
                 agent,
                 &String::from_utf8_lossy(&pending),
                 line_start,
                 &mut found,
+                Some(&appended[consumed..]),
             );
+            if line.held_command {
+                // A command whose reply is not written yet: read it again
+                // with the poll that holds the reply, so neither is lost.
+                offset = line_start;
+                pending.clear();
+                break;
+            }
             parsed.events.extend(line.events);
             parsed.event_offsets.extend(line.event_offsets);
             parsed.skipped_lines += line.skipped_lines;
