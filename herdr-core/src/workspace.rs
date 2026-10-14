@@ -268,6 +268,8 @@ fn space_occupies_checkout(
 pub struct PathIndex {
     paths: BTreeMap<String, PathFact>,
     notes: BTreeMap<String, Result<BTreeMap<String, BranchNote>, String>>,
+    /// Each repository's remotes, by main root (`PathFacts::remotes`).
+    remotes: BTreeMap<String, Vec<String>>,
 }
 
 /// How long the core's own node may take to read the paths of one rebuild.
@@ -278,6 +280,7 @@ impl PathIndex {
     pub const NONE: Self = Self {
         paths: BTreeMap::new(),
         notes: BTreeMap::new(),
+        remotes: BTreeMap::new(),
     };
 
     pub fn new(facts: PathFacts) -> Self {
@@ -321,6 +324,7 @@ impl PathIndex {
         Self {
             paths,
             notes: facts.repositories,
+            remotes: facts.remotes,
         }
     }
 
@@ -353,6 +357,7 @@ impl PathIndex {
             .map_err(|error| error.to_string())?;
             facts.paths.extend(answer.paths);
             facts.repositories.extend(answer.repositories);
+            facts.remotes.extend(answer.remotes);
         }
         Ok(Self::new(facts))
     }
@@ -368,6 +373,14 @@ impl PathIndex {
             .get(path)
             .map(|fact| fact.comparison.clone())
             .unwrap_or_else(|| comparison_by_names(Path::new(path)))
+    }
+
+    /// The repositories the remotes of the repository `path` is in name,
+    /// as its node read them; `None` when the node did not say.
+    pub fn remotes(&self, path: &str) -> Option<&[String]> {
+        self.remotes
+            .get(&self.place(path)?.main_root)
+            .map(Vec::as_slice)
     }
 
     /// The repository `path` is in, as its node read it.

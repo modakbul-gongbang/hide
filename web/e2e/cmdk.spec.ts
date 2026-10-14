@@ -26,6 +26,7 @@ import { fixtureProgram } from "./platform-fixture";
 import { countSent, enterWorkspace, registerFolder, screenshot } from "./wire";
 import { chord, field, label, SYSTEM } from "./chords";
 import { fieldChord } from "../src/shortcuts";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -219,7 +220,7 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);

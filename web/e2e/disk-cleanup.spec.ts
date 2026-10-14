@@ -21,6 +21,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
 import { openProjectOverview } from "./overview-entry";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -122,7 +123,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     fs.writeFileSync(path.join(repo, "Cargo.toml"), '[package]\nname = "fixture"\n');
     fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');

@@ -1208,15 +1208,27 @@ impl LinkStore {
 
     /// Closed issues also need creation facts; feed sightings to the existing
     /// bounded GitHub reader, never fetch from record/search code.
+    ///
+    /// A sighting is the project's only when its session works inside the
+    /// project and its issue is in the project's repository, the one GitHub
+    /// answered for the project's checkout: the same two facts that join a
+    /// session's pull requests to a project (`project_paths`). An address an
+    /// agent only printed, such as a test fixture's `acme/repo`, is no issue
+    /// of the project's, and one that does not resolve once failed every issue
+    /// read of the project. A project whose repository is not known yet has
+    /// none.
     pub fn ledger_issue_refs(
         &self,
         project: &str,
     ) -> Result<Vec<crate::issues::IssueReference>, String> {
         let project = self.project(project)?.ok_or("ledger_project_missing")?;
+        let Some(repo) = project.repo.as_deref() else {
+            return Ok(Vec::new());
+        };
         let paths = self.project_paths(&project)?;
-        let mut statement = self.connection.prepare("SELECT DISTINCT x.device,x.agent,x.id,x.repo,x.number FROM ledger_sightings x WHERE kind='issue' ORDER BY at DESC LIMIT ?1").map_err(failed)?;
+        let mut statement = self.connection.prepare("SELECT DISTINCT x.device,x.agent,x.id,x.repo,x.number FROM ledger_sightings x LEFT JOIN repo_names r ON r.name=x.repo WHERE x.kind='issue' AND COALESCE(r.repo,x.repo)=?2 ORDER BY x.at DESC LIMIT ?1").map_err(failed)?;
         let rows = statement
-            .query_map([SUMMARY_SESSION_LIMIT as i64 + 1], |r| {
+            .query_map(params![SUMMARY_SESSION_LIMIT as i64 + 1, repo], |r| {
                 Ok((
                     SessionIdentity {
                         device_id: r.get(0)?,
