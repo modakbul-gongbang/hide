@@ -1203,11 +1203,11 @@ Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checko
 Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
-A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--size-lineage-indent` (18px) further in and each lineage level retains that same step.
+A singleton has no header even when named; its status mark stays on the outer axis and its title follows that mark directly, 20px left of the header title column, while grouped roots keep their status mark `--size-lineage-indent` (18px) further in and their title 2px left of the header title column, and each lineage level retains that 18px step.
 Tab groups are separated by `--spacing-sm` (8px), without another card or border.
 At a 240px sidebar width, its 8px list inset puts header disclosures and singleton status marks on x18, and tab glyphs and grouped root status marks on x36.
 Headers and quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding; a header touches its own first row.
-Tab glyphs are 12px in a 16px lane; header and singleton titles start at x48, grouped titles at x66, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
+Tab glyphs are 12px in a 16px lane; header titles start at x48, grouped titles at x46, singleton titles at x28, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
 Focused sidebar agent and checkout rows and collapsed tab representatives use the neutral `--secondary` fill.
 A singleton root with descendants in other tabs keeps its lineage disclosure inside the reserved trailing slot; its status mark stays on the outer axis.
 The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
