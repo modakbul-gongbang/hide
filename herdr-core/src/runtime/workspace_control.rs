@@ -392,6 +392,14 @@ impl Runtime {
                 self.check_browser_area(&key, area_id.as_deref())?;
             }
             self.reconcile_view_displays();
+            if self.open_adds_view(
+                &key,
+                pane_id,
+                &action,
+                material.as_ref().map(|material| material.path.as_str()),
+            ) {
+                self.make_view_room(&key);
+            }
             // A pane of a tab the operator is not looking at keeps the
             // operator's fronts and only bookmarks its own tab (D-05).
             let parked = self.parked_caller(&key, pane_id, &action)?;

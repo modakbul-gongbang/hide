@@ -368,8 +368,9 @@ fn with_tabs(runtime: &mut Runtime, directory: &Path) {
     ))));
 }
 
-/// D-04, B8: choosing another Agent tab leaves the Workspace's document in
-/// its View area; without View areas the terminal still takes the canvas back.
+/// D-04, B8: choosing another Agent tab keeps the Workspace's document open
+/// for the tab that showed it, which shows it again on return; without View
+/// areas the terminal takes the canvas back.
 #[test]
 fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas() {
     for separate in [true, false] {
@@ -386,6 +387,17 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
         runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
 
         if separate {
+            assert_eq!(
+                active_label(&runtime),
+                None,
+                "a tab not shown before has no Views"
+            );
+            assert_eq!(
+                runtime.snapshot.editor.tabs.len(),
+                1,
+                "the document stays open"
+            );
+            runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1"));
             assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
             let shown = runtime
                 .snapshot_delta_payload(0)
@@ -402,8 +414,9 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
 
 /// PRD three-column-panel B2, B4, B22, D-17: a new Workspace shows Agent
 /// Views alone; an explicit file open turns File Views on and the file lands
-/// in it; a session update, and an agent or tab chosen from anywhere, change
-/// no column.
+/// in it; a session update changes no column, and an agent or tab chosen
+/// from anywhere changes no Tools column while File Views follows that tab's
+/// own Views, none for a tab not shown before.
 #[test]
 fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
@@ -435,8 +448,8 @@ fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
         columns(&runtime),
-        (true, false),
-        "an agent choice moves no column"
+        (false, false),
+        "a tab not shown before has no Views"
     );
     layout(&mut runtime, serde_json::json!({"tools": true}));
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1"));

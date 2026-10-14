@@ -1068,7 +1068,7 @@ test("at six view areas every split is refused with its reason, in the menu and 
   } finally { stopStack(stack); }
 });
 
-test("a Workspace holds at most sixty-four views: opening one more is refused with the reason, and opening a shown file still moves to it", async ({ page }) => {
+test("a Workspace holds at most sixty-four views: opening one more closes the view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
   await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps-views", files);
@@ -1095,7 +1095,8 @@ test("a Workspace holds at most sixty-four views: opening one more is refused wi
                   kind: "file",
                   committed: null,
                   preview: false,
-                  last_focused_unix_ms: 0,
+                  // f10 was looked at longest ago.
+                  last_focused_unix_ms: index === 9 ? 1 : 1000 + index,
                 })),
               },
             },
@@ -1113,11 +1114,11 @@ test("a Workspace holds at most sixty-four views: opening one more is refused wi
     await page.getByRole("tree", { name: "Checkout files" }).hover();
     await page.mouse.wheel(0, 2000);
     await explorerRow(page, stack, "f65.txt").click();
-    await expect(page.locator("[data-notice]")).toContainText("This Workspace has 64 views open. Close a view to open another.");
+    await expect(tab(page, "f65.txt")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "f10.txt")).toHaveCount(0);
     await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
-    await expect(tab(page, "f65.txt")).toHaveCount(0);
+    await expect(page.locator("[data-notice]")).toHaveCount(0);
     await screenshot(page, "s7-caps-display-limit");
-    await page.locator('[data-notice] button[aria-label="Dismiss"]').click();
     await explorerRow(page, stack, "f60.txt").click();
     await expect(tab(page, "f60.txt")).toHaveAttribute("aria-selected", "true");
     await expect(page.locator("[data-notice]")).toHaveCount(0);

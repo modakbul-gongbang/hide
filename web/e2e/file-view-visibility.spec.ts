@@ -55,7 +55,8 @@ test("Agent tabs keep File Views on or off through switching and restart @platfo
     await agentTab(page, second).click();
     await openFile(herdr, daemon, created.result.root_pane.pane_id, "b.md");
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
+    // The second tab was shown for the first time, so b.md is its only View.
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
     await toggle(page).click();
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
     await expect(fileViews(page)).toBeHidden();

@@ -212,10 +212,12 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
   await fitWindow(app, { width, height: 900 });
   const page = await shellPage(app);
   await enterWorkspace(page, "fixture");
-  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Other tab", "--no-focus"]) as { result: { tab: { tab_id: string } } };
+  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Other tab", "--no-focus"]) as {
+    result: { tab: { tab_id: string }; root_pane: { pane_id: string } };
+  };
   const other = created.result.tab.tab_id;
   const url = `${origin}/a.html`;
-  const chooseTab = async (id: string) => {
+  const chooseTab = async (id: string, callViews = true) => {
     // The native screen can leave only one Workspace column visible.
     // Use its existing toolbar navigation, then call File Views back.
     if (!(await page.locator('[data-column="agents"]').isVisible())) {
@@ -224,7 +226,7 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
     await expect(page.locator('[data-column="agents"]')).toBeVisible();
     await page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`).click();
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`)).toHaveAttribute("aria-selected", "true");
-    if (!(await page.locator('[data-column="views"]').isVisible())) {
+    if (callViews && !(await page.locator('[data-column="views"]').isVisible())) {
       await page.locator('[data-column-toggle="views"]').click();
     }
   };
@@ -234,11 +236,16 @@ test(`browser: Agent tabs retain independent same-URL pages through a background
     const a = (opened.result as { view_id: string }).view_id;
     await shownAndSelected(page, url, a);
     const original = await viewOf(url);
-    await chooseTab(other);
+    // The other tab is shown for the first time, so it starts with no Views;
+    // its own agent opens the same address there as a page of its own.
+    await chooseTab(other, false);
     await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
-    await expect.poll(() => displayIdOf(page, "Page A")).not.toBe(a);
-    const b = await displayIdOf(page, "Page A");
+    await expect(tab(page, "Page A")).toHaveCount(0);
+    const openedB = await cliFromPane(["browser", "open", url, "--reveal", "--wait"], created.result.root_pane.pane_id);
+    expect(openedB).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+    const b = (openedB.result as { view_id: string }).view_id;
     expect(b).not.toBe(a);
+    await expect.poll(() => displayIdOf(page, "Page A")).toBe(b);
     await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(2);
     const pageB = (await views()).find((view) => view.url === url && view.id !== original.id)!;
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([pageB.id]);
