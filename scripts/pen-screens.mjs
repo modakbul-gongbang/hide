@@ -3935,7 +3935,11 @@ function buildProjectsSidebar(tokens) {
 
   // An opened checkout and its unboxed tab blocks.
   function group(id, rows) {
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, rows);
+    const [checkout, ...agents] = rows;
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [
+      checkout,
+      frame(`${id}-tab`, 'Contiguous tab header and lineage', {width: row, layout: 'vertical'}, agents),
+    ]);
   }
 
   function fold(id, label, level) {
