@@ -4,7 +4,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, type ElectronApplication } from "@playwright/test";
+import { initGithubRepository } from "../../web/e2e/github-remote";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { fixtureProgram } from "../../web/e2e/platform-fixture";
 import { showProjectRow } from "../../web/e2e/wire";
 import { openProjectOverview } from "../../web/e2e/overview-entry";
 import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
@@ -18,7 +20,12 @@ test("Project settings keep confirmed values through a failed save and restart",
   try {
     const repo = path.join(run.env.HOME!, "projects", "sample");
     fs.mkdirSync(repo);
-    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    initGithubRepository(repo);
+    // gh as a logged-out account answers it: exit 4 and its sign-in hint.
+    fixtureProgram(path.join(herdr.root, "bin"), "gh", `
+console.error("To get started with GitHub CLI, please run:  gh auth login");
+process.exit(4);
+`);
     fs.writeFileSync(path.join(repo, "README.md"), "Fixture\n");
     execFileSync("git", ["add", "README.md"], { cwd: repo });
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Initial"], { cwd: repo });
@@ -31,11 +38,11 @@ test("Project settings keep confirmed values through a failed save and restart",
     let sheet = page.locator('[data-project-settings]');
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("tab")).toHaveText(["Connections", "Working style", "Memory"]);
-    // Discovery finds gh on this controlled PATH, but this repository has no
-    // GitHub remote. Auto keeps its actual provider failure instead of Local.
+    // A GitHub repository whose read fails stays GitHub under Auto and says
+    // so, rather than moving its issues to Local.
     await expect(sheet).toContainText("Automatic (GitHub)");
     await expect(sheet).toContainText("GitHub read failed");
-    await captureNativeWindow(app, "project-settings-connections-native", { state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, daemonPid: run.daemonPid(), build: "worktree debug", provider: "actual discovery failure, no GitHub remote" });
+    await captureNativeWindow(app, "project-settings-connections-native", { state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, daemonPid: run.daemonPid(), build: "worktree debug", provider: "fixture gh logged out, GitHub remote" });
     await sheet.getByRole("combobox", { name: "Issue source", exact: true }).click();
     await page.getByRole("option", { name: "Local", exact: true }).click();
     await expect(sheet).toContainText("Saved");
