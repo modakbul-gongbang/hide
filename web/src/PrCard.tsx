@@ -434,7 +434,7 @@ function WriteLine({ write, base, card, actions, projectId, number }: { write: P
   return (
     <p role="alert" className="flex flex-wrap items-center gap-sm text-caption text-warning" data-pr-card-write="failed" data-pr-card-write-reason={reason}>
       <span>{t(`work.card.fail.${reason}`, { base })}</span>
-      {reason === "head_moved" || reason === "not_mergeable" ? <Button size="sm" variant="secondary" disabled={card?.reading === true} onClick={() => actions.lookAgainPrCard(projectId, number)} data-pr-card-look-again="true">{t("work.card.lookAgain")}</Button> : null}
+      <Button size="sm" variant="secondary" disabled={card?.reading === true} onClick={() => actions.lookAgainPrCard(projectId, number)} data-pr-card-look-again="true">{t("work.card.lookAgain")}</Button>
     </p>
   );
 }
