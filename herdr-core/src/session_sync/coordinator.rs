@@ -3346,14 +3346,13 @@ mod window_reads_tests {
     use hide_node_link::cleanup::RepositoryDirs;
     use hide_node_link::protocol::Call;
     use hide_node_link::worktrees::GitWatchReport;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{Sender, channel};
 
     /// A node whose every project is its own repository and whose Git watch
-    /// says it is watching, then reports a heartbeat each time the test ticks
-    /// until the watch is stopped, and then says it ended.
+    /// says it has started and is watching, then reports a heartbeat each
+    /// time the test ticks until the watch is stopped, and then says it ended.
     struct WatchingNode {
-        started: AtomicUsize,
+        started: Mutex<Sender<()>>,
         tick: Mutex<std::sync::mpsc::Receiver<()>>,
         ended: Mutex<Sender<()>>,
     }
@@ -3381,7 +3380,7 @@ mod window_reads_tests {
                 })
                 .into()),
                 Call::GitWatch { .. } => {
-                    self.started.fetch_add(1, Ordering::SeqCst);
+                    let _ = self.started.lock().unwrap().send(());
                     let mut report = serde_json::to_value(GitWatchReport::Watching {
                         unwatched: Vec::new(),
                     })
@@ -3436,8 +3435,9 @@ mod window_reads_tests {
         );
         let (ended, watch_ended) = channel();
         let (heartbeat, tick) = channel();
+        let (started, watch_started) = channel();
         let node = Arc::new(WatchingNode {
-            started: AtomicUsize::new(0),
+            started: Mutex::new(started),
             tick: Mutex::new(tick),
             ended: Mutex::new(ended),
         });
@@ -3464,7 +3464,10 @@ mod window_reads_tests {
         };
         assert!(window_reads(&context, Some(&mut reader)));
         let _ = reader.read_if_due(request.clone());
-        assert_eq!(node.started.load(Ordering::SeqCst), 1);
+        // The watch call runs on a thread of its own.
+        watch_started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the first read starts the watch");
 
         attached(false);
         assert!(!window_reads(&context, Some(&mut reader)));
@@ -3476,11 +3479,9 @@ mod window_reads_tests {
         attached(true);
         assert!(window_reads(&context, Some(&mut reader)));
         let _ = reader.read_if_due(request);
-        assert_eq!(
-            node.started.load(Ordering::SeqCst),
-            2,
-            "the watch starts again on the first read with a renderer back"
-        );
+        watch_started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the watch starts again on the first read with a renderer back");
     }
 }
 
