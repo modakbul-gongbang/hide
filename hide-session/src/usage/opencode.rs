@@ -138,7 +138,7 @@ fn active(
     let count: u64 = db
         .query_row(
             "SELECT count(*) FROM (SELECT 1 FROM part WHERE message_id=?1
-         AND length(CAST(data AS BLOB))<=?2 AND json_valid(data)
+         AND octet_length(data)<=?2 AND json_valid(data)
          AND json_extract(data,'$.type')='step-finish' LIMIT 2)",
             params![id, ROW_BYTES],
             |row| row.get(0),
@@ -216,8 +216,8 @@ fn read_connection(
         if let Some(active) = &mut step.checkpoint.database.active {
             let row: Option<(String, u64, Option<String>)> = db
                 .query_row(
-                    "SELECT CASE WHEN length(CAST(id AS BLOB))<=128 THEN id END,length(CAST(data AS BLOB)),
-                 CASE WHEN length(CAST(data AS BLOB))<=?3 THEN data END
+                    "SELECT CASE WHEN octet_length(id)<=128 THEN id END,octet_length(data),
+                 CASE WHEN octet_length(data)<=?3 THEN data END
                  FROM part WHERE message_id=?1 AND id>?2 ORDER BY id LIMIT 1",
                     params![active.id, active.part_after, ROW_BYTES],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
@@ -253,9 +253,9 @@ fn read_connection(
         let cursor = &step.checkpoint.database;
         let row: Option<(String, u64, String, Option<String>)> = db
             .query_row(
-                "SELECT CASE WHEN length(CAST(id AS BLOB))<=128 THEN id END,time_updated,
-             CASE WHEN length(CAST(session_id AS BLOB))<=128 THEN session_id END,
-             CASE WHEN length(CAST(data AS BLOB))<=?4 THEN data END
+                "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
+             CASE WHEN octet_length(session_id)<=128 THEN session_id END,
+             CASE WHEN octet_length(data)<=?4 THEN data END
              FROM message WHERE (time_updated>?1 OR (time_updated=?1 AND id>?2))
              AND time_updated<=?3 ORDER BY time_updated,id LIMIT 1",
                 params![cursor.after_time, cursor.after_id, horizon, ROW_BYTES],

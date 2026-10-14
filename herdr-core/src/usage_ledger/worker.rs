@@ -370,8 +370,12 @@ impl Engine {
                     }
                     work.queue = listed.files.into();
                 }
-                _ => {
+                Ok(_) => {
                     work.fail("usage_list_failed");
+                    return;
+                }
+                Err(error) => {
+                    work.fail_because("usage_list_failed", &error);
                     return;
                 }
             }
@@ -454,9 +458,9 @@ impl Engine {
                     work.fail(code);
                 }
             },
-            Err(_) => {
+            Err(error) => {
                 work.active = None;
-                work.fail("usage_read_failed");
+                work.fail_because("usage_read_failed", &error);
             }
         }
     }
@@ -525,8 +529,22 @@ impl Engine {
 
 impl AgentWork {
     fn fail(&mut self, code: &'static str) {
+        self.fail_with(code, None);
+    }
+
+    /// A failed node call, with what the node said: a refusal's own code
+    /// (`usage_read_Database`) or how the link failed, so the log tells a
+    /// database error from a timeout.
+    fn fail_because(&mut self, code: &'static str, error: &crate::node_access::LinkError) {
+        self.fail_with(code, Some(crate::links::link_code(error, "node")));
+    }
+
+    fn fail_with(&mut self, code: &'static str, reason: Option<String>) {
         if self.progress.failure != Some(code) {
-            diagnostic(code, Some(self.progress.agent), 0);
+            let agent = self.progress.agent.as_str();
+            crate::diagnostic!(serde_json::json!({
+                "component": "usage_ledger", "kind": code, "agent": agent, "count": 0, "reason": reason,
+            }));
         }
         self.progress.failure = Some(code);
         self.failed = true;

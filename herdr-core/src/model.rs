@@ -4253,6 +4253,45 @@ pub struct GithubProjectSnapshot {
     pub pull_requests: Vec<PullRequestSnapshot>,
 }
 
+/// How a project's read ended, as the re-read clock counts it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GithubReadOutcome {
+    /// The pull requests and the issues were read.
+    Read,
+    /// The pull requests were read and the issues were not. The re-read
+    /// clock backs off as from a failure, so issues that fail every time
+    /// (a fork with its issues turned off) are not asked for every minute,
+    /// while the pull requests the answer holds are current.
+    IssuesFailed,
+    /// The pull requests were not read.
+    Failed,
+    /// The repository has no GitHub remote: there is nothing to ask GitHub,
+    /// and nothing changes that until its remotes do.
+    NoRemote,
+}
+
+impl GithubReadOutcome {
+    /// Whether the answer holds the project's pull requests as GitHub has
+    /// them now.
+    pub fn pull_requests_read(self) -> bool {
+        matches!(self, Self::Read | Self::IssuesFailed)
+    }
+}
+
+impl GithubProjectSnapshot {
+    pub fn read_outcome(&self) -> GithubReadOutcome {
+        if self.status.failure_category == Some(GithubFailureCategory::NoGithubRemote) {
+            GithubReadOutcome::NoRemote
+        } else if !self.pull_requests_read {
+            GithubReadOutcome::Failed
+        } else if !self.issues_read {
+            GithubReadOutcome::IssuesFailed
+        } else {
+            GithubReadOutcome::Read
+        }
+    }
+}
+
 /// Every repository's pull-request state, keyed by main worktree path.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct GithubSnapshot {

@@ -23,6 +23,7 @@ import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixtur
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, screenshot } from "./wire";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -214,7 +215,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     const origin = path.join(herdr.root, "origin.git");
     fs.mkdirSync(repo);
     git(herdr.root, ["init", "--bare", origin]);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
