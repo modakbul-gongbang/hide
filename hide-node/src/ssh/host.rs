@@ -121,9 +121,9 @@ const HOOKS_NAME: &str = "hide-agent-hooks";
 /// 15); a folder past them is left out and the kit names the missing part.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a draining connection waits for its admitted requests before it
-/// closes anyway. An admitted request can wait up to its timeout to be
-/// written and again for its answer, and the longest call timeout is 120 s
-/// (an index walk, a worktree removal), so this outlasts both.
+/// closes anyway. An admitted request is written and answered by its one
+/// deadline, and the longest call timeout is 120 s (an index walk, a
+/// worktree removal), so this outlasts it.
 const DRAIN_BOUND: Duration = Duration::from_secs(250);
 /// How long a cancel waits to be written; the call it stops ends on its
 /// own timeout whatever happens to the cancel.
@@ -378,7 +378,9 @@ impl Gate {
         }
     }
 
-    fn admit(&self, timeout: Duration) -> Result<(), LinkError> {
+    /// Admits one request, waiting for a slot until `deadline` at most: the
+    /// call's own, which its write and its answer share.
+    fn admit(&self, deadline: Instant) -> Result<(), LinkError> {
         let mut admission = lock_recover(&self.state);
         if let Some(reason) = &admission.stopped {
             return Err(LinkError::NotConnected(reason.clone()));
@@ -391,7 +393,6 @@ impl Gate {
             return Err(LinkError::Busy);
         }
         admission.queued += 1;
-        let deadline = Instant::now() + timeout;
         loop {
             if let Some(reason) = &admission.stopped {
                 let reason = reason.clone();
@@ -597,12 +598,16 @@ impl RemoteHost {
     }
 
     /// Sends one request and waits at most `timeout` for its answer. Must
-    /// not be called from inside an async context.
+    /// not be called from inside an async context. The call has one
+    /// deadline: waiting for a slot, waiting for the writer, the write and
+    /// the answer all end by it, so a caller that gave up at `timeout` leaves
+    /// no work of this call behind.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
+        let deadline = Instant::now() + timeout;
         let gate = self.inner.gate_for(&call);
-        gate.admit(timeout)?;
-        let result = self.send_and_wait(call, timeout, None);
+        gate.admit(deadline)?;
+        let result = self.send_and_wait(call, deadline, None);
         gate.release();
         result
     }
@@ -617,9 +622,10 @@ impl RemoteHost {
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
+        let deadline = Instant::now() + timeout;
         let gate = self.inner.gate_for(&call);
-        gate.admit(timeout)?;
-        let result = self.send_and_wait(call, timeout, Some(progress));
+        gate.admit(deadline)?;
+        let result = self.send_and_wait(call, deadline, Some(progress));
         gate.release();
         result
     }
@@ -627,7 +633,7 @@ impl RemoteHost {
     fn send_and_wait(
         &self,
         call: Call,
-        timeout: Duration,
+        deadline: Instant,
         mut progress: Option<&mut dyn FnMut(serde_json::Value) -> bool>,
     ) -> Result<LinkAnswer, LinkError> {
         let inner = &self.inner;
@@ -642,11 +648,10 @@ impl RemoteHost {
                 until_stopped: call.runs_until_stopped(),
             },
         );
-        self.send(id, call, timeout)?;
-        let end = Instant::now() + timeout;
+        self.send(id, call, deadline)?;
         let mut stopping = false;
         loop {
-            let left = end.saturating_duration_since(Instant::now());
+            let left = deadline.saturating_duration_since(Instant::now());
             match receiver.recv_timeout(left) {
                 Ok(Delivery::Report(raw)) => {
                     if let Some(waiting) = &reports {
@@ -711,7 +716,11 @@ impl RemoteHost {
                 until_stopped: false,
             },
         );
-        if let Err(error) = self.send(id, Call::Cancel { request }, CANCEL_TIMEOUT) {
+        if let Err(error) = self.send(
+            id,
+            Call::Cancel { request },
+            Instant::now() + CANCEL_TIMEOUT,
+        ) {
             crate::diagnostic!(json!({
                 "component": "remote_host",
                 "kind": "host.cancel_unsent",
@@ -724,7 +733,7 @@ impl RemoteHost {
 
     /// Writes request `id`, already waiting in `pending`; on any failure it
     /// is taken out again.
-    fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
+    fn send(&self, id: u64, call: Call, deadline: Instant) -> Result<(), LinkError> {
         let inner = &self.inner;
         if let Err(error) = hide_node_link::link::check_reader_call(self, &call) {
             lock_recover(&inner.pending).remove(&id);
@@ -744,7 +753,7 @@ impl RemoteHost {
             }
         };
         line.push(b'\n');
-        let written = self.write_line(&line, timeout, cancels);
+        let written = self.write_line(&line, deadline, cancels);
         if written.is_err() {
             lock_recover(&inner.pending).remove(&id);
         }
@@ -771,10 +780,10 @@ impl RemoteHost {
         self.inner.terminals.set(terminals).is_ok()
     }
 
-    /// Writes one whole line, which carries its newline. A line that was
-    /// started and not finished ends the connection, since the node would
-    /// read the next line as its tail.
-    fn write_line(&self, line: &[u8], timeout: Duration, cancels: bool) -> Result<(), LinkError> {
+    /// Writes one whole line, which carries its newline, by `deadline`. A
+    /// line that was started and not finished ends the connection, since the
+    /// node would read the next line as its tail.
+    fn write_line(&self, line: &[u8], deadline: Instant, cancels: bool) -> Result<(), LinkError> {
         let inner = &self.inner;
         if let Some(reason) = self.closed_reason() {
             return Err(LinkError::NotConnected(reason));
@@ -782,12 +791,17 @@ impl RemoteHost {
         // Waiting behind another request's write sends nothing, so running
         // out of time there leaves the connection as it was; only a write
         // that started and did not finish can have sent part of a line.
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = tokio::time::Instant::from_std(deadline);
         let written = inner.runtime.block_on(async {
             let Ok(mut writer) = tokio::time::timeout_at(deadline, inner.writer.lock()).await
             else {
                 return Err(LinkError::Busy);
             };
+            // The writer came free as the deadline passed: nothing was sent,
+            // and a write begun now could only be cut short.
+            if tokio::time::Instant::now() >= deadline {
+                return Err(LinkError::Busy);
+            }
             // Admitted before the connection began to drain, but not sent:
             // it is refused now rather than sent after consent was withdrawn.
             if let Some(reason) = inner.gate.stopped().filter(|_| !cancels) {
@@ -829,7 +843,7 @@ const TERMINAL_LINE_TIMEOUT: Duration = Duration::from_secs(30);
 impl crate::terminal::device::LineLink for RemoteHost {
     fn send_line(&self, line: &[u8]) -> Result<(), crate::terminal::device::LineRefused> {
         use crate::terminal::device::LineRefused;
-        self.write_line(line, TERMINAL_LINE_TIMEOUT, false)
+        self.write_line(line, Instant::now() + TERMINAL_LINE_TIMEOUT, false)
             .map_err(|error| match error {
                 LinkError::Busy => LineRefused::Busy,
                 error => LineRefused::Ended(error.to_string()),
@@ -2754,6 +2768,87 @@ mod tests {
         assert!(matches!(&heard[0].1, NodeEvent::Revoke { token } if token == "t"));
     }
 
+    /// Remote audit R2: a call has one deadline. A call that waited for a
+    /// slot, or for the writer behind another request, has only what is left
+    /// of it for its answer, so its work ends when its caller gives up, not a
+    /// whole timeout after it was written.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // the held slot and the held writer are the subject: each is let go late, as on a busy link
+    fn a_call_s_waits_and_its_answer_share_one_deadline() {
+        use std::io::BufRead;
+        const TIMEOUT: Duration = Duration::from_secs(2);
+        const HELD: Duration = Duration::from_secs(1);
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a stream pair");
+        let link = over_local_stream("inbound:node-a", core_end, None, Box::new(|_| {}))
+            .expect("a local link");
+        // The node reads every request and answers none.
+        let (requests, written) = mpsc::channel();
+        let node = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(node_end);
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                let _ = requests.send(std::mem::take(&mut line));
+            }
+        });
+        let project = || Call::Project {
+            path: "/repo".to_owned(),
+        };
+        let call = |link: &RemoteHost| {
+            let link = link.clone();
+            std::thread::spawn(move || link.call(project(), TIMEOUT))
+        };
+        let unanswered = |result: Result<LinkAnswer, LinkError>| matches!(result, Err(LinkError::Unknown(reason)) if reason.contains("did not answer in time"));
+
+        // Every slot is taken, and one comes free late.
+        let gate = link.inner.gate_for(&project());
+        for _ in 0..MAX_RUNNING {
+            gate.admit(Instant::now() + Duration::from_secs(60))
+                .expect("a slot");
+        }
+        let caller = call(&link);
+        queued(gate, "the call never waited for a slot");
+        std::thread::sleep(HELD);
+        let freed = Instant::now();
+        gate.release();
+        assert!(unanswered(caller.join().unwrap()));
+        let returned = Instant::now();
+        written
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the call was written once a slot came free");
+        // Written after `freed`, a call whose answer had a timeout of its
+        // own would still be waiting here.
+        assert!(
+            returned < freed + TIMEOUT,
+            "the slot's wait was spent twice"
+        );
+        for _ in 1..MAX_RUNNING {
+            gate.release();
+        }
+
+        // The writer is taken by another request's line, and comes free late.
+        let other_line = link.inner.runtime.block_on(link.inner.writer.lock());
+        let caller = call(&link);
+        std::thread::sleep(HELD);
+        let freed = Instant::now();
+        drop(other_line);
+        assert!(unanswered(caller.join().unwrap()));
+        let returned = Instant::now();
+        written
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the call was written once the writer came free");
+        assert!(
+            returned < freed + TIMEOUT,
+            "the writer's wait was spent twice"
+        );
+
+        assert!(
+            link.closed_reason().is_none(),
+            "an unanswered call keeps the link"
+        );
+        link.close("the test is over");
+        node.join().expect("the node thread");
+    }
+
     fn folder(uid: u32, mode: u32) -> FileAttributes {
         FileAttributes {
             uid: Some(uid),
@@ -2782,11 +2877,11 @@ mod tests {
     fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
         let gate = Arc::new(Gate::new(MAX_RUNNING));
         for _ in 0..MAX_RUNNING {
-            assert!(gate.admit(Duration::from_secs(1)).is_ok());
+            assert!(gate.admit(Instant::now() + Duration::from_secs(1)).is_ok());
         }
         let waiting = {
             let gate = Arc::clone(&gate);
-            std::thread::spawn(move || gate.admit(Duration::from_secs(60)))
+            std::thread::spawn(move || gate.admit(Instant::now() + Duration::from_secs(60)))
         };
         queued(&gate, "the request never waited");
 
@@ -2798,7 +2893,7 @@ mod tests {
         ));
         assert!(stopped.elapsed() < Duration::from_secs(10));
         assert!(matches!(
-            gate.admit(Duration::from_secs(1)),
+            gate.admit(Instant::now() + Duration::from_secs(1)),
             Err(LinkError::NotConnected(_))
         ));
 
