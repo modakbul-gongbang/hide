@@ -92,7 +92,11 @@ impl Runtime {
         match tab.kind {
             EditorTabKind::File => {
                 self.snapshot.editor.document = document;
-                self.snapshot.ui_state.selected_path = Some(tab.path);
+                // The Explorer shows the front checkout's tree, which has no
+                // row for another checkout's file a terminal link opened here.
+                if self.front_checkout() == Some((&tab.workspace_id, &tab.checkout_id)) {
+                    self.snapshot.ui_state.selected_path = Some(tab.path);
+                }
             }
             EditorTabKind::Diff => {
                 let committed = tab.diff_committed.expect("validated above");
@@ -219,7 +223,23 @@ impl Runtime {
         preview: bool,
     ) {
         if self.separate_view_areas() {
-            self.show_file_in_view(prepared, workspace_id, checkout_id, path, preview, false);
+            let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
+                self.set_error(
+                    "file.invalid_context",
+                    "The file's project or checkout is no longer available",
+                    false,
+                );
+                return;
+            };
+            self.show_file_in_view(
+                prepared,
+                &key,
+                workspace_id,
+                checkout_id,
+                path,
+                preview,
+                false,
+            );
             return;
         }
         let tab_id = match prepared {

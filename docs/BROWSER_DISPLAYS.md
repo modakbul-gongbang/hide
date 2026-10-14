@@ -42,6 +42,7 @@ Only checkouts in the current connected catalog contribute to that inventory; a 
   The device host must have file access consent for a remote page to load.
 - Click an HTML path (`.html`, `.htm` or `.xhtml`, case-insensitive) in a local desktop terminal, or choose Open in browser from that path's right-click menu.
   The shell sends one `browser_open` event with the owning registered checkout and `reveal: true`, so the page and its checkout come forward together; the existing local `file:` boundary checks the address.
+  An HTML file of another checkout than the one in front opens in the front Workspace instead, with no reveal, so no checkout moves; the same boundary admits a file of any registered checkout.
   Open source in the same menu opens the file in the editor at the link's line instead.
   A path outside registered checkouts follows the desktop host's default-application boundary.
 - A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.

@@ -11,6 +11,12 @@
 //! tab no display shows gets one, a dirty document is never a preview, and
 //! the editor's active tab is the active area's active display.
 //!
+//! A display shows a document of its Workspace's checkout, except one a
+//! terminal link opened there for a file of another registered checkout of
+//! the same device (`file_open` `view`): that document stays its own
+//! checkout's tab, read and saved there, and the display reads from the
+//! checkout whose root holds its path (`display_source`).
+//!
 //! A browser display (issue 155) shows a page, not a document: it binds to
 //! no tab, so the reconcile never removes or binds one, and its address and
 //! title are what the desktop host reports of the page (`browser_state`).
@@ -168,8 +174,9 @@ enum ViewLayoutAction {
 
 /// What every display of one Workspace's tree reads to say its state.
 struct DisplayFacts<'a> {
-    /// The checkout in front, whose reads a display can be waiting on.
-    front: Option<(&'a str, &'a str)>,
+    /// The Workspace whose displays these are; a display waits on the read
+    /// of the checkout that holds its file (`display_source`).
+    key: WorkspaceKey,
     tabs: HashMap<&'a str, &'a EditorTabSnapshot>,
     /// Why the Workspace's root cannot be read yet.
     wait: Option<String>,
@@ -224,6 +231,73 @@ fn display_kind(kind: EditorTabKind) -> Option<DisplayKind> {
     }
 }
 
+/// The checkout, as its Workspace key, whose root holds the file `path` a
+/// display of the Workspace `key` names: the Workspace's own for a path
+/// under its root, else the registered checkout of the same device whose
+/// root holds it, the deepest when roots nest. A path under no root stays
+/// the Workspace's own, whose read then says why it cannot show.
+fn source_key(key: &WorkspaceKey, path: &str, roots: &[WorkspaceKey]) -> WorkspaceKey {
+    let holds = |root: &str| hide_platform::path::wire_relative(root, path).is_ok();
+    if holds(&key.1) {
+        return key.clone();
+    }
+    roots
+        .iter()
+        .filter(|root| root.0 == key.0 && holds(&root.1))
+        .max_by_key(|root| root.1.len())
+        .cloned()
+        .unwrap_or_else(|| key.clone())
+}
+
+/// Which Workspaces' displays show each document, so a checkout whose
+/// document another Workspace shows adds no display of its own for it.
+#[derive(Default)]
+struct ShownByViews {
+    /// Each tab a display is bound to, with the Workspaces whose displays are.
+    tabs: HashMap<String, Vec<WorkspaceKey>>,
+    /// Each restored display of another checkout's file that waits for its
+    /// tab, by that checkout and the path, with the Workspaces that show it.
+    files: HashMap<(WorkspaceKey, String), Vec<WorkspaceKey>>,
+}
+
+impl ShownByViews {
+    fn of<'v>(
+        views: impl Iterator<Item = (WorkspaceKey, &'v Layout)>,
+        roots: &[WorkspaceKey],
+    ) -> Self {
+        let mut shown = Self::default();
+        for (key, layout) in views {
+            for display in layout.displays() {
+                if let Some(tab_id) = &display.tab_id {
+                    shown
+                        .tabs
+                        .entry(tab_id.clone())
+                        .or_default()
+                        .push(key.clone());
+                } else if display.kind == DisplayKind::File {
+                    let source = source_key(&key, &display.path, roots);
+                    if source != key {
+                        let views = shown.files.entry((source, display.path.clone()));
+                        views.or_default().push(key.clone());
+                    }
+                }
+            }
+        }
+        shown
+    }
+
+    /// Whether a Workspace other than `key`, the tab's own, shows the tab.
+    fn elsewhere(&self, tab: &TabFacts, key: &WorkspaceKey) -> bool {
+        let other = |views: &Vec<WorkspaceKey>| views.iter().any(|view| view != key);
+        self.tabs.get(&tab.id).is_some_and(other)
+            || (tab.kind == DisplayKind::File
+                && self
+                    .files
+                    .get(&(key.clone(), tab.path.clone()))
+                    .is_some_and(other))
+    }
+}
+
 /// The display that shows a document and was focused last.
 fn last_focused_showing(
     displays: &[&Display],
@@ -267,12 +341,14 @@ struct ReconcileAdmission<'a> {
 /// Brings one Workspace's displays in line with the editor's tabs. Returns
 /// whether anything the file stores changed, and the documents the display
 /// cap kept off screen.
+#[allow(clippy::too_many_arguments)]
 fn reconcile_layout<'t>(
     layout: &mut Layout,
     key: &WorkspaceKey,
     live: bool,
     admission: ReconcileAdmission<'_>,
     tabs: &'t [TabFacts],
+    roots: &[WorkspaceKey],
     requested: Option<&str>,
     now: u64,
 ) -> (bool, Vec<&'t TabFacts>) {
@@ -300,16 +376,19 @@ fn reconcile_layout<'t>(
             .and_then(|id| tabs.iter().find(|tab| &tab.id == id))
         {
             Some(tab) => tab,
-            // A restored display binds to its document once it is read.
-            None => match tabs.iter().find(|tab| {
-                tab.key.as_ref() == Some(key) && display.shows(&tab.path, tab.kind, tab.committed)
-            }) {
-                Some(tab) => {
-                    display.tab_id = Some(tab.id.clone());
-                    tab
-                }
-                None => continue,
-            },
+            // A restored display binds to its document once it is read, the
+            // tab of the checkout that holds its file.
+            None => {
+                let source = source_key(key, &display.path, roots);
+                let Some(tab) = tabs.iter().find(|tab| {
+                    tab.key.as_ref() == Some(&source)
+                        && display.shows(&tab.path, tab.kind, tab.committed)
+                }) else {
+                    continue;
+                };
+                display.tab_id = Some(tab.id.clone());
+                tab
+            }
         };
         // A rename keeps the tab, and the display follows it.
         if display.path != tab.path {
@@ -390,6 +469,27 @@ impl Runtime {
                     .filter(|(owner, _)| owner == key)
                     .and_then(|(_, layout)| layout.as_ref()),
             )
+    }
+
+    /// Every Workspace's layouts, hidden and reserved ones included, each
+    /// with the Workspace it belongs to.
+    fn every_view_layout(&self) -> impl Iterator<Item = (WorkspaceKey, &Layout)> {
+        self.workspace_views.iter().flat_map(|store| {
+            store
+                .views
+                .workspaces
+                .iter()
+                .flat_map(|view| {
+                    let key = (view.device_id.clone(), view.path.clone());
+                    view.layouts().map(move |layout| (key.clone(), layout))
+                })
+                .chain(
+                    store
+                        .view_transaction
+                        .as_ref()
+                        .and_then(|(owner, layout)| Some((owner.clone(), layout.as_ref()?))),
+                )
+        })
     }
 
     pub(super) fn caller_view_layout(&self, key: &WorkspaceKey, caller: &str) -> Option<&Layout> {
@@ -602,10 +702,47 @@ impl Runtime {
             .map(|d| d.id.clone())
     }
 
-    /// `file_open` with View areas: `beside` asks for the area next to the
-    /// one in use (Open to the side, B4).
+    /// `file_open` naming the Workspace in front (`view`) for a file of
+    /// another registered checkout of its device: a terminal link opens the
+    /// file where the operator is. The file stays its own checkout's
+    /// document, read and saved there, and only the display is the front
+    /// Workspace's, so no checkout comes forward and the Explorer keeps its
+    /// tree. A Workspace that is not in front, or a checkout of another
+    /// device, opens nothing.
+    pub(super) fn open_file_in_front_view(
+        &mut self,
+        view: &ViewWorkspace,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        beside: bool,
+    ) {
+        let destination = (view.device_id.clone(), view.path.clone());
+        let source = self.workspace_key(workspace_id, checkout_id);
+        if self.front_workspace_key().as_ref() != Some(&destination)
+            || source.is_none_or(|source| source.0 != destination.0)
+        {
+            self.set_error(
+                "file.invalid_context",
+                "A file opens where it was asked only in the Workspace in front, from a checkout of its device",
+                false,
+            );
+            return;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "view_areas",
+            "kind": "file.open_in_front",
+            "device": destination.0,
+            "checkout": checkout_id,
+        }));
+        self.open_file_in_view(&destination, workspace_id, checkout_id, path, false, beside);
+    }
+
+    /// `file_open` with View areas, into the Workspace `key`: `beside` asks
+    /// for the area next to the one in use (Open to the side, B4).
     pub(super) fn open_file_in_view(
         &mut self,
+        key: &WorkspaceKey,
         workspace_id: &str,
         checkout_id: &str,
         path: &str,
@@ -613,21 +750,30 @@ impl Runtime {
         beside: bool,
     ) {
         match self.prepare_file_tab(workspace_id, checkout_id, path) {
-            Ok(prepared) => {
-                self.show_file_in_view(prepared, workspace_id, checkout_id, path, preview, beside)
-            }
+            Ok(prepared) => self.show_file_in_view(
+                prepared,
+                key,
+                workspace_id,
+                checkout_id,
+                path,
+                preview,
+                beside,
+            ),
             // The read failed before anything moved, so every display keeps
             // what it shows (B15).
             Err(message) => self.set_error("file.open_failed", message, true),
         }
     }
 
-    /// Opens a file into the front Workspace's View areas (contract 4.2).
-    /// A file being read shows when the read lands, where it was asked for;
-    /// a failed read moves nothing.
+    /// Opens a file of the checkout `workspace_id`/`checkout_id` into the
+    /// View areas of the Workspace `key`, the front one (contract 4.2). A
+    /// file being read shows when the read lands, where it was asked for; a
+    /// failed read moves nothing.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn show_file_in_view(
         &mut self,
         prepared: super::editor::PreparedFileTab,
+        key: &WorkspaceKey,
         workspace_id: &str,
         checkout_id: &str,
         path: &str,
@@ -635,18 +781,15 @@ impl Runtime {
         beside: bool,
     ) {
         self.reconcile_view_displays();
-        let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
-            self.set_error(
-                "file.invalid_context",
-                "The file's project or checkout is no longer available",
-                false,
-            );
-            return;
-        };
+        let key = key.clone();
         if !self.admit_view_open(&key, path, DisplayKind::File, None, preview, beside) {
             return;
         }
-        self.snapshot.ui_state.selected_path = Some(path.to_owned());
+        // The Explorer shows the Workspace's own tree, which holds no file of
+        // another checkout to select.
+        if self.workspace_key(workspace_id, checkout_id).as_ref() == Some(&key) {
+            self.snapshot.ui_state.selected_path = Some(path.to_owned());
+        }
         let replace = self.new_tab_target(&key, beside);
         match prepared {
             super::editor::PreparedFileTab::Open(tab_id) => {
@@ -843,10 +986,12 @@ impl Runtime {
             return;
         }
         let in_front =
-            parked.is_none() && self.front_checkout() == Some((workspace_id, checkout_id));
+            parked.is_none() && self.front_workspace_key().as_ref() == Some(&placement.key);
         if in_front {
             self.apply_area_intent_to(&placement.key, AreaIntent::Views);
-            self.snapshot.ui_state.selected_path = Some(path.to_owned());
+            if self.front_checkout() == Some((workspace_id, checkout_id)) {
+                self.snapshot.ui_state.selected_path = Some(path.to_owned());
+            }
         }
         if let Err(refusal) = self.note_control_view(&placement.key, "", &action, &tab_id, parked) {
             self.set_error(refusal.reason, refusal.next_action, false);
@@ -1864,16 +2009,19 @@ impl Runtime {
         };
         let (path, kind, committed) = (display.path.clone(), display.kind, display.committed);
         let tab = display.tab_id.clone();
-        let shared = self
-            .all_view_layouts(key)
-            .flat_map(|layout| layout.displays())
-            .any(|other| {
-                other.id != display_id
-                    && match &tab {
-                        Some(tab) => other.tab_id.as_ref() == Some(tab),
-                        None => other.shows(&path, kind, committed),
-                    }
-            });
+        // A document can show in another Workspace too, a file a terminal
+        // link opened where the operator was, and stays open for it.
+        let shared = match &tab {
+            Some(tab) => self.every_view_layout().any(|(view, layout)| {
+                layout.displays().any(|other| {
+                    other.tab_id.as_ref() == Some(tab) && (&view != key || other.id != display_id)
+                })
+            }),
+            None => self
+                .all_view_layouts(key)
+                .flat_map(|layout| layout.displays())
+                .any(|other| other.id != display_id && other.shows(&path, kind, committed)),
+        };
         if let Some(tab_id) = tab.as_ref()
             && !shared
         {
@@ -1903,7 +2051,7 @@ impl Runtime {
         if tab.is_none()
             && !shared
             && kind == DisplayKind::File
-            && let Some((workspace_id, checkout_id)) = self.front_checkout_owned()
+            && let Some((workspace_id, checkout_id)) = self.display_source(key, &path)
         {
             self.cancel_document_read(&workspace_id, &checkout_id, &path);
         }
@@ -1962,6 +2110,9 @@ impl Runtime {
                     );
                     return true;
                 }
+                let (workspace_id, checkout_id) = self
+                    .display_source(key, &display.path)
+                    .unwrap_or((workspace_id, checkout_id));
                 match self.document_source(&workspace_id, &checkout_id) {
                     Ok((root, channel)) => self.start_document_open(
                         root,
@@ -1997,7 +2148,7 @@ impl Runtime {
     /// is started in Herdr, and nothing takes the screen: the tree was
     /// published already, and each display binds to its tab when it lands.
     pub(super) fn restore_view_displays(&mut self, key: &WorkspaceKey) {
-        let Some((workspace_id, checkout_id)) = self.front_checkout_owned() else {
+        let Some(front) = self.front_checkout_owned() else {
             return;
         };
         let Some(layout) = self.view_layout_of(key) else {
@@ -2018,6 +2169,13 @@ impl Runtime {
         }
         let mut reads = 0usize;
         for (path, kind, committed) in &targets {
+            // A file a terminal link opened here from another checkout is
+            // read from that checkout; a diff is always this one's.
+            let (workspace_id, checkout_id) = match kind {
+                DisplayKind::File => self.display_source(key, path),
+                DisplayKind::Diff | DisplayKind::Browser => None,
+            }
+            .unwrap_or_else(|| front.clone());
             let open = self.snapshot.editor.tabs.iter().any(|tab| {
                 tab.workspace_id == workspace_id
                     && tab.checkout_id == checkout_id
@@ -2121,6 +2279,8 @@ impl Runtime {
                 })
             })
             .collect();
+        let roots = self.checkout_roots();
+        let shown = ShownByViews::of(self.every_view_layout(), &roots);
         let now = unix_milliseconds();
         let store = self.workspace_views.as_mut().expect("checked above");
         let mut stored = false;
@@ -2137,21 +2297,25 @@ impl Runtime {
                 tabs.iter()
                     .any(|tab| tab.id == *requested && tab.key.as_ref() == Some(&key))
             });
+            // A document another Workspace shows, a file a terminal link
+            // opened where the operator was, is not one to add here.
             let owned: HashSet<String> = tabs
                 .iter()
                 .filter(|tab| tab.key.as_ref() == Some(&key))
                 .filter(|tab| {
-                    view.view_presentations
-                        .values()
-                        .map(|presentation| &presentation.layout)
-                        .chain(reserved)
-                        .any(|layout| {
-                            layout.displays().any(|display| {
-                                display.tab_id.as_deref() == Some(&tab.id)
-                                    || (tab.key.as_ref() == Some(&key)
-                                        && display.shows(&tab.path, tab.kind, tab.committed))
+                    shown.elsewhere(tab, &key)
+                        || view
+                            .view_presentations
+                            .values()
+                            .map(|presentation| &presentation.layout)
+                            .chain(reserved)
+                            .any(|layout| {
+                                layout.displays().any(|display| {
+                                    display.tab_id.as_deref() == Some(&tab.id)
+                                        || (tab.key.as_ref() == Some(&key)
+                                            && display.shows(&tab.path, tab.kind, tab.committed))
+                                })
                             })
-                        })
                 })
                 .map(|tab| tab.id.clone())
                 .collect();
@@ -2172,6 +2336,7 @@ impl Runtime {
                     append_unrequested: view.view_owner.is_none(),
                 },
                 &tabs,
+                &roots,
                 requested,
                 now,
             );
@@ -2186,6 +2351,7 @@ impl Runtime {
                         append_unrequested: false,
                     },
                     &tabs,
+                    &roots,
                     None,
                     now,
                 );
@@ -2400,11 +2566,47 @@ impl Runtime {
         (!pinned).then(|| "Waiting for this checkout to open".to_owned())
     }
 
+    /// Every registered checkout as its Workspace key.
+    fn checkout_roots(&self) -> Vec<WorkspaceKey> {
+        self.catalog_workspaces()
+            .flat_map(|workspace| {
+                let device = &workspace.device_id;
+                workspace
+                    .checkouts
+                    .iter()
+                    .map(move |checkout| (device.clone(), checkout.path.clone()))
+            })
+            .collect()
+    }
+
+    /// The checkout, by its catalog ids, that a display of the Workspace
+    /// `key` reads the file `path` from (`source_key`).
+    pub(super) fn display_source(
+        &self,
+        key: &WorkspaceKey,
+        path: &str,
+    ) -> Option<(String, String)> {
+        let source = if hide_platform::path::wire_relative(&key.1, path).is_ok() {
+            key.clone()
+        } else {
+            source_key(key, path, &self.checkout_roots())
+        };
+        self.catalog_workspaces()
+            .filter(|workspace| workspace.device_id == source.0)
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.path == source.1)
+                    .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+            })
+    }
+
     /// What a display's state reads that is the same for every display of
     /// the Workspace `key`, taken once per tree rather than per display.
     fn display_facts(&self, key: &WorkspaceKey) -> DisplayFacts<'_> {
         DisplayFacts {
-            front: self.front_checkout(),
+            key: key.clone(),
             tabs: self
                 .snapshot
                 .editor
@@ -2449,9 +2651,11 @@ impl Runtime {
             return (ViewDisplayState::Waiting, Some(reason.clone()));
         }
         if display.kind == DisplayKind::File
-            && facts.front.is_some_and(|(workspace_id, checkout_id)| {
-                self.document_opens_path(workspace_id, checkout_id, &display.path)
-            })
+            && self.display_source(&facts.key, &display.path).is_some_and(
+                |(workspace_id, checkout_id)| {
+                    self.document_opens_path(&workspace_id, &checkout_id, &display.path)
+                },
+            )
         {
             return (ViewDisplayState::Opening, None);
         }

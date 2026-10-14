@@ -429,6 +429,11 @@ A window drag costs one new observer, not one per intermediate size: frames at t
 
 A clicked path is one event, not a sequence.
 The shell resolves the token on the filesystem and decides which registered checkout owns it by the longest symlink-resolved prefix.
+A file of a checkout other than the one in front opens where the operator is and moves no checkout: an HTML file is one `browser_open` naming the front Workspace, and another file or Open source is one `file_open` naming the file's own checkout and the front Workspace as `view`.
+The core accepts that `view` only for the Workspace in front and a checkout of its device (`file.invalid_context` otherwise); the file stays its own checkout's editor tab, so hided checks its path against that checkout's root, the read and the save use that root, and the checkout's own Workspace binds the same tab, while the display belongs to the front Workspace.
+A display therefore reads from the checkout whose root holds its path, its Workspace's own when it does (`display_source`): a restart's restore, a Retry and the binding of a restored display use it, a checkout adds no display of its own for a tab another Workspace shows, and closing a display keeps its document while any Workspace still shows it.
+The Explorer selection follows only a file of the checkout in front, since its tree holds no other.
+A file of the checkout in front, an HTML file of another checkout while All projects or an Overview is on screen, and a folder go through its checkout as before.
 An HTML file opens with one `browser_open` event naming that checkout and `reveal: true`; after the page is admitted, the core uses the existing Workspace reveal operation to bring its checkout and Browser View forward together.
 The active Agent tab remembers that page before the checkout comes forward, so a restored tab's previous View bookmark cannot hide the requested page.
 Another file, a folder or the terminal menu's Open source sends `reveal_path`; the core then decides the focused checkout, the tree's expanded set and selection, the editor tab and the columns together: a file turns File Views on and leaves Tools as it was, and a folder, which no tab shows, turns Tools on with the Explorer (PRD three-column-panel B4).
@@ -2162,6 +2167,7 @@ Any other version, a file that does not parse and a migration that fails all tak
 
 A display never holds a document.
 It binds at runtime to the S5.5 editor tab, the one buffer per device, checkout and document (the tab id, `editor_documents` and the save pipeline), and any number of displays may bind the same tab, so two views of a file share one text, one dirty state and one save queue rather than copies that could diverge (S7 D-03).
+Those displays can sit in different Workspaces: a terminal link to another checkout's file binds a display of the front Workspace to that checkout's tab (A clicked path is one event).
 Closing a display that is not its document's last removes the display alone, and a `pending_save` sent with it is not needed; closing the last one runs the existing `file_close` path, save-then-close with the carried `pending_save` and the conflict protection, so a document leaves only once its buffer is safe.
 The web's frame may still show another view of a document the core already holds in one, so a close of the last view of a dirty, saving or failed document that carries neither `pending_save` nor `discard: true` (the operator's Don't Save) is refused as `view_layout.unsaved`, naming the document, and nothing changes.
 A document that becomes dirty, is saving or has a save state promotes every display of it in the same event, because a preview is replaced by the next click and such a document must never be.
