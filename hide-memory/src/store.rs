@@ -4572,13 +4572,19 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         assert_eq!(similar.len(), 1);
         assert_eq!(similar[0].body, "Use PostgreSQL for persistence");
         assert!(similar[0].needs_aliases);
+        // This checks matching, not expiry; the deadline boundary has its
+        // own consumed-invocation test, so scheduler time cannot decide it.
+        let (_elapsed, expired) = invocation_clock();
         assert_eq!(
             store
-                .retrieve(&RetrievalQuery::prompt(
-                    &project,
-                    "데이터베이스는 포스트그레스로 결정했다",
-                    vec![],
-                ))
+                .retrieve_with_expiry(
+                    &RetrievalQuery::prompt(
+                        &project,
+                        "데이터베이스는 포스트그레스로 결정했다",
+                        vec![],
+                    ),
+                    expired,
+                )
                 .unwrap()
                 .outcome,
             InjectionOutcome::Empty,
