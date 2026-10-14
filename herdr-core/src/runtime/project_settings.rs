@@ -424,5 +424,8 @@ impl Runtime {
             }
             self.refresh_issue_rows(Some(&after.device_id));
         }
+        if repository_changed {
+            self.feed_links();
+        }
     }
 }

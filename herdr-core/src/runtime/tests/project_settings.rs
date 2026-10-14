@@ -776,3 +776,115 @@ fn a_later_local_memory_or_device_visit_supersedes_delayed_remote_memory() {
         }
     }
 }
+
+#[test]
+fn acknowledged_remote_repository_edits_invalidate_native_intake_before_returning() {
+    let mut runtime = fixture();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: "mini".into(),
+            label: "Mini".into(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "mini".into(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    let mut project = runtime.snapshot.navigator.workspaces.remove(0);
+    project.device_id = "mini".into();
+    project.remote_target_id = Some("mini".into());
+    let mut remote = super::device_catalog::connected_status("mini");
+    remote.catalog.state = "ready".into();
+    remote.session = Some(RemoteSessionSnapshot {
+        workspaces: vec![project],
+        agents: vec![],
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: vec![],
+        pane_hook_tokens: Default::default(),
+        issue_tokens: Default::default(),
+        issue_links: Default::default(),
+    });
+    runtime.snapshot.status.remote = vec![remote];
+    runtime.device_hosts.insert(
+        "mini".into(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: super::documents::FakeDevice::new(),
+                platform: "macos aarch64".into(),
+                helper_path: Some("/fake/hided".into()),
+            },
+            generation: 1,
+        },
+    );
+    let mut github = crate::model::GithubProjectSnapshot {
+        root_path: "/fixture/project".into(),
+        ..Default::default()
+    };
+    github.issues.repository = Some("acme/original".into());
+    runtime.device_github.insert(
+        "mini".into(),
+        crate::model::GithubSnapshot {
+            projects: vec![github],
+        },
+    );
+    let client = crate::links::worker::LinkClient::full_mailbox_for_test();
+    runtime.links_work.client = Some(client.clone());
+    runtime.feed_links();
+    assert_eq!(
+        client.take_project_facts_for_test().unwrap()[0]
+            .repository
+            .as_deref(),
+        Some("acme/original")
+    );
+    runtime.worker_context = Some(RuntimeWorkerContext {
+        runtime: std::sync::Weak::new(),
+        notifier: crate::handle::ChangeNotifier::noop(),
+    });
+    let key = crate::project_settings::key("mini", "/fixture/project");
+    let mut last_epoch = 0;
+    // No local catalog tick, native session ingest or provider callback occurs
+    // between the acknowledged A-to-B and B-to-A changes.
+    for (request, repository) in [("to-b", "acme/new"), ("back-to-a", "acme/original")] {
+        assert!(
+            runtime.dispatch_json(
+                &serde_json::to_vec(&serde_json::json!({
+                    "schema_version": SCHEMA_VERSION, "kind": "project_settings_set", "payload": {
+                        "device_id":"mini", "root":"/fixture/project", "request_id":request,
+                        "patch":{"repository":{"mode":"repository","repository":repository}}
+                    }
+                }))
+                .unwrap()
+            )
+        );
+        assert_eq!(
+            runtime.snapshot.ui_state.project_settings_writes[&key].state,
+            WriteState::Pending
+        );
+        let saved = runtime.ui_state_to_save();
+        assert!(runtime.acknowledge_project_settings_save(&saved, true));
+        assert_eq!(
+            runtime.snapshot.ui_state.project_settings_writes[&key].state,
+            WriteState::Saved
+        );
+        let facts = client
+            .take_project_facts_for_test()
+            .expect("save ACK must post changed connection before returning");
+        let project = facts
+            .iter()
+            .find(|facts| facts.device_id == "mini")
+            .unwrap();
+        assert_eq!(
+            project.repository, None,
+            "old catalog connection is invalidated while the new provider answer is pending"
+        );
+        assert!(project.connection_epoch > last_epoch);
+        last_epoch = project.connection_epoch;
+    }
+}

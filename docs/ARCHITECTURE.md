@@ -815,6 +815,7 @@ The link store's version 2 adds the session work ledger, keyed by device, agent 
 Version 3 retains one immutable nullable original project and repository for each retained session, including descendants.
 An observed connection can identify only a session that started after that connection was known; first discoveries of older history and records migrated from versions 1 or 2 keep unknown repository identity.
 The writer resets its connection observation window on restart, and an accepted repository edit advances that project's window even when changes return to the same repository before the worker observes them.
+The save acknowledgement posts the new connection epoch to the writer for both local and device Projects, with an unknown repository until its new provider read answers.
 A retained cursor's same session identity cannot certify a new birth when the native file is replaced or truncated.
 Both local and device intake certify only a birth strictly before the node read began, with no newer project facts pending when its answer returns; otherwise ordinary reader data is kept with an immutable unknown origin.
 A device clock ahead of the writer may therefore leave its original repository unknown rather than assign a current connection without a valid observation window.

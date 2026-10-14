@@ -129,6 +129,10 @@ struct ContextCache {
 
 impl LinkClient {
     #[cfg(test)]
+    pub(crate) fn take_project_facts_for_test(&self) -> Option<Arc<Vec<ProjectFacts>>> {
+        self.0.0.lock().unwrap().projects.take()
+    }
+    #[cfg(test)]
     pub(crate) fn parent_facts_for_test(&self) -> Option<Arc<Vec<ParentFact>>> {
         self.0.0.lock().unwrap().parents.clone()
     }

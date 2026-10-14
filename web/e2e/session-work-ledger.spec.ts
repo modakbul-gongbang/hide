@@ -146,6 +146,11 @@ test("@platform a recovered provider cannot authorize a typed create in another 
   try {
     const last = new Map<string, Record<string, unknown>>();
     countSent(page, last);
+    let create: { phase: string; workspace_id: string; message: string | null } | undefined;
+    page.on("websocket", socket => socket.on("framereceived", frame => {
+      const answer = JSON.parse(String(frame.payload)) as { payload?: { rest?: { issue_work?: { create?: typeof create } } } };
+      if (answer.payload?.rest?.issue_work?.create) create = answer.payload.rest.issue_work.create;
+    }));
     const github = workFixture(herdr);
     daemon = await startHided(herdr,"session-issue-recovered-provider",undefined,github.env);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
@@ -177,7 +182,9 @@ test("@platform a recovered provider cannot authorize a typed create in another 
     });
     await expect.poll(()=>fs.readFileSync(github.calls,"utf8").trim().split("\n").slice(before)
       .some(line=>{const args=JSON.parse(line) as string[];return args[0]==="repo"&&args[1]==="view";})).toBe(true);
-    await expect(form).toContainText("issue_repository_changed",{timeout:30_000});
+    await expect.poll(()=>create?.phase,{timeout:30_000}).toBe("failed");
+    expect(create?.workspace_id).toBe(await form.getAttribute("data-new-issue"));
+    expect(create?.message).toBe("The issue could not be confirmed. Retry to check the previous attempt before creating it.");
     expect(fs.existsSync(github.issue)).toBe(false);
     const calls=fs.readFileSync(github.calls,"utf8").trim().split("\n").map(line=>JSON.parse(line) as string[]);
     expect(calls.filter(args=>args[0]==="issue"&&args[1]==="create")).toHaveLength(0);
