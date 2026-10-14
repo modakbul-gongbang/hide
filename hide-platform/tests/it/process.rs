@@ -13,13 +13,14 @@ use std::sync::{Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use hide_platform::fs::identity::{canonical, file_id};
 #[cfg(unix)]
 use hide_platform::process::GuardedSpawnError;
 use hide_platform::process::{
     CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch,
-    RUN_OUTPUT_CAP, RunFailure, cwd_of, descendants, descends_from, detach, is_alive, kill_tree,
-    measure_tree, name_of, parent_of, restrict_to_login_environment, run_to_end, start_time,
-    terminate, terminate_group,
+    RUN_OUTPUT_CAP, RunFailure, cwd_of, descendants, descends_from, detach, image_of, is_alive,
+    kill_tree, measure_tree, name_of, parent_of, restrict_to_login_environment, run_to_end,
+    start_time, terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -277,7 +278,12 @@ fn child_role() {
 }
 
 fn role_command(role: &str) -> Command {
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    role_command_from(&std::env::current_exe().unwrap(), role)
+}
+
+/// The role command run from `program`, a copy of this test binary.
+fn role_command_from(program: &std::path::Path, role: &str) -> Command {
+    let mut command = Command::new(program);
     command
         .args([
             "--exact",
@@ -758,6 +764,73 @@ fn killing_a_process_that_is_already_gone_is_not_an_error() {
     // Windows keeps an exited process until its last handle closes.
     drop(child);
     kill_tree(pid).unwrap();
+}
+
+/// What a newer app asks of the Herdr server an older one started: the file
+/// the server runs stays the one it started from while the app around it is
+/// renamed aside and a new file takes its path, as replacing an app does.
+#[test]
+fn the_image_of_a_process_is_the_file_it_started_from_wherever_that_file_goes() {
+    let _serial = serial();
+    let root = tempfile::tempdir().unwrap();
+    let resources = root
+        .path()
+        .join("Old.app")
+        .join("Contents")
+        .join("Resources");
+    std::fs::create_dir_all(&resources).unwrap();
+    let program = resources.join(format!("program{}", std::env::consts::EXE_SUFFIX));
+    copy_program(&std::env::current_exe().unwrap(), &program);
+    let started_from = file_id(&program).unwrap();
+    let mut child = role_command_from(&program, "sleep").spawn().unwrap();
+    ready_number(child.stdout.take().unwrap());
+    let pid = child.id();
+
+    let first = image_of(pid);
+    if cfg!(windows) {
+        assert_eq!(first.unwrap_err().kind(), ErrorKind::Unsupported);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        return;
+    }
+    let first = first.unwrap();
+    assert_eq!(first.file, started_from);
+    assert_eq!(first.path, canonical(&program).unwrap());
+
+    let aside = root.path().join("Old.app.bak");
+    std::fs::rename(root.path().join("Old.app"), &aside).unwrap();
+    let moved = aside
+        .join("Contents")
+        .join("Resources")
+        .join(program.file_name().unwrap());
+    let renamed = image_of(pid).unwrap();
+    assert_eq!(renamed.file, started_from);
+    assert_eq!(renamed.path, canonical(&moved).unwrap());
+
+    std::fs::remove_file(&moved).unwrap();
+    std::fs::write(&moved, b"a newer program").unwrap();
+    assert_ne!(file_id(&moved).unwrap(), started_from);
+    let replaced = image_of(pid).unwrap();
+    assert_eq!(
+        replaced.file, started_from,
+        "a new file at the path is not the one running"
+    );
+    assert_eq!(replaced.path, canonical(&moved).unwrap());
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(image_of(pid).unwrap_err().kind(), ErrorKind::NotFound);
+}
+
+/// A copy of `from` at `to` that runs as a program of its own, its bytes
+/// written rather than cloned (`docs/TESTING.md`, rule 8).
+fn copy_program(from: &std::path::Path, to: &std::path::Path) {
+    let mut source = std::fs::File::open(from).unwrap();
+    let mut target = std::fs::File::create(to).unwrap();
+    std::io::copy(&mut source, &mut target).unwrap();
+    target
+        .set_permissions(source.metadata().unwrap().permissions())
+        .unwrap();
 }
 
 /// What closing a worktree's panes waits for: a running process holds its
