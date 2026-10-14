@@ -741,6 +741,332 @@ fn only_the_last_five_shown_tabs_keep_their_panes_attached() {
     assert_eq!(released, ["w-order:t3:p"]);
 }
 
+/// Five tabs hold nine panes, so retaining five pane IDs cannot accidentally
+/// satisfy the five-tab policy. The sixth is a newly acknowledged single pane.
+const RETENTION_PATH: &str = "/private/tmp/hide-retention-creation";
+const RETENTION_TABS: [&str; 6] = [
+    "w-order:t1",
+    "w-order:t2",
+    "w-order:t3",
+    "w-order:t4",
+    "w-order:t5",
+    "w-order:t6",
+];
+
+fn retention_session(path: &str, tabs: &[&str], selected: &str) -> SessionSnapshotPayload {
+    let mut value = tab_order_payload(path, tabs, tabs, selected);
+    for (index, tab) in tabs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| (1..5).contains(index))
+    {
+        let other = format!("{tab}:other");
+        value
+            .panes
+            .push(serde_json::from_value(serde_json::json!({"pane_id":other,"cwd":path})).unwrap());
+        let layout = &mut value.layouts[index];
+        layout.panes[0].rect.width = 40;
+        layout.panes.push(
+            serde_json::from_value(serde_json::json!({
+                "pane_id":other,"rect":{"x":40,"y":0,"width":40,"height":24}
+            }))
+            .unwrap(),
+        );
+        layout.splits = serde_json::from_value(serde_json::json!([{
+            "id":"split_0_root","direction":"right","ratio":0.5,
+            "rect":{"x":0,"y":0,"width":80,"height":24}
+        }]))
+        .unwrap();
+    }
+    value
+}
+
+fn answer_retention_attaches(runtime: &mut Runtime, terminals: &RecordedTerminals) {
+    for control in terminals.take() {
+        if let TerminalControl::Attach { pane, .. } = control {
+            report_terminal(runtime, &pane, terminal_state("controlling", 1));
+        }
+    }
+}
+
+fn retained_pane_ids(runtime: &Runtime) -> BTreeSet<String> {
+    runtime
+        .snapshot()
+        .terminal
+        .panes
+        .iter()
+        .filter(|pane| pane.transport_state != "released")
+        .map(|pane| pane.pane_id.clone())
+        .collect()
+}
+
+fn focus_retention_tab(
+    runtime: &mut Runtime,
+    terminals: &RecordedTerminals,
+    checkout: &str,
+    tab: &str,
+) {
+    runtime.dispatch_json(&focus_tab_event(checkout, tab));
+    runtime.complete_lane_tab(
+        RemoteControlAction::FocusTab { tab_id: tab.into() },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        0,
+    );
+    answer_retention_attaches(runtime, terminals);
+}
+
+fn retention_runtime(existing_sixth: bool) -> (Runtime, String, Arc<RecordedTerminals>) {
+    let (mut runtime, checkout) = live_tab_order_runtime(RETENTION_PATH);
+    let terminals = record_terminals(&mut runtime);
+    let tabs = &RETENTION_TABS[..if existing_sixth { 6 } else { 5 }];
+    runtime.ingest_session(Ok(retention_session(RETENTION_PATH, tabs, tabs[0])));
+    answer_retention_attaches(&mut runtime, &terminals);
+    for tab in &tabs[1..5] {
+        focus_retention_tab(&mut runtime, &terminals, &checkout, tab);
+    }
+    (runtime, checkout, terminals)
+}
+
+fn acknowledge_retention_tab(runtime: &mut Runtime, open_owner: bool) {
+    let path = RETENTION_PATH;
+    let action = if open_owner {
+        RemoteControlAction::OpenOwner {
+            owner: crate::checkout_owner::OwnerOpen::Worktree {
+                path: path.into(),
+                repository_root: path.into(),
+                label: "order".into(),
+            },
+            cwd: path.into(),
+            label: "6".into(),
+            area_id: None,
+            admission_id: None,
+        }
+    } else {
+        RemoteControlAction::CreateTab {
+            workspace_id: "w-order".into(),
+            cwd: path.into(),
+            label: "6".into(),
+            area_id: None,
+            admission_id: None,
+        }
+    };
+    runtime.complete_lane_tab(
+        action,
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some(RETENTION_TABS[5].into()),
+            created_pane_id: Some("w-order:t6:p".into()),
+        }),
+        0,
+    );
+}
+
+fn expected_retention_ids(tabs: &[&str]) -> BTreeSet<String> {
+    tabs.iter()
+        .flat_map(|tab| {
+            let mut panes = vec![format!("{tab}:p")];
+            if RETENTION_TABS[1..5].contains(tab) {
+                panes.push(format!("{tab}:other"));
+            }
+            panes
+        })
+        .collect()
+}
+
+#[test]
+fn sixth_tab_ack_before_projection_keeps_every_retained_pane() {
+    let (mut runtime, _checkout, terminals) = retention_runtime(false);
+    let path = RETENTION_PATH;
+    let tabs = RETENTION_TABS;
+    let before = retained_pane_ids(&runtime);
+    assert_eq!(before.len(), 9);
+    acknowledge_retention_tab(&mut runtime, true);
+    runtime.ingest_session(Ok(retention_session(path, &tabs[..5], tabs[4])));
+    assert_eq!(
+        retained_pane_ids(&runtime),
+        before
+            .into_iter()
+            .filter(|pane| pane != "w-order:t1:p")
+            .collect(),
+        "the four retained tabs keep all eight panes while the new pane awaits projection"
+    );
+    assert!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .is_none_or(|error| error.kind != "pane.projection_unavailable")
+    );
+
+    runtime.ingest_session(Ok(retention_session(path, &tabs, tabs[5])));
+    answer_retention_attaches(&mut runtime, &terminals);
+    let expected = [
+        "w-order:t2:p",
+        "w-order:t2:other",
+        "w-order:t3:p",
+        "w-order:t3:other",
+        "w-order:t4:p",
+        "w-order:t4:other",
+        "w-order:t5:p",
+        "w-order:t5:other",
+        "w-order:t6:p",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(retained_pane_ids(&runtime), expected);
+    assert_eq!(
+        runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w-order:t1:p")
+            .unwrap()
+            .transport_state,
+        "released"
+    );
+
+    // A confirmed close is still authoritative while the other tabs remain.
+    runtime.ingest_session(Ok(retention_session(path, &tabs[..5], tabs[4])));
+    assert!(
+        !runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == "w-order:t6:p")
+    );
+    assert!(
+        expected
+            .iter()
+            .filter(|pane| pane.as_str() != "w-order:t6:p")
+            .all(|pane| retained_pane_ids(&runtime).contains(pane))
+    );
+}
+
+#[test]
+fn sixth_tab_creation_orders_and_existing_tab_keep_exact_membership_on_revisits() {
+    // Opening an owner and creating in a known workspace share retention.
+    // Ordered projection may land on either side of the control reply.
+    for (open_owner, projection_first, existing) in [
+        (true, false, false),
+        (true, true, false),
+        (false, false, false),
+        (false, true, false),
+        (false, false, true),
+    ] {
+        let (mut runtime, checkout, terminals) = retention_runtime(existing);
+        let tabs = RETENTION_TABS;
+        let after = || retention_session(RETENTION_PATH, &tabs, tabs[5]);
+        if existing {
+            focus_retention_tab(&mut runtime, &terminals, &checkout, tabs[5]);
+        } else {
+            if projection_first {
+                runtime.ingest_session(Ok(after()));
+            }
+            acknowledge_retention_tab(&mut runtime, open_owner);
+            // A known workspace can already draw its created pane from the
+            // reply. No pending read may discard another tab's metadata.
+            if !projection_first {
+                runtime.ingest_session(Ok(retention_session(RETENTION_PATH, &tabs[..5], tabs[4])));
+                let pending_tabs = if open_owner { &tabs[1..5] } else { &tabs[1..] };
+                assert_eq!(
+                    retained_pane_ids(&runtime),
+                    expected_retention_ids(pending_tabs)
+                );
+            }
+        }
+        runtime.ingest_session(Ok(after()));
+        answer_retention_attaches(&mut runtime, &terminals);
+        assert_eq!(
+            retained_pane_ids(&runtime),
+            expected_retention_ids(&tabs[1..])
+        );
+        assert!(runtime.provisional_tabs.is_empty());
+        let mut recent = tabs[1..].to_vec();
+        for _ in 0..2 {
+            for tab in tabs {
+                focus_retention_tab(&mut runtime, &terminals, &checkout, tab);
+                recent.retain(|known| *known != tab);
+                recent.push(tab);
+                if recent.len() > 5 {
+                    recent.remove(0);
+                }
+                assert_eq!(retained_pane_ids(&runtime), expected_retention_ids(&recent));
+            }
+        }
+    }
+}
+
+#[test]
+fn unconfirmed_owner_creation_expires_without_erasing_live_panes() {
+    let (mut runtime, _checkout, terminals) = retention_runtime(false);
+    let tabs = RETENTION_TABS;
+    acknowledge_retention_tab(&mut runtime, true);
+    runtime.ingest_session(Ok(retention_session(RETENTION_PATH, &tabs[..5], tabs[4])));
+    let pending = retained_pane_ids(&runtime);
+    assert_eq!(pending, expected_retention_ids(&tabs[1..5]));
+    runtime.tick_async_operations(unix_milliseconds() + CLOSE_STAGE_TIMEOUT_MS + 1);
+    assert!(runtime.take_republish_request());
+    runtime.ingest_session(Ok(retention_session(RETENTION_PATH, &tabs[..5], tabs[4])));
+    answer_retention_attaches(&mut runtime, &terminals);
+    assert_eq!(retained_pane_ids(&runtime), pending);
+    assert!(runtime.provisional_tabs.is_empty());
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.projection_unavailable")
+    );
+    assert!(
+        !runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == "w-order:t6:p")
+    );
+}
+
+#[test]
+fn connection_loss_cancels_acknowledged_creation_before_reconnect() {
+    // Include the known-workspace drawing: it must not resurrect a tab on
+    // the next server after the connection that acknowledged it was lost.
+    for open_owner in [false, true] {
+        let (mut runtime, _checkout, _terminals) = retention_runtime(false);
+        acknowledge_retention_tab(&mut runtime, open_owner);
+        runtime.ingest_session(Err(SessionFetchError::Unreachable(
+            "private server ended".into(),
+        )));
+        assert_eq!(runtime.snapshot().status.herdr.state, "unreachable");
+        assert!(runtime.provisional_tabs.is_empty());
+        let tabs = RETENTION_TABS;
+        runtime.ingest_session(Ok(retention_session(RETENTION_PATH, &tabs[..5], tabs[4])));
+        assert!(
+            !runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .any(|layout| layout.tab_id == tabs[5])
+        );
+        assert!(
+            !runtime
+                .snapshot()
+                .terminal
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == "w-order:t6:p")
+        );
+    }
+}
+
 /// AC15, R11, SC7. Herdr closes the PTY before it reports the pane gone,
 /// so the attach child ends while the pane is still drawn. Reading that as
 /// a transport failure is what flashed "terminal attach ended" over a pane

@@ -18,11 +18,13 @@ const PROVISIONAL_TAB_LIMIT: usize = 8;
 /// back; the same bound as every operation stage.
 const PROVISIONAL_TAB_TIMEOUT_MS: u64 = CLOSE_STAGE_TIMEOUT_MS;
 
-/// A tab Herdr acknowledged creating, drawn as one pane until Herdr's layout
-/// for it arrives (D-05).
+/// A tab Herdr acknowledged creating, pending until its ordered layout
+/// arrives. When its workspace is already known, draw it as one pane (D-05).
 #[derive(Clone, Debug)]
 pub(super) struct ProvisionalTab {
-    pub(super) workspace_id: String,
+    // Opening an owner may create a workspace too. Its identity is learned
+    // from the session, never guessed from the returned tab or pane id.
+    pub(super) workspace_id: Option<String>,
     pub(super) tab_id: String,
     pub(super) pane_id: String,
     pub(super) cwd: String,
@@ -40,8 +42,8 @@ impl Runtime {
         self.overlay_geometry(payload);
     }
 
-    /// Draws `tab_id`, which Herdr just acknowledged creating in
-    /// `workspace_id` with `pane_id`, until Herdr's layout for it arrives.
+    /// Holds the acknowledged creation until Herdr lays it out. A known
+    /// workspace can draw it already; opening an owner waits for that identity.
     pub(super) fn draw_created_tab(&mut self, tab: ProvisionalTab) {
         if self
             .snapshot
@@ -66,6 +68,12 @@ impl Runtime {
         }
         self.provisional_tabs.push(tab);
         self.request_republish();
+    }
+
+    pub(super) fn created_pane_awaits_layout(&self, pane_id: &str, checkout: &str) -> bool {
+        self.provisional_tabs
+            .iter()
+            .any(|tab| tab.pane_id == pane_id && tab.cwd == checkout)
     }
 
     /// The Herdr workspace that holds the checkout at `path`, as the session
@@ -121,11 +129,14 @@ impl Runtime {
         let now = unix_milliseconds();
         self.expire_provisional_tabs(now);
         for tab in self.provisional_tabs.clone() {
+            let Some(workspace_id) = tab.workspace_id else {
+                continue;
+            };
             if !payload.tabs.iter().any(|row| row.tab_id == tab.tab_id) {
                 let number = payload
                     .tabs
                     .iter()
-                    .filter(|row| row.workspace_id == tab.workspace_id)
+                    .filter(|row| row.workspace_id == workspace_id)
                     .map(|row| row.number)
                     .max()
                     .unwrap_or(0)
@@ -133,14 +144,14 @@ impl Runtime {
                 payload.tabs.push(crate::sidebar::SessionTabPayload {
                     number,
                     tab_id: tab.tab_id.clone(),
-                    workspace_id: tab.workspace_id.clone(),
+                    workspace_id: workspace_id.clone(),
                     label: tab.label.clone(),
                 });
             }
             let area = payload
                 .layouts
                 .iter()
-                .find(|layout| layout.workspace_id == tab.workspace_id)
+                .find(|layout| layout.workspace_id == workspace_id)
                 .map(|layout| layout.area)
                 .unwrap_or(crate::sidebar::SessionLayoutRect {
                     x: 0,
@@ -149,7 +160,7 @@ impl Runtime {
                     height: 24,
                 });
             payload.layouts.push(crate::sidebar::SessionLayoutPayload {
-                workspace_id: tab.workspace_id.clone(),
+                workspace_id,
                 tab_id: tab.tab_id.clone(),
                 zoomed: false,
                 area,

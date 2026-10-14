@@ -75,7 +75,6 @@ fn run_coordinator(
     // A refresh asked for while a list was out, owed when it answers.
     let mut agents_refresh_owed = false;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
-    let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache = CatalogState {
         wake: Some(RepublishWaker {
             sender: sender.clone(),
@@ -105,21 +104,6 @@ fn run_coordinator(
     } else {
         None
     };
-    // The hook-install state is two small file reads of this machine's own
-    // configuration, which its node makes, so the local coordinator takes it
-    // once before the first connect. It is not a poll: it changes only when
-    // the kit installs or the operator removes, and the kit worker
-    // republishes it after each install (PRD B36). The install itself is the
-    // kit's (`crate::kit`).
-    let hook_node = context
-        .is_local()
-        .then(|| context.node().map(Arc::clone))
-        .flatten();
-    if let Some(node) = hook_node.as_deref()
-        && let Some(diagnosis) = crate::kit::hook_diagnosis(node, context.log_target())
-    {
-        publish_hook_diagnosis(&context, diagnosis);
-    }
     // Kept for the AI settings and the counter sweep below, which read this
     // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
@@ -442,30 +426,6 @@ fn run_coordinator(
                     Ok(false) => {}
                     Err(error) => {
                         log_sync_failure(&context, "process.publish_failed", Some(current), &error)
-                    }
-                }
-            }
-
-            if let Some(node) = hook_node.as_deref() {
-                // While the Settings agents tab is on screen the diagnosis is
-                // read back once a second, because the hook helper records a
-                // report it could not deliver from its own process and that
-                // record is the one thing that distinguishes "installed but
-                // refused" from "this session started first". Off screen,
-                // nothing is read.
-                if Instant::now() >= next_hook_diagnosis_refresh {
-                    next_hook_diagnosis_refresh = Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL;
-                    let Some(observed) = read_settings_observed(&context) else {
-                        stop_subscription(&mut subscription);
-                        return;
-                    };
-                    if observed
-                        && let Some(diagnosis) =
-                            crate::kit::hook_diagnosis(node, context.log_target())
-                        && !publish_hook_diagnosis(&context, diagnosis)
-                    {
-                        stop_subscription(&mut subscription);
-                        return;
                     }
                 }
             }
@@ -1815,35 +1775,6 @@ fn read_ui_attached(context: &SessionSyncContext) -> bool {
         .upgrade()
         .and_then(|runtime| runtime.lock().ok().map(|guard| guard.ui_attached()))
         .unwrap_or(true)
-}
-
-/// Whether the Settings agents tab is on screen. `None` means the runtime is
-/// gone.
-fn read_settings_observed(context: &SessionSyncContext) -> Option<bool> {
-    let runtime = context.runtime.upgrade()?;
-    let observed = runtime.lock().ok()?.settings_observed();
-    drop(runtime);
-    Some(observed)
-}
-
-/// Hands the runtime the hook-install judgement, which was read on this
-/// thread rather than under the mutex.
-fn publish_hook_diagnosis(
-    context: &SessionSyncContext,
-    diagnosis: hide_agent_hooks::Diagnosis,
-) -> bool {
-    let Some(runtime) = context.runtime.upgrade() else {
-        return false;
-    };
-    let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
-        Err(_) => return false,
-    };
-    drop(runtime);
-    if changed {
-        context.notifier.notify();
-    }
-    true
 }
 
 /// Reads what the worktree reader needs, holding the runtime mutex only for

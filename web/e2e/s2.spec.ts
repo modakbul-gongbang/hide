@@ -607,6 +607,58 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
   }
 });
 
+test("creating a sixth tab preserves the four retained tabs and restores the evicted tab", async ({ page }) => {
+  const flow = await startFlow(page);
+  try {
+    const firstPane = (await page.evaluate(() => window.__hideProbe!.paneId()))!;
+    await page.locator(`[data-pane-view="${firstPane}"] textarea`).focus();
+    await page.keyboard.type("retention-before");
+    await expect.poll(() => screen(page)).toContain("retention-before");
+    const retained: string[] = [];
+    for (const tab of flow.tabs.slice(1)) {
+      await page.locator(`[data-tab="${tab}"]`).click();
+      await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tab);
+      await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
+      retained.push((await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!);
+    }
+    const warmPane = retained[1];
+    const warmTextarea = await page.locator(`[data-pane-view="${warmPane}"] textarea`).elementHandle();
+    const createTab = async (count: number) => {
+      const previousPane = await page.locator("[data-pane-view]").getAttribute("data-pane-view");
+      await page.locator("[data-new-agent-tab]").first().click();
+      await expect(page.locator("[data-tab]")).toHaveCount(count);
+      await expect(page.locator("[data-pane-view]")).not.toHaveAttribute("data-pane-view", previousPane!);
+      await expect(page.locator("[data-pane-view]")).toHaveAttribute("data-transport", "controlling");
+      await expect.poll(() => screen(page)).toContain("fixture %");
+      return (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
+    };
+    retained.push(await createTab(4), await createTab(5));
+    const before = [...flow.herdr.panes, ...retained].sort();
+    await expect.poll(() => page.evaluate(() => window.__hideProbe!.attachedPanes().sort())).toEqual(before);
+    await expect.poll(() => page.evaluate(() => window.__hideProbe!.liveTerminals().sort())).toEqual(before);
+
+    const sixthPane = await createTab(6);
+    const after = [...retained, sixthPane].sort();
+    await expect.poll(() => page.evaluate(() => window.__hideProbe!.attachedPanes().sort())).toEqual(after);
+    await expect.poll(() => page.evaluate(() => window.__hideProbe!.liveTerminals().sort())).toEqual(after);
+    await page.locator(`[data-tab="${flow.tabs[2]}"]`).click();
+    await expect(page.locator(`[data-pane-view="${warmPane}"]`)).toHaveAttribute("data-transport", "controlling");
+    expect(await warmTextarea!.evaluate((element, id) => element === document.querySelector(`[data-pane-view="${id}"] textarea`), warmPane)).toBe(true);
+
+    // Eviction ends a renderer, not its PTY: revisiting restores old text and accepts new input.
+    await page.locator(`[data-tab="${flow.herdr.tab}"]`).click();
+    await expect(page.locator(`[data-pane-view="${firstPane}"]`)).toHaveAttribute("data-transport", "controlling");
+    await expect.poll(() => page.evaluate((id) => window.__hideProbe!.paneText(id), firstPane)).toContain("retention-before");
+    await page.locator(`[data-pane-view="${firstPane}"] textarea`).focus();
+    await page.keyboard.type("retention-after");
+    const inputLog = flow.herdr.inputLogs[flow.herdr.panes.indexOf(firstPane)];
+    await expect.poll(() => fs.readFileSync(inputLog, "utf8")).toContain("retention-beforeretention-after");
+    await expect.poll(() => page.evaluate((id) => window.__hideProbe!.paneText(id), firstPane)).toContain("retention-after");
+  } finally {
+    flow.stop();
+  }
+});
+
 // @platform: Typed echo through the platform's PTY, a terminal parked across a tab switch, and a dropped socket that comes back to the platform's hided and Herdr.
 test("typed text echoes and parks across a tab switch, and a dropped socket comes back with the tab bar and splits", { tag: "@platform" }, async ({ page }) => {
   const flow = await startFlow(page);
