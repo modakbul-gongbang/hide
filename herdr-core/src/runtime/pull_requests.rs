@@ -758,7 +758,10 @@ impl Runtime {
         let dismissed = self
             .existing_pr_card(&payload.workspace_id, payload.pr_number)
             .is_some_and(|card| {
-                let failed = card.write.as_ref().is_some_and(|write| write.phase == "failed");
+                let failed = card
+                    .write
+                    .as_ref()
+                    .is_some_and(|write| write.phase == "failed");
                 if failed {
                     card.write = None;
                 }

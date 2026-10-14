@@ -230,16 +230,20 @@ fn failed_reason(pr: &PullRequestSnapshot) -> Reason {
 /// GitHub has not computed the merge state yet.
 fn standing(pr: &PullRequestSnapshot) -> Option<Placed> {
     let work = &pr.work;
-    if blocking_failure(pr) {
+    // Blocked is for work the operator or their sessions own: someone else's
+    // pull request that was only asked of them is the review's, whatever its
+    // checks say (D-08, D-25).
+    let owned = work.mine || !work.sessions.is_empty() || work.author_is_bot;
+    if owned && blocking_failure(pr) {
         return Some(place("blocked", failed_reason(pr)));
     }
-    if pr.review == Some(ReviewDecision::ChangesRequested) {
+    if owned && pr.review == Some(ReviewDecision::ChangesRequested) {
         return Some(place(
             "blocked",
             Reason::of("changes").since(pr.updated_at_unix_ms),
         ));
     }
-    if work.merge_state == MergeState::Dirty {
+    if owned && work.merge_state == MergeState::Dirty {
         return Some(place(
             "blocked",
             Reason::of("conflict").base(&pr.base_branch),
@@ -799,6 +803,21 @@ mod tests {
         assert_eq!(row(&board, 3).fold, Some("team"));
         assert!(board.rows.iter().all(|row| row.number != 4));
         assert_eq!(board.needs_you, 1, "the team line is not counted (D-26)");
+    }
+
+    #[test]
+    fn a_teammate_s_pull_request_asked_of_me_is_a_review_even_when_its_checks_fail() {
+        let mut theirs = pr(1);
+        theirs.work.mine = false;
+        theirs.work.asked_of_me = ReviewAsk::Direct;
+        theirs.work.author = Some("ann".into());
+        theirs.checks = PullRequestChecks::Failed;
+        theirs.work.merge_state = MergeState::Dirty;
+        let board = board(vec![theirs], &[]);
+        assert_eq!(
+            (row(&board, 1).group, row(&board, 1).reason.kind),
+            ("needs_you", "review")
+        );
     }
 
     #[test]
