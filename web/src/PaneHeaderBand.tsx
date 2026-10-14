@@ -5,8 +5,8 @@ import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { askWhat, VerbText } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
-import { reviewWord } from "./prMark";
-import { AgentTreePopover } from "./components/agent-tree-popover";
+import { reviewWord, sessionPulls, type SessionPull } from "./prMark";
+import { AgentTreePopover, childrenOf } from "./components/agent-tree-popover";
 import { StatusMark } from "./components/status-mark";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
@@ -187,17 +187,28 @@ export function usePaneAgents(): AgentRow[] {
   return useMemo(() => [...local, ...(remote ?? []).flatMap((row) => row.session?.agents ?? [])], [local, remote]);
 }
 
-/** The pane's own PR mark after its title (B21, B22); a descendant's PRs stay on its own rows. */
+/**
+ * The pane's PR mark after its title, as the Sessions row of the same agent
+ * draws it: a pane without children shows its own PRs (B21, B22), and a
+ * parent shows `PR N` over itself and every descendant, so the operator sees a
+ * child's pull request from the pane that delegated it.
+ */
 export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
-  const agent = usePaneAgents().find((row) => row.pane_id === paneId);
-  if (!agent?.state.pr) return null;
-  return <PaneAgentPrMark agent={agent} actions={actions} />;
+  const agents = usePaneAgents();
+  const family = useMemo(() => {
+    const byPane = new Map(agents.map((row) => [row.pane_id, row]));
+    const agent = byPane.get(paneId);
+    return agent && childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined;
+  }, [agents, paneId]);
+  const agent = agents.find((row) => row.pane_id === paneId);
+  if (!agent || (family ? family.length === 0 : !agent.state.pr)) return null;
+  return <PaneAgentPrMark agent={agent} family={family} actions={actions} />;
 }
 
-function PaneAgentPrMark({ agent, actions }: { agent: AgentRow; actions: Actions }) {
-  const staleness = useAgentStaleness(agent);
+function PaneAgentPrMark({ agent, family, actions }: { agent: AgentRow; family?: SessionPull[]; actions: Actions }) {
+  const staleness = useAgentStaleness(agent, family);
   // The pane names no project; the PR's URL finds the one that lists it.
-  return <AgentPrMark agent={agent} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+  return <AgentPrMark agent={agent} family={family} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
 }
 
 /** The second row's child trigger: core state counts, with the total in its hint. */

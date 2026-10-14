@@ -19,6 +19,7 @@ import { BINDINGS_CHANNEL, COMMAND_CHANNEL, EDITOR_AVAILABLE_CHANNEL, EDITOR_OPE
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
+  cliRecords,
   HAS_LOGIN_SHELL,
   loginPathCommand,
   healthFailure,
@@ -624,7 +625,9 @@ export class DesktopHost {
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
     await this.ensureHerdrServer(attempt);
     if (this.quitting) return;
-    const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
+    const connected = await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS);
+    for (const record of cliRecords(connected.stderr)) this.log.event(record.event, { attempt, ...record.fields });
+    const answer = parseConnect(connected);
     if (this.quitting) return;
     if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });

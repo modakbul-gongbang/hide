@@ -41,6 +41,17 @@ pub fn bundled_kit_dir(executable: &Path) -> Option<PathBuf> {
     .then(|| resources.to_path_buf())
 }
 
+/// Whether `dir` holds a desktop package's runtime: its `hided` beside the
+/// shell archive. Read from what the folder holds rather than from the
+/// names around it, so a package renamed aside (`hide.app.bak`) or moved to
+/// the Trash after a newer one replaced it still counts.
+pub fn holds_package_runtime(dir: &Path) -> bool {
+    dir.join("app.asar").is_file()
+        && dir
+            .join(format!("hided{}", std::env::consts::EXE_SUFFIX))
+            .is_file()
+}
+
 /// This machine's target for a desktop package whose resources are `kit_dir`.
 pub fn local_target(
     kit_dir: &Path,
@@ -95,6 +106,27 @@ mod tests {
         ] {
             assert_eq!(bundled_kit_dir(Path::new(elsewhere)), None, "{elsewhere}");
         }
+    }
+
+    #[test]
+    fn a_package_runtime_is_its_daemon_beside_the_shell_archive_whatever_the_package_is_called() {
+        let dir = tempfile::tempdir().unwrap();
+        let aside = dir.path().join("hide-previous.app.bak/Contents/Resources");
+        std::fs::create_dir_all(&aside).unwrap();
+        let daemon = aside.join(format!("hided{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(aside.join("app.asar"), "").unwrap();
+        assert!(!holds_package_runtime(&aside), "a shell archive alone");
+        std::fs::write(&daemon, "").unwrap();
+        assert!(holds_package_runtime(&aside));
+        // A folder Herdr was installed into by itself, as Homebrew does.
+        let own = dir.path().join("homebrew/bin");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(
+            own.join(format!("herdr{}", std::env::consts::EXE_SUFFIX)),
+            "",
+        )
+        .unwrap();
+        assert!(!holds_package_runtime(&own));
     }
 
     #[test]

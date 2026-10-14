@@ -12,6 +12,7 @@ import { useShellStore } from "../store";
 import { hasLimits, percentLabel, resetCountdown, SHORT_WINDOW, usageChips, usageTone, windowLabel, windowPercent, WINDOW_ORDER, type UsageTone } from "../usage";
 import { UsageHistory, type UsageOutline } from "./usage-history";
 import { Button } from "./ui/button";
+import { Hint } from "./ui/tooltip";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 const NO_ROWS: AgentUsage[] = [];
@@ -63,21 +64,24 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
         </PopoverTrigger>;
       })}
     </div></PopoverAnchor>
-    <PopoverContent side="top" align="end" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-md overflow-y-auto p-lg" data-usage-popover="true">
+    <PopoverContent side="top" align="end" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-sm overflow-y-auto p-lg" data-usage-popover="true">
       <div className="flex flex-wrap items-center gap-sm">
         <span className="min-w-0 flex-1 text-subhead font-semibold">{t("usage.title")}</span>
-        <Button variant="ghost" size="sm" onClick={() => { setOpen(false); actions.openSettings("usage"); }}><SettingsIcon />{t("usage.chooseChips")}</Button>
+        <Hint label={t("usage.chooseChips")}><Button variant="ghost" size="icon-sm" onClick={() => { setOpen(false); actions.openSettings("usage"); }}><SettingsIcon /></Button></Hint>
       </div>
-      {visible.map((adapter) => <div key={adapter.id} className="flex flex-col gap-md rounded-md border border-border p-md" data-usage-row={adapter.herdr_kind}>
-        <div className="flex items-center gap-sm text-subhead font-semibold"><AgentMark kind={adapter.herdr_kind} />{adapter.label}</div>
-        <UsageWindows agent={adapter.herdr_kind} cell={rows.find((row) => row.agent === adapter.herdr_kind)?.limits} now={now} onOutline={setOutline} />
+      {node ? <UsageHistory node={node} surface="popover" outline={outline} onHistory={() => { setOpen(false); actions.openUsageHistory(); }}>
+        <div className="usage-limits flex flex-col gap-md">
+        {visible.map((adapter) => <div key={adapter.id} className="flex flex-col gap-xs" data-usage-row={adapter.herdr_kind}>
+        <div className="flex items-center gap-xs text-caption font-semibold"><AgentMark kind={adapter.herdr_kind} />{adapter.label}</div>
+        <UsageWindows agent={adapter.herdr_kind} cell={rows.find((row) => row.agent === adapter.herdr_kind)?.limits} now={now} onOutline={setOutline} compact />
       </div>)}
-      {node?.history ? <UsageHistory node={node} surface="popover" outline={outline} onHistory={() => { setOpen(false); actions.openUsageHistory(); }} /> : null}
+        </div>
+      </UsageHistory> : null}
     </PopoverContent>
   </Popover>;
 });
 
-export function UsageWindows({ agent, cell, now, onOutline }: { agent: string; cell: LimitCell | undefined; now: number; onOutline?: (window: UsageOutline) => void }) {
+export function UsageWindows({ agent, cell, now, onOutline, compact = false }: { agent: string; cell: LimitCell | undefined; now: number; onOutline?: (window: UsageOutline) => void; compact?: boolean }) {
   const { t } = useInterfaceTranslation();
   if (!cell || cell.state === "loading") return <span data-usage-value="true" className="text-caption text-muted-foreground">…</span>;
   if (cell.state !== "reading") return <div className="text-caption text-muted-foreground">
@@ -86,10 +90,10 @@ export function UsageWindows({ agent, cell, now, onOutline }: { agent: string; c
     {cell.state === "unavailable" && cell.cause === "not_installed" ? <p>{t("usage.notInstalled", { command: agent })}</p> : null}
   </div>;
   const windows = WINDOW_ORDER.flatMap((kind) => cell.value.windows.filter((window) => window.kind === kind).sort((a, b) => Number(a.scope.kind === "model") - Number(b.scope.kind === "model")));
-  return windows.map((window) => <UsageLine key={`${window.kind}-${window.scope.kind === "model" ? window.scope.label : "all"}`} window={window} now={now} onOutline={onOutline} />);
+  return windows.map((window) => <UsageLine key={`${window.kind}-${window.scope.kind === "model" ? window.scope.label : "all"}`} window={window} now={now} onOutline={onOutline} compact={compact} />);
 }
 
-function UsageLine({ window, now, onOutline }: { window: WindowReading; now: number; onOutline?: (window: UsageOutline) => void }) {
+function UsageLine({ window, now, onOutline, compact }: { window: WindowReading; now: number; onOutline?: (window: UsageOutline) => void; compact: boolean }) {
   const { t } = useInterfaceTranslation();
   const percent = windowPercent(window, now);
   if (["expired", "not_offered", "unreadable"].includes(window.outcome.state) || (window.outcome.state === "open" && percent === null)) return null;
@@ -98,8 +102,9 @@ function UsageLine({ window, now, onOutline }: { window: WindowReading; now: num
     <div className="flex flex-wrap items-baseline gap-xs">
       <span className="min-w-0 break-words text-caption font-medium text-subtle-foreground">{window.scope.kind === "model" ? `└ ${window.scope.label}` : windowLabel(window.kind, t)}</span>
       {window.outcome.state === "open" ? <span className="font-mono text-micro text-muted-foreground" data-usage-reset="true">· {resetCountdown(window.outcome.resets_at_s, now, t)}</span> : null}
-      <span className={cn("ml-auto font-mono text-caption font-semibold", TEXT_TONE[usageTone(percent)])} data-usage-value="true">{percent !== null ? percentLabel(percent) : t("usage.notStarted")}</span>
+      {compact && percent !== null ? <div aria-hidden="true" className="ml-auto h-xs w-(--size-control-lg) shrink-0 overflow-hidden rounded-full bg-border"><div className={cn("h-full rounded-full", FILL_TONE[usageTone(percent)])} style={{ width: `${Math.min(Math.max(percent, 0), 100)}%` }} /></div> : null}
+      <span className={cn(compact ? "font-mono text-caption font-semibold" : "ml-auto font-mono text-caption font-semibold", TEXT_TONE[usageTone(percent)])} data-usage-value="true">{percent !== null ? percentLabel(percent) : t("usage.notStarted")}</span>
     </div>
-    {percent !== null ? <div aria-hidden="true" className="h-xs overflow-hidden rounded-full bg-border"><div className={cn("h-full rounded-full", FILL_TONE[usageTone(percent)])} style={{ width: `${Math.min(Math.max(percent, 0), 100)}%` }} /></div> : null}
+    {!compact && percent !== null ? <div aria-hidden="true" className="h-xs overflow-hidden rounded-full bg-border"><div className={cn("h-full rounded-full", FILL_TONE[usageTone(percent)])} style={{ width: `${Math.min(Math.max(percent, 0), 100)}%` }} /></div> : null}
   </div>;
 }

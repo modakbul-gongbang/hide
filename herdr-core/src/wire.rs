@@ -1867,9 +1867,10 @@ pub(crate) fn subscription_params(kinds: &[&str]) -> Result<Value, String> {
     params(req::EventsSubscribeParams { subscriptions })
 }
 
-// What `hided`'s phone routes need from Herdr: the only items of this module
-// that are public, and the way a crate other than this one reaches the
-// generated types. Each takes and returns plain values.
+// What `hided`'s phone routes and `hide connect`'s server handoff need from
+// Herdr: the only items of this module that are public, and the way a crate
+// other than this one reaches the generated types. Each takes and returns
+// plain values.
 
 /// The recent rows of one pane, with escape sequences kept.
 pub fn pane_rows_params(pane_id: &str, lines: u32) -> Result<Value, String> {
@@ -1933,6 +1934,60 @@ pub fn pane_session(value: Value) -> Result<(Option<String>, Option<PaneSession>
             }),
         )),
         _ => Err("pane.get returned no pane".into()),
+    }
+}
+
+/// What a Herdr server says of itself when pinged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerPong {
+    pub version: String,
+    pub protocol: u32,
+    /// Whether it can hand its panes to another Herdr program
+    /// (`server.live_handoff`); Herdr does so on Unix only.
+    pub live_handoff: bool,
+}
+
+/// A `ping`, which takes no parameters.
+pub fn ping_params() -> Result<Value, String> {
+    params(req::PingParams(Default::default()))
+}
+
+/// A `ping` answer.
+pub fn server_pong(value: Value) -> Result<ServerPong, String> {
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("ping response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::Pong {
+            version,
+            protocol,
+            capabilities,
+        } => Ok(ServerPong {
+            version,
+            protocol,
+            live_handoff: capabilities.is_some_and(|capabilities| capabilities.live_handoff),
+        }),
+        _ => Err("ping returned no pong".into()),
+    }
+}
+
+/// A `server.live_handoff` that hands the server's panes to the Herdr at
+/// `import_exe`, which refuses them unless it is `version` and speaks the
+/// protocol this build pins.
+pub fn live_handoff_params(import_exe: &str, version: &str) -> Result<Value, String> {
+    params(req::ServerLiveHandoffParams {
+        import_exe: Some(import_exe.into()),
+        expected_version: Some(version.into()),
+        expected_protocol: Some(HERDR_PROTOCOL_REVISION as u32),
+    })
+}
+
+/// A `server.live_handoff` answer: the replacement holds the panes.
+pub fn live_handoff_done(value: Value) -> Result<(), String> {
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("server.live_handoff response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::Ok => Ok(()),
+        _ => Err("server.live_handoff returned something other than ok".into()),
     }
 }
 

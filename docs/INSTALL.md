@@ -136,6 +136,7 @@ Not supported is a gap, never a design choice.
 | Agent notifications ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#first-run)) | supported: the wizard's notifications step asks macOS and reads its answer back; delivery on a signed build is unverified | supported: the app registers itself for toasts at launch, and the package checks require its Start menu entry; delivery and a click from the Action Center after Hide quit are unverified | supported where a notification service runs; without one the wizard and Settings say so and keep the switch off; delivery is unverified |
 | Needs You count on the app icon | supported: a count on the Dock once macOS lets Hide notify | supported: a dot on the taskbar button, with the count in its description | unverified: drawn only by a desktop that shows launcher counts for the app's `.desktop` entry, which the folder package does not install |
 | Device node (a remote machine's files and Git) | supported | not supported: no device runs the Windows `hided` yet, so from Windows a device's files and Git stay unavailable | supported |
+| The Herdr server follows an app update ([Update](#update)) | supported | not supported: Herdr hands a running server to another Herdr on Unix only, so the server keeps the previous package's Herdr until it is stopped; changes when Herdr supports live handoff on Windows | supported (the remote mailbox lane hands a pinned server over) |
 | Move the core to another machine ([Move the core](#move-the-core-to-another-mac)) | supported | not supported: the core's login item is written for launchd only (`hide_platform::user_agents`), with no Windows or systemd form yet | not supported: same as Windows |
 
 Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
@@ -376,7 +377,9 @@ Hide AI's settings move with the core and come back with it.
 ## Update
 
 Quit hide, replace `/Applications/hide.app` on macOS or unpack the new Windows/Linux package into its permanent folder, and reopen it.
-Opening the updated app replaces a `hided` still running from the previous build with one of its own build, and leaves the Herdr server, its panes and the agents running; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
+Opening the updated app replaces a `hided` still running from the previous build with one of its own build; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
+On macOS and Linux it also moves the Herdr server the previous app started onto its own Herdr, with the panes and the agents in them still running, so nothing keeps running from the previous app's folder; a Herdr terminal you attached yourself is asked to reconnect, and a Herdr server you started from your own Herdr install is left as it is.
+On Windows the server keeps the previous package's Herdr until you stop it ([What each system supports](#what-each-system-supports)).
 State under `~/.hide/state` and the desktop profile (`~/Library/Application Support/hide-desktop` on macOS, `%APPDATA%\hide-desktop` on Windows, `~/.config/hide-desktop` on Linux) both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.

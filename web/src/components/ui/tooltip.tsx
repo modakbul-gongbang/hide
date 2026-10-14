@@ -143,6 +143,7 @@ function useHintOpen() {
 function Hint({
   label,
   shortcut,
+  contentClassName,
   side,
   reveals = false,
   active = true,
@@ -150,6 +151,7 @@ function Hint({
 }: {
   label: string;
   shortcut?: ReactNode;
+  contentClassName?: string;
   side?: "top" | "right" | "bottom" | "left";
   reveals?: boolean;
   /** False while the control says all of this itself (a visible word), so no hint opens. */
@@ -162,7 +164,7 @@ function Hint({
       <TooltipTrigger asChild aria-label={reveals ? undefined : label} {...triggerProps}>
         {children}
       </TooltipTrigger>
-      <TooltipContent side={side}>
+      <TooltipContent side={side} className={contentClassName}>
         <span className="inline-flex items-center gap-sm whitespace-pre-line">
           {label}
           {shortcut ? <span className="text-muted-foreground">{shortcut}</span> : null}

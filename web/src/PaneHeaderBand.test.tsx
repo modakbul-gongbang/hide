@@ -6,8 +6,8 @@ import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { RELATION_ANSWER_TIMEOUT_MS } from "./lineage";
-import { PaneHeaderBand } from "./PaneHeaderBand";
-import type { AgentRow, PaneHeader, PaneFocusRequest, SnapshotRest, Workspace } from "./snapshot";
+import { PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
+import type { AgentPullRequest, AgentRow, PaneHeader, PaneFocusRequest, SnapshotRest, Workspace } from "./snapshot";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -252,4 +252,44 @@ it("opens the displayed repository even when another project has the same PR num
     actions.openSessionPullRequest({workspace_id: "here", number: 7, url: "https://github.com/acme/absent/pull/7"});
     expect(open).toHaveBeenCalledWith("https://github.com/acme/absent/pull/7", "_blank", "noopener,noreferrer");
   } finally { await unmount(); }
+});
+
+// The pane header draws the Sessions row's PR mark: a parent counts its
+// descendants' pull requests, a pane without children shows only its own.
+function pullRow(pane: string, numbers: number[], children: string[] = []): AgentRow {
+  const seed = legacyAgentRow({ pane_id: pane, identity_label: `${pane} 세션`, lineage_child_pane_ids: children });
+  const pulls: AgentPullRequest[] = numbers.map((number) => ({ number, title: `PR ${number}`, url: `https://github.com/acme/app/pull/${number}`, badge: "open", checks: "pending", head_branch: "feat/work", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }));
+  return { ...seed, state: { ...seed.state, pr: numbers.length ? { count: numbers.length, worst: "pending", pulls: numbers.map((_, index) => ({ state: "pending", index })) } : null }, request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: pulls } };
+}
+
+async function mountChip(paneId: string, agents: AgentRow[]) {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  initializeInterfaceI18n("en");
+  useShellStore.setState({ agents, rest: { status: { pane_focus_request: null } } as SnapshotRest });
+  const actions = createActions(() => true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => root.render(<TooltipProvider><PanePrChip paneId={paneId} actions={actions} /></TooltipProvider>));
+  return { container, unmount: async () => { await act(async () => root.unmount()); } };
+}
+
+it("shows a parent's PR mark over its descendants as the Sessions row does, and a childless pane's own", async () => {
+  const parent = pullRow("parent", [], ["child"]);
+  const child = pullRow("child", [1073]);
+  const { container, unmount } = await mountChip("parent", [parent, child]);
+  try {
+    const mark = container.querySelector<HTMLButtonElement>("[data-agent-pr=parent]")!;
+    expect(mark.textContent).toBe("PR 1");
+    expect(mark.getAttribute("aria-label")).toBe("PR 1 CI running or review pending");
+  } finally { await unmount(); }
+  const own = await mountChip("child", [parent, child]);
+  try {
+    expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("1073");
+  } finally { await own.unmount(); }
+  const none = await mountChip("parent", [{ ...parent, lineage_child_pane_ids: [] }]);
+  try {
+    expect(none.container.querySelector("[data-agent-pr]")).toBeNull();
+  } finally { await none.unmount(); }
 });

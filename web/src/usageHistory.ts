@@ -14,7 +14,48 @@ export function usageDate(date: string, language: InterfaceLanguage, options: In
   return new Intl.DateTimeFormat(language, { ...options, timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 }
 export function compactTokens(value: number, language: InterfaceLanguage): string {
-  return new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  const unit = value >= 1e9 ? [1e9, "B"] as const : value >= 1e6 ? [1e6, "M"] as const : value >= 1e3 ? [1e3, "K"] as const : [1, ""] as const;
+  return new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(value / unit[0]) + unit[1];
+}
+
+/** A display period over core-prepared daily amounts; never reprice a call. */
+export function usagePeriodDays(range: UsageRange, count: number): UsageDay[] {
+  const end = Date.parse(`${range.calendar_end}T00:00:00Z`);
+  const start = new Date(end - (count - 1) * 86_400_000).toISOString().slice(0, 10);
+  const days = usageDays({ ...range, calendar_start: start });
+  const offset = days[0]!.weekday;
+  return days.map((day, index) => ({ ...day, week: Math.floor((index + offset) / 7) }));
+}
+
+export function sumUsageDays(days: readonly UsageDay[]): UsageAmount {
+  const total: UsageAmount = {
+    calls: 0, new_tokens: 0,
+    tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, reasoning: null },
+    cost: { micro_usd: 0, partial: false, waiting: false, stale: false, incomplete: false, unpriced_models: [], other_unpriced_models: 0 },
+  };
+  const unpriced = new Set<string>();
+  for (const { amount } of days) {
+    total.calls += amount.calls;
+    total.new_tokens += amount.new_tokens;
+    for (const key of ["input", "output", "cache_read", "cache_write", "cache_write_1h"] as const) total.tokens[key] += amount.tokens[key];
+    if (amount.tokens.reasoning !== null) total.tokens.reasoning = (total.tokens.reasoning ?? 0) + amount.tokens.reasoning;
+    total.cost.micro_usd += amount.cost.micro_usd;
+    for (const key of ["partial", "waiting", "stale", "incomplete"] as const) total.cost[key] ||= amount.cost[key];
+    for (const model of amount.cost.unpriced_models) {
+      if (unpriced.has(model)) continue;
+      if (unpriced.size < 8) unpriced.add(model);
+      else total.cost.other_unpriced_models = 1;
+    }
+    // Daily truncated names cannot establish a distinct-model count. Keep only
+    // their presence, with at most eight visible names and nonnumeric copy.
+    if (amount.cost.other_unpriced_models) total.cost.other_unpriced_models = 1;
+  }
+  total.cost.unpriced_models = [...unpriced];
+  return total;
+}
+
+export function allTokens(amount: UsageAmount): number {
+  return amount.new_tokens + amount.tokens.cache_read;
 }
 export function dollarAmount(value: UsageAmount, language: InterfaceLanguage): string {
   return new Intl.NumberFormat(language, { style: "currency", currency: "USD", currencyDisplay: "narrowSymbol", maximumFractionDigits: 2 }).format(value.cost.micro_usd / 1_000_000);

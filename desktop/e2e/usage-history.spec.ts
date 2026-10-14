@@ -23,7 +23,7 @@ test("native usage history preserves totals, hover geometry and the Overview fil
   fs.writeFileSync(path.join(root, "usage.jsonl"), Array.from({ length: 6 }, (_, i) => JSON.stringify({
     type: "assistant", sessionId: "fixture", requestId: `request-${i}`,
     timestamp: new Date(now - i * 86_400_000).toISOString(),
-    message: { id: `message-${i}`, model: "fixture-unpriced-model", content: [], usage: { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 30, cache_read_input_tokens: 900 } },
+    message: { id: `message-${i}`, model: `fixture-unpriced-model-${"x".repeat(100)}`, content: [], usage: { input_tokens: 10, output_tokens: 20, cache_creation_input_tokens: 30, cache_read_input_tokens: 900 } },
   })).join("\n") + "\n");
   let app: ElectronApplication | undefined;
   const failures: unknown[] = [];
@@ -55,29 +55,34 @@ test("native usage history preserves totals, hover geometry and the Overview fil
         if (!large) { await slider.press("ArrowRight"); await slider.press("ArrowRight"); }
         await page.keyboard.press("Escape");
         await chip.click();
-        await expect(popover.locator('[data-usage-total]')).toHaveText("360", { timeout: 30_000 });
-        const share = popover.locator('[data-usage-detail] [data-usage-filter="claude"]:visible');
-        await share.scrollIntoViewIfNeeded();
-        const target = await share.boundingBox();
-        await share.hover();
-        await expect(detail.locator('[data-usage-cost]:visible')).toContainText("fixture-unpriced-model");
-        expect(await share.boundingBox()).toEqual(target);
+        // The approved compact popover leads with today, not the entire period.
+        await expect(popover.locator('[data-usage-total]')).toHaveText("60", { timeout: 30_000 });
+        await expect(popover.locator('[data-usage-day]')).toHaveCount(30);
+        await expect(detail.locator('[data-usage-cost]')).not.toContainText("$0.00");
         const before = await detail.boundingBox();
         await popover.locator('[data-usage-day][data-today="true"]').hover();
-        await expect(detail.locator('[data-usage-cost]:visible')).toContainText("fixture-unpriced-model");
+        await expect(detail.locator('[data-usage-cost]')).toHaveAttribute("aria-label", /fixture-unpriced-model/);
         const after = await detail.boundingBox();
         expect(after!.height).toBe(before!.height);
         expect(await popover.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await detail.locator('[data-usage-cost]').focus();
+        const costHint = page.locator('[data-slot="tooltip-content"]');
+        await expect(costHint).toBeVisible();
+        expect(await costHint.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         await capture(`usage-history-${language}-${large ? "largest" : "default"}`);
         await popover.locator('[data-usage-history-link]').click();
         const overview = page.locator('[data-usage-overview]');
         await expect(overview).toBeVisible();
         await expect(overview.locator('[data-usage-total]')).toHaveText("360");
-        const filter = overview.locator('[data-usage-filter="claude"]');
+        const filter = overview.locator('[data-usage-agent-select]');
         await filter.click();
-        await expect(filter).toHaveAttribute("aria-pressed", "true");
+        await page.getByRole("option", { name: "Claude Code", exact: true }).click();
+        await expect(filter).toHaveText("Claude Code");
+        await expect(overview.locator('[data-usage-agent-row="claude"]')).toHaveCount(1);
+        await expect(overview.locator('[data-usage-agent-row="claude"]')).toContainText("960");
         await filter.click();
-        await expect(filter).toHaveAttribute("aria-pressed", "false");
+        await page.getByRole("option", { name: language === "en" ? "All agents" : "모든 에이전트", exact: true }).click();
+        await expect(overview.locator('[data-usage-date-row]')).toHaveCount(6);
         expect(await overview.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         await capture(`usage-overview-${language}-${large ? "largest" : "default"}`);
       }

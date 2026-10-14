@@ -1443,7 +1443,7 @@
     ]
   },
   "usage-history": {
-    "description": "Approved heatmap C new-token column, with shared A calendar and detail parts. Values are invented; native accounting is tested separately.",
+    "description": "Compact A direction: cost-first summary, thirty contribution squares and date/agent records. Values are invented; native accounting is tested separately.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-usage",
     "scene": "usage-history",
@@ -1452,7 +1452,6 @@
     "frames": [
       {
         "node": "screen-usage-year-l",
-        "referenceNode": "hc-0-l-col",
         "theme": "light",
         "width": 800,
         "scale": 1,
@@ -1461,7 +1460,6 @@
       },
       {
         "node": "screen-usage-year-d",
-        "referenceNode": "hc-0-d-col",
         "theme": "dark",
         "width": 800,
         "scale": 1,
@@ -1488,10 +1486,10 @@
       ]
     },
     "states": {
-      "rest": "Whole-period shares, cost hidden until hover.",
-      "backfill": "Unread days and reading progress.",
-      "sparse": "Start-anchored short history.",
-      "unpriced": "Partial public price coverage."
+      "rest": "Cost and new tokens above expandable date/agent records.",
+      "backfill": "Partial totals and reading progress.",
+      "sparse": "Only recorded dates, within the selected period.",
+      "unpriced": "Unpriced amounts remain unavailable; known subtotals are lower bounds."
     },
     "urlStates": {
       "backfill": {
@@ -1509,9 +1507,9 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Keep one-hue five-level new-token cells, start-anchored weeks, token totals, peak and streak, and cost only on hover.",
-      "The production column wraps its statistics at narrow widths; the approved reference is the wide composition.",
-      "A day replaces period totals with its top contributors; filtering stays reversible."
+      "Cost is visible before token categories; agent details expand beneath each date.",
+      "Filters and summary wrap at narrow widths; horizontal scrolling stays within the table.",
+      "The popover uses thirty small contribution squares, with daily hover, keyboard preview and click-to-pin."
     ]
   },
   "sidebar-status-axis": {
