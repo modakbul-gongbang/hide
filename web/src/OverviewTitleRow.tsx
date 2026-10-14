@@ -1,4 +1,4 @@
-import { EllipsisIcon, PlusIcon, SquareTerminalIcon } from "lucide-react";
+import { ArrowLeftIcon, EllipsisIcon, PlusIcon, SquareTerminalIcon } from "lucide-react";
 import { EntryDropdown } from "./components/entry-menu";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -24,10 +24,21 @@ const gapOf = (node: Element) => Number.parseFloat(getComputedStyle(node).column
 const naturalWidth = (node: HTMLElement) => Math.max(node.getBoundingClientRect().width, node.scrollWidth);
 
 /** Whether the nav at its natural width and the labelled actions fit in the row. */
-function labelledFit(row: HTMLElement, nav: HTMLElement, twin: HTMLElement): boolean {
+function labelledFit(row: HTMLElement, nav: HTMLElement, twin: HTMLElement, back: HTMLElement, backTwin: HTMLElement): boolean {
   const children = [...nav.children] as HTMLElement[];
-  const navWidth = children.reduce((sum, child) => sum + naturalWidth(child), 0) + gapOf(nav) * Math.max(children.length - 1, 0);
+  const navWidth = children.reduce((sum, child) => sum + naturalWidth(child === back ? backTwin : child), 0) + gapOf(nav) * Math.max(children.length - 1, 0);
   return row.getBoundingClientRect().width >= navWidth + gapOf(row) + twin.getBoundingClientRect().width;
+}
+
+/** The path back uses the same named-icon state as the row's other actions. */
+function ReturnAction({ label, iconOnly, twin = false, button }: { label: string; iconOnly: boolean; twin?: boolean; button?: ComponentProps<"button"> & Record<`data-${string}`, string> }) {
+  const control = (
+    <button type="button" className={cn("shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent", iconOnly && "inline-flex size-(--size-control-sm) items-center justify-center px-0")} tabIndex={twin ? -1 : undefined} {...(twin ? {} : button)}>
+      {iconOnly ? <ArrowLeftIcon aria-hidden="true" className="size-(--size-icon)" /> : null}
+      <span className={cn(iconOnly && "sr-only")}>{label}</span>
+    </button>
+  );
+  return twin ? control : <Hint reveals active={iconOnly} label={label}>{control}</Hint>;
 }
 
 type ActionProps = {
@@ -83,28 +94,30 @@ export function OverviewTitleRow({
   const more = useRef<HTMLButtonElement>(null);
   const nav = useRef<HTMLElement>(null);
   const twin = useRef<HTMLDivElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const backTwin = useRef<HTMLDivElement>(null);
   const [iconOnly, setIconOnly] = useState(false);
   const issues = newIssue !== null;
+  const hasSettings = openSettings !== undefined;
   const agentLabel = t("requests.newAgent");
   const issueLabel = t("issue.newTitle");
+  const backLabel = t("overview.allProjects");
   useLayoutEffect(() => {
-    const [rowNode, navNode, twinNode] = [row.current, nav.current, twin.current];
-    if (!rowNode || !navNode || !twinNode) return;
-    const measure = () => !labelledFit(rowNode, navNode, twinNode);
+    const [rowNode, navNode, twinNode, backNode, backTwinNode] = [row.current, nav.current, twin.current, back.current, backTwin.current];
+    if (!rowNode || !navNode || !twinNode || !backNode || !backTwinNode) return;
+    const measure = () => !labelledFit(rowNode, navNode, twinNode, backNode, backTwinNode);
     setIconOnly(measure());
     // Flushed, so a frame of a dragged window is never drawn in the old state.
     const observer = new ResizeObserver(() => flushSync(() => setIconOnly(measure())));
-    for (const node of [rowNode, twinNode, ...navNode.children]) observer.observe(node);
+    for (const node of [rowNode, twinNode, backTwinNode, ...navNode.children]) observer.observe(node);
     return () => observer.disconnect();
-  }, [name, remoteDevice, issues, agentLabel, issueLabel]);
+  }, [name, remoteDevice, issues, agentLabel, issueLabel, backLabel, hasSettings]);
   const agentIcon = <SquareTerminalIcon aria-hidden="true" />;
   const issueIcon = <PlusIcon aria-hidden="true" />;
   return (
     <div ref={row} className="relative flex min-w-0 items-center gap-lg">
       <nav ref={nav} aria-label={t("overview.location")} className="flex min-w-0 flex-1 items-center gap-xs">
-        <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={onAllProjects}>
-          {t("overview.allProjects")}
-        </button>
+        <ReturnAction label={backLabel} iconOnly={iconOnly} button={{ ref: back, onClick: onAllProjects, "data-go-main": "true" }} />
         <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
         <Hint label={path} reveals>
           <h1 className="min-w-0 truncate text-headline font-semibold text-foreground" aria-current="page">
@@ -118,6 +131,7 @@ export function OverviewTitleRow({
       {newIssue ? <Action label={issueLabel} icon={issueIcon} keycap="C" iconOnly={iconOnly} button={{ onClick: newIssue, "data-overview-new-issue": "true" }} /> : null}
       {/* Clipped to the row, so the copy adds nothing to what scrolls, and measured at its own width. */}
       <div aria-hidden="true" className="invisible pointer-events-none absolute inset-0 overflow-hidden">
+        <div ref={backTwin} className="w-max"><ReturnAction label={backLabel} iconOnly={false} twin /></div>
         <div ref={twin} className="flex w-max items-center gap-lg">
           <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={false} twin />
           {newIssue ? <Action label={issueLabel} icon={issueIcon} keycap="C" iconOnly={false} twin /> : null}
