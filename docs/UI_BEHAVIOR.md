@@ -385,7 +385,19 @@ When there is no core band, the core-ranked lead child's existing line, or its t
 With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
-The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
+The core publishes at most one band: connection, terminal restoration failure or sleep first, own demand next, the lead raised descendant next, then task state.
+Herdr's explicit restoration failure is a terminal fact, independent of an agent's activity or its saved sleep record.
+Its pane body says the terminal could not be restored, names its folder and offers Close pane; raw details remain in diagnostics.
+Visiting this pane preserves a saved conversation and its title without waking it, and neither Wake nor attach Retry is offered as terminal recovery.
+A missing folder alone never establishes restoration failure.
+An explicit close rereads the failed terminal's incarnation and failure before sending the close, and keeps the pane until Herdr confirms removal.
+A whole-tab close requires the same pane membership; a nonfailed peer must be quiet or the same terminal included in the existing close confirmation.
+A newly active or unknown peer requires a fresh close decision.
+Close only this leaves external descendants running; the existing subtree choice owns whether they are included.
+The fresh read and close share the admitted deadline, so a slow status read cannot send a close after its permission expires.
+Other active or unknown panes and descendants keep their close guards.
+A failed terminal has no recoverable live layout, so a close containing one does not enter the ordinary undo stack.
+Closing the last failed terminal preserves the project registration without trying to start a replacement in the failed folder.
 An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
 The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.
@@ -526,7 +538,8 @@ Ranges follow the terminal's actual cells, including wide glyphs, combining sequ
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
 A click opens it in the front Workspace: a URL or an HTML file (`.html`, `.htm` or `.xhtml`, case-insensitive) as a browser display, another file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
-A path in another registered checkout brings that checkout forward; with no Workspace in front a URL goes to the default browser.
+A file in another registered checkout opens the same way in the front Workspace and moves no checkout: the pane that printed it stays on screen, the Explorer keeps its tree and selection, and the file stays that checkout's document, so its own Workspace shows the same text and closing one view leaves the other.
+A folder in another registered checkout brings that checkout forward to show it in its Explorer, as does any path while All projects or an Overview is on screen; with no Workspace in front a URL goes to the default browser.
 Right-clicking a URL offers Open in Hide, Open in default browser and Copy link above the terminal's ordinary editing and pane actions.
 Right-clicking an existing path offers Open, Open in default application, the host's Reveal in Finder/File Explorer/file manager and Copy path; an HTML file in a registered checkout offers Open in browser and Open source instead of Open.
 Open source opens that HTML file in View at the line its link names.
@@ -1432,6 +1445,11 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 
 ### The Factory place
 
+Until the Factory launches its screens are closed, and the rest of this section describes them as they will open (`web/src/factory/launch.ts`).
+While closed, the sidebar's Factory row is its name in the muted colour with a 'Soon' chip ('곧 출시'), and nothing in it can be pressed; no project or secretary row is drawn under it.
+Nothing else reaches the screen either: ⇧⌘F is not claimed and is absent from the shortcut sheet, Settings, Shortcuts, the View menu and the table under Every command, the ⌘K palette has no 'Factory 열기', and the Factory's macOS notifications are not shown.
+The engine, `hide factory` and the snapshot's `factory` section are unchanged, so opening the screens is that one value.
+
 The sidebar has a Factory row of its own under the Overview row, and its badge is the number of items in 결정 필요, with no badge at zero.
 Under it, once a Factory is open, each open Factory has a row with its project name, a pause mark while it is paused, and its own 결정 필요 number in the warning colour when above zero; the row opens the Factory screen filtered to that Factory, and the Factory row opens it for every Factory.
 The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
@@ -2196,7 +2214,6 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Search | `⌘K` | `Ctrl+Shift+K` | `⌘K` | `Ctrl+Shift+K` |
 | Open file | `⌘P` | `Ctrl+Shift+P` | `⌘P` | `Ctrl+Shift+P` |
 | Overview | `⇧⌘O` | `Alt+Shift+O` | `⇧⌘O` | `Alt+Shift+O` |
-| Open Factory | `⇧⌘F` | `Alt+Shift+F` | `⇧⌘F` | `Alt+Shift+F` |
 | Focus sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Agents overview | `⇧⌘A` | `Alt+Shift+A` | `⇧⌘A` | `Ctrl+Alt+A` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |

@@ -270,6 +270,9 @@ impl Runtime {
             .mark_seen(looked.iter().map(String::as_str), unix_milliseconds());
         let mut changed = false;
         for pane_id in entered {
+            if self.failed_terminal_id(&pane_id).is_some() {
+                continue;
+            }
             match self.snapshot.ui_state.agent_sleep.records.get_mut(&pane_id) {
                 Some(record) if record.phase == SleepPhase::Ending => {
                     record.pending_wake = Some(WakeMode::Resume);
@@ -554,6 +557,9 @@ impl Runtime {
     }
 
     fn begin_agent_wake(&mut self, pane_id: &str, mode: WakeMode, trigger: &str) -> bool {
+        if self.failed_terminal_id(pane_id).is_some() {
+            return false;
+        }
         let Some(context) = self.sleep_target(pane_id) else {
             return false;
         };

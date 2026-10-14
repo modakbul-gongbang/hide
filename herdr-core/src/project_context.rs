@@ -586,6 +586,8 @@ mod tests {
                 panes: pane_ids
                     .iter()
                     .map(|pane_id| PaneSnapshot {
+                        terminal_id: None,
+                        failed_terminal_id: None,
                         id: (*pane_id).to_owned(),
                         herdr_label: None,
                         terminal_title: None,

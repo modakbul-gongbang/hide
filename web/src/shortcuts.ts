@@ -33,6 +33,7 @@
 // each with its reason; docs/UI_BEHAVIOR.md (Keyboard shortcuts per system)
 // lists the whole table on both systems.
 
+import { FACTORY_OPEN } from "./factory/launch";
 import type { HostKind } from "./host";
 
 export type Chord = {
@@ -234,7 +235,8 @@ export const REGISTRY: readonly Command[] = [
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
   { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
-  { id: "factory_open", title: "Open Factory", group: "Navigate", browser: { code: "KeyF", meta: true, shift: true }, electron: { code: "KeyF", meta: true, shift: true }, moved: false },
+  // Until the Factory opens, nothing claims ⇧⌘F and no sheet or menu lists it (`factory/launch.ts`).
+  ...(FACTORY_OPEN ? [{ id: "factory_open", title: "Open Factory", group: "Navigate", browser: { code: "KeyF", meta: true, shift: true }, electron: { code: "KeyF", meta: true, shift: true }, moved: false } satisfies Command] : []),
   { id: "sidebar_projects", title: "Focus sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
   { id: "sidebar_agents", title: "Agents overview", group: "Panels", browser: { code: "KeyA", meta: true, shift: true }, electron: { code: "KeyA", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },

@@ -54,6 +54,36 @@ fn every_session_sync_snapshot_fixture_obeys_the_generated_contract() {
     }
 }
 
+/// Coexistence B1/B7: terminal failure survives both projections and a pane
+/// update, but a missing cwd alone never makes a live shell a failed terminal.
+#[test]
+fn restoration_failure_survives_snapshot_updates_and_remote_projection() {
+    let mut value = snapshot();
+    value["panes"][0]["cwd"] = json!("/missing/한글 폴더");
+    let mut replica = SessionReplica::from_snapshot(&value).unwrap();
+    assert!(replica.project().panes[0].failed_terminal_id.is_none());
+    value["panes"][0]["restore_error"] = json!("internal ENOENT detail");
+    let update = event(
+        "pane_updated",
+        json!({"type":"pane_updated", "pane":value["panes"][0]}),
+    );
+    replica.apply(update, ApplyMode::Strict).unwrap();
+    assert_eq!(
+        replica.project().panes[0].failed_terminal_id.as_deref(),
+        Some("fixture-terminal")
+    );
+    for replica in [replica, SessionReplica::from_snapshot(&value).unwrap()] {
+        let (remote, _) = replica.project_remote("device", replica.project()).unwrap();
+        let pane = &remote.workspaces[0].checkouts[0].tabs[0].panes[0];
+        assert_eq!(pane.failed_terminal_id.as_deref(), Some("fixture-terminal"));
+        assert!(!serde_json::to_string(pane).unwrap().contains("ENOENT"));
+        assert!(
+            remote.agents.is_empty(),
+            "a shell failure must not invent an agent"
+        );
+    }
+}
+
 fn two_tab_snapshot() -> Value {
     let mut value = snapshot();
     value["focused_workspace_id"] = json!("w1");

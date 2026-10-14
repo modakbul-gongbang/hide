@@ -1565,6 +1565,167 @@ mod tests {
         );
     }
 
+    /// A Claude Code session file that printed pull request 7.
+    fn printed_a_pull_request(home: &Path, id: &str, at: &str) -> String {
+        let folder = home.join(".claude/projects/-work-app");
+        std::fs::create_dir_all(&folder).unwrap();
+        let lines = [
+            serde_json::json!({"type": "user", "uuid": format!("{id}-u"), "parentUuid": null,
+                "message": {"role": "user", "content": "Open the pull request"},
+                "timestamp": at, "origin": {"kind": "human"}, "userType": "external",
+                "promptId": "p", "cwd": "/work/app", "sessionId": id, "gitBranch": "feat/x"}),
+            serde_json::json!({"type": "pr-link", "sessionId": id, "prNumber": 7,
+                "prRepository": "acme/app", "prUrl": "https://github.com/acme/app/pull/7",
+                "timestamp": at}),
+        ];
+        let path = folder.join(format!("{id}.jsonl"));
+        std::fs::write(&path, lines.map(|line| format!("{line}\n")).concat()).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn read_to_the_end(store: &mut LinkStore, home: &Path, path: &str) -> links::ReadAnswer {
+        let answer = links::read(
+            home,
+            &[links::ReadRequest {
+                agent: hide_session::Agent::Claude,
+                path: path.to_owned(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(answer.error.is_none() && !answer.has_more);
+        store.apply_answer("local", &answer, "stamp").unwrap();
+        answer
+    }
+
+    /// The ledger's links can name a session it holds no record of: a Pi or
+    /// omp child is named by its file where its reader names it by its own
+    /// id, a spawn is known before its file is read, and retention removes a
+    /// session while its file's cursor stays. Each was a write failure on
+    /// every read answer that reached it, about one every two seconds, and
+    /// the failure kept the parent's work from the turns that continue it.
+    #[test]
+    fn a_session_the_ledger_never_recorded_fails_no_write_and_stops_no_context() {
+        use crate::labels::analysis::LabelEnd;
+        use crate::links::ledger::{RecordedRequest, TaskDecision, TurnJudgment, WorkAuthor};
+        let home = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let session = |id: &str| SessionIdentity {
+            device_id: "local".into(),
+            agent: "claude".into(),
+            session_id: id.into(),
+        };
+        // A session retention removed: its file's cursor still names it.
+        let removed = printed_a_pull_request(home.path(), "removed", "2026-07-01T00:00:00Z");
+        let removed_answer = read_to_the_end(&mut store, home.path(), &removed);
+        let mut present = |_: &[String]| Ok(std::collections::BTreeSet::new());
+        assert_eq!(
+            store
+                .prune(&|_| None, "local", &mut present, CREATED + 91 * 86_400_000)
+                .unwrap(),
+            1
+        );
+        // A root with open work, a child whose file printed a pull request,
+        // and a Pi child its spawn named by its file.
+        store
+            .apply_ledger_update(&LedgerUpdate::Requests {
+                session: session("root"),
+                cwd: "/work/app".into(),
+                path: None,
+                requests: vec![RecordedRequest {
+                    offset: 1,
+                    at_unix_ms: CREATED,
+                    text: "Build the release".into(),
+                    author: WorkAuthor::Operator,
+                    task_ids: vec![],
+                    chapter_id: None,
+                    judged: false,
+                }],
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: session("root"),
+                goal: "Ship the release".into(),
+                at_unix_ms: CREATED,
+            })
+            .unwrap();
+        store
+            .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                session: session("root"),
+                offset: 1,
+                at_unix_ms: CREATED + 1,
+                end: LabelEnd::Working,
+                work_author: true,
+                turn_witness: None,
+                judgment: TurnJudgment {
+                    task: TaskDecision::New {
+                        name: "Release build".into(),
+                    },
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let child = printed_a_pull_request(home.path(), "child", "2026-09-27T00:00:00Z");
+        let pi = SessionIdentity {
+            device_id: "local".into(),
+            agent: "pi".into(),
+            session_id: "/operator/.pi/agent/sessions/--work-app--/2026-10-10_01a1.jsonl".into(),
+        };
+        let parented = |child: &SessionIdentity| ParentFact {
+            device_id: child.device_id.clone(),
+            agent: child.agent.clone(),
+            session_id: child.session_id.clone(),
+            parent_device_id: "local".into(),
+            parent_agent: "claude".into(),
+            parent_session_id: "root".into(),
+            parent_name: "lead".into(),
+        };
+        store
+            .apply_parents(&[parented(&session("child")), parented(&pi)])
+            .unwrap();
+        let child_answer = read_to_the_end(&mut store, home.path(), &child);
+
+        let client = LinkClient::full_mailbox_for_test();
+        let ((), records) = crate::diagnostics::capture(|| {
+            refresh_reader_context(&client, &store, "local", &removed_answer);
+            refresh_reader_context(&client, &store, "local", &child_answer);
+            update_context(&client, &store, &pi);
+        });
+        assert!(
+            !records
+                .iter()
+                .any(|record| record["kind"] == "store.write_failed"),
+            "{records:?}"
+        );
+        assert_eq!(
+            client.context(&session("root")).unwrap().open_tasks[0].name,
+            "Release build"
+        );
+        let unrecorded = client.context(&pi).unwrap();
+        assert_eq!(unrecorded.parent_name.as_deref(), Some("lead"));
+        assert!(unrecorded.open_tasks.is_empty());
+        assert!(
+            client
+                .context(&session("removed"))
+                .unwrap()
+                .open_tasks
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .ledger_record(&session("root"))
+                .unwrap()
+                .children
+                .iter()
+                .map(|record| record.session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["child"],
+            "the record lists the child it holds"
+        );
+    }
+
     /// A connected device whose helper answers the two link calls from its
     /// own home, the way `hided node serve` does.
     struct Device {

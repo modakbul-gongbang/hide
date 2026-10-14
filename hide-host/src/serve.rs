@@ -744,6 +744,10 @@ pub struct Env {
     /// The label generator locks this node's core took, released when the
     /// last copy of the environment is dropped: with the link it served.
     pub label_locks: Arc<crate::label_lock::LabelLocks>,
+    /// What this node last measured of each repository's worktrees, which a
+    /// read of the same repository reuses for a worktree whose inputs did
+    /// not move.
+    pub worktrees: Arc<worktrees::Measured>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -779,6 +783,7 @@ impl Env {
             ai: process_ai(),
             factory: Arc::default(),
             label_locks: Arc::default(),
+            worktrees: Arc::default(),
         }
     }
 
@@ -794,6 +799,7 @@ impl Env {
             ai: Arc::default(),
             factory: Arc::default(),
             label_locks: Arc::default(),
+            worktrees: Arc::default(),
         }
     }
 
@@ -911,10 +917,13 @@ pub fn handle_with_progress(
             path,
             bases,
             base_override,
+            reuse_unchanged,
         } => to_value(worktrees::read(
             &absolute(&path)?,
             &bases,
             base_override.as_deref(),
+            &env.worktrees,
+            reuse_unchanged,
         )),
         Call::BranchCheck { path, branch } => {
             worktrees::check_new_branch(&absolute(&path)?, &branch)?;

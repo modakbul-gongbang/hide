@@ -230,6 +230,9 @@ pub struct Ledger {
     pub agents: Vec<crate::coordination::AgentRecord>,
     #[serde(default)]
     pub spawns: Vec<crate::coordination::SpawnRecord>,
+    /// Changed only when durable spawn placement moves, never by letters or watches.
+    #[serde(default)]
+    pub spawn_placement_revision: u64,
     /// The clock of each machine other than this core's own that a letter
     /// waits on, by its registration id; a machine without one, this core's
     /// own among them, is waited on in wall time. One per machine with a
@@ -247,6 +250,7 @@ impl Default for Ledger {
             watches: Vec::new(),
             agents: Vec::new(),
             spawns: Vec::new(),
+            spawn_placement_revision: 0,
             node_clocks: BTreeMap::new(),
         }
     }

@@ -9,6 +9,7 @@ import { markTone } from "./agentRow";
 import { HideMark } from "./AgentMark";
 import { hideAiCheckoutOf, originLine, splitByOrigin } from "./hideAiOrigin";
 import { useFactoryTurnCount } from "./factory/hooks";
+import { FACTORY_OPEN } from "./factory/launch";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./factory/request";
 import { paneListed } from "./factory/secretary";
 import type { Actions } from "./actions";
@@ -155,7 +156,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
           <SidebarHeader
             compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
-            factory={{ selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => openFactoryAt(actions, null), projects: factoryProjects, secretary }}
+            factory={FACTORY_OPEN ? { selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => openFactoryAt(actions, null), projects: factoryProjects, secretary } : "soon"}
             searchChord={commandLabel("search") || null}
             onSearch={() => actions.openSearch()}
           />

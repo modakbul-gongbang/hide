@@ -2,8 +2,9 @@
 // shell printed into a pane is a link where it names a URL or a path that
 // exists, whatever program printed it. A click opens it in the Workspace (a
 // browser display, the file in View at its line, a folder in the Explorer),
-// ⌘-click hands it to macOS, a path outside every checkout goes to macOS on a
-// plain click too and a program there is only revealed, a path the terminal
+// ⌘-click hands it to macOS, a file of another checkout opens in the Workspace
+// in front without bringing that checkout forward, a path outside every
+// checkout goes to macOS on a plain click too and a program there is only revealed, a path the terminal
 // wrapped is one link, a program's own OSC 8 link opens without xterm's
 // confirm dialog, a drag across a link selects rather than opens, and no link
 // click reaches the program as a mouse click. Everything runs on a private Herdr server, hided and Electron
@@ -351,6 +352,46 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => sent.get("terminal_click") ?? 0).toBe(clicksBefore + 1);
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
+});
+
+// Its own spec because the links journey is at its size ceiling: a file of
+// another checkout is one contract, the routing that keeps the screen where it is.
+test("an image of another checkout opens in the Workspace in front and its checkout stays where it is", async () => {
+  // A second checkout, a Herdr workspace of its own beside the fixture's,
+  // holding a screenshot an agent there saved.
+  const elsewhere = path.join(fs.realpathSync(herdr.root), "elsewhere");
+  fs.mkdirSync(elsewhere, { recursive: true });
+  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  fs.writeFileSync(path.join(elsewhere, "shot.png"), Buffer.from(pixel, "base64"));
+  const second = herdr.run(["workspace", "create", "--cwd", elsewhere, "--label", "elsewhere", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
+    result: { workspace: { workspace_id: string } };
+  };
+  try {
+    ({ app } = await launch(run.env));
+    await fitWindow(app, { width: 1024, height: 681 });
+    const page = await shellPage(app);
+    const sent = countSent(page);
+    await withProbe(page);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
+    await enterWorkspace(page, "fixture");
+    const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+    await showFileViews(page, paneId);
+    // A program's own link, so the long temporary path never wraps.
+    await print(page, paneId, [`osc8 \u001b]8;;file://${elsewhere}/shot.png\u001b\\Elsewhere shot\u001b]8;;\u001b\\`, "ELSEWHERE-END"], "ELSEWHERE-END");
+
+    const point = await pointOf(page, paneId, "Elsewhere shot", { offset: 1 });
+    await hoverLink(page, paneId, point);
+    await page.mouse.click(point.x, point.y);
+    await expect(viewTab(page, "shot.png")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-viewer="image"] img')).toBeVisible();
+    // The pane that printed the link is still the one on screen.
+    await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
+    expect(sent.get("file_open")).toBe(1);
+    expect(sent.get("reveal_path") ?? 0).toBe(0);
+    await screenshot(page, "terminal-link-other-checkout");
+  } finally {
+    herdr.run(["workspace", "close", second.result.workspace.workspace_id]);
+  }
 });
 
 // @platform: File URLs, physical paths and the file-manager reveal label follow the host OS.

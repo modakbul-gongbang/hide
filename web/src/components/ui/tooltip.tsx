@@ -82,6 +82,14 @@ function TooltipContent({ ref, className, side = "top", align = "center", sideOf
         sideOffset={sideOffset}
         className={cn("pointer-events-none z-50 max-w-(--size-tooltip-max-width) text-balance rounded-sm border border-border bg-popover px-sm py-xs text-caption text-popover-foreground shadow-lg", className)}
         {...props}
+        onMouseDown={(event) => {
+          props.onMouseDown?.(event);
+          // A hint that can be hovered may hold a button. Pressing it must not
+          // move focus: the hint is drawn outside any dialog it opened from,
+          // and the dialog's focus trap would take focus back and close the
+          // hint before the click lands. The button still gets its click.
+          if (event.target instanceof Element && event.target.closest("button, a")) event.preventDefault();
+        }}
       >
         {children}
       </TooltipPrimitive.Content>

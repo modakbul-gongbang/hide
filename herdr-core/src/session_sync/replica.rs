@@ -148,6 +148,9 @@ impl SessionReplica {
     }
 
     pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
+        for pane in &state.panes {
+            report_restore_failure(pane);
+        }
         let generation = NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tab_moves = crate::sidebar::SessionTabMoves::new(generation);
         let replica = Self {
@@ -485,6 +488,11 @@ impl SessionReplica {
                                 let agent =
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
+                                    terminal_id: Some(pane.terminal_id.clone()),
+                                    failed_terminal_id: pane
+                                        .restore_error
+                                        .as_ref()
+                                        .map(|_| pane.terminal_id.clone()),
                                     id: remote_pane_id(target_id, &pane.pane_id),
                                     herdr_label: non_blank(pane.label.as_deref()),
                                     terminal_title: non_blank(
@@ -2210,10 +2218,24 @@ fn upsert_pane(panes: &mut Vec<ProjectedPane>, mut pane: ProjectedPane) {
         .iter_mut()
         .find(|existing| existing.pane_id == pane.pane_id)
     {
+        if pane.restore_error != existing.restore_error || pane.terminal_id != existing.terminal_id
+        {
+            report_restore_failure(&pane);
+        }
         pane.foreground_process = existing.foreground_process.clone();
         *existing = pane;
     } else {
+        report_restore_failure(&pane);
         panes.push(pane);
+    }
+}
+
+fn report_restore_failure(pane: &ProjectedPane) {
+    if let Some(error) = &pane.restore_error {
+        crate::diagnostic!(serde_json::json!({
+            "component": "session_sync", "kind": "terminal_restore_failed",
+            "pane_id": pane.pane_id, "terminal_id": pane.terminal_id, "detail": error,
+        }));
     }
 }
 

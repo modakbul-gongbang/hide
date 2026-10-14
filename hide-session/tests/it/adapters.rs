@@ -1002,6 +1002,51 @@ fn every_agent_reads_to_the_same_facts() {
     }
 }
 
+/// A conversation page reaches the core as JSON over the node link
+/// (`Call::SessionConversation`), and the core reads every event back. Codex
+/// writes the instructions it adds to a turn as `developer` records, and a
+/// page holding one was refused as `conversation_role_invalid`, so Project
+/// Memory failed every Codex session again each time its file grew.
+#[test]
+fn every_agents_conversation_page_reads_back_from_the_node_link() {
+    let file = |agent: Agent, home: &Path| {
+        match agent {
+        Agent::Claude => home.join(".claude/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl"),
+        Agent::Codex => home.join(".codex/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl"),
+        _ => unreachable!("the file fixtures above"),
+    }
+    };
+    for agent in [Agent::Claude, Agent::Codex] {
+        let home = home(agent);
+        let scope = hide_session::SessionReadScope {
+            id: request(agent).reference_value,
+            cwd: "/work/app".to_owned(),
+        };
+        let page = hide_session::read_conversation(
+            home.path(),
+            agent,
+            &file(agent, home.path()),
+            &scope,
+            None,
+        )
+        .unwrap();
+        let wire = serde_json::to_vec(&page).unwrap();
+        let read: hide_session::ConversationRead = serde_json::from_slice(&wire)
+            .unwrap_or_else(|error| panic!("{agent:?}: the core refused the page: {error}"));
+        assert_eq!(read.events, page.events, "{agent:?}");
+        if agent == Agent::Codex {
+            let instructions = &read.events[0];
+            assert_eq!(instructions.text, "<permissions instructions>");
+            assert_eq!(
+                (instructions.role, instructions.kind),
+                ("system", hide_session::EventKind::Injected),
+                "Codex's own instructions are no one's request"
+            );
+            assert!(instructions.is_provider_injected());
+        }
+    }
+}
+
 mod omp {
     use super::*;
     use serde_json::json;

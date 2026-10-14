@@ -214,6 +214,10 @@ struct Request {
 }
 
 pub(crate) enum Effect {
+    SpawnNames {
+        work: Box<crate::coordination::naming::Work>,
+        names: crate::coordination::naming::Names,
+    },
     HumanClaim,
     Agents {
         authority: Authority,
@@ -567,6 +571,10 @@ pub(crate) fn now() -> u64 {
 
 fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, bool), String> {
     let (actor, target, command) = match &request.effect {
+        Effect::SpawnNames { work, names } => {
+            crate::coordination::naming::apply(ledger, work, names)?;
+            return Ok((json!({"saved":true}), false));
+        }
         Effect::HumanClaim => {
             let notices = super::human::claim(ledger, now);
             return Ok((json!(notices), false));

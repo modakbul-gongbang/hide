@@ -369,8 +369,16 @@ export const PaneView = memo(function PaneView({
           </div>
         ) : null}
         <PaneHeaderBand paneId={paneId} header={header} actions={actions} />
-        {sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
-        {caption?.reconnects && !sleep ? (
+        {pane.failed_terminal_id ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-sm overflow-auto bg-card px-lg text-center" data-pane-restore-failed={paneId}>
+            <CircleAlertIcon className="size-(--size-icon-lg) shrink-0 text-destructive" aria-hidden="true" />
+            <p className="text-subhead text-foreground" role="status">{t("panes.restore.failed")}</p>
+            <p className="max-w-full break-all text-caption text-muted-foreground">{pane.cwd}</p>
+            <p className="max-w-full text-caption text-muted-foreground">{t("panes.restore.explanation")}</p>
+            <Button size="sm" variant="outline" onClick={() => actions.closePane(paneId)}>{t("panes.restore.close")}</Button>
+          </div>
+        ) : sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
+        {caption?.reconnects && !sleep && !pane.failed_terminal_id ? (
           <button
             type="button"
             className="absolute inset-0 flex items-center justify-center bg-card text-caption text-subtle-foreground"

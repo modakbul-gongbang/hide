@@ -40,6 +40,30 @@
                     ],
                     "type": "string"
                 },
+                "Names": {
+                    "properties": {
+                        "tab": {
+                            "$ref": "#/definitions/Outcome"
+                        },
+                        "workspace": {
+                            "$ref": "#/definitions/Outcome"
+                        }
+                    },
+                    "required": [
+                        "workspace",
+                        "tab"
+                    ],
+                    "type": "object"
+                },
+                "Outcome": {
+                    "enum": [
+                        "pending",
+                        "applied",
+                        "preserved",
+                        "failed"
+                    ],
+                    "type": "string"
+                },
                 "Runtime": {
                     "enum": [
                         "running",
@@ -139,6 +163,17 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "names": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/Names"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "Naming has its own receipt; it never changes successful spawn identity."
                 },
                 "origin": {
                     "description": "The spawner, independently of responsibility; null for ordinary roots.",
@@ -256,6 +291,17 @@
                         "name": {
                             "type": "string"
                         },
+                        "names": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/definitions/Names"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Naming has its own receipt; it never changes successful spawn identity."
+                        },
                         "origin": {
                             "description": "The spawner, independently of responsibility; null for ordinary roots.",
                             "type": [
@@ -321,6 +367,30 @@
                     "enum": [
                         "connected",
                         "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Names": {
+                    "properties": {
+                        "tab": {
+                            "$ref": "#/definitions/Outcome"
+                        },
+                        "workspace": {
+                            "$ref": "#/definitions/Outcome"
+                        }
+                    },
+                    "required": [
+                        "workspace",
+                        "tab"
+                    ],
+                    "type": "object"
+                },
+                "Outcome": {
+                    "enum": [
+                        "pending",
+                        "applied",
+                        "preserved",
+                        "failed"
                     ],
                     "type": "string"
                 },
@@ -1780,7 +1850,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:516e93f66c3f40732f0ee00e1e933f7cc579d5db58fdd023ac847d6744b45b93",
+    "digest": "sha256:303916961363f3bd60bb93ebea0832127465086e579fd464ac818e77ccf54dbe",
     "envelopes": {
         "agent": {
             "answer": "value",

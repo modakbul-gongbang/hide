@@ -4,6 +4,7 @@
 mod executor;
 pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
+pub(crate) mod naming;
 pub(crate) mod started;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
@@ -143,6 +144,10 @@ impl SpawnMode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_tab: Option<naming::SeedTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<naming::Names>,
     pub id: String,
     /// The caller authorizes the receipt, including a parentless handoff.
     pub parent: String,
@@ -202,6 +207,7 @@ pub(crate) enum Mutation {
         command: Command,
     },
     Advance {
+        seed_tab: Option<naming::SeedTab>,
         id: String,
         path: Option<String>,
         pane: Option<String>,
@@ -290,6 +296,11 @@ pub(crate) fn view(record: &AgentRecord, ledger: &Ledger) -> Value {
 
 pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
     AgentView {
+        names: ledger
+            .spawns
+            .iter()
+            .find(|spawn| spawn.child.as_deref() == Some(&record.id))
+            .and_then(|spawn| spawn.names.clone()),
         id: record.id.clone(),
         name: record.name.clone(),
         machine: record.machine.clone(),
@@ -556,6 +567,8 @@ pub(crate) fn apply(
                 return Err("capacity".into());
             }
             let record = SpawnRecord {
+                seed_tab: None,
+                names: Some(naming::Names::default()),
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
                 mode,
@@ -581,6 +594,7 @@ pub(crate) fn apply(
             Ok(json!(record))
         }
         Mutation::Advance {
+            seed_tab,
             id,
             path,
             pane,
@@ -616,6 +630,25 @@ pub(crate) fn apply(
                     .is_some_and(|(stored, next)| stored != next)
             }) {
                 return Err("intent_conflict".into());
+            }
+            if [
+                (record.path.as_ref(), path.as_ref()),
+                (record.pane.as_ref(), pane.as_ref()),
+                (record.terminal.as_ref(), terminal.as_ref()),
+            ]
+            .into_iter()
+            .any(|(previous, next)| next.is_some() && previous != next)
+            {
+                ledger.spawn_placement_revision = ledger
+                    .spawn_placement_revision
+                    .checked_add(1)
+                    .ok_or("capacity")?;
+            }
+            if let Some(seed) = seed_tab {
+                if record.seed_tab.as_ref().is_some_and(|old| old != seed) {
+                    return Err("intent_conflict".into());
+                }
+                record.seed_tab = Some(seed.clone());
             }
             if path.is_some() {
                 record.path = path.clone()
@@ -1420,6 +1453,7 @@ mod tests {
             &mut restored,
             &caller_one,
             &Mutation::Advance {
+                seed_tab: None,
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: Some("child-pane".into()),
@@ -1439,6 +1473,7 @@ mod tests {
                 &mut restored,
                 &caller_two,
                 &Mutation::Advance {
+                    seed_tab: None,
                     id,
                     path: None,
                     pane: Some("wrong".into()),
@@ -1567,6 +1602,7 @@ mod tests {
             &mut ledger,
             &actor,
             &Mutation::Advance {
+                seed_tab: None,
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: Some("worker".into()),
@@ -1994,6 +2030,7 @@ mod tests {
                 command: command("once"),
             },
             Mutation::Advance {
+                seed_tab: None,
                 id: spawn.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: None,

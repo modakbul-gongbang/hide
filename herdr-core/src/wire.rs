@@ -303,6 +303,8 @@ macro_rules! record_conversions {
         impl From<$wire::PaneInfo> for ProjectedPane {
             fn from(v: $wire::PaneInfo) -> Self {
                 Self {
+                    terminal_id: v.terminal_id,
+                    restore_error: v.restore_error,
                     pane_id: v.pane_id,
                     foreground_process: None,
                     agent_status: v.agent_status.to_string(),
@@ -869,6 +871,7 @@ pub(crate) fn worktree_open_params(
 /// pane, and whether Herdr had it open before this request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OpenedWorktree {
+    pub(crate) tab_label: String,
     pub(crate) workspace_id: String,
     pub(crate) label: String,
     pub(crate) tab_id: String,
@@ -886,6 +889,7 @@ pub(crate) fn opened_worktree(value: Value) -> Result<OpenedWorktree, String> {
             already_open,
             ..
         } => Ok(OpenedWorktree {
+            tab_label: tab.label,
             label: workspace.label,
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             tab_id: nonempty_id(tab.tab_id, missing)?,
@@ -1723,6 +1727,7 @@ pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CreatedWorktree {
+    pub tab_label: String,
     pub workspace_id: String,
     pub tab_id: String,
     pub pane_id: String,
@@ -1740,6 +1745,7 @@ pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> 
             worktree,
             ..
         } => Ok(CreatedWorktree {
+            tab_label: tab.label,
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             tab_id: nonempty_id(tab.tab_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,

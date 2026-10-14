@@ -513,13 +513,21 @@ fn read_observed(
         .iter()
         .map(|observation| {
             let root = observation.request.root_path.clone();
-            if let Some((cached_generation, cached, project)) = cache.get(&root)
+            let cached = cache.get(&root);
+            if let Some((cached_generation, cached, project)) = cached
                 && cached_generation == generation
                 && cached == observation
             {
                 return (root, project.clone());
             }
-            let project = read(node, &observation.request);
+            // Only an explicit read (a refresh, an Overview opening) asks
+            // every worktree again; a Git change or a new base is read from
+            // the worktrees whose inputs moved.
+            let reuse_unchanged = cached.is_some_and(|(cached_generation, cached, _)| {
+                cached_generation == generation
+                    && cached.request.generation == observation.request.generation
+            });
+            let project = read(node, &observation.request, reuse_unchanged);
             cache.insert(
                 root.clone(),
                 (*generation, observation.clone(), project.clone()),
@@ -649,6 +657,7 @@ pub fn deletion_gate(
 fn read(
     node: &dyn crate::node_access::NodeLink,
     project: &WorktreeProjectRequest,
+    reuse_unchanged: bool,
 ) -> Option<ProjectWorktreesSnapshot> {
     let unavailable = |reason: String| {
         Some(ProjectWorktreesSnapshot {
@@ -669,6 +678,7 @@ fn read(
             path: path.to_owned(),
             bases: project.bases.clone(),
             base_override: project.base_override.clone(),
+            reuse_unchanged,
         },
         WORKTREES_TIMEOUT,
     ) {
@@ -678,8 +688,7 @@ fn read(
     }
 }
 
-/// How long one repository's read may take on its node.
-const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
+use hide_node_link::worktrees::WORKTREES_TIMEOUT;
 
 #[cfg(test)]
 fn read_project(
@@ -693,6 +702,8 @@ fn read_project(
         root_path,
         bases,
         base_override,
+        &hide_host::worktrees::Measured::default(),
+        false,
     ))
 }
 

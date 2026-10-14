@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { translate } from "./i18n/client";
-import { issuePlaces, NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
+import { issuePlaces, NewIssueDialog, StartIssueDialog, typing } from "./IssueDialogs";
 import type { BackgroundAi, Device, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
@@ -118,4 +118,16 @@ it("draws New issue again for a project change, not for a snapshot change it doe
   expect(draws).toBeGreaterThan(settled);
   await act(async () => root.unmount());
   useShellStore.setState(saved, true);
+});
+
+it("reads a key on the Overview layer as the page's, and a field, menu or other dialog as not (B20)", () => {
+  document.body.innerHTML = `
+    <div role="dialog" data-overview-modal="true"><article tabindex="0" data-card></article><input data-field /></div>
+    <div role="dialog" data-other><button data-in-dialog></button></div>
+    <div role="menu"><div role="menuitem" data-item></div></div>`;
+  const at = (selector: string) => document.querySelector(selector);
+  expect(typing(at("[data-card]"))).toBe(false);
+  expect(typing(at("[data-field]"))).toBe(true);
+  expect(typing(at("[data-in-dialog]"))).toBe(true);
+  expect(typing(at("[data-item]"))).toBe(true);
 });

@@ -500,6 +500,11 @@ pub(super) struct FileOpenPayload {
     /// to its right (PRD S7 B4). Only a shell with View areas reads it.
     #[serde(default)]
     pub(super) beside: bool,
+    /// The Workspace in front, named when the file is another checkout's: a
+    /// terminal link opens it there as an ordinary tab and moves no checkout
+    /// (`open_file_in_front_view`). Only a shell with View areas sends it.
+    #[serde(default)]
+    pub(super) view: Option<super::view_areas::ViewWorkspace>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3051,6 +3056,18 @@ impl Runtime {
                 self.request_remote_control(payload)
             }
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
+            Event::FileOpen(payload) if payload.view.is_some() && self.separate_view_areas() => {
+                let view = payload.view.as_ref().expect("matched above");
+                self.open_file_in_front_view(
+                    view,
+                    &payload.workspace_id,
+                    &payload.checkout_id,
+                    &payload.path,
+                    payload.beside,
+                );
+                self.persist_current_ui_state();
+                true
+            }
             Event::FileOpen(payload) => {
                 let context_exists = self
                     .catalog_checkout(&payload.workspace_id, &payload.checkout_id)
@@ -3065,8 +3082,12 @@ impl Runtime {
                     );
                     return true;
                 }
-                if self.separate_view_areas() {
+                if self.separate_view_areas()
+                    && let Some(key) =
+                        self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+                {
                     self.open_file_in_view(
+                        &key,
                         &payload.workspace_id,
                         &payload.checkout_id,
                         &payload.path,

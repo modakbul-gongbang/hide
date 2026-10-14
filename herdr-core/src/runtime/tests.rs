@@ -617,6 +617,8 @@ fn working_payload() -> SessionSnapshotPayload {
 
 fn pane(id: &str, cwd: &str) -> PaneSnapshot {
     PaneSnapshot {
+        terminal_id: None,
+        failed_terminal_id: None,
         id: id.to_owned(),
         herdr_label: None,
         terminal_title: None,
@@ -1499,6 +1501,7 @@ fn closed_file(key: &str, path: &str) -> ClosedItem {
 
 fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
     live::CloseCaptureRequest {
+        failed_terminals: Vec::new(),
         retain_for_reopen: true,
         key: key.to_owned(),
         connection_generation: 0,
