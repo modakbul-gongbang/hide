@@ -453,12 +453,15 @@ Neither the screen-key samples nor xterm write completion prove physical-key-to-
 
 Frames (PRD B12) is one 120 s window with each driven pane printing a sequence-numbered line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`.
 The collector reads each pane's parsed buffer at most twice a second, retaining the first and last advancing sequence in each third of the window; at most six panes retain 36 progress records.
+Sequence and retirement records accept trailing terminal-cell spaces, while prefixes, embedded command text and records from another run are not evidence.
 This observer cost is part of the measured workload and must be identical in a baseline and candidate comparison.
 The frame summary requires advancing output from the same run in every pane and every third, a matching completed window of at least 120 s, valid durations, and confirmed writer launch and retirement before evaluating the existing 16.7 ms budget and one-percent fraction.
 CLI success, WebSocket traffic and a final pane tail are diagnostics, not proof that a driven workload persisted.
 The progress observations establish sampled workload coverage, not an output-rate or input-latency guarantee.
 Writers run in the foreground and finish with a run-specific marker; cleanup interrupts every attempted writer, checks its final marker, cancels the owned frame callback and closes the CDP connection.
 Each writer has a deadline beyond the measurement window, and unconfirmed retirement fails the run so the enclosing private-server owner can finish cleanup.
+Failure still emits the collected frames, workload observations and bounded pane diagnostics as an invalid measurement document, with a nonzero exit status.
+Diagnostics retain at most 4,096 UTF-16 code units per pane tail before and after stopping, plus one native tail on failure, for at most six panes; these reads are outside the measured window.
 An output-only frame window contains no injected echo markers; use the separate `keys` scenario for input timing while other panes print.
 A callback interval remains distinct from native presentation.
 
