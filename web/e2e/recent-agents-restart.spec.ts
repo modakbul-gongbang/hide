@@ -64,7 +64,7 @@ test("the recent agent pane order survives a daemon restart and a reload", async
     await expect(cycleRow).toHaveAttribute("data-cycle-row", fixturePane);
     await page.keyboard.press("Backquote");
     await expect(cycleRow).toHaveAttribute("data-cycle-row", betaPane);
-    await expect(cycleRow).toHaveAttribute("aria-label", /codex agent/);
+    await expect(cycleRow).toHaveAttribute("aria-label", /Codex agent/);
     await screenshot(page, "recent-agents-after-restart");
     await page.keyboard.up("Alt");
     await expect(canvas).toHaveAttribute("data-canvas", beta.result.tab.tab_id);

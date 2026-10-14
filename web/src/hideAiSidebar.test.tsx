@@ -102,7 +102,8 @@ it("gathers the checkouts Hide AI made under one head behind the operator's, wit
     // An open checkout names the task under its agent row; a folded one in the purpose line's place, ahead of the purpose.
     expect(group.querySelector('[data-pane="pane:checkout:m43"] [data-agent-task]')?.textContent).toBe("Promote Memory · m43");
     expect(group.querySelector('[data-checkout-row="checkout:m72"] [data-purpose]')?.textContent).toBe("Promote Memory · m72 · PR 없이 끝남");
-    expect(group.querySelector("[data-hide-ai-badge]")).toBeNull();
+    // The group head says who started the rows, so no tree row draws the owl or a provider logo.
+    expect(group.querySelector("[data-pane] [data-hide-mark], [data-pane] [data-agent-mark]")).toBeNull();
     // The operator's agent carries no task line.
     expect(container.querySelector('[data-pane="pane:main"] [data-agent-task]')).toBeNull();
   } finally {
@@ -136,7 +137,7 @@ function Row({ row, place, tree }: { row: AgentRow; place: string | null; tree?:
   );
 }
 
-it("badges the provider icon of a Hide AI row where it stands alone, names Hide AI and the task, and leaves other rows plain (B3, B7, B9)", async () => {
+it("draws the Hide owl alone, with no provider logo, on a Hide AI row where it stands alone, names Hide AI, the task and the product, and leaves other rows plain (B1, B8)", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
   document.body.append(container);
@@ -145,16 +146,23 @@ it("badges the provider icon of a Hide AI row where it stands alone, names Hide 
     const started = agent("m72", "m72 결정을 문서로 옮기기", { hide_ai: { task: { kind: "memory_promote", target: "m72" } }, group: "done", status_code: "stopped" });
     const operators = agent("ci", "CI 러너 샤드 정리", { group: "done", status_code: "stopped" });
     await act(async () => root.render(<Row row={started} place="herdr-ide › Promote Memory · m72" />));
-    expect(container.querySelector("[data-hide-ai-badge]")).not.toBeNull();
+    const status = container.querySelector("[data-agent-status-mark]");
+    const owl = container.querySelector("[data-hide-mark]");
+    expect(owl).not.toBeNull();
+    expect(container.querySelector("[data-agent-mark]")).toBeNull();
+    expect(status!.compareDocumentPosition(owl!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector("[data-agent-place]")?.textContent).toBe("herdr-ide › Promote Memory · m72");
     expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain("Hide AI · Promote Memory · m72");
+    expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain("Claude Code");
     await act(async () => root.render(<Row row={operators} place="herdr-ide › main" />));
-    expect(container.querySelector("[data-hide-ai-badge]")).toBeNull();
+    expect(container.querySelector("[data-hide-mark]")).toBeNull();
+    expect(container.querySelector("[data-agent-mark]")).toBeNull();
+    expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).toContain("Claude Code");
     expect(container.querySelector("[data-agent-open]")?.getAttribute("aria-label")).not.toContain("Hide AI");
     // In a project's tree the group says it, so the row has no badge but a task line (B2); with no task it says Hide AI alone (B10).
     const named = agent("bare", "알 수 없는 일", { hide_ai: {} });
     await act(async () => root.render(<Row row={named} place={null} tree />));
-    expect(container.querySelector("[data-hide-ai-badge]")).toBeNull();
+    expect(container.querySelector("[data-hide-mark]")).toBeNull();
     expect(container.querySelector("[data-agent-task]")?.textContent).toBe("Hide AI");
   } finally {
     await act(async () => root.unmount());

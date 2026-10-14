@@ -1,4 +1,5 @@
 import { childrenOf } from "./components/agent-tree-popover";
+import { agentsByPane } from "./paneAgents";
 import { deviceConnected, localDeviceId } from "./devices";
 import type { MessageKey } from "./i18n/catalogs";
 import { remoteTargetOfPane } from "./remote";
@@ -14,9 +15,9 @@ export type ChildCountPart = {
 
 /** Presentation of the core's direct-child counts, not another status projection. */
 export function paneChildren(paneId: string, agents: AgentRow[], rest: SnapshotRest | null) {
-  const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
+  const byPane = agentsByPane(agents);
   const parent = byPane.get(paneId);
-  if (!parent) return null;
+  if (!parent?.lineage_child_pane_ids?.length) return null;
   const children = childrenOf(parent, byPane);
   if (children.length === 0) return null;
   // Topology can survive a connection. Subtree totals cannot claim current

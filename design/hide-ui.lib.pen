@@ -7430,7 +7430,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "AgentRow · 12pt title / 11pt detail · provider 16 / status 12 / gap 4. Sample data.",
+          "content": "AgentRow · 12pt title / 11pt detail · status 12 / gap 4; no provider logo. Sample data.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -7562,19 +7562,6 @@
                   ]
                 }
               ]
-            },
-            {
-              "type": "frame",
-              "id": "YYqJe",
-              "name": "Provider artwork",
-              "width": 16,
-              "height": 16,
-              "fill": {
-                "type": "image",
-                "enabled": true,
-                "url": "../web/src/assets/agent-codex.png",
-                "mode": "contain"
-              }
             },
             {
               "type": "frame",
@@ -16131,7 +16118,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark alone (no provider logo; a row Hide AI started that stands alone also draws the Hide owl, see Component / Hide AI origin), the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -16268,20 +16255,6 @@
                       ]
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "sar-provider",
-                  "name": "Provider artwork",
-                  "width": 16,
-                  "height": 16,
-                  "fill": {
-                    "type": "image",
-                    "enabled": true,
-                    "url": "../web/src/assets/agent-claude.png",
-                    "mode": "contain"
-                  },
-                  "cornerRadius": "$--radius-xs"
                 }
               ]
             },
@@ -18388,7 +18361,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "Every direct child on one 24pt row under the pane header (--size-pane-child-row); each chip is a status mark, the provider mark and a title capped at --size-pane-child-chip-max. The row clips and scrolls sideways instead of growing, and a pane with no children has no row. A chip opens the existing child at once; while that move is in flight it shows … and ignores repeats; a failure puts the core reason under the header with Retry (when retryable) and Dismiss. Supersedes first child + N for the web shell; the native pane header keeps its own master until the native shell changes.",
+              "content": "Every direct child on one 24pt row under the pane header (--size-pane-child-row); each chip is a status mark and a title, with no provider logo capped at --size-pane-child-chip-max. The row clips and scrolls sideways instead of growing, and a pane with no children has no row. A chip opens the existing child at once; while that move is in flight it shows … and ignores repeats; a failure puts the core reason under the header with Retry (when retryable) and Dismiss. Supersedes first child + N for the web shell; the native pane header keeps its own master until the native shell changes.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -18440,19 +18413,6 @@
                   "fontWeight": "normal"
                 },
                 {
-                  "type": "frame",
-                  "id": "pane-child-chip-provider",
-                  "name": "Provider mark",
-                  "width": 14,
-                  "height": 14,
-                  "fill": {
-                    "type": "image",
-                    "enabled": true,
-                    "url": "../web/src/assets/agent-claude.png",
-                    "mode": "contain"
-                  }
-                },
-                {
                   "type": "text",
                   "id": "pane-child-chip-title",
                   "name": "Title",
@@ -18494,14 +18454,6 @@
                   "ref": "pane-child-chip",
                   "name": "Child 2",
                   "descendants": {
-                    "pane-child-chip-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
-                    },
                     "pane-child-chip-title": {
                       "content": "API 계약 확인"
                     }
@@ -18531,14 +18483,6 @@
                     "pane-child-chip-mark": {
                       "content": "✓",
                       "fill": "$--success"
-                    },
-                    "pane-child-chip-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
                     },
                     "pane-child-chip-title": {
                       "content": "Fixture cleanup"
@@ -18774,7 +18718,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "One row per session in a Project's Sessions list, newest first: the provider mark and name, the time, the first request or title (two lines at most, full text in the tooltip), and the checkout it ran in. Nothing is invented: a session with no request or title reads Untitled session, muted, and a time the session never carried is left out. The open session's row sits on --color-elevated and is aria-current. An unreadable session dims only its own row, marks it ! unavailable and keeps its reason, Retry and Copy source location under it. The row reads aloud as provider, first request, checkout, time and availability. The list place states are single marks: loading, none yet, no match with Clear filters, a failed read with Retry, and a device reason.",
+              "content": "One row per session in a Project's Sessions list, newest first: the provider name, the time, the first request or title (two lines at most, full text in the tooltip), and the checkout it ran in. Nothing is invented: a session with no request or title reads Untitled session, muted, and a time the session never carried is left out. The open session's row sits on --color-elevated and is aria-current. An unreadable session dims only its own row, marks it ! unavailable and keeps its reason, Retry and Copy source location under it. The row reads aloud as provider, first request, checkout, time and availability. The list place states are single marks: loading, none yet, no match with Clear filters, a failed read with Retry, and a device reason.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -18821,19 +18765,6 @@
                   "gap": "$--spacing-xs",
                   "alignItems": "center",
                   "children": [
-                    {
-                      "type": "frame",
-                      "id": "session-row-provider-mark",
-                      "name": "Provider mark",
-                      "width": 14,
-                      "height": 14,
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     {
                       "type": "text",
                       "id": "session-row-provider",
@@ -18921,14 +18852,6 @@
               "ref": "session-row",
               "name": "Codex",
               "descendants": {
-                "session-row-provider-mark": {
-                  "fill": {
-                    "type": "image",
-                    "enabled": true,
-                    "url": "../web/src/assets/agent-codex.png",
-                    "mode": "contain"
-                  }
-                },
                 "session-row-provider": {
                   "content": "Codex"
                 },
@@ -37024,7 +36947,7 @@
           "type": "text",
           "id": "cmp-agent-graph-box-spec",
           "name": "A checkout in the Agents gra",
-          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
+          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (status mark, title, age, and no provider logo; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -37408,20 +37331,6 @@
                           "alignItems": "center"
                         },
                         {
-                          "type": "frame",
-                          "id": "agb-row1-provider",
-                          "name": "Provider artwork",
-                          "children": [],
-                          "width": 14,
-                          "height": 14,
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "contain"
-                          }
-                        },
-                        {
                           "type": "text",
                           "id": "agb-row1-title",
                           "name": "agent title",
@@ -37573,7 +37482,7 @@
                         0,
                         "$--spacing-sm",
                         0,
-                        20
+                        24
                       ],
                       "enabled": false
                     }
@@ -37716,20 +37625,6 @@
                           "layout": "horizontal",
                           "justifyContent": "center",
                           "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "agb-row2-provider",
-                          "name": "Provider artwork",
-                          "children": [],
-                          "width": 14,
-                          "height": 14,
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "contain"
-                          }
                         },
                         {
                           "type": "text",
@@ -37883,7 +37778,7 @@
                         0,
                         "$--spacing-sm",
                         0,
-                        20
+                        24
                       ],
                       "enabled": false
                     }
@@ -38027,20 +37922,6 @@
                           "layout": "horizontal",
                           "justifyContent": "center",
                           "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "agb-row3-provider",
-                          "name": "Provider artwork",
-                          "children": [],
-                          "width": 14,
-                          "height": 14,
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "contain"
-                          }
                         },
                         {
                           "type": "text",
@@ -38194,7 +38075,7 @@
                         0,
                         "$--spacing-sm",
                         0,
-                        20
+                        24
                       ],
                       "enabled": false
                     }
@@ -38309,14 +38190,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "SIGTERM 정리 오케스트레이션"
                     },
@@ -38372,14 +38245,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "Overview 진입 흐름"
@@ -38517,14 +38382,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "SIGTERM 처리와 자식 정리",
                       "fontWeight": "600"
@@ -38587,14 +38444,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "리뷰: 종료 경로 회귀"
@@ -38720,14 +38569,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "CI 복구 시도",
                       "fontWeight": "600"
@@ -38789,14 +38630,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": true
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "어댑터 정리"
@@ -38941,14 +38774,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "체크아웃 기능 구현 및 정리"
                     },
@@ -39076,14 +38901,6 @@
                     },
                     "agb-row1-stopped": {
                       "enabled": false
-                    },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row1-title": {
                       "content": "agent-tab-groups"
@@ -39213,14 +39030,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "Lead"
                     },
@@ -39276,14 +39085,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "명세 정리"
@@ -39410,14 +39211,6 @@
                     },
                     "agb-row1-stopped": {
                       "enabled": false
-                    },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row1-title": {
                       "content": "Agent tab groups 구현"
@@ -39564,14 +39357,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "SIGTERM 정리 오케스트레이션"
                     },
@@ -39627,14 +39412,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "Overview 진입 흐름"
@@ -39772,14 +39549,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "SIGTERM 처리와 자식 정리",
                       "fontWeight": "600"
@@ -39842,14 +39611,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "리뷰: 종료 경로 회귀"
@@ -39975,14 +39736,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "CI 복구 시도",
                       "fontWeight": "600"
@@ -40044,14 +39797,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": true
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "어댑터 정리"
@@ -40196,14 +39941,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "체크아웃 기능 구현 및 정리"
                     },
@@ -40331,14 +40068,6 @@
                     },
                     "agb-row1-stopped": {
                       "enabled": false
-                    },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row1-title": {
                       "content": "agent-tab-groups"
@@ -40468,14 +40197,6 @@
                     "agb-row1-stopped": {
                       "enabled": false
                     },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
-                    },
                     "agb-row1-title": {
                       "content": "Lead"
                     },
@@ -40531,14 +40252,6 @@
                     },
                     "agb-row2-stopped": {
                       "enabled": false
-                    },
-                    "agb-row2-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-claude.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row2-title": {
                       "content": "명세 정리"
@@ -40665,14 +40378,6 @@
                     },
                     "agb-row1-stopped": {
                       "enabled": false
-                    },
-                    "agb-row1-provider": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
                     },
                     "agb-row1-title": {
                       "content": "Agent tab groups 구현"
@@ -41335,20 +41040,6 @@
                           "layout": "horizontal",
                           "justifyContent": "center",
                           "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ath-row-provider",
-                          "name": "Provider artwork",
-                          "children": [],
-                          "width": 14,
-                          "height": 14,
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "contain"
-                          }
                         },
                         {
                           "type": "text",
@@ -43401,7 +43092,7 @@
           "type": "text",
           "id": "cmp-hide-ai-origin-spec",
           "name": "web/src/AgentMark.tsx and th",
-          "content": "web/src/AgentMark.tsx and the Hide AI group of web/src/sidebar.tsx (PRD hide-ai-origin-mark D-03, D-04): Hide AI started the agent, a fact the core reads from the coordination record of the spawn. In a project's tree the checkouts Hide AI made gather behind the operator's under a head, the full Hide mark at the icon size, the name Hide AI and the number of checkouts; the head exists only while the project has one, and the rows inside carry no badge. Where a row stands alone (the sidebar's Needs You and Done, Sessions), the provider's icon wears an 11 badge on its lower-right corner, a plate in the panel's colour holding the 9 mark; a Tools column is a card, so its badge takes the card's colour. The work itself (Memory 올리기 · m72) is words on the row, never an icon, because Hide AI will start other work.",
+          "content": "web/src/AgentMark.tsx and the Hide AI group of web/src/sidebar.tsx (PRD hide-ai-origin-mark D-03, D-04, replaced by agent-mark-quiet D-04): Hide AI started the agent, a fact the core reads from the coordination record of the spawn. In a project's tree the checkouts Hide AI made gather behind the operator's under a head, the full Hide mark at the icon size, the name Hide AI and the number of checkouts; the head exists only while the project has one, and the rows inside carry no owl. Where a row stands alone (the sidebar's Needs You and Done, Sessions), the Hide owl stands beside the status mark in the place of the provider's logo, which no list row draws (PRD agent-mark-quiet D-01, D-04); a row the operator started has the status mark alone. The work itself (Memory 올리기 · m72) is words on the row, never an icon, because Hide AI will start other work.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -43470,62 +43161,19 @@
             },
             {
               "type": "frame",
-              "id": "hao-badged-icon",
-              "name": "Provider icon with Hide badge",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "hao-icon",
-                  "name": "Provider artwork",
-                  "children": [],
-                  "x": 0,
-                  "y": 0,
-                  "width": 16,
-                  "height": 16,
-                  "cornerRadius": "$--radius-xs",
-                  "fill": {
-                    "type": "image",
-                    "enabled": true,
-                    "url": "../web/src/assets/agent-claude.png",
-                    "mode": "contain"
-                  }
-                },
-                {
-                  "type": "frame",
-                  "id": "hao-badge",
-                  "name": "Hide badge",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "hao-badge-mark",
-                      "name": "Hide mark",
-                      "children": [],
-                      "width": 9,
-                      "height": 9,
-                      "cornerRadius": "$--radius-xs",
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/hide-mark.png",
-                        "mode": "contain"
-                      }
-                    }
-                  ],
-                  "x": 6,
-                  "y": 6,
-                  "width": 11,
-                  "height": 11,
-                  "cornerRadius": "$--radius-xs",
-                  "fill": "$--sidebar",
-                  "layout": "horizontal",
-                  "alignItems": "center",
-                  "justifyContent": "center"
-                }
-              ],
+              "id": "hao-owl",
+              "name": "Hide owl mark",
+              "children": [],
               "reusable": true,
-              "layout": "none",
               "width": 16,
-              "height": 16
+              "height": 16,
+              "cornerRadius": "$--radius-xs",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../web/src/assets/hide-mark.png",
+                "mode": "contain"
+              }
             }
           ],
           "layout": "horizontal",
@@ -43598,61 +43246,55 @@
             },
             {
               "type": "frame",
-              "id": "hao-l-badge-claude-cell",
-              "name": "Badge on Claude",
+              "id": "hao-l-alone-cell",
+              "name": "Row started by Hide AI",
               "children": [
                 {
                   "type": "text",
-                  "id": "hao-l-badge-claude-cap",
-                  "name": "Badge on Claude",
-                  "content": "Badge on Claude",
+                  "id": "hao-l-alone-cap",
+                  "name": "Row started by Hide AI",
+                  "content": "Row started by Hide AI",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
                   "fontWeight": "600"
                 },
                 {
-                  "id": "hao-l-badge-claude",
-                  "type": "ref",
-                  "ref": "hao-badged-icon",
-                  "name": "Provider icon with Hide badge"
-                }
-              ],
-              "layout": "vertical",
-              "gap": "$--spacing-xs",
-              "alignItems": "start",
-              "width": "fit_content"
-            },
-            {
-              "type": "frame",
-              "id": "hao-l-badge-codex-cell",
-              "name": "Badge on Codex",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "hao-l-badge-codex-cap",
-                  "name": "Badge on Codex",
-                  "content": "Badge on Codex",
-                  "fill": "$--muted-foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "600"
-                },
-                {
-                  "id": "hao-l-badge-codex",
-                  "type": "ref",
-                  "ref": "hao-badged-icon",
-                  "name": "Provider icon with Hide badge",
-                  "descendants": {
-                    "hao-icon": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
+                  "type": "frame",
+                  "id": "hao-l-alone-panel",
+                  "name": "Lead",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hao-l-alone-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-l-alone-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "hao-l-alone-owl",
+                      "type": "ref",
+                      "ref": "hao-owl",
+                      "name": "Hide owl mark"
                     }
-                  }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "width": "fit_content"
                 }
               ],
               "layout": "vertical",
@@ -43662,14 +43304,66 @@
             },
             {
               "type": "frame",
-              "id": "hao-l-on-card",
-              "name": "Badge on a card panel",
+              "id": "hao-l-operator-cell",
+              "name": "Row the operator started",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-l-operator-cap",
+                  "name": "Row the operator started",
+                  "content": "Row the operator started",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "hao-l-operator-panel",
+                  "name": "Lead",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hao-l-operator-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-l-operator-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-l-on-card-cell",
+              "name": "Row started by Hide AI (Sessions)",
               "children": [
                 {
                   "type": "text",
                   "id": "hao-l-on-card-cap",
-                  "name": "Badge on a card panel (Sessi",
-                  "content": "Badge on a card panel (Sessions)",
+                  "name": "Row started by Hide AI (Sess",
+                  "content": "Row started by Hide AI (Sessions)",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -43681,18 +43375,35 @@
                   "name": "Card panel",
                   "children": [
                     {
-                      "id": "hao-l-badge-card",
-                      "type": "ref",
-                      "ref": "hao-badged-icon",
-                      "name": "Provider icon with Hide badge",
-                      "descendants": {
-                        "hao-badge": {
-                          "fill": "$--card"
+                      "type": "frame",
+                      "id": "hao-l-on-card-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-l-on-card-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
                         }
-                      }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "hao-l-on-card-owl",
+                      "type": "ref",
+                      "ref": "hao-owl",
+                      "name": "Hide owl mark"
                     }
                   ],
                   "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
                   "padding": "$--spacing-sm",
                   "fill": "$--card",
                   "cornerRadius": "$--radius-sm",
@@ -43782,61 +43493,55 @@
             },
             {
               "type": "frame",
-              "id": "hao-d-badge-claude-cell",
-              "name": "Badge on Claude",
+              "id": "hao-d-alone-cell",
+              "name": "Row started by Hide AI",
               "children": [
                 {
                   "type": "text",
-                  "id": "hao-d-badge-claude-cap",
-                  "name": "Badge on Claude",
-                  "content": "Badge on Claude",
+                  "id": "hao-d-alone-cap",
+                  "name": "Row started by Hide AI",
+                  "content": "Row started by Hide AI",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
                   "fontWeight": "600"
                 },
                 {
-                  "id": "hao-d-badge-claude",
-                  "type": "ref",
-                  "ref": "hao-badged-icon",
-                  "name": "Provider icon with Hide badge"
-                }
-              ],
-              "layout": "vertical",
-              "gap": "$--spacing-xs",
-              "alignItems": "start",
-              "width": "fit_content"
-            },
-            {
-              "type": "frame",
-              "id": "hao-d-badge-codex-cell",
-              "name": "Badge on Codex",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "hao-d-badge-codex-cap",
-                  "name": "Badge on Codex",
-                  "content": "Badge on Codex",
-                  "fill": "$--muted-foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "600"
-                },
-                {
-                  "id": "hao-d-badge-codex",
-                  "type": "ref",
-                  "ref": "hao-badged-icon",
-                  "name": "Provider icon with Hide badge",
-                  "descendants": {
-                    "hao-icon": {
-                      "fill": {
-                        "type": "image",
-                        "enabled": true,
-                        "url": "../web/src/assets/agent-codex.png",
-                        "mode": "contain"
-                      }
+                  "type": "frame",
+                  "id": "hao-d-alone-panel",
+                  "name": "Lead",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hao-d-alone-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-d-alone-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "hao-d-alone-owl",
+                      "type": "ref",
+                      "ref": "hao-owl",
+                      "name": "Hide owl mark"
                     }
-                  }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "width": "fit_content"
                 }
               ],
               "layout": "vertical",
@@ -43846,14 +43551,66 @@
             },
             {
               "type": "frame",
-              "id": "hao-d-on-card",
-              "name": "Badge on a card panel",
+              "id": "hao-d-operator-cell",
+              "name": "Row the operator started",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hao-d-operator-cap",
+                  "name": "Row the operator started",
+                  "content": "Row the operator started",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "hao-d-operator-panel",
+                  "name": "Lead",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hao-d-operator-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-d-operator-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "width": "fit_content"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "hao-d-on-card-cell",
+              "name": "Row started by Hide AI (Sessions)",
               "children": [
                 {
                   "type": "text",
                   "id": "hao-d-on-card-cap",
-                  "name": "Badge on a card panel (Sessi",
-                  "content": "Badge on a card panel (Sessions)",
+                  "name": "Row started by Hide AI (Sess",
+                  "content": "Row started by Hide AI (Sessions)",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -43865,18 +43622,35 @@
                   "name": "Card panel",
                   "children": [
                     {
-                      "id": "hao-d-badge-card",
-                      "type": "ref",
-                      "ref": "hao-badged-icon",
-                      "name": "Provider icon with Hide badge",
-                      "descendants": {
-                        "hao-badge": {
-                          "fill": "$--card"
+                      "type": "frame",
+                      "id": "hao-d-on-card-status",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "hao-d-on-card-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
                         }
-                      }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "id": "hao-d-on-card-owl",
+                      "type": "ref",
+                      "ref": "hao-owl",
+                      "name": "Hide owl mark"
                     }
                   ],
                   "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
                   "padding": "$--spacing-sm",
                   "fill": "$--card",
                   "cornerRadius": "$--radius-sm",
@@ -61189,14 +60963,6 @@
     "--size-status-copy": {
       "type": "number",
       "value": 460
-    },
-    "--size-hide-badge": {
-      "type": "number",
-      "value": 11
-    },
-    "--size-hide-badge-mark": {
-      "type": "number",
-      "value": 9
     },
     "--size-settings-nav-w": {
       "type": "number",

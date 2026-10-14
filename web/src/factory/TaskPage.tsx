@@ -5,7 +5,7 @@ import { Elapsed, useRemaining } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { agentAdapter } from "../agentAdapters";
+import { agentProductName } from "../agentAdapters";
 import { MarkdownText } from "../MarkdownText";
 import { Hint } from "../components/ui/tooltip";
 import { useInterfaceTranslation } from "../i18n/client";
@@ -764,7 +764,7 @@ function StopLine({ detail }: { detail: TaskDetail }) {
 
 /** A candidate as one line: agent · model · effort, the CLI's own default where none is set. */
 function candidateText(candidate: Pick<WorkerCandidate, "agent" | "model" | "effort" | "description">, cliDefault: string): string {
-  const label = agentAdapter(candidate.agent)?.label ?? candidate.agent;
+  const label = agentProductName(candidate.agent);
   const parts = [label, candidate.model, candidate.effort].filter((part): part is string => !!part);
   return parts.length > 1 ? parts.join(" · ") : `${label} · ${cliDefault}`;
 }
