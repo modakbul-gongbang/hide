@@ -71,7 +71,9 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     const panel = page.locator("[data-session-panel]");
     const childRow = (pane: string) => panel.locator(`[data-session-child="${pane}"]`);
     const open = (pane: string) => panel.locator(`[data-session-chevron="${pane}"]`).click();
-    await expect(panel.locator(`[data-session-row="${root}"] [data-descendant-mark="working"]`)).toContainText("4", { timeout: 30_000 });
+    // Four working descendants draw no `● N`: the root's row stands alone until it is opened.
+    await expect(panel.locator(`[data-session-row="${root}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(panel.locator(`[data-session-row="${root}"] [data-descendant-mark]`)).toHaveCount(0);
 
     // Each chevron opens one more level; nothing below a closed row is drawn.
     await open(root);

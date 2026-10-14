@@ -107,7 +107,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect.poll(() => last.get("request_view")?.observing).toBe(true);
     expect(last.get("ui_state_update")?.right_panel_section).not.toBe("sessions");
     const children = panel.locator(`[data-session-chevron="${parent}"]`);
-    await expect(row(parent).locator('[data-descendant-mark="working"]')).toContainText("1");
+    await expect(row(parent).locator('[data-descendant-mark]')).toHaveCount(0);
     await children.click();
     await expect(panel.locator(`[data-session-child="${child}"]`)).toContainText("하위 작업 검증");
     expect(await rightEdge(panel.locator(`[data-session-child="${child}"] [data-resolve-slot]`))).toBe(await rightEdge(row(parent).locator("[data-session-resolve]")));
