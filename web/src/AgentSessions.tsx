@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon, GitBranchIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -17,7 +17,8 @@ import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
 import type { LensAgent } from "./overviewLens";
-import { checkoutPathOfPane, childBranch, sessionTreeLines } from "./sessionTree";
+import { checkoutPathOfPane, sessionTreeLines } from "./sessionTree";
+import { sessionPulls, type SessionPull } from "./prMark";
 import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
 import type { AgentRow, SessionGroup } from "./snapshot";
@@ -101,7 +102,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
   // the operator scrolled stays where they left it.
   const list = useRef<HTMLDivElement>(null);
   const revealed = useRef<string | null>(null);
-  // The whole row is brought in, both lines, not only the title's button.
+  // The whole row is brought in, including its detail lines, not only the title's button.
   useLayoutEffect(() => {
     const row = list.current?.querySelector<HTMLElement>('[data-selected="true"]');
     if (selected === null || selected === revealed.current || !list.current || !row) return;
@@ -162,9 +163,10 @@ function sessionMember(model: SessionsModel, member: number): LensAgent {
 /** A Sessions root and, through every opened row, its descendants as tree rows. */
 function SessionTree({ row, lines, model, actions, byPane, opened, selected, onShowAll }: { row: LensAgent; lines: SidebarTreeLine[]; model: SessionsModel; actions: Actions; byPane: ReadonlyMap<string, AgentRow>; opened: ReadonlySet<string>; selected: string | null; onShowAll: (parent: string) => void }) {
   const { agent } = row;
+  const family = useMemo(() => childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined, [agent, byPane]);
   const openOf = (of: AgentRow) => (childrenOf(of, byPane).length > 0 ? opened.has(of.pane_id) : null);
   return <>
-    <SessionRow row={row} model={model} actions={actions} open={openOf(agent)} selected={selected === agent.pane_id} />
+    <SessionRow row={row} family={family} model={model} actions={actions} open={openOf(agent)} selected={selected === agent.pane_id} />
     {lines.slice(1).map((line) => {
       if (line.kind === "more") return <TreeMoreRow key={`more:${line.parent}`} line={line} onShowAll={onShowAll} />;
       const child = line.row.agent;
@@ -174,10 +176,10 @@ function SessionTree({ row, lines, model, actions, byPane, opened, selected, onS
   </>;
 }
 
-const SessionRow = memo(function SessionRow({ row, model, actions, open, selected }: { row: LensAgent; model: SessionsModel; actions: Actions; open: boolean | null; selected: boolean }) {
+const SessionRow = memo(function SessionRow({ row, family, model, actions, open, selected }: { row: LensAgent; family?: SessionPull[]; model: SessionsModel; actions: Actions; open: boolean | null; selected: boolean }) {
   const { t } = useInterfaceTranslation();
   const { agent, project } = row;
-  const staleness = useAgentStaleness(agent);
+  const staleness = useAgentStaleness(agent, family);
   const session = agent.state.session;
   const needsYou = session.group === "needs_you";
   const open_ = () => { if (model.available) actions.openAgent(agent.pane_id); };
@@ -198,7 +200,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
           <AgentForkMark agent={agent} />
         </button>
         {needsYou || open ? null : <DescendantMark agent={agent} />}
-        {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
+        {needsYou ? null : <AgentPrMark agent={agent} family={family} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
         <RecordActions agent={agent} workspace={project.id} actions={actions} expanded={open === true} />
         {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : <ResolveLane />}
@@ -210,8 +212,8 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
 
 /**
  * An opened row's descendant at any depth: the same tree row with its own
- * chevron, PR and, while folded, its descendant mark; the second line starts
- * with the branch when it works in another checkout than its parent.
+ * chevron, own PR and, while folded, its descendant mark; a different checkout's
+ * branch is separate from the progress or ask line.
  */
 function ChildRow({ parent, child, depth, model, actions, place, open, selected, workspace }: { parent: AgentRow; child: AgentRow; depth: number; model: SessionsModel; actions: Actions; place: TreePlace; open: boolean | null; selected: boolean; workspace: string }) {
   const { t } = useInterfaceTranslation();
@@ -241,7 +243,8 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         <RecordActions agent={child} workspace={workspace} actions={actions} expanded={open === true} />
         <ResolveLane />
       </div>
-      <SecondLine agent={child} branch />
+      <SecondLine agent={child} />
+      {child.state.branch_badge ? <BranchLine agent={child} branch={child.state.branch_badge} /> : null}
     </div>
   </li>;
 }
@@ -285,32 +288,31 @@ function TreeMoreRow({ line, onShowAll }: { line: Extract<SidebarTreeLine, { kin
 }
 
 /**
- * B31: the ask for Needs You, else the core's line; a block's line is its
- * cause. A child in another checkout than its parent starts the line with
- * that branch, which keeps at most two fifths of the line for the label.
+ * B31: the ask for Needs You, else the core's line; a block's line is its cause.
  */
-function SecondLine({ agent, branch: withBranch = false }: { agent: AgentRow; branch?: boolean }) {
+function SecondLine({ agent }: { agent: AgentRow }) {
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
-  const branch = withBranch ? childBranch(agent) : null;
-  if (ask && !branch) return <div className="flex min-w-0 text-micro" data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
-  if (!session.line && !ask && !branch) return null;
+  if (ask) return <div className={cn(DETAIL_INDENT, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
+  if (!session.line) return null;
   const blocked = agent.status_code === "error";
-  return <div className={cn("flex min-w-0 gap-xs text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={ask ? "ask" : blocked ? "blocked" : session.unfinished ? "unfinished" : session.line ? "label" : "branch"}>
-    {branch ? <BranchText agent={agent} branch={branch} alone={!ask && !session.line} /> : null}
-    {ask ? <AskLine ask={ask} className="min-w-0 flex-1" /> : session.line ? <span className="min-w-0 truncate" title={session.line}>{session.line}</span> : null}
+  return <div className={cn(DETAIL_INDENT, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
+    <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
   </div>;
 }
 
 /**
- * The child's branch, dim mono, cut with … past two fifths of the line when a
- * label follows and at the line's end when it stands alone; the whole branch
- * and path in its tooltip.
+ * The branch has its own metadata line, aligned with the task's title. Its
+ * glyph and mono text distinguish it from progress; the tooltip retains its path.
  */
-function BranchText({ agent, branch, alone }: { agent: AgentRow; branch: string; alone: boolean }) {
+const DETAIL_INDENT = "pl-[calc(var(--size-agent-mark)+var(--size-agent-badge-compact)+2*var(--spacing-xs))]";
+
+function BranchLine({ agent, branch }: { agent: AgentRow; branch: string }) {
   const path = useShellStore((state) => checkoutPathOfPane(state.rest, agent.pane_id));
-  return <span className={cn("truncate font-mono text-muted-foreground", alone ? "min-w-0" : "max-w-2/5 shrink-0")} data-session-branch={agent.pane_id}
-    title={[agent.state.branch_badge, path].filter(Boolean).join("\n")}>{branch}</span>;
+  return <div className={cn(DETAIL_INDENT, "flex min-w-0 items-center gap-xs text-micro text-muted-foreground")}>
+    <GitBranchIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+    <span className="min-w-0 truncate font-mono" data-session-branch={agent.pane_id} title={[branch, path].filter(Boolean).join("\n")}>{branch}</span>
+  </div>;
 }
 
 /** Right opens a row's children and Left folds them (B15); Up and Down move through the list. */

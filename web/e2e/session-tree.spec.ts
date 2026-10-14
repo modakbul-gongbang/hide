@@ -88,11 +88,11 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await expect(childRow(deeper).locator("[data-tree-pass]")).toHaveCount(1);
     await expect(childRow(deep).locator("[data-tree-elbow]")).toHaveCount(1);
 
-    // A branch only where the checkout differs from the parent's, without its `prd/` or `fix/`.
-    await expect(childRow(child).locator(`[data-session-branch="${child}"]`)).toHaveText("child");
+    // A shows the full branch only where the checkout differs from the parent's.
+    await expect(childRow(child).locator(`[data-session-branch="${child}"]`)).toHaveText("prd/child");
     await expect(childRow(child).locator(`[data-session-branch="${child}"]`)).toHaveAttribute("title", new RegExp(`^prd/child\\n.*repo-child$`));
     await expect(childRow(grandchild).locator("[data-session-branch]")).toHaveCount(0);
-    await expect(childRow(deep).locator(`[data-session-branch="${deep}"]`)).toHaveText("deep-fixture");
+    await expect(childRow(deep).locator(`[data-session-branch="${deep}"]`)).toHaveText("fix/deep-fixture");
     await expect(childRow(deeper).locator("[data-session-branch]")).toHaveCount(0);
     // Branch, label and facts stay inside each row, with no part over another.
     expect(await measure(page)).toEqual({ partProblems: [], rowsFit: [], overflow: [] });

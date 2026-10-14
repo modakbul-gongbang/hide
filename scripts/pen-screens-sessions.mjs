@@ -3,7 +3,9 @@
 // existing System masters supplied by pen-screens, and the verb, descendant
 // mark, tree button and PR mark are refs of Component / Agent tree parts.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
+import {num} from './pen-system.mjs';
 export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton}) {
+  const detailIndent = num(tokens, '--size-agent-mark') + num(tokens, '--size-agent-badge-compact') + 2 * num(tokens, '--spacing-xs');
   const caption = (id, value, fill = '$--muted-foreground', extra = {}) => text(id, value, {size:'$--text-caption', fill, ...extra});
   const verb = (id, word) => themedXref(id, 'ath-verb', word, {}, {'ath-verb-t': {content: word}});
   const descendantMark = (id, kind, count) => themedXref(id, 'ath-mark', 'Descendant mark', {}, {
@@ -12,22 +14,23 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   });
   const provider = (id, kind = 'claude') => frame(id, 'Provider', {width:14,height:14,fill:{type:'image',enabled:true,url:`../web/src/assets/agent-${kind}.png`,mode:'contain'}}, []);
   // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, the number, and `+N` for several (B22).
-  const prChip = (id, {number, state, more = 0}) => {
+  const prChip = (id, {number, count, state, more = 0}) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `${number}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, count === undefined ? `PR #${number}` : `PR ${count}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: count === undefined ? `${number}` : `PR ${count}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
   };
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
   // A Sessions row (B30, B31): mark, provider, title, the folded descendant
-  // mark, own PR mark and the age; the second line is the ask for Needs You and
+  // mark, PR mark and the age; a parent counts the distinct PRs in its tree.
+  // The second line is the ask for Needs You and
   // otherwise the label line, absent when there is none. A child row steps one
   // indent per level down to the third (`rails` says which ancestor levels run
   // on past it); a deeper one (`chain`) keeps the third level's column and
   // hangs from its parent's chevron lane. A child in another checkout than its
-  // parent starts its second line with the branch in dim mono.
+  // parent has a separate branch metadata line, below its progress or ask.
   const RAIL = '$--lineage-rail';
   const rail = (id, x, y, width, height) => frame(id, 'Rail', {x, y, width, height, fill: RAIL}, []);
-  const rowHeight = spec => (spec.ask || spec.line || spec.branch) ? 46 : 28;
+  const rowHeight = spec => 28 + (spec.ask || spec.line ? 18 : 0) + (spec.branch ? 18 : 0);
   const columns = (id, spec) => {
     if (!spec.depth) return [];
     const height = rowHeight(spec);
@@ -59,11 +62,12 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
         caption(`${id}-age`, spec.age ?? '3m', '$--muted-foreground', {mono:true}),
       ]),
-      ...(spec.ask ? [frame(`${id}-ask`, 'Ask', {width:'fill_container',layout:'horizontal',gap:6,alignItems:'center'}, [verb(`${id}-verb`, spec.ask[0]), caption(`${id}-what`, spec.ask[1], '$--warning')])]
-        : spec.line || spec.branch ? [frame(`${id}-two`, 'Line two', {width:'fill_container',layout:'horizontal',gap:6,alignItems:'center'}, [
-          ...(spec.branch ? [text(`${id}-branch`, spec.branch, {size:'$--text-micro', fill:'$--muted-foreground', mono:true})] : []),
-          ...(spec.line ? [caption(`${id}-line`, spec.line, '$--subtle-foreground')] : []),
-        ])] : []),
+      ...(spec.ask ? [frame(`${id}-ask`, 'Ask', {width:'fill_container',height:16,layout:'horizontal',gap:4,padding:[0,0,0,detailIndent],alignItems:'center'}, [verb(`${id}-verb`, spec.ask[0]), text(`${id}-what`, spec.ask[1], {size:'$--text-micro', fill:'$--warning', width:'fill_container'})])]
+        : spec.line ? [frame(`${id}-two`, 'Progress', {width:'fill_container',height:16,layout:'horizontal',padding:[0,0,0,detailIndent],alignItems:'center'}, [text(`${id}-line`, spec.line, {size:'$--text-micro', fill:'$--subtle-foreground', width:'fill_container'})])] : []),
+      ...(spec.branch ? [frame(`${id}-metadata`, 'Branch metadata', {width:'fill_container',height:16,layout:'horizontal',gap:4,padding:[0,0,0,detailIndent],alignItems:'center'}, [
+        icon(`${id}-branch-g`, 'git-branch', {size:12,fill:'$--muted-foreground'}),
+        text(`${id}-branch`, spec.branch, {size:'$--text-micro', fill:'$--muted-foreground', mono:true, width:'fill_container'}),
+      ])] : []),
     ]),
   ]);
   function panel(suffix, width=420, id=`sfu-panel-${suffix}`) {
@@ -88,10 +92,10 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       ]),
       group('working','Working',[
         {title:'공통 후보 전체 검증과 PR 제출',provider:'codex',open:false,desc:['working',1],pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
-        {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,age:'2m',line:'4단계 리뷰 지적 수정 중'},
-        {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
+        {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{count:1,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
+        {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'feat/core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
         {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
-        {title:'fixture 정리',depth:3,rails:[true,false],last:true,open:true,age:'40s',branch:'e2e-fixture-home-isol…',line:'HOME 격리 옮기는 중'},
+        {title:'fixture 정리',depth:3,rails:[true,false],last:true,open:true,age:'40s',branch:'fix/e2e-fixture-home-isolation',line:'HOME 격리 옮기는 중'},
         {title:'로그 확인',depth:4,rails:[true,false],chain:{pass:false,on:false},mark:'○',tone:'$--muted-foreground',age:'5m',selected:true},
         {title:'사전 리뷰',depth:1,last:true,mark:'○',tone:'$--muted-foreground',age:'40m',branch:'layer5'},
         {title:'에이전트 패널 표시 규칙과 UI 구조 정리안',age:'38s',line:'Sessions 분류 리뷰 3건을 v3에 반영 중'},

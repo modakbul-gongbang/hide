@@ -30,19 +30,6 @@ export function sessionTreeLines(root: AgentRow, byPane: ReadonlyMap<string, Age
   return sidebarTreeLines(rows, shownAll, (depths) => cappedPlaces(depths, SESSION_INDENT_LEVELS));
 }
 
-/**
- * The branch a child row names: the core's badge (only on a child whose
- * checkout differs from its parent's), without the part up to the first `/`
- * (`fix/`, `feat/`), which every branch of a kind shares.
- */
-export function childBranch(agent: Pick<AgentRow, "state">): string | null {
-  const branch = agent.state.branch_badge;
-  if (!branch) return null;
-  const slash = branch.indexOf("/");
-  const rest = slash >= 0 ? branch.slice(slash + 1) : branch;
-  return rest || branch;
-}
-
 /** The path of the checkout whose tab holds `pane`, for the branch's tooltip. */
 export function checkoutPathOfPane(rest: SnapshotRest | null, pane: string): string | null {
   for (const workspace of catalogWorkspaces(rest)) {

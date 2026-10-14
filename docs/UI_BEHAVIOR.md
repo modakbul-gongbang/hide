@@ -692,22 +692,30 @@ Delegated children and Factory workers are not Sessions rows of their own.
 Resolved holds work resolved in the last 24 hours, by the operator or automatically once the agent stopped with no demand and every PR it held merged or closed.
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
 
-A row's first line is its mark, provider, title, descendant mark while its tree is closed, own PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
+A row's first line is its mark, provider, title, descendant mark while its tree is closed, PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
 A fork's row, here and in the sidebar, wears the fork mark right after its title, before the PR mark: the fork icon whose tooltip reads `Forked from <source>` or `Forked from another pane`, the same words the row's accessible name adds after the title (PRD fork-operator-root B8; `web/src/components/fork-mark.tsx`).
 A fork is a root row of its own, never a child under its source; ⌘K, the Agents graph, the Overview lenses and the phone draw no fork mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
-The PR mark shows one PR as its state's icon and number, and several as the worst PR's (`924 +1`); a closed PR is not counted, and each row, a child included, dims while the GitHub read behind its own PRs is stale, with that read's last time in the tooltip.
-Pressing the mark lists each PR with its mark and title, worst first, and choosing one opens the existing PR panel.
+The PR mark on a child or a root without descendants shows one own PR as its state's icon and number, and several as the worst PR's (`924 +1`).
+A root with descendants instead shows the worst state's icon and `PR N`, counting distinct PR URLs held by itself and every descendant, including folded trees and siblings behind `N개 더`.
+The core's own PR projection decides which PRs count; a closed PR is not counted.
+Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
+Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
+Each item's mark has an accessible name for its state in the interface language, so the state is readable without its colour.
+Equal PR numbers in different repositories stay separate.
+Choosing an entry opens the existing PR panel in the project that holds its URL, or the existing URL fallback when the catalog has no match.
 The core verb ladder, read rules and PR summary are owned by [status-model.md](status-model.md#the-sessions-tool).
 Reading an AI question removes its Answer and Needs You attention; an active menu or plan approval stays until answered.
-A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and Sessions has no popover.
+A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and the tree itself opens inline.
 Five siblings show per parent and the rest wait behind `N개 더`, as in the sidebar (`web/src/sidebarTree.ts`).
 A child steps one indent right of its parent down to the third level below the root; deeper rows stay in the third level's column and hang from their parent's chevron lane, whose rail runs down through them, so a narrow Tools column keeps room for titles (`web/src/sessionTree.ts`).
 A child row has the root's first line without the Resolve button, and the same second line.
-When the child works in another checkout than its parent, that line starts with the checkout's branch (the core's `branch_badge`, the name the sidebar gives the checkout) in dim mono, without the part up to the first `/` (`fix/`, `feat/`), cut with `…` past two fifths of the line when a label follows and at the line's end when it stands alone, with the whole branch and the checkout's path in its tooltip; the label takes the rest of the line and is cut with `…`.
-A child in its parent's checkout carries no branch, an Idle child with no label line and a branch has a second line with the branch alone, and a root row carries none.
+When the child works in another checkout than its parent, a separate metadata line below its progress or ask shows a branch glyph and the checkout's full branch (the core's `branch_badge`) in dim mono.
+The branch is cut with `…` at the line's end, with the whole branch and the checkout's path in its tooltip; the progress line has its own width and ellipsis.
+Progress, ask and branch metadata align with the task's title column.
+A child in its parent's checkout carries no branch, an Idle child with no label line has only the branch metadata below its title, and a root row carries none.
 A child's title is quiet (subtle) unless it asks or is selected, by the sidebar's title rule; a root's title is not.
 While a Workspace is in front, the row standing for its focused pane is selected as in the sidebar: the focused pane's row, or, when a closed tree or `N개 더` hides it, the nearest ancestor row the panel draws, with the sidebar's selected fill and `aria-current`; nothing opens by itself, and a root hidden in the folded Resolved has no selected row.
 An agent is drawn once in Sessions: a raised child's ask rides its root's row, and the child's own row, where its root's tree is open, is the one selected.
