@@ -122,14 +122,16 @@ test("the answer to a click on the focused pane leaves the keys where the operat
     const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
     await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
+    await expect(keys).toBeFocused();
     await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(sidebarHasKeys).toBe(true);
 
     // A click back into the pane that is already focused is still a click the
     // core answers; the operator leaves for the sidebar before the answer lands.
     net.hold();
-    const box = (await pane.boundingBox())!;
-    await page.mouse.click(box.x + 100, box.y + 100);
+    // The focused checkout's interactive card can cover a fixed offset.
+    // Target the terminal itself so the single click reaches its screen.
+    await pane.locator(".xterm-screen").click();
     await expect(keys).toBeFocused();
     await expect.poll(() => net.sent().length).toBe(1);
     await expect.poll(() => net.includes(1)).toBeGreaterThan(0);

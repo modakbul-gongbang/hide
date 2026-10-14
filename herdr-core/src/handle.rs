@@ -111,7 +111,11 @@ impl Drop for Core {
         }
         // A kit step running on this machine's node ends the child it waits
         // on, so the kit worker below is joined without waiting it out.
+        if let Some(kit) = self._kit.as_ref() {
+            kit.stop();
+        }
         self.own_node.close("core stopping");
+        self._kit.take();
         self._usage_ledger.take();
         self._session_search.take();
         self._links.take();

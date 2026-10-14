@@ -35,6 +35,17 @@ The save workers' pending flags bound the number of pending saves, not the byte 
 `Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).
 Before adding resident work, use the [tick/timer/watcher ledger and cost review](PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers).
 
+### Sidebar tab disclosure
+
+`TabSnapshot.sidebar` serializes the existing `TabNaming` as a manual name and stable tab number, using the same automatic-number convention as the tabbar.
+The automatic task label remains the tabbar's own projection; the shell never guesses a sidebar name from that label.
+The core admits one `sidebar_tab_expanded` event against the connected device's current checkout/tab membership before saving `ui_state.sidebar_collapsed_tabs`.
+Its structured device, checkout and tab keys are idempotent, bounded by admitted live tabs, and pruned after accepted topology removes or reassigns a tab; disconnected or failed observations preserve the last live choices.
+Removing a device retires its keys, while unrelated UI-state updates cannot replace them.
+The shell derives groups and physical agent counts from the snapshot and keeps a root's complete subtree under that root's tab, even for cross-tab or cross-device children.
+Only disclosure writes state; typing and terminal echo add no event, I/O, timer or subprocess for this feature.
+Local and remote session reconciliation prune only saved choices for the device they just observed, and normal snapshot publication carries the resulting UI transition.
+
 ## The core, the shell and Herdr
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
@@ -360,6 +371,9 @@ A refusal or timeout keeps the core-owned context at the requested target, recor
 A non-focused workspace's active tab is that workspace's memory, never a focus to follow: folding every workspace's active tab into one value per checkout let the last one overwrite the rest, and every tab focus on the other workspace timed out and snapped back.
 Herdr moves that memory silently: a close that removes a workspace's active tab is followed by `tab_focused` only when the workspace holds Herdr's keyboard focus, and by nothing at all otherwise.
 The replica therefore asks `workspace.get` for the replacement the moment such a close is applied and on each operation tick while the answer names a tab the stream has not delivered yet; a workspace still waiting after a bounded number of reads is a replica that cannot converge, and it is rebuilt from a fresh snapshot.
+If the close retired the focused pane, the replica restores it from the confirmed layout of the focused workspace's replacement active tab before publication, whether `tab_focused` or `workspace.get` confirmed that tab.
+Herdr can leave that tab's layout unchanged and emit no pane focus, so waiting for another layout would publish a remote session with no focused checkout and send the shell to Overview despite surviving tabs.
+An unconfirmed replacement or layout keeps the previous projection, and a background workspace's layout or replacement never takes a surviving global pane focus.
 Waiting for the focus event alone froze the whole workspace's projection, so a closed pane stayed drawn as `closing…` for three to five seconds, until the operator's next tab focus or the close deadline's status check.
 The focused checkout always draws the tab that holds the selected pane: a tab action moves the pane into the tab, and a pane action, a restore, or a retirement moves the tab to the pane (`align_visible_tab_with_selected_pane`).
 A retired selection lands, in order, in the tab it was in, in the tab the same session pass has the checkout showing, and only then where Herdr's keyboard is, because Herdr's keyboard can sit in another Agent area.
@@ -380,6 +394,8 @@ A refused, failed or unknown operation drops the waiting operations behind it, b
 A tab creation, split, zoom, resize or pane close Hide asked for reaches the screen before Herdr confirms it (PRD instant-pane-topology D-07): Herdr's answer takes tens of milliseconds, but its layout event arrives hundreds of milliseconds later.
 The prediction is drawn onto the session payload after every confirmation has read Herdr's own layout (`runtime/drawn_ahead.rs`), so the operation records, the close pipeline and the focus readback judge Herdr's layout and never their own drawing.
 A zoom, a resize and a close are drawn at the request; a split and a created tab are drawn at the answer, because only the answer names the new pane, and a created tab waits for its pane's layout as a one-pane tab of the checkout's owner workspace (at most `PROVISIONAL_TAB_LIMIT`, each dropped at the close stage timeout).
+Opening an owner can acknowledge the new tab before its workspace is known; the same bounded provisional record holds that creation without inventing a workspace or treating its missing layout as a retired pane.
+Herdr's layout, the existing timeout or connection loss ends that provisional record.
 Geometry is laid out with the same split arithmetic that projects Herdr's layouts (`pane_prediction.rs`), so the confirmed layout replaces the drawn one without a jump when they agree; when they do not, Herdr's wins and `pane.prediction_mismatch` records both shapes.
 A close is drawn on the canvas only: the closing pane keeps its sidebar row, session and read state until Herdr confirms the close.
 Whether a close waits in its tab's line is Herdr's layout's answer, not the drawing's: once a close draws its sibling gone, a ⌘W on the pane left drawn alone still closes one of two panes in Herdr's tab, so it waits behind the close ahead instead of meeting it in progress, stays drawn until it runs, and leaves with its tab.
@@ -620,6 +636,9 @@ Every shown Agent tab stays attached; recently shown tabs fill the remaining ret
 The total is `max(ATTACHED_TAB_LIMIT, shown_count)`, at most six tabs, so an unseen attach never displaces a shown tab.
 Herdr renders a pane for every attached client, so the core releases tabs outside that bounded set through the ordinary session drop.
 A released pane keeps its projection entry carrying `released`; the shell disposes its terminal and redraws from Herdr's frame on the next visit.
+Terminal metadata belongs to each session pane, independently of which pane is selected.
+An acknowledged new tab awaiting its layout, or a selected pane that retired, cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+The attach window continues to release its oldest tab normally, and returning to an evicted tab restores its PTY content with a new renderer.
 The idle tick attaches every shown tab's panes, while focus, read and sleep-visit state follow only the active area's tab.
 All shown tabs count as on screen for sleep prevention.
 
@@ -1358,6 +1377,9 @@ A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a deb
 The node's terminal service spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
 A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it binds, and `hide connect` refuses the same value as `start_failed` before spawning one: Herdr hands every pane the path its server started from, that path dies when the app bundle is replaced under a running server, and a daemon that came up on it would answer healthy and then fail every pane attach one by one (`env::herdr_bin_error`).
 The web shell holds no UI authority: it draws the snapshot, writes the hub's terminal frames straight into xterm.js, and sends one event per operator action.
+Each terminal instance owns its one WebGL addon and context-loss subscription through `web/src/terminalRenderer.ts`, including while parked.
+The pinned addon's own transient-restoration window runs first; persistent loss or failed activation disposes the addon and leaves the same Terminal, buffer, selection and grid on xterm's normal renderer.
+Disposal removes the subscription before the addon and precedes terminal destruction; fallback starts no retry, attach, resize or additional work per key or output chunk.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
 
 ### The daemon lives with its Herdr
@@ -1393,9 +1415,12 @@ A folder `HIDE_STATE_DIR` or `XDG_STATE_HOME` chose is never moved (D-04).
 
 With no window attached the daemon does only the work that keeps labels current (D-20, B29).
 `hided` counts web and desktop renderers, tells the core `ui_attached` when the first arrives and when the last leaves (under one lock, so two windows arriving together cannot leave the core told the opposite of the final count), and refuses `ui_attached` from a client, because a window that sent it would pause the readers every other window draws.
-While none is attached the session-sync coordinator rests the readers that only feed what a window draws: foreground processes, provider usage, the hook diagnosis, ports, worktrees, GitHub and disk, and the Background AI probe.
+While none is attached the session-sync coordinator rests the readers that only feed what a window draws: foreground processes, provider usage, ports, worktrees, GitHub and disk, and the Background AI probe.
 Label work, which runs on the coordinator's own wakes, goes on, and the root follower skips its snapshot reads while no client is connected and catches up with one read when the next client arrives (`RootFollower::resume`).
 The readers resume on the coordinator's next wake after a window attaches.
+Local hook diagnosis belongs to the existing kit pump, not the session coordinator: one startup read, another after a successful apply, and a refresh due one second after completion while a window observes Settings.
+The pump serializes diagnosis and installation on its existing worker, keeps one next-read deadline instead of a tick queue, and publishes only changed answers after releasing Runtime.
+Core shutdown stops pump admission before closing its fixed node, rejects replies from that retiring owner and joins the pump outside Runtime.
 `hided/tests/it/connect_build.rs` and `hided/tests/it/handshake.rs` (`the_daemon_outlives_the_idle_window_while_its_herdr_answers`, `the_daemon_exits_after_the_idle_window_when_its_herdr_is_gone`, `a_window_cannot_say_whether_windows_are_attached`) own these rules.
 
 ### The core's node id
@@ -1524,7 +1549,10 @@ Page actions the gateway asks for go from M's daemon to C (`/relay/browser-contr
 When the link ends, M drops its tickets, ends its relays as a lost gateway and asks the gateway to revoke every capability (best effort, asked again before a `revoke.failed` diagnostic, the desktop's own lease the backstop), and C stops choosing M's windows ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#a-screen-whose-core-runs-on-another-machine)).
 Terminals take another way.
 M's own panes' keys and output never leave M: keys go from M's screen to M's node terminals and output from them to M's hub, and C hears the input facts it always heard.
-Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, at most 4 MiB unsent per node before a pane is drawn again whole, and their keys go up it.
+Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, and their keys go up it.
+The tap's 4 MiB overflow check applies to queued base64 output when the incoming frame is a delta; crossing it drops the backlog and requests full frames.
+A full frame replaces queued output for its own pane and bypasses that overflow check (`hided/src/relay.rs`, `RelayTap::output`), so full frames from different panes can exceed 4 MiB together.
+This is not an aggregate terminal-relay buffer bound; it is separate from the screen-relay backlog limit above, and a slow-reader run must record queued full-frame bytes as well as delta overflow and resynchronization.
 Each side writes its relay on a task of its own, so a send the other side is slow to take never stops it reading keys, output or the link's end; a key M took and did not send, or one for M's own pane while its link is down, reaches its screen as not sent.
 While that relay is away (C restarted it, or the forward blinked) the keys wait on M in order, 64 KiB and 3 s each with one line of any size always taken, as keys wait for a pane that does not exist yet; a key past the bound is refused to its screen, and one that waited too long or was held for a link that ended is dropped (`terminals.held_dropped`), as is one whose write was cut off (`terminals.held_unsent`).
 A screen hears of the keys it lost once per burst: one error frame with the count and the causes, counted per live screen connection rather than queued per line, so a burst larger than any queue loses no notice and a screen that left is only logged.

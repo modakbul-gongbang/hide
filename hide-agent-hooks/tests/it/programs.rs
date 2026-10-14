@@ -2,17 +2,21 @@
 
 use std::path::Path;
 
+#[cfg(not(target_os = "macos"))]
 use crate::stand_ins;
 
-/// The helper cargo built, ready to run, with the `hide` it asks when cargo
-/// built one beside it. A test that needs the helper beside a stand-in puts
-/// a hard link to this file there ([`stand_ins::place`]).
+/// The helper cargo built. Unix fixtures place it with `stand_ins::place`
+/// before starting their deadline; macOS admits that private signed copy,
+/// rather than starting the linker-signed build output first.
 pub fn hook() -> &'static Path {
     let hook = Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
-    stand_ins::ready(hook);
-    let sibling = hook.with_file_name(format!("hide{}", std::env::consts::EXE_SUFFIX));
-    if sibling.exists() {
-        stand_ins::ready(&sibling);
+    #[cfg(not(target_os = "macos"))]
+    {
+        stand_ins::ready(hook);
+        let sibling = hook.with_file_name(format!("hide{}", std::env::consts::EXE_SUFFIX));
+        if sibling.exists() {
+            stand_ins::ready(&sibling);
+        }
     }
     hook
 }

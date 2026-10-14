@@ -1,9 +1,9 @@
-import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, ListTreeIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { askWhat, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { askWhat, VerbText } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { reviewWord } from "./prMark";
 import { AgentTreePopover } from "./components/agent-tree-popover";
@@ -122,7 +122,7 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
 }
 
 /**
- * An ask band: child total/raised requests · verb · what · who · waited · Open.
+ * An ask band: raised requests · verb · what · who · waited · Open.
  * The pane's own approval or question names no one; a raised descendant's
  * names its provider and title, whose hover gives the path from the root,
  * the checkout and the wait. The child trigger opens the raised branches;
@@ -200,7 +200,7 @@ function PaneAgentPrMark({ agent, actions }: { agent: AgentRow; actions: Actions
   return <AgentPrMark agent={agent} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
 }
 
-/** The second row's B2 trigger: direct child total and core state counts. */
+/** The second row's child trigger: core state counts, with the total in its hint. */
 function PaneTreeButton({ paneId, children, agents, actions, compact = false, connection }: { paneId: string; children: PaneChildren; agents: AgentRow[]; actions: Actions; compact?: boolean; connection: string | null }) {
   const { t } = useInterfaceTranslation();
   const count = children.children.length;
@@ -215,9 +215,9 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
     trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">
-      <TreeButtonFace count={count} />
+      {!connection && parts.length === 0 ? <ListTreeIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" /> : null}
       {connection ? <StatusMark symbol="⊘" className="text-muted-foreground" /> : null}
-      {parts.length ? <span className="flex items-center gap-xxs border-l border-border pl-xs" aria-hidden="true">{parts.map((part) => <span key={part.kind} className={cn("flex items-center font-mono text-micro", part.tone)} data-pane-child-count={part.kind}><StatusMark symbol={part.symbol} /><span>{part.count}</span></span>)}</span> : null}
+      {parts.length ? <span className="flex items-center gap-xxs" aria-hidden="true">{parts.map((part) => <span key={part.kind} className={cn("flex items-center font-mono text-micro", part.tone)} data-pane-child-count={part.kind}><StatusMark symbol={part.symbol} /><span>{part.count}</span></span>)}</span> : null}
       <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
     </button>}
   />;

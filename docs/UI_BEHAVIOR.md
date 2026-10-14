@@ -375,17 +375,18 @@ The PR mark shows the pane's own PRs only, as Sessions draws them (below); a des
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
-The B2 tree button starts the second row over the terminal: a tree icon, the live direct child count, positive core state counts, and a chevron open the existing tree popover ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
+The B2 tree button starts the second row over the terminal: positive core state counts and a chevron open the existing tree popover, with no separate total or internal divider ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
 The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
 An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
-The tooltip and accessible name spell out every count, including those hidden by the compact form.
-If the parent or a known descendant's device is not connected, the button keeps the last topology total with a dim disconnected mark and its connection reason, and suppresses state totals and the representative activity line until the connection returns.
+The tooltip and accessible name spell out the live direct child total and every state count, including those hidden by the compact form.
+When the compact form has no raised count, or no state counts are available, a tree icon keeps the child popover recognizable.
+If the parent or a known descendant's device is not connected, the button shows a dim disconnected mark, keeping the last topology total and connection reason in its tooltip and accessible name, and suppresses state totals and the representative activity line until the connection returns.
 When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space beside its provider.
 With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
-An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact child total and raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
+An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
 The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.
 The child button opens with the raised branches expanded whenever its core raised count is positive; `외 N건` remains only when this child button is unavailable, providing the same raised-tree access.
@@ -692,22 +693,30 @@ Delegated children and Factory workers are not Sessions rows of their own.
 Resolved holds work resolved in the last 24 hours, by the operator or automatically once the agent stopped with no demand and every PR it held merged or closed.
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable, pending, draft or merged PR, before the rest; every Idle row is drawn, as in Needs You, Working and Done.
 
-A row's first line is its mark, provider, title, descendant mark while its tree is closed, own PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
+A row's first line is its mark, provider, title, descendant mark while its tree is closed, PR mark, and elapsed time; a Needs You row has no PR mark and no descendant mark.
 A fork's row, here and in the sidebar, wears the fork mark right after its title, before the PR mark: the fork icon whose tooltip reads `Forked from <source>` or `Forked from another pane`, the same words the row's accessible name adds after the title (PRD fork-operator-root B8; `web/src/components/fork-mark.tsx`).
 A fork is a root row of its own, never a child under its source; ⌘K, the Agents graph, the Overview lenses and the phone draw no fork mark.
 Every row, a child and a resolved row included, ends in the Resolve button's slot, so the times of the panel stand in one column as in the sidebar.
 There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
-The PR mark shows one PR as its state's icon and number, and several as the worst PR's (`924 +1`); a closed PR is not counted, and each row, a child included, dims while the GitHub read behind its own PRs is stale, with that read's last time in the tooltip.
-Pressing the mark lists each PR with its mark and title, worst first, and choosing one opens the existing PR panel.
+The PR mark on a child or a root without descendants shows one own PR as its state's icon and number, and several as the worst PR's (`924 +1`).
+A root with descendants instead shows the worst state's icon and `PR N`, counting distinct PR URLs held by itself and every descendant, including folded trees and siblings behind `N개 더`.
+The core's own PR projection decides which PRs count; a closed PR is not counted.
+Each mark dims while a contributing GitHub read is stale, with that read's last time in the tooltip; a tree uses the oldest stale contributing read.
+Pressing the mark lists each PR with its mark and title, worst first; a tree's list also names the sessions that hold each PR, and repeated sightings of one URL share one entry.
+Each item's mark has an accessible name for its state in the interface language, so the state is readable without its colour.
+Equal PR numbers in different repositories stay separate.
+Choosing an entry opens the existing PR panel in the project that holds its URL, or the existing URL fallback when the catalog has no match.
 The core verb ladder, read rules and PR summary are owned by [status-model.md](status-model.md#the-sessions-tool).
 Reading an AI question removes its Answer and Needs You attention; an active menu or plan approval stays until answered.
-A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and Sessions has no popover.
+A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and the tree itself opens inline.
 Five siblings show per parent and the rest wait behind `N개 더`, as in the sidebar (`web/src/sidebarTree.ts`).
 A child steps one indent right of its parent down to the third level below the root; deeper rows stay in the third level's column and hang from their parent's chevron lane, whose rail runs down through them, so a narrow Tools column keeps room for titles (`web/src/sessionTree.ts`).
 A child row has the root's first line without the Resolve button, and the same second line.
-When the child works in another checkout than its parent, that line starts with the checkout's branch (the core's `branch_badge`, the name the sidebar gives the checkout) in dim mono, without the part up to the first `/` (`fix/`, `feat/`), cut with `…` past two fifths of the line when a label follows and at the line's end when it stands alone, with the whole branch and the checkout's path in its tooltip; the label takes the rest of the line and is cut with `…`.
-A child in its parent's checkout carries no branch, an Idle child with no label line and a branch has a second line with the branch alone, and a root row carries none.
+When the child works in another checkout than its parent, a separate metadata line below its progress or ask shows a branch glyph and the checkout's full branch (the core's `branch_badge`) in dim mono.
+The branch is cut with `…` at the line's end, with the whole branch and the checkout's path in its tooltip; the progress line has its own width and ellipsis.
+Progress, ask and branch metadata align with the task's title column.
+A child in its parent's checkout carries no branch, an Idle child with no label line has only the branch metadata below its title, and a root row carries none.
 A child's title is quiet (subtle) unless it asks or is selected, by the sidebar's title rule; a root's title is not.
 While a Workspace is in front, the row standing for its focused pane is selected as in the sidebar: the focused pane's row, or, when a closed tree or `N개 더` hides it, the nearest ancestor row the panel draws, with the sidebar's selected fill and `aria-current`; nothing opens by itself, and a root hidden in the folded Resolved has no selected row.
 An agent is drawn once in Sessions: a raised child's ask rides its root's row, and the child's own row, where its root's tree is open, is the one selected.
@@ -1174,8 +1183,27 @@ Its chevron changes disclosure alone, and other checkouts keep their own expansi
 The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
 A later Herdr projection failure retains these accepted values under the existing focus policy.
 The last-commit age stays in place whatever the pointer does and while the menu is open.
-An opened checkout and its agent rows share one small group fill; no card border nests inside another.
+Opened folder projects use the same icon/title columns, neutral selected fill and unboxed tab blocks as opened checkouts.
+Their required secondary lines and metadata remain visible.
+An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
+Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
+A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
+Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
+A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--size-lineage-indent` (18px) further in and each lineage level retains that same step.
+Tab groups are separated by `--spacing-sm` (8px), without another card or border.
+At a 240px sidebar width, its 8px list inset puts header disclosures and singleton status marks on x18, and tab glyphs and grouped root status marks on x36.
+Headers and quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding; a header touches its own first row.
+Tab glyphs are 12px in a 16px lane; header and singleton titles start at x48, grouped titles at x66, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
+Focused sidebar agent and checkout rows and collapsed tab representatives use the neutral `--secondary` fill.
+A singleton root with descendants in other tabs keeps its lineage disclosure inside the reserved trailing slot; its status mark stays on the outer axis.
+The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
+Headers open their real tab with click, Enter or Space, while the separate chevron changes disclosure only, without focus, read-state or process effects.
+Groups start open, and core-owned `sidebar_collapsed_tabs` saves collapsed choices by device, checkout and tab identity across restart and reconnect.
+When two agents become one, the singleton is shown regardless of the retained choice; a second agent restores the same live tab's name and choice.
+Accepted tab removal retires its choice, failed or disconnected session reads retain it, and stale disclosure targets change nothing.
+A collapsed header represents a focused agent it hides, without unfolding; focus changes reveal the nearest visible row with minimal scrolling, and unchanged focus retains the operator's scroll.
+Arrow Up/Down and Home/End traverse visible header and agent controls, skipping collapsed roots; root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for headers or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.

@@ -2833,12 +2833,15 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     runtime.snapshot.navigator.focused_checkout_id = Some(stale_checkout_id.to_owned());
     runtime.snapshot.ui_state.focused_checkout_id = Some(stale_checkout_id.to_owned());
     runtime.snapshot.terminal.pane_id = Some("w3P:p1".to_owned());
-    runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+    let retained_pane = TerminalPaneSnapshot {
         pane_id: "w3P:p1".to_owned(),
         closed: false,
         exit_code: None,
+        transport_state: "controlling".to_owned(),
+        transport_generation: 7,
         ..TerminalPaneSnapshot::default()
-    }];
+    };
+    runtime.snapshot.terminal.panes = vec![retained_pane.clone()];
     runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
         workspace_id: "w3P".to_owned(),
         tab_id: "w3P:t1".to_owned(),
@@ -2880,7 +2883,7 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     .expect("stale projection payload");
 
     assert!(runtime.ingest_session_with_catalog(
-        Ok(payload),
+        Ok(payload.clone()),
         Some(session_sync::PrecomputedCatalog {
             worktrees: runtime.worktree_catalog(),
             registrations: Vec::new(),
@@ -2888,17 +2891,50 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
             paths: Default::default(),
         }),
     ));
-    // The layout stays in the snapshot because it is Herdr's and it
-    // describes a tab that exists. What must not happen is drawing it,
-    // and that is settled by the tab projection going empty and the
-    // projection-unavailable error being raised, both asserted here. The
-    // shell has no checkout to look a tab up in, so it has no layout to
-    // draw either.
+    // Layout and transport metadata belong to Herdr's live pane, not to
+    // the missing checkout selection. The shell cannot draw this pane:
+    // it has neither the selected checkout nor a tab to look a layout up
+    // for. Clearing retained metadata here would discard its warm terminal.
     assert_eq!(runtime.snapshot().pane_layouts.len(), 1);
-    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert_eq!(runtime.snapshot().terminal.panes, vec![retained_pane]);
+    assert!(runtime.snapshot().navigator.workspaces.is_empty());
+    assert_eq!(
+        runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+        Some(stale_checkout_id)
+    );
     assert!(runtime.snapshot().tab.empty);
+    assert_eq!(runtime.snapshot().tab.id, None);
     assert!(runtime.snapshot().tab.panes.is_empty());
     assert_eq!(runtime.snapshot().tab.checkout_id, None);
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("pane.projection_unavailable")
+    );
+
+    // Losing the catalog must not disable cleanup: Herdr subsequently
+    // removes the pane while that same checkout is still unavailable.
+    let mut closed = payload;
+    closed.panes.clear();
+    closed.tabs.clear();
+    closed.layouts.clear();
+    assert!(runtime.ingest_session_with_catalog(
+        Ok(closed),
+        Some(session_sync::PrecomputedCatalog {
+            worktrees: runtime.worktree_catalog(),
+            registrations: Vec::new(),
+            workspaces: Vec::new(),
+            paths: Default::default(),
+        }),
+    ));
+    assert!(runtime.snapshot().terminal.panes.is_empty());
+    assert!(runtime.snapshot().pane_layouts.is_empty());
+    assert!(runtime.snapshot().tab.empty);
+    assert_eq!(runtime.snapshot().tab.id, None);
     assert_eq!(
         runtime
             .snapshot()

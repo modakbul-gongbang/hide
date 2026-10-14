@@ -1,4 +1,4 @@
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
@@ -57,6 +57,8 @@ export function FoldLane() {
 /** Where a sidebar row sits in a drawn tree, and how its chevron opens its children. */
 export type SidebarTreeSlot = {
   place: TreePlace;
+  /** A header-free root keeps its disclosure in the reserved trailing slot. */
+  rootFoldRight?: boolean;
   /** Null for a row with no children; a grandchild's chevron opens the popover instead. */
   open: boolean | null;
   onToggle: () => void;
@@ -169,8 +171,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-agent-device={device ?? undefined}
       data-depth={depth}
       data-unreachable={unreachable ? "true" : undefined}
-      className={cn("group/row relative flex rounded-sm pr-xs text-body", tree ? "items-stretch" : "items-start gap-xs py-xs", selected ? "bg-selected" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
-      style={{ paddingLeft: tree ? `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` : inset }}
+      className={cn("group/row relative flex rounded-sm text-body", tree ? "items-stretch pr-xs" : "items-start gap-xs py-xs pr-xs", selected ? tree ? "bg-secondary" : "bg-selected" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
+      style={{ paddingLeft: inset }}
     >
       <Hint label={hint} reveals>
         <button
@@ -187,8 +189,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         />
       </Hint>
       {tree ? <TreeRails place={tree.place} /> : null}
-      {tree ? <RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /> : null}
-      <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs pl-xs")}>
+      {tree && tree.open !== null && !(depth === 0 && tree.rootFoldRight) ? <span className="absolute inset-y-0 flex w-(--size-agent-mark)" style={{ left: `calc(${inset} + var(--size-lineage-indent) * ${depth - 1})` }}><RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /></span> : null}
+      <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
           {/* In a project's tree the Hide AI group says who started the row; alone, the provider's icon wears the badge (D-03, D-04). */}
@@ -243,6 +245,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ) : null}
         </span>
       </span>
+      {tree && depth === 0 && tree.rootFoldRight && tree.open !== null ? <button type="button" tabIndex={-1} aria-expanded={tree.open} aria-label={t(tree.open ? "agentSessions.tree.collapse" : "agentSessions.tree.expand", { name: agent.identity_label })} data-tree-chevron={agent.pane_id} className="absolute top-xs right-xs flex h-(--size-sidebar-line) w-(--size-lineage-chevron) items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={tree.onToggle}>
+        {tree.open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+      </button> : null}
       {number !== null ? <Keycap number={number} /> : null}
     </li>
     </EntryContextMenu>

@@ -56,6 +56,7 @@ fn every_session_sync_snapshot_fixture_obeys_the_generated_contract() {
 
 fn two_tab_snapshot() -> Value {
     let mut value = snapshot();
+    value["focused_workspace_id"] = json!("w1");
     value["tabs"]
         .as_array_mut()
         .expect("tabs array")
@@ -97,6 +98,28 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
         SubscriptionLine::Event(event) => event,
         SubscriptionLine::EventsLost { .. } | SubscriptionLine::Error { .. } => unreachable!(),
     }
+}
+
+fn remote_focus(replica: &SessionReplica) -> (Option<String>, Option<String>, Option<String>) {
+    let (session, _) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
+    (
+        session.focused_checkout_id,
+        session.focused_tab_id,
+        session.focused_pane_id,
+    )
+}
+
+fn assert_remote_replacement_focus(replica: &SessionReplica) {
+    assert_eq!(
+        remote_focus(replica),
+        (
+            Some("remote:mini:checkout:w1".to_owned()),
+            Some("remote:mini:tab:w1:t2".to_owned()),
+            Some("remote:mini:pane:w1:p2".to_owned()),
+        )
+    );
 }
 
 /// A session can fold Herdr's moves into one state; the replica keeps each
@@ -594,6 +617,173 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
 fn remove_fixture(folder: tempfile::TempDir, runtime: Arc<Mutex<Runtime>>) {
     drop(runtime);
     folder.close().expect("remove fixture directory");
+}
+
+/// Hold the host protocol, not a helper inside the coordinator. Both the
+/// startup and Settings paths must publish Herdr's layout before release.
+#[test]
+fn held_hook_diagnosis_does_not_hold_startup_or_settings_topology() {
+    use crate::node_access::{LinkAnswer, LinkError, NodeLink};
+    use hide_node_link::protocol::Call;
+    use std::sync::{Condvar, mpsc};
+
+    struct Host {
+        held: Mutex<bool>,
+        released: Condvar,
+        started: mpsc::Sender<()>,
+        finished: mpsc::Sender<()>,
+    }
+    impl NodeLink for Host {
+        fn call(&self, call: Call, _: Duration) -> Result<LinkAnswer, LinkError> {
+            if matches!(call, Call::HookDiagnosis) {
+                let mut held = self.held.lock().unwrap();
+                self.started.send(()).unwrap();
+                while *held {
+                    held = self.released.wait(held).unwrap();
+                }
+                self.finished.send(()).unwrap();
+                return Ok(json!({"runtimes": [], "last_report_failure": null}).into());
+            }
+            Err(LinkError::NotConnected(
+                "private fixture denies other host work".into(),
+            ))
+        }
+    }
+    struct Release(Arc<Host>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.held.lock().unwrap() = false;
+            self.0.released.notify_all();
+        }
+    }
+    struct Server {
+        closer: hide_platform::ipc::ListenerCloser,
+        worker: Option<thread::JoinHandle<()>>,
+    }
+    impl Drop for Server {
+        fn drop(&mut self) {
+            self.closer.close();
+            self.worker.take().unwrap().join().unwrap();
+        }
+    }
+
+    let folder = tempfile::Builder::new()
+        .prefix("hook-sync-")
+        .tempdir_in(socket_parent())
+        .unwrap();
+    let socket = folder.path().join("herdr.sock");
+    let listener = LocalListener::bind(&socket).unwrap();
+    let closer = listener.closer();
+    let (streams, subscription) = mpsc::channel();
+    let server = Server {
+        closer,
+        worker: Some(thread::spawn(move || {
+            while let Ok(stream) = listener.accept() {
+                let mut reader = std::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let mut stream = reader.into_inner();
+                let result = match request["method"].as_str().unwrap() {
+                    "events.subscribe" => json!({"type": "subscription_started"}),
+                    "session.snapshot" => {
+                        json!({"type": "session_snapshot", "snapshot": snapshot()})
+                    }
+                    "agent.list" => json!({"type": "agent_list", "agents": []}),
+                    "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                        "pane_id": request["params"]["pane_id"], "foreground_processes": []
+                    }}),
+                    method => panic!("unexpected fixture method {method}"),
+                };
+                let response = wire::checked_response_fixture(&request["id"], result);
+                writeln!(stream, "{response}").unwrap();
+                if request["method"] == "events.subscribe" {
+                    streams.send(stream).unwrap();
+                }
+            }
+        })),
+    };
+    let runtime = runtime_for_fixture(&socket, &folder.path().join("state.json"));
+    let (started, calls) = mpsc::channel();
+    let (finished, answers) = mpsc::channel();
+    let host = Arc::new(Host {
+        held: Mutex::new(true),
+        released: Condvar::new(),
+        started,
+        finished,
+    });
+    let mut context = context_for_fixture(&runtime, &socket);
+    context.node = Some(host.clone());
+    let pump = crate::kit::KitPump::spawn(
+        Arc::downgrade(&runtime),
+        ChangeNotifier::noop(),
+        host.clone(),
+        None,
+        crate::node::test_node(),
+    )
+    .unwrap();
+    let handle = spawn(context, None).unwrap();
+    // This guard releases before the owners join, including on assertion failure.
+    let release = Release(host.clone());
+    calls
+        .recv_timeout(Duration::from_secs(10))
+        .expect("startup diagnosis entered host");
+    let mut stream = subscription
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Herdr subscribes while startup diagnosis is held");
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        !runtime.lock().unwrap().snapshot().pane_layouts.is_empty()
+    });
+    drop(release);
+    answers
+        .recv_timeout(Duration::from_secs(10))
+        .expect("startup diagnosis released");
+    {
+        let mut guard = runtime.lock().unwrap();
+        guard.dispatch_json(
+            &serde_json::to_vec(&json!({"schema_version": SCHEMA_VERSION,
+            "kind": "ui_attached", "payload": {"attached": true}}))
+            .unwrap(),
+        );
+    }
+    // Wait for the first read's result before arming the next one.
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        runtime.lock().unwrap().snapshot().status.herdr.state == "connected"
+    });
+    *host.held.lock().unwrap() = true;
+    let release = Release(host.clone());
+    runtime.lock().unwrap().dispatch_json(
+        &serde_json::to_vec(&json!({
+            "schema_version": SCHEMA_VERSION, "kind": "ai_settings", "payload": {"observing": true}
+        }))
+        .unwrap(),
+    );
+    calls
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Settings diagnosis entered host");
+    let mut layout = snapshot()["layouts"][0].clone();
+    layout["zoomed"] = json!(true);
+    writeln!(
+        stream,
+        "{}",
+        json!({"event":"layout_updated", "data":{"type":"layout_updated", "layout":layout}})
+    )
+    .unwrap();
+    wait_until(Instant::now() + Duration::from_secs(10), || {
+        runtime
+            .lock()
+            .unwrap()
+            .snapshot()
+            .pane_layouts
+            .iter()
+            .any(|layout| layout.zoomed)
+    });
+    drop(release);
+    drop(handle);
+    drop(pump);
+    drop(stream);
+    drop(server);
+    remove_fixture(folder, runtime);
 }
 
 #[test]
@@ -1156,6 +1346,7 @@ fn last_pane_close_waits_for_the_authoritative_fallback_tab_focus() {
     assert!(tab_focused.publish);
     assert!(replica.ready_to_publish());
     assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
+    assert_remote_replacement_focus(&replica);
     assert!(
         replica
             .project()
@@ -1301,6 +1492,7 @@ fn active_tab_close_waits_for_the_authoritative_fallback_tab_focus() {
     assert!(tab_focused.publish);
     assert!(replica.ready_to_publish());
     assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
+    assert_remote_replacement_focus(&replica);
 }
 
 /// Herdr moves a non-focused workspace's active tab without an event when a
@@ -1337,6 +1529,158 @@ fn active_tab_close_settles_from_a_workspace_read_when_no_focus_follows() {
         projected.workspaces[0].active_tab_id.as_deref(),
         Some("w1:t2")
     );
+    assert_remote_replacement_focus(&replica);
+}
+
+#[test]
+fn a_replacement_tab_keeps_its_selected_split_pane_after_either_close() {
+    let mut value = two_tab_snapshot();
+    let mut pane = value["panes"][1].clone();
+    pane["pane_id"] = json!("w1:p3");
+    value["panes"].as_array_mut().unwrap().push(pane);
+    let layout = &mut value["layouts"][1];
+    layout["focused_pane_id"] = json!("w1:p3");
+    layout["panes"][0]["rect"]["width"] = json!(60);
+    layout["panes"].as_array_mut().unwrap().push(json!({
+        "pane_id": "w1:p3", "focused": true,
+        "rect": {"x": 60, "y": 0, "width": 60, "height": 60}
+    }));
+
+    for close in [
+        event(
+            "tab_closed",
+            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+        ),
+        event(
+            "pane_closed",
+            json!({"type": "pane_closed", "pane_id": "w1:p1", "workspace_id": "w1"}),
+        ),
+    ] {
+        for from_read in [false, true] {
+            let mut replica = SessionReplica::from_snapshot(&value).expect("split replacement");
+            let before = remote_focus(&replica);
+            assert!(
+                !replica
+                    .apply(close.clone(), ApplyMode::Strict)
+                    .unwrap()
+                    .publish
+            );
+            assert_eq!(
+                remote_focus(&replica),
+                before,
+                "hold selection until confirmed"
+            );
+            if from_read {
+                assert!(replica.settle_active_tab("w1", "w1:t2"));
+                assert!(replica.refresh_published_state().unwrap());
+            } else {
+                let focused = replica
+                    .apply(
+                        event(
+                            "tab_focused",
+                            json!({"type": "tab_focused", "tab_id": "w1:t2", "workspace_id": "w1"}),
+                        ),
+                        ApplyMode::Strict,
+                    )
+                    .unwrap();
+                assert!(focused.publish);
+            }
+            assert_eq!(
+                remote_focus(&replica),
+                (
+                    Some("remote:mini:checkout:w1".to_owned()),
+                    Some("remote:mini:tab:w1:t2".to_owned()),
+                    Some("remote:mini:pane:w1:p3".to_owned()),
+                )
+            );
+            assert!(
+                replica
+                    .project()
+                    .tabs
+                    .iter()
+                    .all(|tab| tab.tab_id != "w1:t1")
+            );
+        }
+    }
+}
+
+#[test]
+fn a_background_layout_cannot_take_the_closed_front_panes_focus() {
+    let mut value = two_tab_snapshot();
+    let mut background: Value =
+        serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    background["workspaces"][0]["focused"] = json!(false);
+    for section in ["workspaces", "tabs", "panes", "layouts"] {
+        value[section]
+            .as_array_mut()
+            .unwrap()
+            .extend(background[section].as_array().unwrap().clone());
+    }
+    let mut replica = SessionReplica::from_snapshot(&value).expect("two workspaces");
+    let before = remote_focus(&replica);
+    replica
+        .apply(
+            event(
+                "pane_closed",
+                json!({"type": "pane_closed", "pane_id": "w1:p1", "workspace_id": "w1"}),
+            ),
+            ApplyMode::Strict,
+        )
+        .unwrap();
+    replica
+        .apply(
+            event(
+                "layout_updated",
+                json!({"type": "layout_updated", "layout": background["layouts"][0]}),
+            ),
+            ApplyMode::Strict,
+        )
+        .unwrap();
+    assert_eq!(remote_focus(&replica), before);
+    assert!(replica.settle_active_tab("w1", "w1:t2"));
+    assert!(replica.refresh_published_state().unwrap());
+    assert_remote_replacement_focus(&replica);
+}
+
+#[test]
+fn a_background_tab_close_keeps_the_front_checkout_and_pane() {
+    let mut value = snapshot();
+    value["focused_workspace_id"] = json!("w1");
+    let mut background: Value =
+        serde_json::from_str(&two_tab_snapshot().to_string().replace("w1", "w2")).unwrap();
+    background["workspaces"][0]["focused"] = json!(false);
+    for section in ["workspaces", "tabs", "panes", "layouts"] {
+        value[section]
+            .as_array_mut()
+            .unwrap()
+            .extend(background[section].as_array().unwrap().clone());
+    }
+    let mut replica = SessionReplica::from_snapshot(&value).expect("background two-tab workspace");
+    let before = remote_focus(&replica);
+    replica
+        .apply(
+            event(
+                "tab_closed",
+                json!({"type": "tab_closed", "tab_id": "w2:t1", "workspace_id": "w2"}),
+            ),
+            ApplyMode::Strict,
+        )
+        .unwrap();
+    assert!(replica.settle_active_tab("w2", "w2:t2"));
+    assert!(replica.refresh_published_state().unwrap());
+    assert_eq!(remote_focus(&replica), before);
+    let projected = replica.project();
+    assert_eq!(
+        projected
+            .workspaces
+            .iter()
+            .find(|w| w.workspace_id == "w2")
+            .unwrap()
+            .active_tab_id
+            .as_deref(),
+        Some("w2:t2")
+    );
+    assert!(projected.tabs.iter().all(|tab| tab.tab_id != "w2:t1"));
 }
 
 /// The focused workspace still gets its replacement from `tab_focused`; a
@@ -1400,6 +1744,7 @@ fn last_tab_close_waits_for_the_workspace_close_cascade() {
     assert!(workspace_closed.publish);
     assert!(replica.ready_to_publish());
     assert!(replica.project().workspaces.is_empty());
+    assert_eq!(remote_focus(&replica), (None, None, None));
 }
 
 /// Herdr 0.9.1 announces a workspace that closes with its last tab or pane

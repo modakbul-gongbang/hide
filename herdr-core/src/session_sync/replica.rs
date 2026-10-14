@@ -325,6 +325,7 @@ impl SessionReplica {
     }
 
     pub(crate) fn refresh_published_state(&mut self) -> Result<bool, SessionFetchError> {
+        self.restore_missing_pane_focus();
         let ready = self.ready_to_publish();
         let mut next = if ready {
             self.validate()?;
@@ -346,6 +347,36 @@ impl SessionReplica {
         let changed = next != self.published_state;
         self.published_state = next;
         Ok(changed)
+    }
+
+    fn restore_missing_pane_focus(&mut self) {
+        if self.state.focused_pane_id.is_some() {
+            return;
+        }
+        let Some(workspace) = self.state.workspaces.iter().find(|workspace| {
+            Some(&workspace.workspace_id) == self.state.focused_workspace_id.as_ref()
+        }) else {
+            return;
+        };
+        if self
+            .pending_active_tab_focuses
+            .contains(&workspace.workspace_id)
+            || self
+                .pending_workspace_closures
+                .contains(&workspace.workspace_id)
+            || self.pending_layouts.contains(&workspace.active_tab_id)
+        {
+            return;
+        }
+        // A close can select another tab without a pane focus or layout event.
+        // Its confirmed layout already carries Herdr's selected pane. Only the
+        // focused workspace may supply it; a background layout is no focus move.
+        if let Some(layout) = self.state.layouts.iter().find(|layout| {
+            layout.workspace_id == workspace.workspace_id
+                && layout.tab_id == workspace.active_tab_id
+        }) {
+            self.state.focused_pane_id = Some(layout.focused_pane_id.clone());
+        }
     }
 
     /// The remote session built from `payload`, which is [`Self::project`]
@@ -1535,21 +1566,8 @@ impl SessionReplica {
                     ));
                 }
                 let tab_id = input_layout.tab_id.clone();
-                let focused_was_missing =
-                    self.state.focused_pane_id.as_ref().is_none_or(|focused| {
-                        !self.state.panes.iter().any(|pane| &pane.pane_id == focused)
-                    });
                 upsert_layout(&mut self.state.layouts, input_layout);
                 self.pending_layouts.remove(&tab_id);
-                if focused_was_missing
-                    && let Some(layout) = self
-                        .state
-                        .layouts
-                        .iter()
-                        .find(|layout| layout.tab_id == tab_id)
-                {
-                    self.state.focused_pane_id = Some(layout.focused_pane_id.clone());
-                }
             }
             ReplicaEvent::Unrequested(unknown) => {
                 return Err(SessionFetchError::Malformed(format!(

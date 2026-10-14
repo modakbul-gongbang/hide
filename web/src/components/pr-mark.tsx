@@ -2,7 +2,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { cn } from "../lib/utils";
-import { agentMark, agentStaleness, ownPulls, PR_LOOK, reviewWord, staleLabel, type PrStaleness } from "../prMark";
+import { agentMark, agentStaleness, ownPulls, PR_LOOK, reviewWord, sessionStaleness, staleLabel, type PrStaleness, type SessionPull } from "../prMark";
 import type { PrChip } from "../projectBoard";
 import type { AgentPullRequest, AgentRow, PrState } from "../snapshot";
 import { useShellStore } from "../store";
@@ -63,44 +63,47 @@ export function PrChipMark({ chip, stale = false }: { chip: PrChip; stale?: bool
 const CHANGES = reviewWord("changes_requested")!;
 
 /** The GitHub read behind a row's own PRs, read as two plain values so a snapshot that moves neither renders nothing. */
-export function useAgentStaleness(agent: AgentRow): PrStaleness | undefined {
-  const stale = useShellStore((s) => agentStaleness(s.rest, agent)?.stale);
-  const lastRead = useShellStore((s) => agentStaleness(s.rest, agent)?.lastRead);
+export function useAgentStaleness(agent: AgentRow, family?: SessionPull[]): PrStaleness | undefined {
+  const stale = useShellStore((s) => (family ? sessionStaleness(s.rest, family) : agentStaleness(s.rest, agent))?.stale);
+  const lastRead = useShellStore((s) => (family ? sessionStaleness(s.rest, family) : agentStaleness(s.rest, agent))?.lastRead);
   return stale === undefined ? undefined : { stale, lastRead: lastRead ?? null };
 }
 
 /** The words a mark reads out: its number and state, how many more, and when GitHub was last read. */
-function useMarkLabel(state: PrState, number: number, more: number, stale: PrStaleness | undefined): string {
+function useMarkLabel(state: PrState, number: number, more: number, stale: PrStaleness | undefined, familyCount?: number): string {
   const { t, i18n } = useInterfaceTranslation();
-  const head = `#${number} ${t(PR_LOOK[state].word)}`;
-  return [more > 0 ? `${head} +${more}` : head, staleLabel(stale, t, requireInterfaceLanguage(i18n.language))].filter(Boolean).join(" · ");
+  const head = `${familyCount === undefined ? `#${number}` : t("agentSessions.pr.count", { count: familyCount })} ${t(PR_LOOK[state].word)}`;
+  return [familyCount === undefined && more > 0 ? `${head} +${more}` : head, staleLabel(stale, t, requireInterfaceLanguage(i18n.language))].filter(Boolean).join(" · ");
 }
 
 /** The class that makes a mark pressable: the fill under the pointer, the focus ring. */
 export const PR_MARK_PRESS = "flex shrink-0 items-center rounded-xs px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary disabled:opacity-(--opacity-disabled)";
 
 /**
- * An agent row's own PRs as one mark (Sessions rows, the pane header):
+ * An agent row's own PRs, or a Sessions root's complete family, as one mark:
  * pressing it lists each PR, worst first; choosing one opens the PR panel.
  */
-export function AgentPrMark({ agent, staleness, disabled = false, onOpen }: { agent: AgentRow; staleness?: PrStaleness; disabled?: boolean; onOpen: (pull: AgentPullRequest) => void }) {
-  const mark = agentMark(agent);
-  const label = useMarkLabel(mark?.state ?? "pending", mark?.number ?? 0, mark?.more ?? 0, staleness);
+export function AgentPrMark({ agent, family, staleness, disabled = false, onOpen }: { agent: AgentRow; family?: SessionPull[]; staleness?: PrStaleness; disabled?: boolean; onOpen: (pull: AgentPullRequest) => void }) {
+  const { t } = useInterfaceTranslation();
+  const mark = family ? family[0] ? { state: family[0].state, number: family[0].pull.number, more: family.length - 1 } : null : agentMark(agent);
+  const entries: { pull: AgentPullRequest; state: PrState; owners?: AgentRow[] }[] = family ?? ownPulls(agent);
+  const label = useMarkLabel(mark?.state ?? "pending", mark?.number ?? 0, mark?.more ?? 0, staleness, family?.length);
   if (!mark) return null;
   return (
     <DropdownMenu>
       <Hint label={label}>
         <DropdownMenuTrigger asChild>
-          <button type="button" disabled={disabled} aria-label={label} data-agent-pr={agent.pane_id} onClick={(event) => event.stopPropagation()} className={PR_MARK_PRESS}>
-            <PrMark state={mark.state} number={mark.number} more={mark.more} stale={staleness?.stale} />
+          <button type="button" disabled={disabled} aria-label={label} data-agent-pr={agent.pane_id} onClick={(event) => event.stopPropagation()} className={cn(PR_MARK_PRESS, family && "gap-xxs")}>
+            <PrMark state={mark.state} number={family ? undefined : mark.number} more={family ? 0 : mark.more} stale={staleness?.stale} />
+            {family ? <span className={cn("font-mono text-caption text-subtle-foreground", staleness?.stale && "opacity-(--opacity-dimmed)")}>{t("agentSessions.pr.count", { count: family.length })}</span> : null}
           </button>
         </DropdownMenuTrigger>
       </Hint>
       <DropdownMenuContent align="start" className="w-(--size-pr-popover)" onClick={(event) => event.stopPropagation()} data-pr-list={agent.pane_id}>
-        <PrListHead agent={agent} />
-        {ownPulls(agent).map(({ pull, state }) => (
-          <DropdownMenuItem key={pull.url} onSelect={() => onOpen(pull)} data-pr-list-item={pull.number}>
-            <PrListItem pull={pull} state={state} />
+        <PrListHead agent={agent} count={family?.length} />
+        {entries.map((entry) => (
+          <DropdownMenuItem key={entry.pull.url} aria-label={[`#${entry.pull.number} ${t(PR_LOOK[entry.state].word)}`, entry.pull.title, entry.owners?.map((owner) => owner.identity_label).join(" · ")].filter(Boolean).join(" · ")} onSelect={() => onOpen(entry.pull)} data-pr-list-item={entry.pull.number}>
+            <PrListItem pull={entry.pull} state={entry.state} owners={entry.owners} />
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -108,22 +111,25 @@ export function AgentPrMark({ agent, staleness, disabled = false, onOpen }: { ag
   );
 }
 
-function PrListHead({ agent }: { agent: AgentRow }) {
+function PrListHead({ agent, count }: { agent: AgentRow; count?: number }) {
   const { t } = useInterfaceTranslation();
   return (
     <DropdownMenuLabel className="flex min-w-0 items-baseline gap-xs">
-      <span className="shrink-0">{t("agentSessions.pr.count", { count: agent.state.pr?.count ?? 0 })}</span>
+      <span className="shrink-0">{t("agentSessions.pr.count", { count: count ?? agent.state.pr?.count ?? 0 })}</span>
       <span className="min-w-0 truncate font-normal text-muted-foreground">{agent.identity_label}</span>
     </DropdownMenuLabel>
   );
 }
 
-function PrListItem({ pull, state }: { pull: AgentPullRequest; state: PrState }) {
+function PrListItem({ pull, state, owners }: { pull: AgentPullRequest; state: PrState; owners?: AgentRow[] }) {
+  const { t } = useInterfaceTranslation();
+  const names = owners?.map((owner) => owner.identity_label).join(" · ");
   return (
     <>
-      <PrMark state={state} number={pull.number} />
-      <span className="min-w-0 flex-1 truncate" title={pull.title}>
-        {pull.title}
+      <PrMark role="img" aria-label={`#${pull.number} ${t(PR_LOOK[state].word)}`} state={state} number={pull.number} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate" title={pull.title}>{pull.title}</span>
+        {names ? <span className="block truncate text-micro text-muted-foreground" title={names}>{names}</span> : null}
       </span>
     </>
   );

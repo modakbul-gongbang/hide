@@ -43,7 +43,7 @@ export function sidebarFocusPane(focused: string | null, agents: readonly AgentR
 export function revealSidebarFocus(list: HTMLElement): void {
   const marked = [...list.querySelectorAll<HTMLElement>('[aria-current="true"]')];
   if (marked.length === 0) return;
-  const deepest = ["[data-agent-open]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
+  const deepest = ["[data-agent-open], [data-sidebar-tab]", "[data-checkout]"].map((kind) => marked.filter((row) => row.matches(kind))).find((rows) => rows.length > 0) ?? marked;
   revealRow(list, deepest, deepest.find((row) => row.closest("[data-raised-group]") === null) ?? deepest[0]!);
 }
 

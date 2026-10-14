@@ -272,8 +272,8 @@ The shell shows five siblings per parent and folds the rest behind `N개 더` (`
 A grandchild's own children open in the tree popover instead of a third level.
 A delegated row whose checkout differs from its parent's carries `row.state.branch_badge` (`agent_state/axes.rs::apply_lineage`): that checkout's branch, or its label when it has none, the name the sidebar gives the checkout; a device checkout's label is its folder name, so the label alone would name a folder there.
 The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's second-row tree button, a grandchild's chevron and an ask band's fallback `외 N건` when that tree button is unavailable.
-The second-row button separates the live direct child total and `direct_child_counts` from the subtree's operator-raised `descendant_mark.count`; ordinary child requests do not become raised asks.
-Its compact ask-band form keeps only the total and raised count, while its tooltip names every count; unknown children are excluded from the resting remainder.
+The second-row button shows `direct_child_counts` and the subtree's operator-raised `descendant_mark.count`, with the live direct child total only in its tooltip and accessible name; ordinary child requests do not become raised asks.
+Its compact ask-band form keeps only the raised count, or a tree icon when none is raised, while its tooltip names every count; unknown children are excluded from the resting remainder.
 Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
 Opened from a pane button with a raised mark, or the fallback ask-band button, it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
@@ -389,7 +389,12 @@ A Workspace without nested agent rows shows no chevron and clicking its row open
 Select an agent to focus its pane; expanding or collapsing a populated Workspace only changes the tree.
 Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
 `collapsed_checkout_ids` persists across launches.
-The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`, which only `checkout_agents_toggle` (a flip) and `focus_checkout`'s `expanded` change, and the legacy `collapsed_checkout_ids` field a client could send instead is kept in the schema but ignored by the web shell.
+The web shell starts every checkout open and keeps explicit collapses in `session_collapsed_checkout_ids`, changed by `checkout_agents_toggle` and the admitted `focus_checkout` event.
+The older `expanded_checkout_ids` and `collapsed_checkout_ids` records do not determine web checkout disclosure.
+Inside an open checkout, actual tabs group complete root subtrees, with a header only when the tab holds at least two recognized agent panes and has a sidebar root.
+The count describes physical agents in that tab, independently of root ownership or child disclosure; raised groups and sleeping sessions retain their existing positions.
+Tab headers use the core's explicit manual-name and stable-number metadata rather than an automatic task label.
+The core saves `sidebar_collapsed_tabs` by device, checkout and tab identity; singleton rows ignore but retain their live tab's fold, and authoritative removal prunes it.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
 The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
@@ -751,7 +756,7 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 `agent_state/header.rs` publishes a working-line flag and at most one band per pane.
 Connection or sleep availability wins, then the pane's own demand, then the lead raised descendant, then the ordinary task verb.
 Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has a thin blue line, while CI wait, child wait and Idle have no task band, although their live children can fill the overlay slot.
-An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the compact child total and operator-raised count, the verb in its colour, what to do (for the pane's own Answer, the row's second line, so a native question reads as itself), who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, and Open.
+An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the compact operator-raised count, the verb in its colour, what to do (for the pane's own Answer, the row's second line, so a native question reads as itself), who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, and Open.
 The duplicate `외 N건` is absent when the child trigger supplies raised-tree access, and remains as a fallback otherwise.
 Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
@@ -760,7 +765,7 @@ The existing input does not supply an approval command or failed check names; th
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
 The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
-The tree button with the direct child total and state counts starts the second-row overlay, sharing that slot with a core band or, without one, the core-ranked child's existing line.
+The tree button with state counts and no separate total or internal divider starts the second-row overlay, sharing that slot with a core band or, without one, the core-ranked child's existing line.
 An unavailable device anywhere in that known subtree overrides the retained state totals and activity line with a dim disconnected mark and the existing connection reason, while preserving topology access.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
 Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test.tsx`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.

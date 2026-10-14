@@ -1,3 +1,5 @@
+import statusAxisScope from "./sidebarStatusAxisScope.json";
+import type { AgentScope } from "../agentScope";
 import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // The Projects sidebar's gallery scene (PRD design-review-workflow D-04,
 // B3, B4): a synthetic snapshot the real sidebar renders, with the content
@@ -7,7 +9,7 @@ import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // a machine. The folds are this scene's own ui state, applied by `applyEvent`
 // the way the core applies the same events, so a chevron really folds.
 
-import type { AgentRow, Checkout, MarkCounts, PullRequest, SleepingSession, SnapshotRest, Workspace } from "../snapshot";
+import type { AgentRow, Checkout, MarkCounts, PullRequest, SidebarTabKey, SleepingSession, SnapshotRest, Workspace } from "../snapshot";
 import { galleryAgentState } from "./agentStates";
 
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
@@ -29,6 +31,7 @@ export const OFFLINE_DEVICE = "build-box";
 
 /** The fold choices the core would keep in its ui state. */
 export type SceneFolds = {
+  collapsedTabs?: SidebarTabKey[];
   collapsedCheckouts: string[];
   collapsedWorkspaces: string[];
   /** Parents whose descendants are unfolded; every other parent is folded, the core's default. */
@@ -168,7 +171,7 @@ export function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
         },
     pull_request: spec.pr ? { url: "", review: null, ...spec.pr } : null,
     github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: nowSeconds * 1000, unavailable_reason: null },
-    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", empty: false, delegated: false, panes: panes.map(pane) }] : [],
+    tabs: panes.length ? [{ id: `${spec.id}:t1`, workspace_id: spec.workspace, checkout_id: spec.id, label: "1", sidebar: { manual_name: null, number: 1 }, empty: false, delegated: false, panes: panes.map(pane) }] : [],
     active_tab_id: panes.length ? `${spec.id}:t1` : null,
     strip: [],
     next_tab_label: "2",
@@ -380,6 +383,9 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       workspace(id, { checkouts: [checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: (30 + index) * 86400 }, now)] }, folds),
     ),
   ].map((row) => withPresence(row, folds, nowMs));
+  if (content === "long") for (const project of workspaces) for (const checkout of project.checkouts) for (const tab of checkout.tabs) {
+    if (tab.sidebar) tab.sidebar.manual_name = "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인";
+  }
   const sleeping: SleepingSession[] = Object.entries(SLEEPING_PROJECTS).map(([id, days]) => ({
     sleep_id: `sleep-${id}`,
     node_id: "local",
@@ -410,11 +416,28 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       left_sidebar_visible: true,
       collapsed_workspace_ids: folds.collapsedWorkspaces,
       session_collapsed_checkout_ids: folds.collapsedCheckouts,
+      sidebar_collapsed_tabs: folds.collapsedTabs ?? [],
       workspace_registrations: world?.registrations ?? workspaces.map((row) => registrationOf(row, "local")),
     },
     ...(world ? { status: { remote: world.remote } } : {}),
   };
   return { rest: galleryScopes(rest, `${content}:${devices}`, folds.expandedAgents), agents };
+}
+
+/** The approved 2-1-2 cutout, rendered by the production Sidebar with invented facts. */
+export function sidebarStatusAxisScene(content: SceneContent, folds: SceneFolds, nowMs: number): { rest: SnapshotRest; agents: AgentRow[] } {
+  const base = sidebarScene(content, folds, nowMs);
+  const labels = ["탭 경계·여백 정리", "왼쪽 pane 검토", "세션 기록 동기화", "PR 질문 표시 개선", "탐색 개선"];
+  const ages = ["1m", "8m", "2s", "6m", "11m"];
+  const ids = ["a1", "a2", "a3", "q1", "e1"];
+  const agents = ids.map((id, index) => agent({ pane_id: id, identity_label: content === "long" ? `${labels[index]} · 여러 프로젝트의 한국어 작업 기록과 진행 상황을 확인합니다` : labels[index], agent_kind: index > 0 && index < 4 ? "codex" : "claude", group: index === 4 ? "seen" : "working", symbol: index === 4 ? "○" : "●", status_code: index === 4 ? "idle" : "working", elapsed: ages[index]!, state: galleryAgentState(index === 4 ? "h2" : "e1", null, nowMs) }));
+  const main = checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 480, panes: ids, marks: { working: 4, idle: 1 } }, nowMs / 1000);
+  main.tabs = [["a1", "a2"], ["a3"], ["q1", "e1"]].map((panes, index) => ({ ...main.tabs[0]!, id: `hide:main:t${index + 1}`, sidebar: { number: index + 1, manual_name: index === 0 ? "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인 · Sidebar tab groups" : null }, panes: panes.map(pane) }));
+  const scope = statusAxisScope as unknown as AgentScope;
+  main.agent_scope = scope;
+  const project = workspace("hide", { checkouts: [main], agent_scope: scope, agent_presence: { working: true } }, folds);
+  const rest = { ...base.rest, navigator: { ...base.rest.navigator, agent_scope: scope, devices: [{ ...base.rest.navigator!.devices![0]!, agent_scope: scope, agent_count: 5 }], workspaces: [project], agents, sleeping_sessions: [], inactive_projects: [], no_agent_projects: [] }, ui_state: { ...base.rest.ui_state, workspace_registrations: [registrationOf(project, "local")] } };
+  return { rest, agents };
 }
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
@@ -528,6 +551,11 @@ function toggled(list: string[], id: string): string[] {
  */
 export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Record<string, unknown> }): SceneFolds | null {
   const { kind, payload } = event;
+  if (kind === "sidebar_tab_expanded") {
+    const key = { device_id: String(payload.device_id), checkout_id: String(payload.checkout_id), tab_id: String(payload.tab_id) };
+    const kept = (folds.collapsedTabs ?? []).filter((row) => row.device_id !== key.device_id || row.checkout_id !== key.checkout_id || row.tab_id !== key.tab_id);
+    return { ...folds, collapsedTabs: payload.expanded ? kept : [...kept, key] };
+  }
   if (kind === "checkout_agents_toggle") return { ...folds, collapsedCheckouts: toggled(folds.collapsedCheckouts, String(payload.checkout_id)) };
   if (kind === "session_fold_toggle" && payload.key === "no_agents/local") return { ...folds, noAgentsOpen: !folds.noAgentsOpen };
   if (kind === "project_checkouts_fold" && String(payload.workspace_id) in SLEEPING_PROJECTS) {

@@ -40766,7 +40766,7 @@
           "type": "text",
           "id": "cmp-agent-tree-parts-spec",
           "name": "web/src/components/agent-tre",
-          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state's icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.",
+          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state's icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -40900,16 +40900,6 @@
                   "icon": "list-tree",
                   "library": "lucide",
                   "fill": "$--muted-foreground"
-                },
-                {
-                  "type": "text",
-                  "id": "ath-tb-n",
-                  "name": "8",
-                  "content": "8",
-                  "fill": "$--subtle-foreground",
-                  "fontFamily": "$--font-mono",
-                  "fontSize": "$--text-caption",
-                  "fontWeight": "400"
                 },
                 {
                   "type": "text",
@@ -41178,18 +41168,7 @@
                   "enabled": false,
                   "layout": "horizontal",
                   "gap": "$--spacing-xxs",
-                  "alignItems": "center",
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    "$--spacing-xs"
-                  ],
-                  "stroke": "$--border",
-                  "strokeWidth": {
-                    "left": 1
-                  },
-                  "strokeAlignment": "inner"
+                  "alignItems": "center"
                 },
                 {
                   "type": "icon",
@@ -42056,12 +42035,7 @@
                   "type": "ref",
                   "ref": "ath-tree-button",
                   "name": "Tree button",
-                  "fill": "$--secondary",
-                  "descendants": {
-                    "ath-tb-n": {
-                      "content": "2"
-                    }
-                  }
+                  "fill": "$--secondary"
                 }
               ],
               "layout": "vertical",
@@ -42091,8 +42065,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "5"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -42142,8 +42116,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "8"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -42184,8 +42158,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "1"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -42223,8 +42197,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "5"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-disconnected": {
                       "enabled": true
@@ -43019,12 +42993,7 @@
                   "type": "ref",
                   "ref": "ath-tree-button",
                   "name": "Tree button",
-                  "fill": "$--secondary",
-                  "descendants": {
-                    "ath-tb-n": {
-                      "content": "2"
-                    }
-                  }
+                  "fill": "$--secondary"
                 }
               ],
               "layout": "vertical",
@@ -43054,8 +43023,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "5"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -43105,8 +43074,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "8"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -43147,8 +43116,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "1"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-counts": {
                       "enabled": true
@@ -43186,8 +43155,8 @@
                   "name": "Tree button",
                   "fill": "$--background",
                   "descendants": {
-                    "ath-tb-n": {
-                      "content": "5"
+                    "ath-tb-tree": {
+                      "enabled": false
                     },
                     "ath-tb-disconnected": {
                       "enabled": true

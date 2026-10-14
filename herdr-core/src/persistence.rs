@@ -21,6 +21,8 @@ struct StoredUiState {
     #[serde(default)]
     session_collapsed_checkout_ids: Vec<String>,
     #[serde(default)]
+    sidebar_collapsed_tabs: Vec<crate::model::SidebarTabKey>,
+    #[serde(default)]
     session_open_folds: Vec<String>,
     schema_version: u32,
     #[serde(default = "default_panel_visible")]
@@ -337,6 +339,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             resolved_sessions: stored.resolved_sessions,
             session_resolution_inputs: stored.session_resolution_inputs,
             session_collapsed_checkout_ids: stored.session_collapsed_checkout_ids,
+            sidebar_collapsed_tabs: stored.sidebar_collapsed_tabs,
             session_open_folds: stored.session_open_folds,
             left_sidebar_visible: stored.left_sidebar_visible,
             device_rail_visible: stored.device_rail_visible,
@@ -449,6 +452,7 @@ pub fn save(
         resolved_sessions: state.resolved_sessions.clone(),
         session_resolution_inputs: state.session_resolution_inputs.clone(),
         session_collapsed_checkout_ids: state.session_collapsed_checkout_ids.clone(),
+        sidebar_collapsed_tabs: state.sidebar_collapsed_tabs.clone(),
         session_open_folds: state.session_open_folds.clone(),
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,

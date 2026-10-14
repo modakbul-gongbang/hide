@@ -2,7 +2,7 @@ import { deviceScope } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { useInterfaceTranslation } from "./i18n/client";
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, MoonIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, MoonIcon, PanelsTopLeftIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
@@ -28,8 +28,10 @@ import { cn } from "./lib/utils";
 import { agentNumber, sidebarAgentNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu, type SidebarTreeSlot } from "./components/sidebar-agent-row";
-import { TreeChevron, TreeRails } from "./components/agent-tree";
+import { TreeRails } from "./components/agent-tree";
 import { sidebarTreeLines } from "./sidebarTree";
+import { moveSidebarKey, sidebarTabGroups } from "./sidebarTabs";
+import { tabSurface } from "./recent";
 import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
 import { Usage } from "./components/usage";
@@ -497,6 +499,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.session_collapsed_checkout_ids ?? NO_IDS);
+  const collapsedTabs = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
@@ -536,7 +539,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
     () => (numbered ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null),
-    [numbered, frontScope, rows, openCheckouts, workspaces, raisedOpen],
+    [numbered, frontScope, rows, openCheckouts, collapsedTabs, workspaces, raisedOpen],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
@@ -556,7 +559,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   };
   if (!loaded) return <ListLoading />;
   return (
-    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true">
+    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-sm" data-project-list="true" onKeyDown={moveSidebarKey}>
       {catalogLine ? (
         <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
@@ -824,9 +827,9 @@ const PROJECT_COLUMN = "var(--spacing-sm)";
 /** Where a project's name, and a plain folder's agent marks, start. */
 const PROJECT_NAME_COLUMN = "calc(var(--spacing-sm) + var(--size-checkout-icon) + var(--spacing-sm))";
 /** Where a checkout's kind glyph, and its Inactive fold, start. */
-const CHECKOUT_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent))";
+const CHECKOUT_COLUMN = "calc(var(--spacing-xs) * 2 + var(--size-agent-mark))";
 /** Where a checkout's name, its line two and its agents' marks start. */
-const CHECKOUT_NAME_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent) + var(--size-checkout-icon) + var(--spacing-sm))";
+const CHECKOUT_NAME_COLUMN = `calc(${CHECKOUT_COLUMN} + var(--size-checkout-icon) + var(--spacing-xs))`;
 
 /**
  * A row control that waits for the pointer, inside a row `EntryContextMenu`
@@ -871,7 +874,7 @@ function FoldRow({
       aria-current={current ? "true" : undefined}
       className={cn(
         "flex min-h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-        current ? "bg-selected text-foreground" : "text-subtle-foreground hover:bg-accent",
+        current ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent",
       )}
       style={{ paddingLeft: level === "project" ? PROJECT_COLUMN : CHECKOUT_COLUMN }}
       onClick={onToggle}
@@ -888,11 +891,12 @@ function FoldRow({
 }
 
 /** The fold on a project or checkout row: a folded one is always shown, an open one waits for the pointer (D-3). */
-function FoldToggle({ open, label, onToggle, ...data }: { open: boolean; label: string; onToggle: () => void } & Record<`data-${string}`, string>) {
+function FoldToggle({ open, label, onToggle, disabled, ...data }: { open: boolean; label: string; onToggle: () => void; disabled?: boolean } & Record<`data-${string}`, string>) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-expanded={open}
       aria-label={label}
       className={cn(
@@ -1062,7 +1066,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         <div
-          className={cn("flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs", hiding === "project" ? "bg-selected" : "hover:bg-accent")}
+          className={cn("flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs", hiding === "project" ? "bg-secondary" : "hover:bg-accent")}
           style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <button
@@ -1246,7 +1250,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
       data-checkout-row={checkout.id}
       data-checkout-open={open ? "true" : undefined}
       data-checkout-removing={removing ? "true" : undefined}
-      className={cn(open && "rounded-sm bg-muted py-xs", removing && "opacity-(--opacity-dimmed)")}
+      className={cn(removing && "opacity-(--opacity-dimmed)")}
     >
       <EntryContextMenu
         label={t("common.entryActions", { name })}
@@ -1260,7 +1264,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
-            focused ? "bg-selected" : !removing && "hover:bg-accent",
+            focused ? "bg-secondary" : !removing && "hover:bg-accent",
             view.settled && !removing && "opacity-(--opacity-dimmed)",
           )}
           style={{ paddingLeft: CHECKOUT_COLUMN }}
@@ -1277,7 +1281,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           />
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above.
               Line one is 20 whatever it carries: the 24-high fold toggle overhangs it rather than moving line two. */}
-          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
+          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-xs">
             <KindGlyph view={view} deviceId={workspace.device_id} actions={actions} />
             <CheckoutName name={name} focused={focused} />
             <CheckoutBadge checkout={checkout} />
@@ -1304,7 +1308,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1348,7 +1352,7 @@ const FolderRowView = memo(function FolderRowView({
   const secondLine = asleep ? !open && checkoutHasSecondLine(view, purpose, raisedFrom) : disclosure.secondLine;
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   return (
-    <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
+    <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={inset}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
         items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, issueSource)}
@@ -1360,9 +1364,9 @@ const FolderRowView = memo(function FolderRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-project-row)",
-            focused ? "bg-selected" : "hover:bg-accent",
+            focused ? "bg-secondary" : "hover:bg-accent",
           )}
-          style={{ paddingLeft: PROJECT_COLUMN }}
+          style={{ paddingLeft: CHECKOUT_COLUMN }}
         >
           <CheckoutOpenButton
             workspace={workspace}
@@ -1374,7 +1378,7 @@ const FolderRowView = memo(function FolderRowView({
             expanded={asleep ? undefined : checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
             projectExpanded={asleep ? checkoutRowExpansion(true, context.workspaceScreen && focused, open) : undefined}
           />
-          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
+          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-xs">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
             <ProjectName workspace={workspace} hidden grow={false} />
             <CheckoutBadge checkout={checkout} />
@@ -1401,7 +1405,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1577,20 +1581,56 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  * joined by elbow rails. A grandchild's chevron opens the tree popover
  * rooted on it. A dormant conversation has no pane or numbered shortcut.
  */
-function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context, label }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext; label?: string }) {
+function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext }) {
+  const { t } = useInterfaceTranslation();
+  const collapsed = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs ?? NO_TAB_FOLDS);
+  const focused = useShellStore((s) => s.focusedPaneId);
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, deviceId, checkout.path, localDeviceId(s.rest)));
+  const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents, collapsed), [checkout, deviceId, agentRows, context.agents, collapsed]);
+  const rowInset = groupTabs ? "var(--spacing-xs)" : inset;
+  return <ul className={cn(groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
+    {groups.map((group, index) => {
+      const header = groupTabs && group.header;
+      const expanded = !header || group.expanded;
+      const selected = workspaceScreen && !expanded && sidebarFocusPane(focused, context.agents, new Set(group.rows.map((row) => row.agent.pane_id))) !== null;
+      const naming = group.tab?.sidebar;
+      const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
+      return <li key={group.tab?.id ?? "unplaced"} className={cn(groupTabs && index > 0 && "mt-sm")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
+        {header && group.tab?.id ? <div data-sidebar-tab-row={group.tab.id} className={cn("group/row relative flex items-center gap-xs rounded-sm py-xs pl-xs pr-xl text-caption", selected ? "bg-secondary" : "hover:bg-accent")}>
+          <Hint label={t("sidebar.tabAgents", { name, count: group.count })} reveals>
+            <button type="button" data-sidebar-tab={group.tab.id} disabled={removing} aria-label={t("sidebar.tabAgents", { name, count: group.count })} aria-current={selected ? "true" : undefined} aria-expanded={expanded}
+              className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => context.actions.openSurface(tabSurface(checkout, group.tab!.id!, deviceId))} />
+          </Hint>
+          <button type="button" disabled={removing} aria-expanded={expanded} aria-label={expanded ? t("sidebar.hideAgentsIn", { name }) : t("sidebar.showAgentsIn", { name })} className="relative flex h-(--size-sidebar-line) w-(--size-agent-mark) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={() => context.actions.setSidebarTabExpanded(deviceId, checkout.id, group.tab!.id!, !expanded)} data-sidebar-tab-toggle={group.tab.id}>
+            {expanded ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+          </button>
+          <span aria-hidden="true" data-sidebar-tab-icon="true" className="pointer-events-none flex w-(--size-agent-badge-compact) shrink-0 items-center justify-center"><PanelsTopLeftIcon className="size-(--size-icon-sm)" /></span>
+          <span className="pointer-events-none min-w-0 flex-1 truncate text-subtle-foreground" data-sidebar-tab-title="true">{name}</span>
+          <span className="pointer-events-none shrink-0 text-muted-foreground" data-sidebar-tab-count="true" aria-hidden="true">{group.count}</span>
+        </div> : null}
+        {expanded ? <div style={header ? { marginLeft: "var(--size-lineage-indent)" } : undefined}><AgentTreeRows checkoutId={checkout.id} deviceId={deviceId} agentRows={group.rows} inset={rowInset} rootFoldRight={groupTabs && !header} context={context} /></div> : null}
+      </li>;
+    })}
+    {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
+  </ul>;
+}
+
+const NO_TAB_FOLDS: readonly import("./snapshot").SidebarTabKey[] = [];
+
+function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, rootFoldRight = false, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; rootFoldRight?: boolean; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
   // Which devices are reachable now, as one value, so a reconnect redraws the rows that name one.
   const reachable = useShellStore((s) => [localDeviceId(s.rest), ...(s.rest?.status?.remote ?? []).filter((row) => row.state === "connected").map((row) => row.target_id)].join("\n"));
   return (
-    <ul {...(label === undefined ? { "data-checkout-agents-open": checkoutId } : { "aria-label": label, "data-home-agents": "true" })}>
+    <ul>
       {lines.map((line) => {
         if (line.kind === "more") {
           return (
-            <li key={`more:${line.parent}`} className="flex items-stretch rounded-sm pr-xs hover:bg-accent" style={{ paddingLeft: `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` }}>
+            <li key={`more:${line.parent}`} className="flex items-stretch rounded-sm pr-xs hover:bg-accent" style={{ paddingLeft: inset }}>
               <TreeRails place={line.place} />
-              <TreeChevron name="" open={null} hangs />
               <button type="button" data-tree-more={line.count} className="flex min-w-0 flex-1 items-center gap-xs py-xs pl-xxs text-left text-caption text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => setShownAll((before) => new Set(before).add(line.parent))}>
                 <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />
                 <span className="min-w-0 truncate">{t("agentSessions.tree.more", { count: line.count })}</span>
@@ -1607,6 +1647,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
           : null;
         const tree: SidebarTreeSlot = {
           place: line.place,
+          rootFoldRight,
           open: hasChildren ? depth < 2 && !agent.lineage_collapsed : null,
           onToggle: () => context.actions.toggleAgentTree(agent.pane_id),
           popover: hasChildren && depth >= 2 ? {
@@ -1635,7 +1676,6 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
           />
         );
       })}
-      {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
     </ul>
   );
 }

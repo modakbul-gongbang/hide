@@ -355,8 +355,8 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // on a parent whose chevron shows at rest, and `unfolded` or null leaves the
 // slot empty at rest. A list with nothing to fold (an Overview card) passes
 // `none`, and the row has no fold slot at all.
-function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, inset = 4, width = 268}) {
-  return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: '$--color-selected'} : {})}, {
+function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
+  return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: selectedFill} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
     'sar-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
@@ -388,7 +388,7 @@ function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
   return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, rootFoldRight = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
     'ath-row-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
@@ -409,10 +409,15 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     } : {}),
     'ath-row-device': device ? {enabled: true} : {enabled: false},
     'ath-row-device-t': {content: device ? `${device}${offline ? ' · 연결 안 됨' : ''}` : ''},
+    ...(statusAxis ? {
+      'ath-row-lane': {layoutPosition: 'absolute', x: rootFoldRight && depth === 0 ? width - 20 : inset + 18 * (depth - 1), y: 0, width: 12, enabled: Boolean(chevron)},
+      'ath-row-body': {padding: [4, 24, 4, 0]},
+      'ath-row-provider': {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
+    } : {}),
     // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark or provider.
     ...(more ? {'ath-row-mark': {enabled: false}, 'ath-row-provider': {enabled: false}} : {}),
   };
-  return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--color-selected'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
+  return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--secondary'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
 }
 
 function screenSessionRow(id, {title, checkout, provider, time, width = 360}) {
@@ -3806,10 +3811,10 @@ function buildProjectsSidebar(tokens) {
   const width = num(tokens, '--size-sidebar-ideal');
   const xs = num(tokens, '--spacing-xs');
   const sm = num(tokens, '--spacing-sm');
-  const row = width - 2 * xs;
+  const row = width - 2 * sm;
   const indent = num(tokens, '--size-lineage-indent');
-  const glyphColumn = sm + indent;
-  const nameColumn = glyphColumn + num(tokens, '--size-checkout-icon') + sm;
+  const glyphColumn = 2 * xs + num(tokens, '--size-agent-mark');
+  const nameColumn = glyphColumn + num(tokens, '--size-checkout-icon') + xs;
   const markSlot = num(tokens, '--size-agent-mark');
   const STATUS = {working: '$--agent-working', asking: '$--warning', done: '$--success', seen: '$--muted-foreground'};
   const SYMBOL = {working: '●', asking: '?', done: '✓', seen: '○'};
@@ -3874,12 +3879,12 @@ function buildProjectsSidebar(tokens) {
     const slash = name.indexOf('/');
     const [prefix, rest] = project || slash <= 0 ? ['', name] : [name.slice(0, slash + 1), name.slice(slash + 1)];
     // Line one starts with the master's mark slot and a gap before the glyph.
-    const leading = (project ? sm : glyphColumn) - markSlot - sm;
+    const leading = glyphColumn - markSlot - sm;
     const inner = row - xs - leading;
     return themedXref(id, 'DLP27', name, {
       width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-project-row' : '--size-checkout-row'),
       padding: [0, xs, 0, leading],
-      ...(selected ? {fill: '$--color-selected'} : hovered ? {fill: '$--accent'} : {}),
+      ...(selected ? {fill: '$--secondary'} : hovered ? {fill: '$--accent'} : {}),
     }, {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},
@@ -3914,14 +3919,28 @@ function buildProjectsSidebar(tokens) {
   // An opened checkout's tree row: the chevron lane sits in the checkout glyph's
   // column, so the marks start under the checkout name, one indent per level.
   const TREE_STATUS = {working: ['●', '$--agent-working'], waiting: ['○', '$--agent-working'], asking: ['?', '$--warning'], approval: ['!', '$--warning'], done: ['✓', '$--success'], seen: ['○', '$--muted-foreground']};
-  function tree(id, {status, ...options}) {
+  function tree(id, {status, grouped = false, ...options}) {
     const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
-    return screenTreeRow(id, {symbol, color, inset: nameColumn - num(tokens, '--size-lineage-chevron') - xs, width: row, ...options});
+    const agent = screenTreeRow(id, {symbol, color, inset: xs, width: row - (grouped ? indent : 0), statusAxis: true, rootFoldRight: !grouped, ...options});
+    return grouped ? frame(`${id}-placement`, 'Grouped root inset', {width: row, layout: 'horizontal', padding: [0, 0, 0, indent]}, [agent]) : agent;
   }
 
-  // An opened checkout and its agent rows, on one small group fill.
+  function tabGroupHeader(id, name, count, expanded = true) {
+    return frame(id, 'Tab agent group', {width: row, height: num(tokens, '--size-sidebar-line') + 2 * xs, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xs', padding: [xs, 24, xs, xs]}, [
+      icon(`${id}-fold`, expanded ? 'chevron-down' : 'chevron-right', {size: num(tokens, '--size-agent-mark'), fill: '$--muted-foreground'}),
+      frame(`${id}-icon`, 'Tab identity', {width: 16, height: 16, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-glyph`, 'panels-top-left', {size: 12, fill: '$--muted-foreground'})]),
+      text(`${id}-title`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
+      text(`${id}-count`, String(count), {size: '$--text-caption', fill: '$--muted-foreground'}),
+    ]);
+  }
+
+  // An opened checkout and its unboxed tab blocks.
   function group(id, rows) {
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', padding: ['$--spacing-xs', 0], fill: '$--muted', cornerRadius: '$--radius-sm'}, rows);
+    const [checkout, ...agents] = rows;
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [
+      checkout,
+      frame(`${id}-tab`, 'Contiguous tab header and lineage', {width: row, layout: 'vertical'}, agents),
+    ]);
   }
 
   function fold(id, label, level) {
@@ -4088,7 +4107,7 @@ function buildProjectsSidebar(tokens) {
       searchRow(id), sharedOverviewRow(id, needs?.total ?? 0), ruleLine(`${id}-r1`),
       ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(needs.p, 'Needs You', needs.rows, needs.total))] : []),
       ...(done ? [frame(`${id}-done`, 'Done', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(done.p, 'Done', done.rows, done.total))] : []),
-      frame(`${id}-list`, 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
+      frame(`${id}-list`, 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, sm], clip: Boolean(height)}, rows),
       footer(id, {helpOpen}),
     ]);
   }
@@ -4113,15 +4132,16 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-          tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
-          tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
-          tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
-          tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
-          tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
-          tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-          tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
-          tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
+          tabGroupHeader(`psb-tab-main-${s}`, '탭 1', 14),
+          tree(`psb-t0-${s}`, {grouped: true, title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
+          tree(`psb-t1-${s}`, {grouped: true, title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+          tree(`psb-t2-${s}`, {grouped: true, title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
+          tree(`psb-t3-${s}`, {grouped: true, title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+          tree(`psb-t4-${s}`, {grouped: true, title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
+          tree(`psb-t5-${s}`, {grouped: true, title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
+          tree(`psb-t6-${s}`, {grouped: true, title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
+          tree(`psb-t7-${s}`, {grouped: true, title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+          tree(`psb-t8-${s}`, {grouped: true, title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
@@ -4385,7 +4405,30 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
+  function statusAxis(s) {
+    const axisHeader = (key, title) => frame(`psb-axis-${key}-${s}`, 'Tab agent group', {width: 224, height: 28, layout: 'horizontal', alignItems: 'center', gap: 4, padding: [0, 24, 0, 4]}, [
+      icon(`psb-axis-${key}-fold-${s}`, 'chevron-down', {size: 12, fill: MUTED}),
+      frame(`psb-axis-${key}-icon-${s}`, 'Tab identity', {width: 16, height: 16, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [icon(`psb-axis-${key}-glyph-${s}`, 'panels-top-left', {size: 12, fill: MUTED})]),
+      text(`psb-axis-${key}-title-${s}`, title, {size: '$--text-caption', fill: SUBTLE, width: 'fill_container'}),
+      text(`psb-axis-${key}-count-${s}`, '2', {size: '$--text-caption', fill: MUTED}),
+    ]);
+    const axisRow = (key, options, grouped = true) => frame(`psb-axis-${key}-wrap-${s}`, 'Agent placement', {width: 224, layout: 'horizontal', padding: [0, 0, 0, grouped ? 18 : 0]}, [
+      screenSidebarAgentRow(`psb-axis-${key}-${s}`, {width: grouped ? 206 : 224, inset: 4, selectedFill: '$--secondary', ...options}),
+    ]);
+    return frame(`psb-axis-${s}`, 'Approved status axis · 240 px', {width: 240, height: 268, layout: 'vertical', gap: 8, padding: 8, fill: '$--sidebar', clip: true}, [
+      frame(`psb-axis-checkout-${s}`, 'Checkout identity', {width: 224, height: 28, layout: 'horizontal', gap: 4, alignItems: 'center', padding: [0, 24, 0, 4]}, [
+        frame(`psb-axis-checkout-fold-${s}`, 'Disclosure slot', {width: 12, height: 16}, []),
+        icon(`psb-axis-checkout-glyph-${s}`, 'house', {size: 16, fill: MUTED}),
+        text(`psb-axis-checkout-title-${s}`, 'main', {size: '$--text-body', weight: '500'}),
+        spacer(`psb-axis-checkout-spacer-${s}`), text(`psb-axis-checkout-age-${s}`, '8m', {size: '$--text-caption', fill: MUTED}),
+      ]),
+      frame(`psb-axis-block-a-${s}`, 'Tab 1', {width: 224, layout: 'vertical'}, [axisHeader('a', '아주 긴 한국어 탭…'), axisRow('one', {title: '탭 경계·여백 정리', age: '1m', selected: true}), axisRow('two', {title: '왼쪽 pane 검토', age: '8m', provider: 'codex'})]),
+      axisRow('single', {title: '세션 기록 동기화', age: '2s', provider: 'codex'}, false),
+      frame(`psb-axis-block-b-${s}`, 'Tab 3', {width: 224, layout: 'vertical'}, [axisHeader('b', '탭 3'), axisRow('three', {title: 'PR 질문 표시 개선', age: '6m', provider: 'codex'}), axisRow('four', {title: '탐색 개선', age: '11m', symbol: '○', color: MUTED})]),
+    ]);
+  }
+  const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------

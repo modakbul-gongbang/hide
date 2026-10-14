@@ -760,6 +760,9 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
+        let live_tabs = payload.tabs.iter().map(|tab| tab.tab_id.clone()).collect();
+        let own_device = self.node.clone();
+        let sidebar_pruned = self.prune_sidebar_tabs(own_device.as_str(), &live_tabs);
         self.snapshot.navigator.devices = workspace::devices(
             &self.node,
             self.machine_name.as_deref(),
@@ -782,7 +785,7 @@ impl Runtime {
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
         self.refresh_agent_scopes();
-        previous != self.snapshot.navigator || previous_card != self.snapshot.card
+        sidebar_pruned || previous != self.snapshot.navigator || previous_card != self.snapshot.card
     }
     /// Puts one strip entry at a new place in its checkout's strip.
     ///
@@ -2045,6 +2048,17 @@ impl Runtime {
         }
         changed |= self.expire_remote_operations(unix_milliseconds());
         if let Some(session) = observed_session.as_ref() {
+            let live_tabs = self
+                .device_raw_sessions
+                .get(target_id)
+                .unwrap_or(session)
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+                .flat_map(|checkout| &checkout.tabs)
+                .filter_map(|tab| tab.id.clone())
+                .collect();
+            changed |= self.prune_sidebar_tabs(target_id, &live_tabs);
             changed |= self.observe_remote_operations(target_id, session);
         }
         if session_ok {
@@ -2356,6 +2370,7 @@ impl Runtime {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
             self.created_tab_checkouts.clear();
+            self.provisional_tabs.clear();
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
@@ -2460,6 +2475,7 @@ impl Runtime {
                     })
             });
         let mut requests_changed = false;
+        let mut terminal_metadata_changed = false;
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -2472,6 +2488,14 @@ impl Runtime {
             let keep =
                 |pane_id: &str| pane_id.starts_with("remote:") || live_pane_ids.contains(pane_id);
             self.retain_terminal_pane_state(keep);
+            // Metadata belongs to the session's panes, not its selection.
+            // Prune even when the selected creation still has no layout.
+            let before = self.snapshot.terminal.panes.len();
+            self.snapshot
+                .terminal
+                .panes
+                .retain(|pane| keep(&pane.pane_id));
+            terminal_metadata_changed = before != self.snapshot.terminal.panes.len();
             let panes_closing = &self.panes_closing;
             if self
                 .input_requests
@@ -2556,6 +2580,15 @@ impl Runtime {
                         .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
                 });
                 let selected_pane_missing = selected_pane_id.is_some() && !selected_still_exists;
+                // An acknowledged owner opening has a root pane before its
+                // workspace/layout can be projected. The bounded creation
+                // record ends on confirmation, timeout or connection loss.
+                let selected_creation_pending = selected_pane_missing
+                    && selected_pane_id.as_deref().is_some_and(|pane_id| {
+                        focused_checkout.is_some_and(|checkout| {
+                            self.created_pane_awaits_layout(pane_id, &checkout.path)
+                        })
+                    });
                 let selected_was_projected = previously_projected_in_focused_checkout
                     && selected_pane_id.as_deref() == previously_projected_pane.as_deref();
                 let selected_left_focused_checkout =
@@ -2710,7 +2743,7 @@ impl Runtime {
                         retired_pane_id,
                         format!("Pane {retired_pane_id} retired before Herdr confirmed focus."),
                     );
-                    self.clear_terminal_projection();
+                    self.clear_selected_terminal_state();
                     self.snapshot.terminal.pane_id = replacement_pane_id.clone();
                     self.snapshot.focused.pane_id = replacement_pane_id.clone();
                     self.snapshot.ui_state.selected_pane_id = replacement_pane_id.clone();
@@ -2735,13 +2768,15 @@ impl Runtime {
                     );
                     self.push_diagnostic("pane.selection_retired", message);
                     selection_changed = true;
-                } else if selected_pane_missing || selected_pane_invalid_for_context {
+                } else if !selected_creation_pending
+                    && (selected_pane_missing || selected_pane_invalid_for_context)
+                {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
                     self.fail_pending_pane_focus_for_target(
                         pane_id,
                         format!("Pane {pane_id} is no longer available in the selected checkout."),
                     );
-                    self.clear_terminal_projection();
+                    self.clear_selected_terminal_state();
                     self.set_error(
                         "pane.projection_unavailable",
                         format!(
@@ -2818,6 +2853,7 @@ impl Runtime {
         let mut changed = catalog_changed
             || requests_changed
             || selection_changed
+            || terminal_metadata_changed
             || timed_out
             || tab_move_timed_out
             || close_timed_out
@@ -3785,7 +3821,7 @@ impl Runtime {
                         .map(|checkout| checkout.next_tab_label.clone())
                         .unwrap_or_default();
                     self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
-                        workspace_id,
+                        workspace_id: Some(workspace_id),
                         tab_id: tab_id.to_owned(),
                         pane_id: pane_id.clone(),
                         cwd: path.clone(),
@@ -4841,21 +4877,23 @@ impl Runtime {
                 }
                 // The tab is drawn from this answer, as one pane with Herdr's
                 // ids, until Herdr's layout replaces it (D-03, D-05). Opening
-                // an owner makes a Herdr workspace as well, which the screen
-                // waits for.
-                if let (
-                    Some(tab_id),
-                    Some(pane_id),
+                // an owner may also make a workspace: keep the same pending
+                // state, but wait for Herdr to name that workspace to draw it.
+                let creation = match &action {
                     RemoteControlAction::CreateTab {
                         workspace_id,
                         cwd,
                         label,
                         ..
-                    },
-                ) = (created_tab_id.as_ref(), created_pane_id.as_ref(), &action)
+                    } => Some((Some(workspace_id.clone()), cwd, label)),
+                    RemoteControlAction::OpenOwner { cwd, label, .. } => Some((None, cwd, label)),
+                    _ => None,
+                };
+                if let (Some(tab_id), Some(pane_id), Some((workspace_id, cwd, label))) =
+                    (created_tab_id.as_ref(), created_pane_id.as_ref(), creation)
                 {
                     self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
-                        workspace_id: workspace_id.clone(),
+                        workspace_id,
                         tab_id: tab_id.clone(),
                         pane_id: pane_id.clone(),
                         cwd: cwd.clone(),

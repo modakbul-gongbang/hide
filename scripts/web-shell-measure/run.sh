@@ -398,7 +398,7 @@ if [[ "$scenario" == topology ]]; then
   fi
   reset_fixture
   note "echo under the scale's agent churn (50 samples)"
-  MEASURE_ECHO_REPEATS=50 node "$measure_dir/echo.mjs" > "$MEASURE_RUN_DIR/echo-1.json"
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/echo-1.json"
   python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/echo-1.json" > "$MEASURE_RUN_DIR/echo-summary.json"
   note "topology: ${MEASURE_TOPOLOGY_ROUNDS:-20} rounds of split, zoom, unzoom, close, new tab and tab switch"
   node "$measure_dir/topology.mjs" > "$MEASURE_RUN_DIR/topology.json"
@@ -578,7 +578,7 @@ for trial in 1 2 3; do
   reset_fixture
   note "echo trial $trial (50 samples)"
   ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/idle-hided-$trial.ps"
-  MEASURE_ECHO_REPEATS=50 node "$measure_dir/echo.mjs" > "$MEASURE_RUN_DIR/echo-$trial.json"
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/echo-$trial.json"
   ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-$trial.ps"
 done
 python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR"/echo-{1,2,3}.json > "$MEASURE_RUN_DIR/echo-summary.json"
@@ -608,13 +608,6 @@ fi
 uptime > "$MEASURE_RUN_DIR/frames-uptime-after.txt"
 "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source recent-unwrapped --lines 5 > "$MEASURE_RUN_DIR/frames-pane-tail.txt" || true
 ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-frames.ps"
-python3 - "$MEASURE_RUN_DIR" <<'PYJSON'
-import json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-data = json.loads((root / 'frames.json').read_text())
-(root / 'echo-driven.json').write_text(json.dumps(data['driven_echo']))
-PYJSON
-python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/echo-driven.json" > "$MEASURE_RUN_DIR/echo-driven-summary.json"
 python3 "$measure_dir/summarize.py" frames "$MEASURE_RUN_DIR/frames.json" > "$MEASURE_RUN_DIR/frames-summary.json"
 python3 "$measure_dir/memory.py" after-frames "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-after-frames.json"
 cat "$MEASURE_RUN_DIR/memory-after-frames.json"
