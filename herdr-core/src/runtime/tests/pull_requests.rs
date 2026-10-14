@@ -50,6 +50,7 @@ fn pull_request(
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     }
 }
 
@@ -67,6 +68,7 @@ fn pr_runtime(pull_requests: Vec<PullRequestSnapshot>) -> Runtime {
         .github
         .projects
         .push(crate::model::GithubProjectSnapshot {
+            viewer: None,
             root_path: "/repo".into(),
             issues: ProjectIssuesSnapshot {
                 repository: Some("acme/project".into()),

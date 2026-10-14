@@ -3632,7 +3632,7 @@ pub struct PrLinkSnapshot {
 
 /// One failed check of a pull request, by the name GitHub shows and the page
 /// that says why.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PrFailedCheck {
     pub name: String,
     pub url: Option<String>,
@@ -4193,6 +4193,90 @@ pub struct PullRequestSnapshot {
     /// nothing about this repository's branch of the same name.
     #[serde(default)]
     pub cross_repository: bool,
+    /// What the Work tab's PRs list groups by (PRD work-tab-pr-lens D-08):
+    /// the GitHub values the 5-minute read adds, none of them parsed from a
+    /// body or a repository's own script (D-05).
+    #[serde(default)]
+    pub work: PullRequestWork,
+}
+
+/// How a pull request stands against its base, GitHub's `mergeStateStatus`
+/// (PRD work-tab-pr-lens D-20). A value this build does not know reads as
+/// `Unknown`, which keeps the pull request where it was.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    #[default]
+    Unknown,
+    Clean,
+    HasHooks,
+    /// Merge is allowed but a check that is not required failed.
+    Unstable,
+    Dirty,
+    Behind,
+    Blocked,
+    Draft,
+}
+
+impl MergeState {
+    pub fn parse(value: &str) -> Self {
+        match value.to_ascii_uppercase().as_str() {
+            "CLEAN" => Self::Clean,
+            "HAS_HOOKS" => Self::HasHooks,
+            "UNSTABLE" => Self::Unstable,
+            "DIRTY" => Self::Dirty,
+            "BEHIND" => Self::Behind,
+            "BLOCKED" => Self::Blocked,
+            "DRAFT" => Self::Draft,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRequestKind {
+    User,
+    Team,
+}
+
+/// One person or team a review was asked of.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ReviewRequest {
+    pub kind: ReviewRequestKind,
+    pub name: String,
+}
+
+/// Whether a review was asked of the signed-in account.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAsk {
+    #[default]
+    None,
+    /// Asked of the account itself.
+    Direct,
+    /// Asked of a team the account is in and not of the account.
+    Team,
+}
+
+/// The GitHub values the Work tab's PRs list and the card read beyond the
+/// badge, checks and review: see [`PullRequestSnapshot::work`].
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PullRequestWork {
+    pub author: Option<String>,
+    pub author_is_bot: bool,
+    /// The signed-in account wrote it.
+    pub mine: bool,
+    pub merge_state: MergeState,
+    pub review_requests: Vec<ReviewRequest>,
+    pub asked_of_me: ReviewAsk,
+    /// The checks of an open pull request that failed, by name, and how many
+    /// are still running: the second line's `✗ <name>` and `CI · N`.
+    pub failed_checks: Vec<PrFailedCheck>,
+    pub pending_checks: u32,
+    /// Its place in the base branch's merge queue, from 1; absent when it is
+    /// not queued.
+    pub queue_position: Option<u32>,
 }
 
 impl PullRequestSnapshot {
@@ -4206,7 +4290,7 @@ impl Serialize for PullRequestSnapshot {
         use serde::ser::SerializeStruct;
         // The head commit, the repository and the created and closed times
         // stay off the wire: only the core compares them.
-        let mut out = serializer.serialize_struct("PullRequestSnapshot", 13)?;
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 14)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;
         out.serialize_field("checks", &self.checks)?;
@@ -4220,6 +4304,7 @@ impl Serialize for PullRequestSnapshot {
         out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
         out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
         out.serialize_field("state", &self.state())?;
+        out.serialize_field("work", &self.work)?;
         out.end()
     }
 }
@@ -4260,6 +4345,10 @@ pub struct GithubProjectSnapshot {
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,
+    /// The account `gh` is signed in as, which "mine" is judged against;
+    /// absent before the first successful read.
+    #[serde(default)]
+    pub viewer: Option<String>,
     /// One entry per branch that has a pull request.
     pub pull_requests: Vec<PullRequestSnapshot>,
 }

@@ -37,6 +37,7 @@ fn pull_request(number: u32, branch: &str, badge: PullRequestBadge) -> PullReque
         closed_at_unix_ms: Some(3),
         head_oid: Some(format!("{number:040x}")),
         cross_repository: false,
+        work: Default::default(),
     }
 }
 

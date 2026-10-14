@@ -114,12 +114,14 @@ fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
     );
     // The same path on another device must use its own repository facts.
     let mut local = crate::model::GithubProjectSnapshot {
+        viewer: None,
         root_path: "/repo".into(),
         ..Default::default()
     };
     local.issues.repository = Some("acme/local".into());
     runtime.github.projects = vec![local];
     let mut remote = crate::model::GithubProjectSnapshot {
+        viewer: None,
         root_path: "/repo".into(),
         ..Default::default()
     };
@@ -281,6 +283,7 @@ fn pull_request(number: u32, branch: &str, closes: &[u32]) -> PullRequestSnapsho
         closed_at_unix_ms: None,
         head_oid: None,
         cross_repository: false,
+        work: Default::default(),
     }
 }
 
@@ -299,6 +302,7 @@ fn links_runtime(pull_requests: Vec<PullRequestSnapshot>, read: bool) -> Runtime
         .github
         .projects
         .push(crate::model::GithubProjectSnapshot {
+            viewer: None,
             root_path: "/repo".into(),
             issues: ProjectIssuesSnapshot {
                 repository: Some("Acme/Project".into()),
