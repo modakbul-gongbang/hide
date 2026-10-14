@@ -100,19 +100,21 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     const owner = keyboardOwner();
     if (agentsCovered && (owner.kind === "pane" || owner.kind === "agent") && owner.workspace === checkoutId) noteKeyboardOwner({ kind: "none" });
   }, [agentsCovered, checkoutId]);
-  // A lane that goes out of sight with the keyboard inside it hands the
+  // A lane that goes out of sight with the keyboard inside it, or a files
+  // tool another tool replaces with the keyboard in its documents, hands the
   // keyboard to the pane the core has focused, as after a closing sheet, so
   // no focus is reported for it (B4, B23).
-  const wasUp = useRef(up);
+  const filesUp = up && tool === "files";
+  const shownBefore = useRef({ up, filesUp });
   useEffect(() => {
-    const before = wasUp.current;
-    wasUp.current = up;
-    if (!before || up) return;
+    const before = shownBefore.current;
+    shownBefore.current = { up, filesUp };
     const owner = keyboardOwner();
-    if (owner.kind !== "view" && owner.kind !== "tool" && !laneHoldsFocus()) return;
+    const lost = (before.up && !up && (owner.kind === "view" || owner.kind === "tool")) || (before.filesUp && !filesUp && owner.kind === "view");
+    if (!lost) return;
     const paneId = useShellStore.getState().focusedPaneId;
     if (paneId) focusTerminal(paneId);
-  }, [up]);
+  }, [up, filesUp]);
   if (!checkout || !view) return null;
   return (
     <section
@@ -130,11 +132,6 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
 
 function tokenPx(name: string): number {
   return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0;
-}
-
-/** Whether the keyboard is inside the lane now. */
-function laneHoldsFocus(): boolean {
-  return document.activeElement instanceof HTMLElement && document.activeElement.closest("[data-lane-frame]") !== null;
 }
 
 /** An element's width, followed as it changes; 0 until it is measured. */
@@ -166,8 +163,10 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
   const up = laneUp(frame.mode);
   const unpinned = !view.pinned;
   // A terminal click puts an unpinned lane away (B4); a pinned one, docked
-  // or over a body too narrow for it, stays (B5, B19).
-  const putAway = () => {
+  // or over a body too narrow for it, stays (B5, B19). A press on a tab
+  // strip is not one, so a tab dragged over the lane meets it there.
+  const putAway = (event: React.PointerEvent<HTMLElement>) => {
+    if (!(event.target instanceof Element) || !event.target.closest("[data-pane-view]")) return;
     if (frame.mode === "overlay" && unpinned) useUiStore.getState().putLaneAway();
   };
   // Escape in the lane, once nothing inside it answered (a menu, a filter, a
