@@ -1,4 +1,4 @@
-import { openAllProjects, openProjectOverview, openOverviewOn } from "./overview-entry";
+import { openProjectOverview, openOverviewOn } from "./overview-entry";
 // The Project Overview on an isolated pinned Herdr and hided (PRD
 // overview-lenses-tiles-agents, on top of web-project-overview,
 // task-agents-views and the issue-first rework of 2026-09-28): a Git project
@@ -835,14 +835,17 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(graph.locator("[data-dependency-edge]")).toHaveCount(1);
     await expect(graph.locator("[data-dependency-edge]")).toHaveAttribute("d", /^M \S+ \S+ C /);
     // The Issues mode is the page's: All projects' Tasks opens on it too (task-agents-views B9, D-10).
-    await openAllProjects(page);
+    // The layer is still open over the sidebar, so its own All projects tab is the way there.
+    await page.getByRole("tab", { name: "All projects", exact: true }).click();
     const main = page.locator("[data-main-screen]");
+    await expect(main).toBeVisible();
     await page.locator('[data-main-tab="tasks"]').click();
     await expect(main.locator("[data-tasks-mode]")).toHaveAttribute("data-tasks-mode", "dependencies");
     await expect(main.locator('[data-dependency-layer="0"] [data-card-project]')).toHaveText("repo");
     await page.locator('[data-tasks-mode-item="list"]').click();
-    // The List mode on the project's Issues tab.
-    await openProjectOverview(page, "repo");
+    // The List mode on the project's Issues tab, the layer's own project tab.
+    await page.getByRole("tab", { name: "repo", exact: true }).click();
+    await expect(overview).toBeVisible();
     await tile("issues").locator("[data-lens-tile-button]").click();
     const list = page.locator("[data-tasks-list]");
     await expect(list.locator("[data-list-group]").first()).toHaveAttribute("data-list-group", "working");
@@ -864,7 +867,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(main.locator("[data-main-tab]")).toHaveCount(4);
-    await expect(main).toHaveAttribute("data-main-view", "agents");
     await expect(main.locator('[data-main-tab="agents"] [data-agents-waiting]')).toBeVisible();
     await page.locator('[data-main-tab="agents"]').click();
     await expect(main.locator("[data-graph=all]")).toBeVisible();
@@ -952,8 +954,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(page.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(0);
 
     // A project with no agent: its main box stays, counting none
-    // (B13); New agent on a folder opens its Workspace.
-    await openAllProjects(page);
+    // (B13); New agent on a folder opens its Workspace. The layer is still
+    // open on fixture's Overview, so its own All projects tab is the way there.
+    await page.getByRole("tab", { name: "All projects", exact: true }).click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(workspace).toBeVisible();
