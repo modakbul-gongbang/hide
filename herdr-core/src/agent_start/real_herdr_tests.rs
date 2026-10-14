@@ -62,13 +62,16 @@ fn a_new_worktrees_seed_tab_is_named_from_creation_proof_without_shell_replaceme
         }),
     );
     assert_eq!(created["workspace"]["label"], "hide:spawn-fixture");
+    // The receipt uses the wire boundary's path spelling, just as the
+    // executor does; Herdr's native Windows response uses backslashes.
+    let placement = wire::created_worktree(created.clone()).unwrap();
     // Pinned Herdr calls the seed "1", not the workspace's marker.
     let record: crate::coordination::SpawnRecord = serde_json::from_value(json!({
         "id":"spawn-fixture", "parent":"agent-1", "intent":"seed", "name":"Seed task",
         "kind":"claude", "repo":repo, "branch":"task", "requested_path":null, "args":[],
-        "path":created["worktree"]["path"], "pane":created["root_pane"]["pane_id"],
+        "path":placement.path, "pane":placement.pane_id,
         "terminal":created["root_pane"]["terminal_id"], "child":null,
-        "seed_tab":{"id":created["tab"]["tab_id"], "label":created["tab"]["label"]},
+        "seed_tab":{"id":placement.tab_id, "label":placement.tab_label},
     }))
     .unwrap();
     let work = crate::coordination::naming::Work::of(&record).unwrap();
