@@ -1,7 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, CornerLeftUpIcon, LoaderCircleIcon, MessageSquareIcon, PlayIcon, CircleHelpIcon, SquareTerminalIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { rowLine } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -10,7 +10,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { deviceLabel, failureKey, foldLines, resumeProvider, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
 import { allAgents } from "./navigation";
-import { catalogWorkspaces, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
+import { catalogOf, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
 import { startAnswer, startRequestId } from "./startAnswer";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -45,10 +45,13 @@ export function LinkSessions({
   actions: Actions;
 }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const navigatorAgents = useShellStore((s) => s.rest?.navigator?.agents);
+  const agentScope = useShellStore((s) => s.rest?.navigator?.agent_scope);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const filling = useShellStore((s) => s.linkSummaries?.filling === true);
   const [unfolded, setUnfolded] = useState(false);
-  const agents = allAgents(rest?.status?.remote, rest?.navigator?.agents ?? [], rest?.navigator?.agent_scope, rest?.navigator?.devices).map((entry) => entry.agent);
+  const agents = useMemo(() => allAgents(remote, navigatorAgents ?? [], agentScope, devices).map((entry) => entry.agent), [remote, navigatorAgents, agentScope, devices]);
   const lines = sessionLines(panel.sessions, agents);
   const { shown, earlier } = foldLines(lines, unfolded);
   const finding = panel.loading || filling;
@@ -144,11 +147,12 @@ function useResume(): { resume: Resume; start: (send: (request: string) => void)
 
 function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actions }: { entry: SessionLine; last: boolean; project: Workspace; checkoutBranch: string | null; onOpenPr?: (pr: number) => void; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
-  const devices = rest?.navigator?.devices;
-  const node = localDeviceId(rest);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const node = useShellStore((s) => localDeviceId(s.rest));
   const { line, live } = entry;
-  const checkout = resumeCheckout(line, catalogWorkspaces(rest), checkoutBranch, node);
+  const checkout = resumeCheckout(line, catalogOf(workspaces, remote), checkoutBranch, node);
   const viewOff = viewBlock(line, devices, node);
   const resumeOff = resumeBlock(line, checkout, devices, node);
   const { resume, start } = useResume();
@@ -165,7 +169,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   return (
     <li
       tabIndex={0}
-      aria-label={request}
+      aria-label={[request, agentProductName(line.agent)].join(", ")}
       className="group/link-line relative flex gap-sm rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
       data-link-session={line.id}
       data-link-live={live?.kind}
@@ -173,9 +177,8 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
       data-link-file={line.file}
     >
       <span className="relative flex w-(--size-agent-badge-compact) shrink-0 flex-col items-center pt-xxs" aria-hidden="true">
-        <span className={cn(gone && "opacity-(--opacity-secondary)")}>
-          <AgentMark kind={line.agent} />
-        </span>
+        {/* The rail's node: the line's provider is named in its detail line, not drawn as a logo (PRD agent-mark-quiet D-06). */}
+        <span className={cn("size-(--size-tab-status-dot) rounded-full bg-border", gone && "opacity-(--opacity-secondary)")} />
         {last ? null : <span className="mt-xs w-(--size-hairline) flex-1 bg-border" />}
       </span>
       <div className={cn("flex min-w-0 flex-1 flex-col gap-xxs", last ? "pb-xxs" : "pb-md")}>
@@ -190,6 +193,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
           </span>
         ) : null}
         <span className="flex min-w-0 flex-wrap items-center gap-x-xs gap-y-xxs text-caption text-muted-foreground">
+          <span data-link-agent={line.agent}>{agentProductName(line.agent)}</span>
           {live?.kind === "working" ? (
             <span className="inline-flex items-center gap-xs" data-link-state="working">
               <span aria-hidden="true" className="size-(--size-tab-status-dot) rounded-full bg-agent-working" />

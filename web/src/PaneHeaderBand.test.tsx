@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
@@ -292,4 +292,37 @@ it("shows a parent's PR mark over its descendants as the Sessions row does, and 
   try {
     expect(none.container.querySelector("[data-agent-pr]")).toBeNull();
   } finally { await none.unmount(); }
+});
+
+it("leaves a header alone when a snapshot section it does not draw moves, and redraws it when its own agents or device do", async () => {
+  const agents = childrenFixture();
+  vi.useFakeTimers();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  initializeInterfaceI18n("en");
+  const rest = { navigator: { devices: [{ id: "local", kind: "local" }], workspaces: [] }, ui_state: { theme: "dark" }, status: { pane_focus_request: null, remote: [] } } as unknown as SnapshotRest;
+  useShellStore.setState({ agents, rest });
+  const draws: Record<string, number> = { shell: 0, parent: 0 };
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  const actions = createActions(() => true);
+  const plain: PaneHeader = { working: false, band: null };
+  await act(async () => root.render(<TooltipProvider>
+    {["shell", "parent"].map((id) => <Profiler key={id} id={id} onRender={() => { draws[id] = (draws[id] ?? 0) + 1; }}><PaneHeaderBand paneId={id} header={plain} actions={actions} /></Profiler>)}
+  </TooltipProvider>));
+  try {
+    expect(container.querySelector('[data-pane-tree="parent"]')).not.toBeNull();
+    const settled = { ...draws };
+    await act(async () => useShellStore.setState({ rest: { ...useShellStore.getState().rest!, ui_state: { theme: "light" } } as SnapshotRest }));
+    await act(async () => useShellStore.setState({ rest: { ...useShellStore.getState().rest!, navigator: { ...useShellStore.getState().rest!.navigator, workspaces: [] } } as unknown as SnapshotRest }));
+    expect(draws).toEqual(settled);
+    // The device a parent's totals depend on moves: the parent redraws, a plain pane does not.
+    await act(async () => useShellStore.setState({ rest: { ...useShellStore.getState().rest!, status: { pane_focus_request: null, remote: [{ target_id: "mini", state: "disconnected", message: "Mac mini is not connected" }] } } as unknown as SnapshotRest }));
+    expect(draws.parent).toBeGreaterThan(settled.parent!);
+    expect(draws.shell).toBe(settled.shell);
+    // An agent row moves: every header that selects the agents is asked again.
+    const before = draws.parent!;
+    await act(async () => useShellStore.setState({ agents: agents.map((row) => row.pane_id === "parent" ? { ...row, lineage_child_pane_ids: row.lineage_child_pane_ids!.slice(0, 2) } : row) }));
+    expect(draws.parent).toBeGreaterThan(before);
+  } finally { await act(async () => root.unmount()); }
 });

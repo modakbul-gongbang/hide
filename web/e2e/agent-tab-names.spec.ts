@@ -23,7 +23,9 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     await page.locator(`[data-pane-view="${first}"]`).click({ position: { x: 30, y: 60 } });
     await expect(tab).toContainText("첫 번째 작업 진행", { timeout: 15_000 });
     await expect(tab.locator("[data-tab-status]")).toHaveCount(1);
-    await expect(tab.locator("img")).toHaveCount(1);
+    await expect(tab.locator("img")).toHaveCount(0);
+    // The logo stays on the pane's own header and names its product (agent-mark-quiet B4, B6).
+    await expect(page.locator(`[data-pane-view="${first}"] header [aria-label="Claude Code"] [data-agent-mark="claude"]`)).toHaveCount(1);
     await page.locator(`[data-pane-view="${second}"]`).click({ position: { x: 30, y: 60 } });
     await expect(tab).toContainText("두 번째 작업 진행");
     await screenshot(page, "tab-names-automatic");

@@ -59,9 +59,9 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     const agents = page.locator('[data-palette-group="agents"]');
     await expect(agents.locator("[data-palette-row]")).toHaveCount(2);
 
-    // An agent row: the provider mark, the title, the state line under it.
-    const rowOne = page.locator(`[data-palette-row="agent:${one}"]`);
-    await expect(rowOne.locator('[data-agent-mark="claude"]')).toBeVisible();
+    // An agent row: its status mark, the title, the state line under it, and no provider logo (agent-mark-quiet B9).
+    const rowOne = page.locator(`[data-palette-row="agent:${one}"][title="Claude Code"]`);
+    await expect(rowOne.locator("[data-agent-mark]")).toHaveCount(0);
     await expect(rowOne).toContainText("Agent one");
     await expect(rowOne.locator("[data-palette-detail]")).toContainText("팔레트 그룹 검증 중");
     const rowTwo = page.locator(`[data-palette-row="agent:${two}"]`);

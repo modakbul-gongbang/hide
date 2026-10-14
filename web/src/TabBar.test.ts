@@ -20,7 +20,7 @@ describe("closingSuffix", () => {
 });
 
 describe("tab composition", () => {
-  it("renders the core's representative mark, provider and title in that order", async () => {
+  it("renders the core's representative mark and the title, with no provider logo, and names the product", async () => {
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { AgentTab } = await import("./TabBar");
@@ -32,11 +32,12 @@ describe("tab composition", () => {
     } as unknown as import("./snapshot").Checkout;
     const markup = renderToStaticMarkup(createElement(TooltipProvider, { children: createElement(AgentTab, { number: 2, checkout, entry: checkout.strip[0]!, interaction: { selected: true, fit: "titled", areaActive: true, dragging: false, press: () => {}, select: () => {} }, renaming: false, onCancelRename: () => {}, actions: {} as import("./actions").Actions }) }));
     const mark = markup.indexOf('data-tab-status="approval"');
-    const logo = markup.indexOf('<img', mark);
-    const title = markup.indexOf('작업 제목', logo);
+    const title = markup.indexOf('작업 제목', mark);
     expect(mark).toBeGreaterThan(0);
-    expect(logo).toBeGreaterThan(mark);
-    expect(title).toBeGreaterThan(logo);
+    expect(title).toBeGreaterThan(mark);
+    expect(markup).not.toContain('<img');
+    expect(markup).not.toContain('data-agent-mark');
+    expect(markup).toContain('Claude Code');
     expect(markup).toContain('data-keycap="2"');
   });
 });

@@ -217,9 +217,9 @@ export async function sidebarRowsFit(page) {
     const parts = Array.from(document.querySelectorAll("nav[data-sidebar] [data-project-list] *")).filter(
       (part) =>
         part.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
-        (part.matches("svg, [data-mark], [data-agent-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
+        (part.matches("svg, [data-mark], [data-hide-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
     );
-    const name = (part) => part.textContent?.trim() || part.getAttribute("data-mark") || part.getAttribute("data-agent-mark") || part.getAttribute("class") || part.tagName;
+    const name = (part) => part.textContent?.trim() || part.getAttribute("data-mark") || (part.hasAttribute("data-hide-mark") ? "hide-mark" : null) || part.getAttribute("class") || part.tagName;
     // What of a part can show: a box that clips its overflow (a badge, a
     // truncated label) is the visible edge of the text inside it.
     const shown = new Map();

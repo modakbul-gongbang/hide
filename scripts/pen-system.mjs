@@ -787,7 +787,7 @@ function buildAgentGraphBox(tokens) {
     ]),
   ]);
 
-  // A row: the mark, provider, title and age on one line; a step in with a
+  // A row: the status mark, title and age on one line, and no provider logo (PRD agent-mark-quiet D-01); a step in with a
   // corner arrow for a delegation inside the checkout; the chip of a
   // delegation into or from another project and the tucked badge before the
   // age; and the question as a second line, only while the agent asks.
@@ -811,7 +811,6 @@ function buildAgentGraphBox(tokens) {
             {type: 'ellipse', id: `${p}-stopped-half`, x: 3.5, y: 3.5, name: 'Half', startAngle: 90, sweepAngle: 180, width: DOT, height: DOT, fill: '$--subtle-foreground'},
           ]),
         ]),
-        frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         text(`${p}-title`, 'agent title'),
         grow(`${p}-sp`),
         frame(`${p}-cross`, 'Cross-project chip', {
@@ -825,7 +824,7 @@ function buildAgentGraphBox(tokens) {
         ]),
         caption(`${p}-age`, '3m', '$--muted-foreground', true),
       ]),
-      frame(`${p}-q`, 'Question', {layout: 'horizontal', alignItems: 'center', width: 'fill_container', height: ROW_LINE, padding: [0, '$--spacing-sm', 0, SM + MARK], enabled: false}, [
+      frame(`${p}-q`, 'Question', {layout: 'horizontal', alignItems: 'center', width: 'fill_container', height: ROW_LINE, padding: [0, '$--spacing-sm', 0, SM + MARK + num(tokens, '--spacing-xs')], enabled: false}, [
         caption(`${p}-q-t`, 'question', '$--warning'),
       ]),
     ]);
@@ -845,11 +844,10 @@ function buildAgentGraphBox(tokens) {
       : symbol === '▲' || symbol === '◐'
         ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}, ...shapes(p, symbol)}
         : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}, ...shapes(p)};
-  const row = (n, {symbol, fill, provider = 'claude', title, age, line, depth = 0, tucked, cross, asking = false}) => {
+  const row = (n, {symbol, fill, title, age, line, depth = 0, tucked, cross, asking = false}) => {
     const p = `agb-row${n}`;
     return {
       ...mark(p, symbol, fill),
-      [`${p}-provider`]: {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
       [`${p}-title`]: {content: title, ...(asking ? {fontWeight: '600'} : {})},
       [`${p}-age`]: {content: age},
       [`${p}-ind`]: {enabled: depth > 0},
@@ -900,7 +898,7 @@ function buildAgentGraphBox(tokens) {
       state('asking', 'Worktree with asking row', {}, {
         ...headOf({glyph: 'git-pull-request', tone: '$--pr-failed', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', issue: '#192', pr: {number: 221, state: 'failed', changes: true}, distance: '↑3', files: 4}),
         ...rowsOn(
-          {symbol: '?', fill: '$--warning', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
+          {symbol: '?', fill: '$--warning', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
           {symbol: '●', fill: '$--agent-working', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
         ),
       }),
@@ -929,7 +927,7 @@ function buildAgentGraphBox(tokens) {
       }),
       state('selected', 'Selected', {stroke: '$--primary'}, {
         ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', distance: '↑39 ↓17'}),
-        ...rowsOn({symbol: '○', fill: '$--muted-foreground', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'}),
+        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: 'Agent tab groups 구현', age: '8m'}),
       }),
     ];
   }
@@ -939,7 +937,7 @@ function buildAgentGraphBox(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent graph box', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (status mark, title, age, and no provider logo; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     masterCard(`${id}-master-card`, 'Master', master),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

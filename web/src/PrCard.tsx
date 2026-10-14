@@ -2,7 +2,7 @@ import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, ExternalLinkIcon, GitB
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { lineTone, rowLine } from "./agentRow";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { Elapsed } from "./components/elapsed";
 import { PrMark } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
@@ -225,8 +225,8 @@ function AgentSaid({ entry }: { entry: PrEntry }) {
     <section className="flex flex-col gap-xxs" data-pr-card-agent={agent.pane_id}>
       <h3 className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
-        <AgentMark kind={agent.agent_kind} />
         <span className="min-w-0 truncate">{asking ? t("work.card.agentAsks", { name: agent.identity_label }) : agent.identity_label}</span>
+        <span className="shrink-0 font-normal">{agentProductName(agent.agent_kind)}</span>
         <Elapsed since={agent.state.request_since} className="shrink-0" />
       </h3>
       {text ? <p className={cn("whitespace-pre-line break-words text-caption", asking ? "text-warning" : said ? lineTone(said, agent) : "text-foreground")} data-pr-card-agent-text={asking ? "ask" : "said"}>{text}</p> : null}

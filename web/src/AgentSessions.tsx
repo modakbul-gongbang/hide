@@ -1,7 +1,8 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon, GitBranchIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { HideMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { forkLabel, markTone } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
 import { hideAiWords } from "./hideAiOrigin";
@@ -176,10 +177,10 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
         <button type="button" data-session-focus="row" disabled={!model.available} onClick={(event) => { event.stopPropagation(); open_(); }}
           onKeyDown={(event) => treeKey(event, open, () => actions.toggleSessionTree(agent.pane_id))}
           aria-current={selected ? "true" : undefined}
-          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, forkLabel(t, agent), agent.agent_kind, statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={agent.identity_label}
+          aria-expanded={open ?? undefined} aria-label={[agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
           {/* Unfinished Idle work wears ◐ in the mark's place (B31); the line says what is left. */}
-          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} hideAi={agent.hide_ai ? "card" : null} />
+          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}{agent.hide_ai ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
           <AgentForkMark agent={agent} />
         </button>
@@ -189,7 +190,7 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
         <RecordActions agent={agent} workspace={project.id} actions={actions} expanded={open === true} />
         {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : <ResolveLane />}
       </div>
-      <SecondLine agent={agent} />
+      <SecondLine agent={agent} owl={Boolean(agent.hide_ai)} />
     </div>
   </li>;
 });
@@ -215,9 +216,9 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         <button type="button" data-session-focus="row" disabled={!model.available} onClick={(event) => { event.stopPropagation(); go(); }}
           onKeyDown={(event) => treeKey(event, open, toggle)}
           aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined}
-          aria-label={[child.identity_label, forkLabel(t, child), child.agent_kind, statusText(t, child.status_code), child.state.branch_badge].filter(Boolean).join(", ")} title={child.identity_label}
+          aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), statusText(t, child.status_code), child.state.branch_badge].filter(Boolean).join(", ")} title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-          <StatusMark symbol={child.symbol} className={markTone(child)} /><AgentMark kind={child.agent_kind} />
+          <StatusMark symbol={child.symbol} className={markTone(child)} />
           <span className={cn("min-w-0 truncate text-caption", titleTone)}>{child.identity_label}</span>
           <AgentForkMark agent={child} />
         </button>
@@ -227,7 +228,7 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         <RecordActions agent={child} workspace={workspace} actions={actions} expanded={open === true} />
         <ResolveLane />
       </div>
-      <SecondLine agent={child} />
+      <SecondLine agent={child} owl={false} />
       {child.state.branch_badge ? <BranchLine agent={child} branch={child.state.branch_badge} /> : null}
     </div>
   </li>;
@@ -274,13 +275,14 @@ function TreeMoreRow({ line, onShowAll }: { line: Extract<SidebarTreeLine, { kin
 /**
  * B31: the ask for Needs You, else the core's line; a block's line is its cause.
  */
-function SecondLine({ agent }: { agent: AgentRow }) {
+function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
+  const indent = owl ? DETAIL_INDENT_OWL : DETAIL_INDENT;
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
-  if (ask) return <div className={cn(DETAIL_INDENT, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
+  if (ask) return <div className={cn(indent, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
   if (!session.line) return null;
   const blocked = agent.status_code === "error";
-  return <div className={cn(DETAIL_INDENT, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
+  return <div className={cn(indent, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
     <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
   </div>;
 }
@@ -289,7 +291,9 @@ function SecondLine({ agent }: { agent: AgentRow }) {
  * The branch has its own metadata line, aligned with the task's title. Its
  * glyph and mono text distinguish it from progress; the tooltip retains its path.
  */
-const DETAIL_INDENT = "pl-[calc(var(--size-agent-mark)+var(--size-agent-badge-compact)+2*var(--spacing-xs))]";
+const DETAIL_INDENT = "pl-[calc(var(--size-agent-mark)+var(--spacing-xs))]";
+/** A Hide AI root row also draws the owl before its title. */
+const DETAIL_INDENT_OWL = "pl-[calc(var(--size-agent-mark)+var(--size-agent-badge-compact)+2*var(--spacing-xs))]";
 
 function BranchLine({ agent, branch }: { agent: AgentRow; branch: string }) {
   const path = useShellStore((state) => checkoutPathOfPane(state.rest, agent.pane_id));

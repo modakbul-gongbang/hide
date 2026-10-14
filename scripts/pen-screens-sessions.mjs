@@ -5,7 +5,8 @@
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 import {num} from './pen-system.mjs';
 export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton}) {
-  const detailIndent = num(tokens, '--size-agent-mark') + num(tokens, '--size-agent-badge-compact') + 2 * num(tokens, '--spacing-xs');
+  // A row leads with its status mark alone (PRD agent-mark-quiet D-01): its second line starts under the title, one gap after the mark.
+  const detailIndent = num(tokens, '--size-agent-mark') + 6;
   const caption = (id, value, fill = '$--muted-foreground', extra = {}) => text(id, value, {size:'$--text-caption', fill, ...extra});
   const verb = (id, word) => themedXref(id, 'ath-verb', word, {}, {'ath-verb-t': {content: word}});
   const descendantMark = (id, kind, count) => themedXref(id, 'ath-mark', 'Descendant mark', {}, {
@@ -56,7 +57,6 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[4,0,4,4]}, [
       frame(`${id}-head`, 'Line one', {width:'fill_container',height:20,layout:'horizontal',gap:6,alignItems:'center'}, [
         caption(`${id}-mark`, spec.mark ?? '●', spec.tone ?? '$--agent-working', {mono:true,weight:'600'}),
-        provider(`${id}-provider`, spec.provider),
         caption(`${id}-title`, spec.title, spec.depth && !spec.selected && !spec.ask ? '$--subtle-foreground' : '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
         ...(spec.desc ? [descendantMark(`${id}-desc`, spec.desc[0], spec.desc[1])] : []),
         ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
@@ -91,7 +91,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'hide 에이전트 지원 PR 묶음 머지 조율',mark:'!',tone:'$--warning',open:false,age:'12m',ask:['승인','e2e 테스트 돌리던 중']},
       ]),
       group('working','Working',[
-        {title:'공통 후보 전체 검증과 PR 제출',provider:'codex',open:false,desc:['working',1],pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
+        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['working',1],pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
         {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{count:1,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
         {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'feat/core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
         {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
@@ -104,7 +104,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'Factory 워커 시작 지연 수정',mark:'✓',tone:'$--success',pr:{number:872,state:'pending'},age:'6m',line:'진단 로그 추가하고 PR 올림'},
       ]),
       group('idle','Idle',[
-        {title:'P8 읽기 전용 준비 계획',provider:'codex',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'Grok 훅 연결 마무리 남음'},
+        {title:'P8 읽기 전용 준비 계획',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'Grok 훅 연결 마무리 남음'},
         {title:'에이전트 막힘 상태 PRD',mark:'○',tone:'$--muted-foreground',pr:{number:861,state:'failed'},age:'3h'},
         {title:'세션 읽기 큰 레코드 건너뛰기',mark:'○',tone:'$--muted-foreground',pr:{number:869,state:'mergeable'},age:'2h'},
         {title:'코어 호스트 노드 이동 설계 문서',mark:'○',tone:'$--muted-foreground',age:'1d'},
@@ -142,13 +142,13 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       ...tree,
       verb(`${id}-band-verb`, band.verb),
       caption(`${id}-band-what`, band.what, '$--foreground'),
-      ...(band.who ? [provider(`${id}-band-who-p`, band.who[0]), caption(`${id}-band-who`, band.who[1], '$--muted-foreground')] : []),
+      ...(band.who ? [caption(`${id}-band-who`, band.who[1], '$--muted-foreground')] : []),
       ...(band.unreceived ? [caption(`${id}-band-unreceived`, band.unreceived, '$--muted-foreground')] : [caption(`${id}-band-age`, band.age ?? '12m', '$--muted-foreground', {mono:true})]),
       ...(!children && band.more ? [caption(`${id}-band-more`, `외 ${band.more}건`, '$--muted-foreground')] : []),
       frame(`${id}-band-sp`, 'Spacer', {width:'fill_container',height:1}, []),
       screenButton(`${id}-band-open`, '열기', {variant:'outline', height:20}),
     ])] : children ? [frame(`${id}-children`, 'Child status overlay', {width:'fill_container',height:28,layout:'horizontal',gap:'$--spacing-xs',alignItems:'center',padding:[0,'$--spacing-sm'],fill:'$--secondary'},[
-      ...tree,...(disconnected?[]:[provider(`${id}-child-provider`)]),caption(`${id}-child-summary`,summary,'$--muted-foreground',{width:'fill_container'}),
+      ...tree,caption(`${id}-child-summary`,summary,'$--muted-foreground',{width:'fill_container'}),
     ])] : [];
     return frame(id, 'Pane', {width:'fill_container',height:120,layout:'vertical',gap:0,clip:true,fill:'$--background',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [
       header, ...bandRow,

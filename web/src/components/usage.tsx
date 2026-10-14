@@ -4,7 +4,7 @@ import { memo, useEffect, useState } from "react";
 import { ChartNoAxesCombinedIcon, SettingsIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
-import { AGENT_ADAPTERS, agentAdapter } from "../agentAdapters";
+import { AGENT_ADAPTERS, agentProductName } from "../agentAdapters";
 import type { AgentUsage, LimitCell, UsagePreferences, WindowReading } from "../generated/hided-ws";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -53,7 +53,7 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
     <PopoverAnchor asChild><div className="flex min-w-0 flex-wrap justify-end gap-xs" data-usage-chips="true">
       {!chips.length ? <PopoverTrigger aria-label={t("usage.title")} data-usage-trigger="true" className="rounded-sm p-xs text-muted-foreground hover:bg-accent"><ChartNoAxesCombinedIcon className="size-(--size-icon)" /></PopoverTrigger> : null}
       {chips.map((chip) => {
-        const label = agentAdapter(chip.agent)?.label ?? chip.agent;
+        const label = agentProductName(chip.agent);
         const value = chip.percent !== null ? percentLabel(chip.percent) : chip.window ? t(chip.state === "not_started" ? "usage.notStarted" : "usage.expired") : chip.state === "loading" ? "…" : t("common.unavailable");
         return <PopoverTrigger key={`${chip.agent}-${chip.window ?? "none"}`} data-usage-trigger="true" data-usage-chip={chip.agent} data-usage-window={chip.window} data-usage-state={chip.state}
           aria-label={[label, chip.window ? windowLabel(chip.window, t) : "", value].filter(Boolean).join(", ")}

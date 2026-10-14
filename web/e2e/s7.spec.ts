@@ -1433,14 +1433,15 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     expect(viewEvents(stack)).toHaveLength(0);
 
     // Kind marks, never colour alone: a file's type mark, a diff's comparison
-    // mark, and each agent tab's provider mark (S6 D-15).
+    // mark, and each agent tab's status mark (S6 D-15; the provider logo is on the pane header only).
     await showTool(page, "changes");
     await page.locator('[data-history-group="working"][data-history-path="a.txt"]').click();
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt*)");
     await expect(page.locator('[data-view-area-id] [data-tab-kind="file"] [data-view-mark="file"]')).toHaveCount(1);
     await expect(page.locator('[data-view-area-id] [data-tab-kind="diff"] [data-view-mark="diff"]')).toHaveCount(1);
     await expect(page.locator('[data-tab-kind="diff"]')).toHaveAttribute("aria-label", /^Working diff: /);
-    await expect(page.locator("[data-agent-tab-bar] [data-agent-mark]").first()).toBeVisible();
+    await expect(page.locator("[data-agent-tab-bar] [data-tab-status]").first()).toBeVisible();
+    await expect(page.locator("[data-agent-tab-bar] img")).toHaveCount(0);
     await screenshot(page, "s7-s6-kind-marks");
 
     // Two areas, the right one used last. The diff is pinned first, since

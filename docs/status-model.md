@@ -352,7 +352,7 @@ A descendant running in another checkout contributes to that checkout, even if i
 An agent repeated in a raised section and the project tree counts once.
 Plain terminal panes without agents do not create an Idle agent status.
 A Workspace with no known agents draws no summary chip.
-A populated Workspace places its representative status and provider icon in a trailing chip, followed by `+N` for the remaining agents (omitted for a single agent).
+A populated Workspace places its representative status in a trailing chip, followed by `+N` for the remaining agents (omitted for a single agent).
 The chip uses the canonical physical agent count, even when agents are also raised above the tree.
 An agent whose lineage starts in another checkout also appears as a local root in the Workspace that physically owns it, so that Workspace can reveal the agents its chip counts.
 Rendering and shortcut numbering share this ownership-aware tree projection.
@@ -382,7 +382,7 @@ Connection recovery resumes the current canonical projection; it does not mark a
 The disclosure chevron sits at the right edge of a Workspace row.
 The left edge holds the checkout-kind icon, title, and checkout badges.
 The representative status moves into the trailing agent summary chip immediately before the chevron.
-A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status, provider icon, and title.
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo (the pane header alone does; PRD agent-mark-quiet).
 A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
 Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
 A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
@@ -810,7 +810,7 @@ PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The identity row reads the ancestor path, the status mark, the agent's logo, title, the pane's own PR mark from `row.state.pr`, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
 The tree button with state counts and no separate total or internal divider starts the second-row overlay, sharing that slot with a core band or, without one, the core-ranked child's existing line.
 An unavailable device anywhere in that known subtree overrides the retained state totals and activity line with a dim disconnected mark and the existing connection reason, while preserving topology access.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
