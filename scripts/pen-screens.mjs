@@ -606,7 +606,6 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
 const HERDR_TILES = [
   {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
   {id: 'issues', label: 'Issues', value: '22', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
-  {id: 'prs', label: 'PRs', value: '9', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
   {id: 'sessions', label: '대화 기록', value: '14', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
 ];
 function lensTabs(tokens, id, view) {
@@ -1266,7 +1265,7 @@ const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩
 
 const MAIN_SPEC = 'web/src/MainScreen.tsx and AgentSessions.tsx (session-first-ui B11-B19): Overview opens Agents, followed by Tasks and Projects. Requests is removed. The Sessions panel is first in Tools, scoped to the selected project or Home, and groups core-projected rows into My Turn, Review/Merge, Progress, Resting and Today Resolved. The approved v6 two-line rows retain live issue, PR, CI, direct-child and checkout facts while working. Resting and Today Resolved start collapsed.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, OverviewLenses.tsx, TaskBoards.tsx and projectBoard.ts: project Overview opens Agents, followed by Issues, PRs and Conversation history. Requests is removed and its saved selection opens Agents. Conversation history retains the former Sessions history. The Agents graph, issue boards, issue panels, PR lists, their filters, actions and ownership remain unchanged. Live task decisions are in the Sessions tool, whose approved v6 composition is in Screen / Main.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, OverviewLenses.tsx, TaskBoards.tsx and projectBoard.ts: project Overview opens Agents, followed by Issues and Conversation history; the PRs lens and the PR card moved to the Work tool (Screen / Work). Requests is removed and its saved selection opens Agents. Conversation history retains the former Sessions history. The Agents graph, issue boards, issue panels, their filters, actions and ownership remain unchanged. Live task decisions are in the Sessions tool, whose approved v6 composition is in Screen / Main.';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -1355,73 +1354,6 @@ function buildMain(tokens) {
   return screenSheet('screen-main', 'Screen / Main', MAIN_SPEC, build, build);
 }
 
-// -- the PRs view (PullRequestsView.tsx over projectBoard.ts) --------------------
-
-// A group and its rows (PRD overview-lenses-prs B2-B6), authored on local
-// tokens like the task card, since no library master draws a pull request row.
-// A row is ▸, the state glyph, the number, the title, the issue cell, `확인`,
-// then the marks, the branch, CI, the review word and the fixed time slot,
-// which holds the buttons under the pointer so nothing moves.
-function prParts(tokens) {
-  const {taskId, agentRow, caption, spacer} = issueBoardParts(tokens);
-  const small = num(tokens, '--size-control-sm');
-  const slot = num(tokens, '--size-pr-slot');
-  const review = num(tokens, '--size-pr-review');
-  const numberWidth = num(tokens, '--size-pr-number');
-  const branchMax = num(tokens, '--size-pr-branch-max');
-  const indent = num(tokens, '--size-pr-indent');
-
-  function prGroup(id, label, count, tone, rows, {folded = false} = {}) {
-    return frame(id, label, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
-      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: num(tokens, '--size-control')}, [
-        ...(folded ? [icon(`${id}-fold`, 'chevron-right', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'})] : []),
-        text(`${id}-label`, label, {size: '$--text-subhead', weight: '600', fill: tone ?? '$--foreground'}),
-        text(`${id}-count`, String(count), {size: '$--text-subhead', fill: '$--muted-foreground'}),
-      ]),
-      ...rows,
-    ]);
-  }
-
-  function prRow(id, pr) {
-    const issue = pr.issue ? taskId(`${id}-issue`, pr.issue)
-      : pr.hover && pr.linkable ? icon(`${id}-issue`, 'link-2', {size: 12, fill: '$--foreground'})
-        : icon(`${id}-issue`, 'circle-dashed', {size: 12, fill: '$--muted-foreground'});
-    const marks = (pr.agents ?? []).slice(0, 3).map((agent, index) => screenStatusMark(tokens, `${id}-m${index}`, AGENT_MARK[agent.mark][0], AGENT_MARK[agent.mark][1]));
-    const act = pr.hover === 'delegate' ? [screenButton(`${id}-take`, '맡기기', {variant: 'secondary', height: small, icon: 'play'})]
-      : pr.hover === 'default' ? [screenIconButton(`${id}-gh`, 'external-link', {size: small}), screenIconButton(`${id}-more`, 'ellipsis', {size: small})]
-        : [caption(`${id}-age`, pr.age, '$--muted-foreground', true)];
-    const row = frame(id, `PR #${pr.number}`, {
-      layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: 'fill_container', height: num(tokens, '--size-control-lg'),
-      padding: [0, '$--spacing-sm', 0, '$--spacing-xs'], cornerRadius: '$--radius-sm',
-      ...(pr.hover ? {fill: '$--accent'} : pr.open ? {fill: '$--secondary'} : {}),
-    }, [
-      icon(`${id}-fold`, pr.open ? 'chevron-down' : 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
-      frame(`${id}-n`, 'PR mark', {layout: 'horizontal', width: numberWidth}, [screenPrMark(`${id}-mark`, pr)]),
-      text(`${id}-t`, pr.title, {size: '$--text-subhead'}),
-      issue,
-      // The yellow `확인` (D-48): the outline Badge in the warning tone, as the web draws it.
-      ...(pr.look ? [frame(`${id}-look`, '확인', {layout: 'horizontal', padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-sm', stroke: '$--warning', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [caption(`${id}-look-t`, '확인', '$--warning')])] : []),
-      spacer(`${id}-sp`),
-      ...(marks.length ? [frame(`${id}-marks`, 'Agents', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, marks)] : []),
-      caption(`${id}-br`, fitText(pr.branch, branchMax, 11, true), '$--muted-foreground', true),
-      frame(`${id}-rvb`, 'Review', {layout: 'horizontal', width: review, justifyContent: 'end'}, pr.review ? [caption(`${id}-rv`, REVIEW_WORD[pr.review][0], REVIEW_WORD[pr.review][1])] : []),
-      frame(`${id}-slot`, 'Time or buttons', {layout: 'horizontal', gap: '$--spacing-xxs', width: slot, justifyContent: 'end', alignItems: 'center'}, act),
-    ]);
-    if (!pr.open) return [row];
-    const width = 460;
-    return [row, frame(`${id}-x`, 'Unfolded', {layout: 'vertical', gap: '$--spacing-xxs', padding: [0, 0, '$--spacing-sm', indent]}, [
-      ...(pr.agents ?? []).map((agent, index) => agentRow(`${id}-xa${index}`, agent, width)),
-      frame(`${id}-xb`, 'Buttons', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        screenIconButton(`${id}-xgh`, 'external-link', {size: small}),
-        screenIconButton(`${id}-xws`, 'square-terminal', {size: small}),
-        ...(pr.issue ? [] : [screenIconButton(`${id}-xln`, 'link-2', {size: small})]),
-      ]),
-    ])];
-  }
-
-  return {prGroup, prRow};
-}
-
 // -- Screen / Project Overview -------------------------------------------------
 
 // The Overview (ProjectOverview.tsx, PRD agents-graph-view): the header with
@@ -1436,7 +1368,6 @@ const CODEX_REST = {mark: 'seen', title: '체크아웃 기능 구현 및 정리'
 
 function buildProjectOverview(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel} = issueBoardParts(tokens);
-  const {prGroup, prRow} = prParts(tokens);
   const graph = graphParts(tokens);
   const {g} = graph;
   const columns = 3;
@@ -1643,41 +1574,10 @@ function buildProjectOverview(tokens) {
         card('d6', {task: gh(199), title: 'Read the remote primary checkout over device connections', word: '백로그'}),
       ]),
     ]);
-    // The PRs tab's view (PRD overview-lenses-prs B2-B6, B19): the groups by
-    // whose move it is, a row unfolded to its lineage and icon buttons, a row
-    // under the pointer with 맡기기 in the time slot, 최근 머지 folded; then
-    // 이슈 잇기's confirmation over it (B10).
-    const prsView = frame(`ov-prs-${suffix}`, 'Project Overview · PRs', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      overviewHeader(tokens, 'ov-prhead', suffix, {project: 'hide', facts: HERDR_FACTS, view: 'prs', width: boardWidth}),
-      prGroup(`ov-prg1-${suffix}`, '내 차례', 4, '$--warning', [
-        ...prRow(`ov-pr222-${suffix}`, {number: 222, state: 'pending', title: 'Start the bundled Herdr server when none answers on the socket', issue: gh(191), branch: '191-desktop-starts-herdr', checks: 'passing', review: 'review_required', age: '12m', agents: [{mark: 'done', title: 'Herdr 서버 시작 구현', line: 'PR 올림 · CI 통과', age: '12m'}], look: true, open: true}),
-        ...prRow(`ov-pr218-${suffix}`, {number: 218, state: 'pending', title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true}),
-        ...prRow(`ov-pr189-${suffix}`, {number: 189, state: 'mergeable', title: 'Bump actions/upload-artifact from 4 to 7', branch: 'dependabot/github_actions/upload-artifact-7', checks: 'passing', review: 'approved', age: '1d'}),
-      ]),
-      prGroup(`ov-prg2-${suffix}`, '에이전트가 고치는 중', 1, null, [
-        ...prRow(`ov-pr221-${suffix}`, {number: 221, state: 'draft', title: 'hided: stop AI children on SIGTERM before exit', issue: gh(192), branch: '192-hided-sigterm-handler', checks: 'failed', review: 'changes_requested', age: '4m', agents: [{mark: 'work'}, {mark: 'ask'}, {mark: 'seen'}]}),
-      ]),
-      prGroup(`ov-prg3-${suffix}`, 'CI 실패 · 맡은 에이전트 없음', 2, null, [
-        ...prRow(`ov-pr190-${suffix}`, {number: 190, state: 'failed', title: 'Bump tokio-tungstenite from 0.26.2 to 0.29.0', branch: 'dependabot/cargo/tokio-tungstenite-0.29.0', checks: 'failed', age: '1d', hover: 'delegate'}),
-        ...prRow(`ov-pr138-${suffix}`, {number: 138, state: 'failed', title: 'Bump sha2 from 0.10.9 to 0.11.0', branch: 'dependabot/cargo/sha2-0.11.0', checks: 'failed', age: '2d'}),
-      ]),
-      prGroup(`ov-prg4-${suffix}`, '최근 머지', 12, null, [], {folded: true}),
-    ]);
-    const prsConfirm = frame(`ov-prconfirm-${suffix}`, 'Project Overview · PRs › 이슈 잇기 확인', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      prGroup(`ov-prcg-${suffix}`, '내 차례', 4, '$--warning', [
-        ...prRow(`ov-prc218-${suffix}`, {number: 218, state: 'pending', title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true, hover: 'default'}),
-      ]),
-      screenDialogSurface(`ov-prcd-${suffix}`, {
-        width: num(tokens, '--size-add-device-sheet-w'), title: 'PR #218을 #212에 잇기', prose: true,
-        description: 'PR #218 본문에 "Closes #212"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.',
-        actions: [screenButton(`ov-prcd-no-${suffix}`, '그만두기', {variant: 'secondary'}), screenButton(`ov-prcd-yes-${suffix}`, '본문에 쓰기')],
-      }),
-    ]);
     return [
       frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [agents, boxStates, filterFrame]),
       frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, states, dependencies]),
       frame(`ov-panelside-${suffix}`, 'Issue panel', {layout: 'vertical', gap: '$--spacing-xl'}, [github, localPanel, editing, failed]),
-      frame(`ov-prside-${suffix}`, 'PRs', {layout: 'vertical', gap: '$--spacing-xl'}, [prsView, prsConfirm]),
     ];
   }
   return screenSheet('screen-project-overview', 'Screen / Project Overview', OVERVIEW_SPEC, build, build);
