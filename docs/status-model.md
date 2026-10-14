@@ -536,13 +536,15 @@ The last successful answer of every project is kept in `github-snapshot.json` in
 A restored answer is stale until a read replaces it: `stale` is set and `last_success_at_unix_ms` stays the time of the read that produced it, so the icon is muted and the popover says how old it is.
 A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
 `loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
-A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid` and `isCrossRepository`), and the open ones with `number,statusCheckRollup` only.
+A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid`, `isCrossRepository`, `createdAt`, `closedAt`, `author`, `mergeStateStatus` and `reviewRequests`), and the open ones with `number,statusCheckRollup` only.
+The Work tool's PRs lens (below) adds three reads to the same generation: the signed-in login (`gh api user --jq .login`, once per read of all projects, right after `auth status`), the open pull requests the account was asked to review (`gh pr list --search review-requested:@me`, numbers only), and one GraphQL query for each open pull request's place in the merge queue and the time of its last review request (`HidePrFacts`).
+They are part of the answer: a read without them would put a pull request on the wrong side of `mine` or of the queue, so any of them failing fails the project's read like a failed list does, and the last answer stays.
 Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
 Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
 The sidebar row, the worktree catalog, the agent rows' PR mark and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
-The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
+The Work tool's PRs lens and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
@@ -577,6 +579,45 @@ The pane header's Review and Merge bands read the same state (`agent_state/heade
 The web turns a state into its icon, colour and word in one module (`web/src/prMark.ts`) and draws it with one component (`web/src/components/pr-mark.tsx`); no screen keeps a colour table or a classifier of its own, and the checks and review words and the stale reading live in the same module.
 The state word and the accessibility label keep the meaning without relying on colour.
 A mark dims while GitHub cannot be read again, and its tooltip says when it was last read.
+
+### Pull request groups
+
+The Work tool's PRs lens (`docs/UI_BEHAVIOR.md`, Work: the PRs lens and the PR card) lists pull requests in groups the core decides, in `herdr-core/src/agent_state/work/board.rs`, from GitHub values the five-minute read carries and from facts only Hide holds: the link record's sessions and the agents' own state.
+A pull request body's headings and a repository's own scripts decide nothing, so the same rules hold in every repository, and Hide AI never changes a group or a reason.
+The result is the `prs` board of each project's `agent_scope`: rows (group, fold, reason, agents, the pane a reason is about, the checkouts it is the work of, its issue), the groups with their numbers in draw order, and the count of `needs_you` rows that are not folded.
+
+Which pull requests are listed: the operator's own, those a session of theirs made or worked on, those a review was asked of them or of their team for, and bots'; a merged one needs the first two, a closed one that was not merged is never listed, and a teammate's pull request none of these reaches is not.
+"Mine" is the pull request's `author.login` equal to the signed-in login.
+A pull request's agents are the live agents whose session the link record names as having made or worked on its branch; sharing a folder alone ties nothing.
+An agent that finished and is not yet looked at moves no group, because the unread check is Sessions' (Done).
+
+Each pull request stops at the first slot that fits:
+
+| # | Fits when | Group | Reason |
+| --- | --- | --- | --- |
+| 1 | the author is a bot (GitHub's `is_bot`) | Bots | the reason its other rules give |
+| 2 | its agent is asking (a question, an approval or an error) | Needs You | `reply` with the agent and the question's first line |
+| 3 | its agent is working but has not moved for the watch's first inactivity window (`INACTIVITY_MS`, 20 minutes) | Needs You | `check` with the agent and the time since it moved |
+| 4 | its agent is working | Agent is working | `working` |
+| 5 | it is in the merge queue | Merging · merged, first | `queued` with the place |
+| 6 | it is a draft | Drafts | `draft` with its age |
+| 7 | it is owned (mine, a session of mine touched it, a bot's) and checks failed that GitHub's `mergeStateStatus` does not call `UNSTABLE`, or a change request stands, or the state is `DIRTY` | Blocked · no agent | `failed` with the first check's name and how many more, `changes`, or `conflict` with the base |
+| 8 | it is mine and the state is `CLEAN` or `HAS_HOOKS`; `UNSTABLE` too, with the failed required-or-not check named | Needs You | `merge` |
+| 9 | it is mine and the state is `BEHIND` | Needs You | `update` with the base |
+| 10 | it is mine and the state is `BLOCKED` | Waiting with `ci` while checks run, Waiting with `waiting_review` while a review is requested, else Needs You | `assign_reviewer` |
+| 11 | a review was asked of the operator by name | Needs You | `review` with the author and the time since the ask |
+| 12 | a review was asked of a team of the operator's (the search finds it, the request names no user) | Needs You, folded as `팀 리뷰 요청 N` | `team_review` |
+| 13 | anything else open | Waiting | `ci` while checks run, else `waiting_review` |
+
+A merged pull request is Merging · merged below the queued ones, newest merge first.
+When GitHub has not computed `mergeStateStatus` (`UNKNOWN`) the pull request keeps the group it stood in on the previous board with the reason `checking`, and waits when it is new, so a pull request never jumps while GitHub thinks.
+A pull request nothing has changed on for 7 days (`OLD_MS`) in any group but Merging · merged is folded as `오래된 PR N` inside its group.
+Folded lines (a team's review asks, old pull requests) are in no count: the Work tab's number is the Sessions Needs You rows plus these unfolded Needs You rows, one for an agent that stands in both, and the sidebar's Needs You is unchanged.
+Within a group the order is the reason's urgency, then the newest update (the newest merge for Merging · merged), then the larger number.
+Times in a reason are the instants they began, never durations, so time passing publishes nothing; the web counts them on its one clock.
+
+`<checkout> only` keeps a row whose `checkout_ids` hold the checkout: the one on the pull request's branch, the ones its recorded sessions ran in and the ones its live agents sit in.
+A project with no GitHub remote has no board, and `gh` missing or signed out is a state of the project's GitHub status, not an empty board.
 
 ### Project Overview summary
 
