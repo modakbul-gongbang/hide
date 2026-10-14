@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  cliRecords,
   HAS_LOGIN_SHELL,
   healthFailure,
   loginPathCommand,
@@ -185,6 +186,22 @@ describe("the remembered CLI", () => {
       expect(parseRememberedCli(other), JSON.stringify(other)).toEqual({ unreadable: "unexpected shape" });
     }
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("what hide connect did on its way", () => {
+  it("keeps each record's kind and flat fields for the host log, and nothing else it printed", () => {
+    const stderr = [
+      "a line a library printed",
+      '{"component":"hide","kind":"herdr.handoff","outcome":"handed_off","from_pid":721,"to_pid":900,"elapsed_ms":640}',
+      '{"component":"hide","kind":"daemon.replacing","pid":5,"running_build":null,"nested":{"a":1}}',
+      '{"no":"kind"}',
+      "",
+    ].join("\n");
+    expect(cliRecords(stderr)).toEqual([
+      { event: "herdr.handoff", fields: { outcome: "handed_off", from_pid: 721, to_pid: 900, elapsed_ms: 640 } },
+      { event: "daemon.replacing", fields: { pid: 5, running_build: null } },
+    ]);
   });
 });
 

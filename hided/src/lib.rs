@@ -23,6 +23,7 @@ pub mod ending;
 pub mod env;
 pub mod factory_cli;
 pub mod file_url;
+pub mod herdr_handoff;
 pub mod index;
 pub mod login_item;
 pub mod mobile;

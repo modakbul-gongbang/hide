@@ -1316,6 +1316,11 @@ impl ConnectError {
 /// so a dev or e2e daemon elsewhere is never replaced, and stopping it
 /// leaves Herdr, its panes and their agents running.
 ///
+/// The app's own `hide` first moves a Herdr server another Hide app
+/// started onto this app's Herdr, its panes kept
+/// ([`crate::herdr_handoff`]), so the daemon follows a server of the same
+/// app.
+///
 /// The whole look-and-replace holds this state folder's connect lock, so
 /// two connects never both stop a daemon and start their own.
 ///
@@ -1437,21 +1442,28 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     move_legacy_state(env).map_err(ConnectError::StartFailed)?;
     let _serialized = state_file::lock_connect(&env.state_dir)
         .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
+    // Judged by the file this `hide` is, not the link it was invoked
+    // through: the kit's command resolves into its package, and a link that
+    // only looks like a package path has no authority.
+    let package = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .ok()
+        .as_deref()
+        .and_then(hide_kit::bundled_kit_dir);
+    // Before the daemon, so a daemon this connect starts or keeps finds the
+    // server it will follow already running this app's Herdr.
+    if let Some(herdr) = package.as_deref().and_then(|kit| given_herdr(env, kit))
+        && let Some(socket) = &env.herdr_socket_path
+        && let Some(record) = crate::herdr_handoff::hand_off(&herdr, Path::new(socket)).record()
+    {
+        eprintln!("{record}");
+    }
     if let Some((state, health)) = healthy_daemon(env) {
         let running = health.get("build").and_then(serde_json::Value::as_str);
         if running == Some(build.as_str()) {
             return Ok((state, health));
         }
-        // Judged by the file this `hide` is, not the link it was invoked
-        // through: the kit's command resolves into its package, and a
-        // link that only looks like a package path has no authority.
-        let from_package = std::env::current_exe()
-            .and_then(|path| path.canonicalize())
-            .ok()
-            .as_deref()
-            .and_then(hide_kit::bundled_kit_dir)
-            .is_some();
-        if !from_package {
+        if package.is_none() {
             eprintln!(
                 "{}",
                 serde_json::json!({
@@ -1490,6 +1502,16 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     // The daemon outlives this command; nothing waits for it.
     std::mem::forget(daemon);
     started
+}
+
+/// The Herdr the app in `kit` ships, when it is the one this connect was
+/// given (`HERDR_BIN_PATH`): the host hands its own unless the operator
+/// named another, whose server is theirs to keep.
+fn given_herdr(env: &Env, kit: &Path) -> Option<std::path::PathBuf> {
+    let shipped = kit.join(format!("herdr{}", std::env::consts::EXE_SUFFIX));
+    let given = env.herdr_bin_path.as_deref()?;
+    let same = hide_platform::fs::identity::same_file(given, &shipped).ok()?;
+    same.then_some(shipped)
 }
 
 /// How long an updated core has to answer `/health` once its update said

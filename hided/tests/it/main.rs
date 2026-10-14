@@ -9,6 +9,7 @@ mod connect_stop;
 mod core_move;
 mod handshake;
 mod held_letter_notice;
+mod herdr_handoff;
 mod mobile;
 mod node_contract;
 mod node_home;

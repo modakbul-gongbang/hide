@@ -50,7 +50,7 @@ pub use coordination_retirement::preflight as retirement_preflight;
 pub use device::{CURRENT, device_target};
 pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
 pub use legacy::{BuildPlace, build_of, is_build_name};
-pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
+pub use local::{STANDALONE_REASON, bundled_kit_dir, holds_package_runtime, local_target};
 pub use record::kit_state_dir;
 
 /// One part of the kit.

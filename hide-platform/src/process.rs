@@ -21,6 +21,9 @@
 //!   does not exist is `false` or `NotFound`, never a default. A start time is
 //!   an opaque number whose only use is to compare with itself, to tell a pid
 //!   from a later process that reused it.
+//! - [`image_of`] names the file a process was started from, and that file
+//!   stays its answer when the file is renamed, deleted or replaced at its
+//!   path.
 //! - [`measure_tree`] counts a process's descendants and sums their resident
 //!   memory, reading the kernel's tables and forking nothing.
 //! - [`run_to_end`] answers a child's exit code and capped output, or ends the
@@ -31,7 +34,7 @@
 //!
 //! Where the system cannot answer, the call says `ErrorKind::Unsupported`:
 //! a Windows process has no working directory a caller can read, no process
-//! group to signal, and no polite termination.
+//! group to signal, no polite termination, and no identity of its image file.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -948,6 +951,25 @@ pub fn name_of(pid: u32) -> io::Result<String> {
     sys::name_of(pid)
 }
 
+/// The program file a process runs, as the kernel keeps it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Image {
+    /// Where the file is now: a rename of it or of a folder above it is
+    /// followed, and a file deleted since is named at the path it last had.
+    pub path: PathBuf,
+    /// The file the process was started from, which a new file put at its
+    /// path does not take over.
+    pub file: crate::fs::identity::FileId,
+}
+
+/// The program file `pid` runs. `NotFound` when the process is gone,
+/// `PermissionDenied` when the system will not say. `Unsupported` on
+/// Windows, which names a process's image by the path it was started from
+/// and keeps no identity of the file that follows a rename.
+pub fn image_of(pid: u32) -> io::Result<Image> {
+    sys::image_of(pid)
+}
+
 /// How the terminal a process controls takes typed input, which decides
 /// whether a line typed into it before the process reads it can be cut.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1627,6 +1649,73 @@ mod sys {
             }
         }
 
+        /// How many of a process's regions are read looking for its program,
+        /// which is mapped at the bottom of its address space.
+        pub(in super::super) const REGION_LIMIT: usize = 1024;
+
+        /// `PROC_PIDREGIONPATHINFO` and the two structures it fills, from
+        /// `<sys/proc_info.h>`; libc declares neither.
+        const PROC_PIDREGIONPATHINFO: libc::c_int = 8;
+
+        #[repr(C)]
+        pub(in super::super) struct RegionInfo {
+            pri_protection: u32,
+            pri_max_protection: u32,
+            pri_inheritance: u32,
+            pri_flags: u32,
+            pri_offset: u64,
+            pri_behavior: u32,
+            pri_user_wired_count: u32,
+            pri_user_tag: u32,
+            pri_pages_resident: u32,
+            pri_pages_shared_now_private: u32,
+            pri_pages_swapped_out: u32,
+            pri_pages_dirtied: u32,
+            pri_ref_count: u32,
+            pri_shadow_depth: u32,
+            pri_share_mode: u32,
+            pri_private_pages_resident: u32,
+            pri_shared_pages_resident: u32,
+            pri_obj_id: u32,
+            pri_depth: u32,
+            pub(in super::super) pri_address: u64,
+            pub(in super::super) pri_size: u64,
+        }
+
+        #[repr(C)]
+        pub(in super::super) struct RegionWithPath {
+            pub(in super::super) prp_prinfo: RegionInfo,
+            pub(in super::super) prp_vip: libc::vnode_info_path,
+        }
+
+        // The sizes the macOS 15 SDK's `sizeof` gives.
+        const _: () = assert!(std::mem::size_of::<RegionInfo>() == 96);
+        const _: () = assert!(std::mem::size_of::<RegionWithPath>() == 1272);
+
+        /// The region of `pid`'s memory at `address`, or the next one above
+        /// it, with the file it maps (an empty path when it maps none).
+        pub(in super::super) fn region_at(pid: u32, address: u64) -> io::Result<RegionWithPath> {
+            // SAFETY: an all-zero region structure is a valid value.
+            let mut region: RegionWithPath = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of::<RegionWithPath>() as libc::c_int;
+            // SAFETY: the buffer is valid for `size` bytes and read only after
+            // `proc_pidinfo` reports that it filled the whole structure.
+            let written = unsafe {
+                libc::proc_pidinfo(
+                    pid as libc::c_int,
+                    PROC_PIDREGIONPATHINFO,
+                    address,
+                    (&mut region as *mut RegionWithPath).cast(),
+                    size,
+                )
+            };
+            if written == size {
+                Ok(region)
+            } else {
+                Err(error_for_missing_info())
+            }
+        }
+
         pub(in super::super) fn bsd_info(pid: u32) -> io::Result<libc::proc_bsdinfo> {
             // SAFETY: an all-zero `proc_bsdinfo` is a valid value.
             let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -1852,6 +1941,60 @@ mod sys {
         Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
     }
 
+    /// The kernel names the program's path but not its file; the program's
+    /// own mapping does. Its text is the lowest file-backed region whose
+    /// file the kernel names at that path, and a region's file is the one
+    /// the process mapped, so a file put at the path later is not it.
+    #[cfg(target_os = "macos")]
+    pub(super) fn image_of(pid: u32) -> io::Result<super::Image> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut buffer = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: the buffer is valid for the length passed, and only the
+        // bytes the call reports are read.
+        let length = unsafe {
+            libc::proc_pidpath(
+                pid as libc::c_int,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+            )
+        };
+        if length <= 0 {
+            return Err(mac::error_for_missing_info());
+        }
+        buffer.truncate(length as usize);
+        let mut address = 0_u64;
+        for _ in 0..mac::REGION_LIMIT {
+            let region = mac::region_at(pid, address)?;
+            let named: Vec<u8> = region
+                .prp_vip
+                .vip_path
+                .iter()
+                .flatten()
+                .map(|&byte| byte as u8)
+                .take_while(|&byte| byte != 0)
+                .collect();
+            if named == buffer {
+                let stat = &region.prp_vip.vip_vi.vi_stat;
+                // `st_dev` is a signed `dev_t` that a path's metadata widens
+                // with its sign; the region keeps the same bits unsigned.
+                let volume = stat.vst_dev as i32 as u64;
+                return Ok(super::Image {
+                    path: PathBuf::from(std::ffi::OsString::from_vec(buffer)),
+                    file: crate::fs::identity::FileId::new(volume, u128::from(stat.vst_ino)),
+                });
+            }
+            address = region
+                .prp_prinfo
+                .pri_address
+                .checked_add(region.prp_prinfo.pri_size)
+                .ok_or_else(|| io::Error::other("the process's regions end without its program"))?;
+        }
+        Err(io::Error::other(
+            "the program's file is not among the process's first regions",
+        ))
+    }
+
     #[cfg(target_os = "macos")]
     pub(super) fn rss(pid: u32) -> io::Result<u64> {
         // SAFETY: an all-zero `proc_taskinfo` is a valid value.
@@ -1980,6 +2123,28 @@ mod sys {
     #[cfg(target_os = "linux")]
     pub(super) fn cwd_of(pid: u32) -> io::Result<PathBuf> {
         std::fs::read_link(format!("/proc/{pid}/cwd"))
+    }
+
+    /// `/proc/<pid>/exe` reads as the file's present path, with ` (deleted)`
+    /// after one that was deleted, and following it reaches the file the
+    /// process runs either way.
+    #[cfg(target_os = "linux")]
+    pub(super) fn image_of(pid: u32) -> io::Result<super::Image> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let link = PathBuf::from(format!("/proc/{pid}/exe"));
+        let named = std::fs::read_link(&link)?;
+        let file = crate::fs::identity::file_id(&link)?;
+        let deleted = named
+            .as_os_str()
+            .as_bytes()
+            .strip_suffix(b" (deleted)")
+            .filter(|_| !named.exists())
+            .map(|bytes| PathBuf::from(std::ffi::OsStr::from_bytes(bytes)));
+        Ok(super::Image {
+            path: deleted.unwrap_or(named),
+            file,
+        })
     }
 
     #[cfg(target_os = "linux")]
@@ -2586,6 +2751,13 @@ mod sys {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Windows reports no working directory for another process",
+        ))
+    }
+
+    pub(super) fn image_of(_: u32) -> io::Result<super::Image> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Windows names a process's image by the path it started from, not by its file",
         ))
     }
 
