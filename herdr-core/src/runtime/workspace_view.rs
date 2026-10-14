@@ -460,6 +460,11 @@ impl Runtime {
         if let Some(tree) = payload.tree {
             entry.tree = tree;
         }
+        // Closing the lane turns the tree off; hiding it or switching tools
+        // does not (PRD right-lane B11).
+        if entry.tool.is_none() {
+            entry.tree = false;
+        }
         // A reveal is the tree's: the files tool with the tree on.
         if payload.reveal.is_some() {
             entry.tool = Some(Tool::Files);

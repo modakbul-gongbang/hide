@@ -474,11 +474,11 @@ fn a_file_open_opens_the_files_lane_and_an_agent_choice_moves_no_lane_state() {
     assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
 }
 
-/// PRD right-lane D-12, B2, B5, B7, B20: every lane field ends at the value
-/// sent, so a repeat changes nothing and reports no change; a tool sent
-/// again is still a call, so a page shows a lane it had hidden; closing
-/// keeps the pin, the tree and the View tree; and the widths are stored per
-/// Workspace within the core's bound.
+/// PRD right-lane D-12, B2, B5, B7, B11, B20: every lane field ends at the
+/// value sent, so a repeat changes nothing and reports no change; a tool
+/// sent again is still a call, so a page shows a lane it had hidden; closing
+/// keeps the pin and the View tree and turns the file tree off; and the
+/// widths are stored per Workspace within the core's bound.
 #[test]
 fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     let (runtime, checkout_id, directory) = strip_checkout("lane-fields");
@@ -511,8 +511,8 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     layout(&mut runtime, serde_json::json!({"tool": null}));
     assert_eq!(
         lane(&runtime),
-        (None, true, true),
-        "closing keeps the pin and tree"
+        (None, true, false),
+        "closing keeps the pin and turns the tree off (B11)"
     );
     assert_eq!(called(&runtime), before + 2, "a close is no call");
     assert_eq!(
@@ -531,7 +531,7 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
         serde_json::json!({"tool": null})
     )));
     layout(&mut runtime, serde_json::json!({"tool": "files"}));
-    assert_eq!(lane(&runtime), (Some(Tool::Files), true, true));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 
     layout(
@@ -548,7 +548,7 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     let saved = saved.get(&view.device_id, &view.path).unwrap();
     assert_eq!(
         (saved.tool, saved.pinned, saved.tree, saved.lane_width),
-        (Some(Tool::Files), true, true, Some(700))
+        (Some(Tool::Files), true, false, Some(700))
     );
     let written = std::fs::read_to_string(&state).unwrap();
     for retired in ["\"views\"", "\"tools\"", "views_width", "lane_called"] {
@@ -557,8 +557,9 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
 }
 
 /// PRD right-lane B12: the files lane opened with no view opens nothing in
-/// it (the shell draws the tree alone), and closing the last view keeps the
-/// lane on the files tool, where the tree now shows.
+/// it (the shell draws the tree alone); a file picked there opens beside the
+/// tree, which stays on; and closing the last view keeps the lane on the
+/// files tool, where the tree shows whether or not it is on.
 #[test]
 fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
     let (runtime, checkout_id, directory) = strip_checkout("views-empty");
@@ -575,6 +576,12 @@ fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
     );
 
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+    assert!(
+        runtime.snapshot.ui_state.right_panel_visible,
+        "the file opens beside the tree it was picked from"
+    );
+    layout(&mut runtime, serde_json::json!({"tree": false}));
     assert!(
         !runtime.snapshot.ui_state.right_panel_visible,
         "a document with the tree off draws no tree"
