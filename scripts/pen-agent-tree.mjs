@@ -105,7 +105,6 @@ export function buildAgentTreeParts(tokens) {
           {type: 'ellipse', id: 'ath-row-ring', name: 'Ring', width: DOT, height: DOT, stroke: '$--agent-working', strokeWidth: HAIR, strokeAlignment: 'inner'},
           {...caption('ath-row-glyph', '!', '$--warning', {mono: true, weight: '600'}), enabled: false},
         ]),
-        frame('ath-row-provider', 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         {...text('ath-row-title', '에이전트 제목', {fill: '$--subtle-foreground'}), textGrowth: 'fixed-width', width: 'fill_container'},
         ref('ath-row-pr', AGENT_TREE_MASTERS.prIcon, 'PR mark'),
         ref('ath-row-desc', AGENT_TREE_MASTERS.mark, 'Descendant mark', {enabled: false}),

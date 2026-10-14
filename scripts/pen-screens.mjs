@@ -354,10 +354,9 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // on a parent whose chevron shows at rest, and `unfolded` or null leaves the
 // slot empty at rest. A list with nothing to fold (an Overview card) passes
 // `none`, and the row has no fold slot at all.
-function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
+function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: selectedFill} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
-    'sar-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
     'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'sar-elapsed': {content: age},
@@ -387,10 +386,9 @@ function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
   return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, rootFoldRight = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, rootFoldRight = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
-    'ath-row-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
     'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'ath-row-age': {content: age},
     'ath-row-rail': {enabled: depth > 1},
@@ -411,10 +409,9 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     ...(statusAxis ? {
       'ath-row-lane': {layoutPosition: 'absolute', x: rootFoldRight && depth === 0 ? width - 20 : inset + 18 * (depth - 1), y: 0, width: 12, enabled: Boolean(chevron)},
       'ath-row-body': {padding: [4, 24, 4, 0]},
-      'ath-row-provider': {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
     } : {}),
-    // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark or provider.
-    ...(more ? {'ath-row-mark': {enabled: false}, 'ath-row-provider': {enabled: false}} : {}),
+    // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark.
+    ...(more ? {'ath-row-mark': {enabled: false}} : {}),
   };
   return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--secondary'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
 }
@@ -700,7 +697,7 @@ function issueBoardParts(tokens) {
     const [symbol, color] = AGENT_MARK[agent.mark];
     const lineWidth = width - 44;
     return screenSidebarAgentRow(id, {
-      title: fitText(agent.title, width - 92, 12), symbol, color, provider: agent.provider ?? 'claude', age: agent.age,
+      title: fitText(agent.title, width - 92, 12), symbol, color, age: agent.age,
       line: agent.line ? fitText(agent.line, lineWidth, 11) : null, lineFill: agent.tone === 'request' ? '$--warning' : '$--foreground',
       bright: ATTENTION.has(agent.mark), inset: 0, width, fold: 'none',
     });
@@ -924,7 +921,7 @@ function issueBoardParts(tokens) {
           screenIconButton(`${id}-w-ws`, 'square-terminal', {size: small}),
         ]),
         ...panel.work.agents.map((agent, index) => screenSidebarAgentRow(`${id}-w-a${index}`, {
-          title: fitText(agent.title, room - 100, 12), symbol: AGENT_MARK[agent.mark][0], color: AGENT_MARK[agent.mark][1], provider: agent.provider ?? 'claude', age: agent.age,
+          title: fitText(agent.title, room - 100, 12), symbol: AGENT_MARK[agent.mark][0], color: AGENT_MARK[agent.mark][1], age: agent.age,
           line: agent.line ?? null, lineFill: agent.tone === 'request' ? '$--warning' : '$--foreground', bright: ATTENTION.has(agent.mark), inset: agent.depth ? 16 : 0, width: room, fold: 'none',
         })),
         ...(panel.work.pr ? [frame(`${id}-w-pr`, 'Pull request', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: room}, [
@@ -1145,13 +1142,12 @@ function graphParts(tokens) {
     const tucked = value.tucked ? value.tucked.map(({symbol: glyph, color: tone, count}, index) => frame(`${id}-tk${index}`, 'Tucked mark', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
       screenStatusMark(tokens, `${id}-tk${index}-m`, glyph, tone), caption(`${id}-tk${index}-n`, String(count), '$--foreground', true),
     ])) : [];
-    const room = g.boxWidth - 2 * sm - indent - mark - 14 - 4 * xs - 36 - (value.depth ? iconSmall + xs : 0) - (tucked.length ? 44 : 0);
+    const room = g.boxWidth - 2 * sm - indent - mark - 3 * xs - 36 - (value.depth ? iconSmall + xs : 0) - (tucked.length ? 44 : 0);
     const first = frame(`${id}-l1`, 'Line', {
       layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: g.boxWidth, height: g.rowHeight, padding: [0, '$--spacing-sm', 0, sm + indent],
     }, [
       ...(value.depth ? [icon(`${id}-in`, 'corner-down-right', {size: iconSmall, fill: '$--muted-foreground'})] : []),
       screenStatusMark(tokens, `${id}-m`, symbol, color),
-      frame(`${id}-p`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${value.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
       text(`${id}-t`, fitText(value.title, room, 13), {size: '$--text-body', weight: asking ? '600' : '400'}),
       spacer(`${id}-sp`),
       ...(tucked.length ? [frame(`${id}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: g.rowLine, cornerRadius: '$--radius-sm', fill: '$--secondary'}, tucked)] : []),
@@ -1159,8 +1155,8 @@ function graphParts(tokens) {
     ]);
     return frame(id, value.title, {x: 0, y: top, layout: 'vertical', gap: 0, width: g.boxWidth, height: rowHeightOf(value)}, [
       first,
-      ...(asking ? [frame(`${id}-l2`, 'Question', {layout: 'horizontal', alignItems: 'center', width: g.boxWidth, height: g.rowLine, padding: [0, '$--spacing-sm', 0, sm + indent + mark]}, [
-        caption(`${id}-q`, fitText(value.line, g.boxWidth - 2 * sm - indent - mark, 11), '$--warning'),
+      ...(asking ? [frame(`${id}-l2`, 'Question', {layout: 'horizontal', alignItems: 'center', width: g.boxWidth, height: g.rowLine, padding: [0, '$--spacing-sm', 0, sm + indent + mark + xs]}, [
+        caption(`${id}-q`, fitText(value.line, g.boxWidth - 2 * sm - indent - mark - xs, 11), '$--warning'),
       ])] : []),
     ]);
   }
@@ -3320,11 +3316,11 @@ function buildPalette(tokens) {
   const SIDEBAR = num(tokens, '--size-sidebar-ideal');
   const MARK = num(tokens, '--size-agent-badge-compact');
   const ROW = W - 2 * num(tokens, '--spacing-xxs');
-  const MARKS = {claude: '../web/src/assets/agent-claude.png', codex: '../web/src/assets/agent-codex.png'};
   function build(suffix) {
     const id = (name) => `pal-${name}-${suffix}`;
     const kbd = (key, label) => themedXref(id(key), 'kbd-m', label, {}, {'kbd-t': {content: label}});
-    const mark = (key, kind) => frame(id(key), 'Agent mark', {width: MARK, height: MARK, cornerRadius: '$--radius-xs', fill: {type: 'image', url: MARKS[kind], mode: 'fill'}}, []);
+    // An agent's result leads with its status mark in the icon slot, and no provider logo (PRD agent-mark-quiet D-09).
+    const mark = (key, symbol, fill) => frame(id(key), 'Status mark slot', {width: MARK, height: MARK, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [screenStatusMark(tokens, `${id(key)}-s`, symbol, fill)]);
     const glyph = (key, name) => frame(id(key), 'Icon', {width: MARK, height: MARK, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [
       icon(`${id(key)}-i`, name, {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
     ]);
@@ -3373,7 +3369,6 @@ function buildPalette(tokens) {
       ]),
       frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
         screenStatusMark(tokens, id('side-a0s'), '?', '$--warning'),
-        mark('side-a0m', 'claude'),
         text(id('side-a0t'), 'mailbox 원격 에이전트 구현', {weight: '500'}),
       ]),
     ]);
@@ -3430,15 +3425,15 @@ function buildPalette(tokens) {
       row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide', selected: true}),
       row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'hide'}),
       row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters'}),
-      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done'}),
-      row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'hide › main · Working'}),
+      row('q3', {lead: mark('q3m', '✓', '$--success'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done'}),
+      row('q4', {lead: mark('q4m', '●', '$--agent-working'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'hide › main · Working'}),
     ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'hide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
 
     const typed = wide('typed', {query: 'sand', list: [
       heading('g-issues', 'Issues'),
       row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide'}),
       heading('g-agents', 'Agents'),
-      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done', selected: true}),
+      row('t1', {lead: mark('t1m', '✓', '$--success'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done', selected: true}),
       heading('g-checkouts', 'Checkouts'),
       row('t2', {lead: glyph('t2i', 'git-branch'), title: 'hide / fix/mailbox-sandbox-letters', detail: '~/projects/hide.worktrees/sandbox', mono: true}),
       frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
@@ -4536,6 +4531,8 @@ function buildMobile(tokens, root) {
     return frame(id, 'New agent', {width: 32, height: 32, cornerRadius: PILL, fill: '$--secondary', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-i`, 'plus', {size: 18, fill: FG})]);
   }
   const INSET = 16 + XS + 14 + XS;
+  // A list row has no provider logo (PRD agent-mark-quiet B12): its lines start under the title, after the status mark alone. The detail head keeps the logo and INSET.
+  const LIST_INSET = 16 + XS;
   function sectionLabel(id, label, count) {
     return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, height: 32, padding: [SP.md, SP.lg, 2, SP.lg]}, [
       text(`${id}-t`, label, {size: '$--text-body', weight: '500', fill: MUTED}),
@@ -4544,12 +4541,11 @@ function buildMobile(tokens, root) {
   }
   function agentRow(id, {title, status, kind = 'claude', project, branch, machine = null, age, request = null, news = null, dim = false}) {
     const attention = status === 'question' || status === 'approval' || status === 'error';
-    const titleW = CONTENT_W - 16 - XS - 14 - SM - 36 - SM - 16;
+    const titleW = CONTENT_W - 16 - XS - SM - 36 - SM - 16;
     const line2 = request ?? news ?? null;
     return frame(id, title, {layout: 'vertical', gap: 3, width: PHONE_W, height: line2 ? 82 : 64, padding: [SP.sm, SP.lg, SP.sm, SP.lg]}, [
       frame(`${id}-l1`, 'Line 1', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', width: CONTENT_W, height: 22}, [
         mark(`${id}-m`, status),
-        provider(`${id}-p`, kind),
         frame(`${id}-tw`, 'Title', {width: titleW, height: 22, alignItems: 'center', clip: true, padding: [0, 0, 0, SP.xs]}, [
           text(`${id}-t`, fit(title, titleW, 15), {size: 15, weight: attention ? '600' : dim ? '400' : '500', fill: dim ? MUTED : attention ? FG : SUBTLE}),
         ]),
@@ -4557,11 +4553,11 @@ function buildMobile(tokens, root) {
         text(`${id}-a`, age, {size: '$--text-body', fill: MUTED, mono: true}),
         icon(`${id}-c`, 'chevron-right', {size: 16, fill: MUTED}),
       ]),
-      frame(`${id}-l2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET]}, [
+      frame(`${id}-l2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, LIST_INSET]}, [
         text(`${id}-pb`, fit(`${project} · ${branch}`, CONTENT_W - 120, 12), {size: '$--text-body', fill: MUTED}),
         ...(machine ? [chip(`${id}-mc`, machine, {glyph: 'server'})] : []),
       ]),
-      ...(line2 ? [frame(`${id}-l3`, 'Line 3', {layout: 'horizontal', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET], alignItems: 'center'}, [
+      ...(line2 ? [frame(`${id}-l3`, 'Line 3', {layout: 'horizontal', width: CONTENT_W, height: 18, padding: [0, 0, 0, LIST_INSET], alignItems: 'center'}, [
         text(`${id}-rq`, fit(line2, CONTENT_W - 40, 13), {size: '$--text-subhead', fill: request ? WARN : FG}),
       ])] : []),
       spacer(`${id}-sp`),
