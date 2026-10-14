@@ -39,7 +39,7 @@ Keep the image's proportions, lower-right crop, eye spacing, and full square bac
 Do not add glow, gradients, expressions, accessories, or a different color to signal agent state.
 At small sizes, use the full mark rather than extracting either eye.
 
-Inside the app the mark names Hide AI as the one who started an agent, never an agent's state: it heads the Hide AI group of a project's tree and, as an 11-pixel badge, sits on the corner of the provider icon of a row that stands alone (`web/src/AgentMark.tsx`, `web/src/assets/hide-mark.png`, a 64-pixel derivative of the full square mark).
+Inside the app the mark names Hide AI as the one who started an agent, never an agent's state: it heads the Hide AI group of a project's tree and stands beside the status mark, in the place of a provider logo, on a row that stands alone (`web/src/AgentMark.tsx`, `web/src/assets/hide-mark.png`, a 64-pixel derivative of the full square mark).
 The macOS app icon at `desktop/resources/hide-icon-1024.png` is the mark inside a rounded 896-pixel tile with a 64-pixel transparent inset on a 1024-pixel canvas.
 `desktop/resources/hide.icns` packages that icon for the app.
 The mobile web icons in `web/public/m/` are size derivatives of the full square mark.
@@ -65,7 +65,7 @@ They were made with the mark as the style reference, so a new pose starts from t
 ## Third-party agent marks
 
 The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu draw an agent's mark on a fixed light plate (`--logo-plate`), so a dark-filled mark stays legible in both themes (`web/src/components/agent-logo.tsx`).
-Everywhere else the shell shows which agent a pane, tab or row is, `AgentMark` (`web/src/AgentMark.tsx`) draws the same logo at the compact badge size for each of the seven supported agents, and a plain shell or a kind Hide does not support keeps the neutral `>_`; `agentMarkOf` in `web/src/agentLogos.ts` is the one place that picks the logo, from the adapter's `logo_id`.
+`AgentMark` (`web/src/AgentMark.tsx`) draws the same logo at the compact badge size for each of the seven supported agents on a pane's own header and in the places that are about the provider itself; a list row, a tab or a result draws no logo and names its agent in its hint and accessible name (PRD agent-mark-quiet), and a plain shell or a kind Hide does not support keeps the neutral `>_`; `agentMarkOf` in `web/src/agentLogos.ts` is the one place that picks the logo, from the adapter's `logo_id`.
 There the plate is only for a mark that would vanish on the dark theme: the manifest entry of a mark drawn dark on a transparent ground (Grok, Cursor) says `"plate": true`, and the others sit on the screen as published, since a plate behind every mark would turn the dark theme into a row of white tiles.
 `web/src/assets/agents/manifest.json` is the only list: a bundled file names its source URL, licence, any modification and the date it was taken, and an agent without an official source mark is a monogram with the reason written beside it.
 `scripts/check-agent-logos.mjs` (run by `check-design-contract`) fails a bundled file the manifest does not list, an adapter with no entry, an entry whose id is neither a kit adapter nor a Hide AI provider's agent (`hide-ai/src/registry.rs`), and an entry without its source and licence.
