@@ -110,9 +110,12 @@ export async function chooseLane(page: Page, tool: "files" | "sessions"): Promis
 /**
  * Binds a chord to a command that has none by default in Settings, Shortcuts
  * (the area commands and the global Recent Panels pair have no other way to run
- * in a browser tab), then closes Settings.
+ * in a browser tab), then closes Settings and waits for it to hand the
+ * keyboard back where it was: that lands a tick after the close, and a key
+ * pressed before it would start from the page body instead.
  */
 export async function bindChordlessCommand(page: Page, id: string, keys: string): Promise<void> {
+  const before = await page.evaluateHandle(() => document.activeElement);
   await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="shortcuts"]').click();
   // The area commands sit in a fold that starts closed.
@@ -125,6 +128,7 @@ export async function bindChordlessCommand(page: Page, id: string, keys: string)
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
   await page.locator("[data-settings-close]").click();
   await expect(page.locator("[data-settings]")).toHaveCount(0);
+  await expect.poll(() => before.evaluate((node) => node === document.activeElement)).toBe(true);
 }
 
 /** Shows the files tool with its file tree, beside the documents or filling the lane (B9, B12). */

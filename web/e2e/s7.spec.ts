@@ -18,7 +18,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
-import { onDisk, quietFor } from "./wait";
+import { onDisk, quietFor, unchangedForFrames } from "./wait";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -589,6 +589,8 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
     // Within its own tab bar: an insertion line, the floating tab, nothing
     // resized while it lasts, then the order changes once with no copy (B6).
     const before = await areaBoxes(page);
+    // The widened lane's terminal resizes go out after its divider lands.
+    await unchangedForFrames(page, resizes);
     const terminalResizes = resizes();
     const [bTab, cTab] = [await boxOf(tab(page, "b.txt")), await boxOf(tab(page, "c.txt"))];
     await dragTab(page, tab(page, "a.txt"), { x: (bTab.x + bTab.width / 2 + cTab.x + cTab.width / 2) / 2, y: bTab.y + bTab.height / 2 }, async () => {
@@ -812,8 +814,10 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
 
     // Split right from the active tab's menu: one event, delivered twice, one new area;
-    // the keyboard follows the view into it (B9, B18, B20).
-    await tabTo(page, tab(page, "d.txt"), "Shift+Tab");
+    // the keyboard follows the view into it (B9, B18, B20). The tabs come after the pin
+    // `widenLane` pressed; before it are Agent Views, whose terminals keep Tab.
+    await expect(page.locator("[data-lane-pin]")).toBeFocused();
+    await tabTo(page, tab(page, "d.txt"), "Tab");
     await menuByKeyboard(page, "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt b.txt >c.txt) | @(>d.txt)");
     // The page sent one split; the wire carried it to the core twice.
