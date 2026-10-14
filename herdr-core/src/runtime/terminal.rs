@@ -1245,8 +1245,15 @@ impl Runtime {
     /// selection in progress is what made the canvas pass through a blank
     /// frame on the way to the tab the operator asked for.
     pub(super) fn clear_terminal_projection(&mut self) {
-        self.snapshot.zoomed = None;
         self.snapshot.terminal.panes.clear();
+        self.clear_selected_terminal_state();
+    }
+
+    /// A missing/retired selection clears only its presentation. Retained
+    /// panes in other tabs keep their transport metadata until they leave
+    /// the session or the attach window releases them.
+    pub(super) fn clear_selected_terminal_state(&mut self) {
+        self.snapshot.zoomed = None;
         self.snapshot.terminal.closed = false;
         self.snapshot.terminal.exit_code = None;
     }
