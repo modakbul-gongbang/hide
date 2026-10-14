@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -175,16 +175,6 @@ export function TreeChevron({ name, open, onToggle, hangs, chain, disabled = fal
       >
         {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
       </button>
-    </span>
-  );
-}
-
-/** The pane header's child button (B21): a tree icon and the direct child count, no word. */
-export function TreeButtonFace({ count }: { count: number }) {
-  return (
-    <span className="flex items-center gap-xxs">
-      <ListTreeIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
-      <span className="font-mono text-caption text-subtle-foreground">{count}</span>
     </span>
   );
 }

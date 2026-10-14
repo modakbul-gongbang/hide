@@ -74,7 +74,7 @@
     ]
   },
   "pane-header": {
-    "description": "The approved B2 pane header: identity and own PR on the first row, child total and core state counts on the second-row overlay, compact counts beside an ask band.",
+    "description": "The approved B2 pane header: identity and own PR on the first row, core state counts without a separate total or internal divider on the second-row overlay, compact counts beside an ask band.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "pane-header",
@@ -121,7 +121,7 @@
     },
     "judgment": [
       "B2 was approved from the interactive HTML comparison; this board records its layout in both themes using the existing tokens. Compare each state's production and native captures with the approved arrangement.",
-      "Does the ask band retain its request and Open action beside the compact total and ! count, with no duplicate 외 N건 trigger? Does the request keep readable space at narrow widths and enlarged text?",
+      "Does the ask band retain its request and Open action beside the compact ! count, with no separate total, internal divider or duplicate 외 N건 trigger? Does the request keep readable space at narrow widths and enlarged text?",
       "Do the ancestor path, fork and own PR remain on the first row, with child counts on the second row and a core-ranked child line only when no core band takes that slot?",
       "Are ordinary child requests distinct from operator-raised requests, unknown distinct from resting, and reported results distinct from verified task delivery? Does an empty parent lose the child row without changing the terminal grid?"
     ]

@@ -67,15 +67,14 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-mark-n', '2', '$--warning', {weight: '600', mono: true}),
   ]);
 
-  // Tree button: the pane header's tree icon and direct child count, no word (B21).
+  // Child states start the button; a tree icon keeps compact access when no count is drawn.
   const treeButton = frame(AGENT_TREE_MASTERS.treeButton, 'Tree button', {
     reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', height: DETAIL, padding: [0, '$--spacing-xs'],
     cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner',
   }, [
     icon('ath-tb-tree', 'list-tree', {size: ICON, fill: '$--muted-foreground'}),
-    caption('ath-tb-n', '8', '$--subtle-foreground', {mono: true}),
     {...caption('ath-tb-disconnected', '⊘', '$--muted-foreground', {mono: true}), enabled: false},
-    frame('ath-tb-counts', 'Child state counts', {enabled:false,layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center',padding:[0,0,0,'$--spacing-xs'],stroke:'$--border',strokeWidth:{left:HAIR},strokeAlignment:'inner'}, [
+    frame('ath-tb-counts', 'Child state counts', {enabled:false,layout:'horizontal',gap:'$--spacing-xxs',alignItems:'center'}, [
       ...[['raised','!','$--warning'],['working','●','$--agent-working'],['result','✓','$--success'],['waiting','○','$--agent-working'],['unknown','~','$--muted-foreground'],['idle','○','$--muted-foreground']].map(([key,symbol,fill])=>frame(`ath-tb-${key}`,key,{enabled:false,layout:'horizontal',alignItems:'center'},[
         frame(`ath-tb-${key}-mark`,'Status mark',{width:MARK,height:MARK,layout:'horizontal',alignItems:'center',justifyContent:'center'},[
           ...(['●','○'].includes(symbol) ? [{type:'ellipse',id:`ath-tb-${key}-symbol`,width:DOT,height:DOT,...(symbol==='●'?{fill}:{stroke:fill,strokeWidth:HAIR,strokeAlignment:'inner'})}] : [caption(`ath-tb-${key}-symbol`,symbol,fill,{size:'$--text-micro',mono:true})]),
@@ -133,11 +132,11 @@ export function buildAgentTreeParts(tokens) {
     ];
     const buttons = [
       cell('Tree button rest', ref(id('tb-rest'), AGENT_TREE_MASTERS.treeButton, 'Tree button')),
-      cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'}, {'ath-tb-n': {content: '2'}})),
-      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'5'},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result','waiting','unknown','idle'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
-      cell('Ask band compact child button', ref(id('tb-raised'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'8'},'ath-tb-counts':{enabled:true},'ath-tb-raised':{enabled:true},'ath-tb-raised-n':{content:'2'}})),
-      cell('Tree button with unknown child', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'1'},'ath-tb-counts':{enabled:true},'ath-tb-unknown':{enabled:true}})),
-      cell('Unavailable child states, topology kept', ref(id('tb-disconnected'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-n':{content:'5'},'ath-tb-disconnected':{enabled:true}})),
+      cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'})),
+      cell('Tree button with child states', ref(id('tb-counts'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},...Object.fromEntries(['working','result','waiting','unknown','idle'].map(key=>[`ath-tb-${key}`,{enabled:true}]))})),
+      cell('Ask band compact child button', ref(id('tb-raised'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-raised':{enabled:true},'ath-tb-raised-n':{content:'2'}})),
+      cell('Tree button with unknown child', ref(id('tb-unknown'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-counts':{enabled:true},'ath-tb-unknown':{enabled:true}})),
+      cell('Unavailable child states, topology kept', ref(id('tb-disconnected'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill:'$--background'}, {'ath-tb-tree':{enabled:false},'ath-tb-disconnected':{enabled:true}})),
     ];
     const rows = [
       cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
@@ -157,7 +156,7 @@ export function buildAgentTreeParts(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent tree parts', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, state counts without a separate total or internal divider, a tree icon when no count is drawn; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [verb, prIcon, mark, treeButton, row]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

@@ -121,8 +121,8 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   // with the one band a pane carries overlaid at the top (D-14, D-43; B20, B21).
   function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, pr, children, counts = {}, disconnected = false, summary = '작업 상태 칩과 팝업을 연결하는 중', band, terminal}) {
     const parts = band ? ['raised'].filter(key=>counts[key]) : Object.keys(counts).filter(key=>counts[key]);
-    const tree = children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Child total and states', {fill:'$--background'}, {
-      'ath-tb-n':{content:String(children)},'ath-tb-counts':{enabled:parts.length>0},
+    const tree = children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Child states', {fill:'$--background'}, {
+      'ath-tb-tree':{enabled:!disconnected && parts.length===0},'ath-tb-counts':{enabled:parts.length>0},
       'ath-tb-disconnected':{enabled:disconnected},
       ...Object.fromEntries(parts.flatMap(key=>[[`ath-tb-${key}`,{enabled:true}],[`ath-tb-${key}-n`,{content:String(counts[key])}]])),
     })] : [];
@@ -167,7 +167,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     // One column at the approved board's width, each pane under the line that says what it shows.
     const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
     return frame(id,'Pane header states',{width:761,layout:'vertical',gap:20,padding:[0,0,24,0],fill:'$--background'},[
-      labeled('root','B2 raised ask: child total and ! count replace 외 N건',[pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,counts:{raised:2},band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'})]),
+      labeled('root','B2 raised ask: ! count replaces 외 N건, with no duplicate total',[pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,counts:{raised:2},band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'})]),
       labeled('child','B2 child pane: own PR on the identity row, child states and representative line on the second',[pane(`${id}-child`,{path:[root],title:'P8 읽기 전용 준비',pr:{number:811,state:'failed'},children:5,counts:{working:1,result:1,waiting:1,unknown:1,idle:1},summary:'기존 PR에 합칠지 부모 응답을 기다리는 중'})]),
       labeled('unknown','Unknown child: a tilde, never a resting ring',[pane(`${id}-unknown`,{title:'자식 상태 확인',children:1,counts:{unknown:1},summary:'상태 확인 중인 자식'})]),
       labeled('disconnected','Unavailable states: topology access with a connection reason',[pane(`${id}-disconnected`,{title:'다른 기기의 자식 상태',children:5,disconnected:true,summary:'Mac mini 연결되지 않음'})]),
