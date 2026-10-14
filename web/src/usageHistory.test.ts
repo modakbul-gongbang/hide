@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UsageAmount, UsageRange } from "./generated/hided-ws";
-import { usageDays } from "./usageHistory";
+import { allTokens, sumUsageDays, usageDays, usagePeriodDays } from "./usageHistory";
 
 const empty: UsageAmount = {
   calls: 0, new_tokens: 0,
@@ -47,4 +47,41 @@ describe("sparse usage calendar", () => {
       "2026-03-10", "2026-03-11", "2026-03-12", "2026-03-13", "2026-03-14", "2026-03-15", "2026-03-16",
     ]);
   });
+});
+
+describe("usage display periods", () => {
+  it("shows exactly thirty civil days and places a partial first week without shifting recorded cells", () => {
+    const source = { ...range(false), calendar_start: "2026-02-01", calendar_end: "2026-03-10" };
+    const record = { ...usageDays(source)[28]!, level: 4, week: 4, amount: { ...empty, calls: 1, new_tokens: 500 } };
+    source.days = [record];
+    const days = usagePeriodDays(source, 30);
+    expect(days).toHaveLength(30);
+    expect(days[0]).toMatchObject({ date: "2026-02-09", weekday: 1, week: 0 });
+    expect(days.at(-1)).toMatchObject({ date: "2026-03-10", weekday: 2, week: 4, today: true });
+    expect(days.find((day) => day.date === "2026-03-01")).toMatchObject({ weekday: 0, week: 3, level: 4, amount: { new_tokens: 500 } });
+    expect(source.days[0]!.week).toBe(4);
+  });
+
+  it("sums the selected dates without counting cache reads twice or dropping a pricing limitation", () => {
+    const days = usageDays(range(false));
+    days[0]!.amount = { ...empty, calls: 1, new_tokens: 60, tokens: { ...empty.tokens, input: 10, output: 20, cache_write: 30, cache_write_1h: 5, cache_read: 900 }, cost: { ...empty.cost, micro_usd: 120_000 } };
+    days[1]!.amount = { ...empty, calls: 1, new_tokens: 90, tokens: { ...empty.tokens, input: 20, output: 30, cache_write: 40, cache_read: 1800 }, cost: { ...empty.cost, partial: true, unpriced_models: ["unpriced-fixture"] } };
+    const total = sumUsageDays(days);
+    expect(total.new_tokens).toBe(150);
+    expect(allTokens(total)).toBe(2850);
+    expect(total.tokens).toMatchObject({ input: 30, output: 50, cache_write: 70, cache_write_1h: 5, cache_read: 2700 });
+    expect(total.cost).toMatchObject({ micro_usd: 120_000, partial: true, unpriced_models: ["unpriced-fixture"] });
+    expect(sumUsageDays(days.slice(1)).cost.micro_usd).toBe(0);
+  });
+  it("bounds cross-day unpriced names without inventing an additional-model count", () => {
+    const days = usageDays(range(false));
+    days[0]!.amount = { ...empty, calls: 1, cost: { ...empty.cost, partial: true, unpriced_models: ["a", "b", "c", "d", "e", "f", "g", "h"], other_unpriced_models: 2 } };
+    days[1]!.amount = { ...empty, calls: 1, cost: { ...empty.cost, partial: true, unpriced_models: ["a", "i", "j", "k"] } };
+    const total = sumUsageDays(days);
+    expect(total.cost.partial).toBe(true);
+    expect(total.cost.unpriced_models).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+    expect(total.cost.other_unpriced_models).toBeGreaterThan(0);
+    expect(days[1]!.amount.cost.unpriced_models).toEqual(["a", "i", "j", "k"]);
+  });
+
 });

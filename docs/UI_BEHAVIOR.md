@@ -1642,7 +1642,7 @@ Settings > Agents > Starting work has no default agent of its own.
 
 ## Usage
 
-Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/UsageOverview.tsx`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
+Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx`, `web/src/components/usage-history-table.tsx`, `web/src/components/usage-amount.tsx`, `web/src/UsageOverview.tsx`, `web/src/usageHistory.ts`, `web/src/usage.ts`, `web/src/settings/UsageTab.tsx`.
 The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
@@ -1656,38 +1656,45 @@ Loading or unavailable agents collapse their pins into one dimmed mark; recent s
 At narrow widths the footer wraps rather than clipping its controls.
 
 Any chip opens the 320-wide Usage popover above the footer.
-Each visible agent has one card, with 5 hours and 7 days rows, countdown, percent and bar, and model-specific limits indented below their weekly row.
+Its first row shows today's estimated API-rate equivalent cost and new tokens side by side; token categories are behind `Token details`.
+New tokens means input, output and cache writes; cache reads stay separate, and All tokens adds them to new tokens.
+Cost is an estimate at public API rates, not the account's bill; its tooltip states this and the full history repeats it below the table.
+An unpriced model or incomplete native usage makes a known subtotal a lower bound with its reason; a wholly unpriced amount says `Price unavailable`, a missing price table says `Pricing pending`, and a table older than sixty days is marked stale.
+No calls means No data, never a zero dollar amount; a known free price remains zero.
+
+Below the summary, thirty 12-pixel contribution squares show the most recent thirty civil dates in Sunday-first columns, with no calendar numbers or weekday labels.
+The adjacent thirty-day cost and new-token total stay visible while a day is inspected.
+The core prepares daily amounts, boundaries and quartile levels; the page selects and sums those amounts without repricing calls or reading sessions.
+Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
+During initial backfill unread cells are outlined, and file progress and `so far` remain visible.
+Hover or keyboard focus previews a day in the summary; clicking pins it, leaving restores the pinned day, and Today returns to today.
+Up and Down move one day, Left and Right move a week, and Home and End reach the range's ends.
+A day change keeps the closed detail row and grass geometry stable; expanded token categories wrap at the available width.
+Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes that outline.
+Only thirty date buttons are mounted, and closing the popover removes them.
+
+Account limits follow the grass as compact rows without individual card borders.
+Each visible agent has 5 hours and 7 days rows with a countdown, short inline bar and percent; model-specific limits are indented below their weekly row.
 Not-started windows say `Not started`, never 0%.
 Expired, not-offered and individually unreadable windows have no popover row; a whole malformed response makes the agent unavailable.
-Loading cards show `…`; unavailable cards show `Unavailable`, with a sign-in command only for a signed-out account, or the missing CLI for an uninstalled agent.
+Loading rows show `…`; unavailable rows show `Unavailable`, with a sign-in command only for a signed-out account, or the missing CLI for an uninstalled agent.
 Network and timeout detail stays in diagnostics.
-`Choose chips` opens Settings > Usage.
+The header's settings icon, named `Choose chips`, opens Settings > Usage.
 No usage state becomes a banner, toast or alert.
-The countdown advances once a minute only while the popover is open.
+The countdown advances once a minute only while the popover or Usage tab is open; the redesign adds no polling or data collection.
+With no history there is no grass section; available account rows remain, and with no visible account chips the footer's chart button opens the available history.
 
-Below the account cards, New tokens draws up to twenty Sunday-first weeks of the core's own machine's recorded usage.
-Overview's Usage tab draws up to a year beside the same account cards and the agents without limit readings.
-New tokens means input, output and cache writes; cache reads are shown in the day detail and excluded from every total, share and intensity.
-The core prepares the day boundaries, quartile levels, peak, active days, streak and shares; the page only formats and draws them.
-Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
-The calendar starts at the first retained record's week, bounded by the surface's width in weeks; during initial backfill it starts forty-five days ago, marks unread days and shows file progress and `so far`.
-Finishing the backfill removes leading empty weeks once.
-With no records and no backfill there is no popover section or Overview history column; with no visible account chips the footer's chart button opens the available history.
-
-The popover reserves its tallest localized day or agent detail before hover, so its height and the cell under the pointer stay still.
-At rest it shows the peak and all agent shares; a day shows date, total, input/output/write, excluded read tokens, API-rate equivalent cost and the top three agents plus the remaining count.
-An agent share shows that agent's retained lifetime cost; costs are otherwise hidden.
-An unpriced model or incomplete native usage makes the cost a lower bound with its reason; an absent price table says cost will appear once it loads, and a table older than sixty days is marked stale.
-No calls means No data, never a zero dollar amount.
-Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes the limit outline.
-Arrow keys move through dates, Home and End reach the range's ends, and keyboard focus shows the same details as hover.
-
-Pressing an agent share or bar filters the calendar and statistics while keeping the complete agent comparison visible; pressing it again clears the filter.
-Usage history opens Overview's global Usage tab; it is not a per-project ledger.
-The large surface adds current and longest streak, peak, period totals and agent bars, replaced by the selected day's details and bars while over a day.
+Full history opens Overview's global Usage tab, not a per-project ledger.
+The table starts at the most recent thirty days, with seven-day and retained-year choices and an agent filter.
+The retained year is the existing core projection's bound; Full history does not claim to expose an unlimited lifetime ledger.
+Each recorded date has a summary row, followed by agent rows when expanded; today starts expanded.
+Columns are Date / Agent, estimated cost, new tokens, input, output, cache write, cache read and all tokens, with period totals and an exact-number toggle.
+Year-view dates include the year, and changing the filter or page clears expanded rows.
+At most thirty recorded dates are mounted per page, with agent rows only for expanded dates; an empty filter says there is no usage for the chosen agent and period.
+The table scrolls sideways within its own region at narrow widths and large Interface text, never the whole page.
+Account limits and agents without limit readings remain available in a collapsed Account limits section below the table.
 Pi and omp show recorded provider provenance using known display names, account wording only for a recorded account provider, and no line for an unknown provider.
 A bounded or partly unreadable source has the small limited marker in its own row and range.
-At narrow widths and large Interface text the Overview columns stack and copy wraps; a full-year grid scrolls within its calendar, never the whole page sideways.
 
 The page sends `usage_window_visible` on every live connection and visibility change, and `usage_popover_open` while the popover or Usage tab is open.
 Opening it requests a refresh only for reads older than one minute, subject to the existing backoff.

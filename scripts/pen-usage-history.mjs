@@ -1,36 +1,42 @@
-// Approved heatmap A/C: one primary hue, start-anchored weeks and cost on hover.
+// The operator chose compact A, a contribution grid and an agent detail table
+// in the HTML comparison. These sheets record that choice on the shared tokens.
 import {frame, text, num} from './pen-system.mjs';
-const ref = (id, target, name, props = {}) => ({id, type: 'ref', ref: target, name, ...props});
 const caption = (id, value, props = {}) => text(id, value, {size: '$--text-caption', fill: '$--muted-foreground', ...props});
 const row = (id, children, props = {}) => frame(id, 'Row', {layout: 'horizontal', width: 'fill_container', gap: '$--spacing-sm', alignItems: 'center', ...props}, children);
-const AGENTS = ['Claude Code', 'Codex', 'OpenCode', 'Pi', 'omp', 'Grok'];
-const MARKS = ['claude', 'codex', 'opencode', 'pi', 'omp', 'grok'];
 function cell(id, level, size, tokens, pending = false) {
-  return frame(id, pending ? 'Not read yet' : `Level ${level}`, {layout: 'none', width: size, height: size, cornerRadius: '$--radius-xs', fill: '$--secondary', ...(pending ? {stroke: '$--border', strokeWidth: 1, fill: []} : {})}, level && !pending ? [frame(`${id}-fill`, 'Intensity', {width: size, height: size, cornerRadius: '$--radius-xs', fill: '$--primary', opacity: num(tokens, `--opacity-usage-level-${level}`)}, [])] : []);
+  return frame(id, pending ? 'Not read yet' : `Level ${level}`, {layout: 'none', width: size, height: size, cornerRadius: '$--spacing-xxs', fill: '$--secondary', ...(pending ? {stroke: '$--border', strokeWidth: 1, fill: []} : {})}, level && !pending ? [frame(`${id}-fill`, 'Intensity', {width: size, height: size, cornerRadius: '$--spacing-xxs', fill: '$--primary', opacity: num(tokens, `--opacity-usage-level-${level}`)}, [])] : []);
+}
+const summary = (id, cost, tokens) => row(`${id}-summary`, [['추정 비용', cost], ['새 토큰', tokens]].map(([label, value], i) => frame(`${id}-metric-${i}`, label, {width: 'fill_container', layout: 'vertical', gap: '$--spacing-xs'}, [caption(`${id}-metric-label-${i}`, label, {size: '$--text-micro'}), text(`${id}-metric-value-${i}`, value, {size: '$--text-headline', mono: true, weight: '600'})])));
+function table(id, state) {
+  const values = [
+    ['날짜 / 에이전트', '추정 비용', '새 토큰', '입력', '출력', '캐시 쓰기', '캐시 읽기', '전체 토큰'],
+    ['⌄ 10월 11일 (일)', '≈ $8.00', '4M', '1.2M', '800K', '2M', '48M', '52M'],
+    ['    Claude Code', '≈ $4.80', '2.4M', '720K', '480K', '1.2M', '28.8M', '31.2M'],
+    ['    Codex', '≈ $1.60', '800K', '240K', '160K', '400K', '9.6M', '10.4M'],
+    ['› 10월 10일 (토)', '≈ $6.00', '3M', '900K', '600K', '1.5M', '36M', '39M'],
+    ['› 10월 9일 (금)', '≈ $4.00', '2M', '600K', '400K', '1M', '24M', '26M'],
+    ['기간 합계', '≈ $132.00', '66M', '19.8M', '13.2M', '33M', '792M', '858M'],
+  ];
+  return frame(`${id}-table`, 'Date and agent usage', {width: 'fill_container', layout: 'vertical'}, values.map((values, r) => row(`${id}-table-row-${r}`, values.map((value, c) => caption(`${id}-table-${r}-${c}`, state === 'unpriced' && c === 1 && r ? value.replace('≈', '≥') : value, {width: c === 0 ? 148 : c === 1 ? 94 : 80, size: r === 0 ? '$--text-micro' : '$--text-caption', mono: r > 0 && c > 0, fill: r === 0 || [2, 3].includes(r) ? '$--muted-foreground' : '$--foreground'})), {gap: 0, padding: [8, 0], stroke: {fill: '$--border', thickness: {bottom: 1}}})));
 }
 export function usageHistory(tokens, id, surface, state = 'rest') {
-  const year = surface === 'year', size = num(tokens, year ? '--size-usage-year-cell' : '--size-usage-cell'), gap = num(tokens, '--size-usage-cell-gap');
-  const pending = state === 'backfill', detail = state === 'day' || state === 'unpriced';
-  const days = state === 'sparse' ? 9 : 37, weeks = Math.ceil(days / 7);
-  const grid = row(`${id}-grid`, [
-    frame(`${id}-weekdays`, 'Weekdays', {width: 22, layout: 'vertical', gap}, ['', '', 'Mon', '', 'Wed', '', 'Fri'].map((value, i) => frame(`${id}-label-${i}`, value || 'Space', {width: 22, height: i === 0 ? 18 : size}, value ? [text(`${id}-label-text-${i}`, value, {size: '$--text-micro', fill: '$--muted-foreground'})] : []))),
-    ...Array.from({length: weeks}, (_, week) => frame(`${id}-week-${week}`, 'Week', {layout: 'vertical', gap}, [frame(`${id}-month-${week}`, 'Month', {width: size, height: 18}, [0, 4].includes(week) ? [text(`${id}-month-text-${week}`, week ? 'Oct' : 'Sep', {size: '$--text-micro', fill: '$--muted-foreground'})] : []), ...Array.from({length: Math.min(7, days - week * 7)}, (_, day) => cell(`${id}-day-${week}-${day}`, (week + day) % 5, size, tokens, pending && week < 2))])),
-  ], {gap});
-  const shares = frame(`${id}-shares`, 'Agent filters', {layout: year ? 'vertical' : 'horizontal', width: 'fill_container', gap: '$--spacing-xs'}, AGENTS.map((agent, i) => row(`${id}-agent-${i}`, [
-    {id: `${id}-mark-${i}`, type: 'rectangle', width: 12, height: 12, fill: {type: 'image', url: i < 2 ? `../web/src/assets/agent-${MARKS[i]}.png` : `../web/src/assets/agents/${MARKS[i]}.svg`, mode: 'fit'}},
-    ...(year ? [caption(`${id}-name-${i}`, agent, {width: 90})] : []),
-    ...(year ? [frame(`${id}-bar-${i}`, 'Share', {width: 'fill_container', height: 4, fill: '$--secondary'}, [frame(`${id}-share-${i}`, 'Contribution', {width: [320, 106, 53, 27, 16, 11][i], height: 4, fill: '$--primary'}, [])])] : []),
-    caption(`${id}-value-${i}`, ['46.8M', '15.6M', '7.8M', '3.9M', '2.3M', '1.6M'][i], {mono: true, size: '$--text-micro'}),
-  ], year ? {} : {width: 'fit_content', gap: 2})));
-  return frame(id, year ? 'Usage year' : 'Usage history', {width: year ? num(tokens, '--size-usage-year') : 286, clip: true, layout: 'vertical', gap: '$--spacing-sm'}, [
-    row(`${id}-title`, [text(`${id}-heading`, 'New tokens', {size: '$--text-subhead', weight: '600'}), caption(`${id}-total`, pending ? '78M · so far' : '78M · 30 / 37 days active')]),
-    grid,
-    row(`${id}-legend`, [year ? caption(`${id}-streak`, pending ? 'So far' : '3-day streak') : ref(`${id}-history-link`, 'btn-m', 'Usage history', {fill: [], height: 24, descendants: {'btn-lb': {content: 'Usage history'}, 'btn-ic': {enabled: true, icon: 'arrow-up-right'}}}), frame(`${id}-space`, 'Space', {width: 'fill_container', height: 1}, []), text(`${id}-less`, 'Less', {size: '$--text-micro', fill: '$--muted-foreground'}), ...Array.from({length: 5}, (_, level) => cell(`${id}-legend-${level}`, level, size, tokens)), text(`${id}-more`, 'More', {size: '$--text-micro', fill: '$--muted-foreground'})], {gap: 3}),
-    ...(pending ? [caption(`${id}-progress`, 'Reading history · 412 / 1,280 files')] : []),
-    ...(year ? [caption(`${id}-peak-summary`, 'Peak · Sun, Oct 11 · 4M')] : []),
-    frame(`${id}-detail`, 'Reserved detail', {width: 'fill_container', layout: 'vertical', gap: '$--spacing-xs', ...(year ? {padding: '$--spacing-md', stroke: '$--border', strokeWidth: 1, cornerRadius: '$--radius-md'} : {height: 106})}, detail ? [
-      caption(`${id}-date`, 'Sun, Oct 11 · 4M', {fill: '$--foreground'}), caption(`${id}-split`, 'In 1.2M · Out 800K · Cache write 2M'), caption(`${id}-read`, 'Cache read 48M · not counted'), caption(`${id}-cost`, state === 'unpriced' ? '≥ $8.00 API rate · model-with-no-public-price unpriced' : '≈ $8.00 API rate'), caption(`${id}-top`, 'Claude 2.4M · Codex 800K · OpenCode 400K · +3'),
-    ] : [caption(`${id}-peak`, year ? 'Since Sep 7 · 78M' : 'Peak · Sun, Oct 11 · 4M'), shares]),
+  const year = surface === 'year', pending = state === 'backfill', size = num(tokens, '--size-usage-cell'), gap = num(tokens, '--size-usage-cell-gap');
+  const cost = state === 'unpriced' ? '가격 미등록' : pending ? '아직 읽지 않음' : '≈ $8.00';
+  if (year) return frame(id, 'Usage records', {width: num(tokens, '--size-usage-year'), layout: 'vertical', gap: '$--spacing-md', fill: '$--background'}, [
+    row(`${id}-heading`, [text(`${id}-title`, '전체 기록', {size: '$--text-subhead', weight: '600'}), frame(`${id}-spacer`, 'Space', {width: 'fill_container', height: 1}, []), caption(`${id}-controls`, '모든 에이전트 ⌄   최근 30일 ⌄   정확한 숫자')]),
+    summary(id, state === 'unpriced' ? '≥ $132.00' : '≈ $132.00', '66M'),
+    ...(pending ? [caption(`${id}-reading`, '기록 읽는 중 · 1,280개 중 412개 파일 · 지금까지')] : []),
+    table(id, state), caption(`${id}-foot`, 'API 단가 환산액 · 실제 청구액과 다를 수 있음                   이전  1 / 1  다음', {size: '$--text-micro'}),
+  ]);
+  const grass = row(`${id}-grid`, Array.from({length: 5}, (_, w) => frame(`${id}-week-${w}`, 'Week', {layout: 'vertical', gap}, Array.from({length: w === 4 ? 2 : 7}, (_, d) => cell(`${id}-day-${w}-${d}`, (w + d) % 5, size, tokens, pending && w < 2)))), {width: 'fit_content', gap});
+  return frame(id, 'Compact usage', {width: 286, layout: 'vertical', gap: '$--spacing-md'}, [
+    caption(`${id}-date`, state === 'day' ? '10월 11일 (일)' : '오늘'), summary(id, cost, pending ? '아직 읽지 않음' : '4M'),
+    caption(`${id}-details`, '› 세부 내역', {size: '$--text-micro'}),
+    frame(`${id}-grass-section`, 'Last 30 days', {width: 'fill_container', layout: 'vertical', gap: '$--spacing-sm', padding: [12, 0]}, [
+      caption(`${id}-period`, '최근 30일                                          새 토큰', {size: '$--text-micro'}),
+      row(`${id}-grass-row`, [grass, frame(`${id}-period-total`, 'Period total', {layout: 'vertical', gap: '$--spacing-xs'}, [text(`${id}-cost`, '≈ $132.00', {size: '$--text-subhead', mono: true, weight: '600'}), caption(`${id}-tokens`, '66M', {mono: true}), row(`${id}-legend`, [caption(`${id}-less`, '적음', {size: '$--text-micro'}), ...Array.from({length: 5}, (_, l) => cell(`${id}-legend-${l}`, l, size, tokens)), caption(`${id}-more`, '많음', {size: '$--text-micro'})], {gap: '$--spacing-xxs'})])], {gap: '$--spacing-lg'}),
+    ]),
+    ...(pending ? [caption(`${id}-reading`, '기록 읽는 중 · 1,280개 중 412개 파일', {size: '$--text-micro'})] : []),
   ]);
 }
 export function buildUsageHistory(tokens) {
