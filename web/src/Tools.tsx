@@ -92,7 +92,9 @@ export function ToolRail({ actions }: { actions: Actions }) {
             >
               {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
               <Icon aria-hidden="true" className="size-(--size-icon-lg)" />
-              <span className="max-w-full truncate px-xxs leading-none">{name}</span>
+              <span className="whitespace-nowrap tracking-tight [:lang(ja)_&]:[font-feature-settings:'palt']" data-lane-tool-name="true">
+                {name}
+              </span>
               {count > 0 ? (
                 <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-lane-badge={count}>
                   {count}

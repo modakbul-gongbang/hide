@@ -120,7 +120,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
       aria-label={t("panes.workspace.aria", { name: checkout.branch ?? checkout.label })}
       data-workspace-screen={checkout.id}
       data-lane-mode={frame.mode}
-      data-lane-tool={tool ?? "none"}
+      data-lane-shows={tool ?? "none"}
     >
       <LaneRow view={view} frame={frame} width={width} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
       <ToolRail actions={actions} />
