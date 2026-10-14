@@ -527,7 +527,11 @@ fn a_switch_pressed_before_the_hooks_are_read_turns_memory_on_once_they_are() {
         guard.snapshot.status.last_error, None,
         "the press is held, not refused"
     );
-    assert_eq!(pending(&guard), None, "Memory waits for the hook read");
+    assert_eq!(
+        pending(&guard),
+        Some(MemoryAction::Enable),
+        "the switch shows the held press"
+    );
 
     guard.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
         runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
@@ -545,6 +549,27 @@ fn a_switch_pressed_before_the_hooks_are_read_turns_memory_on_once_they_are() {
         last_report_failure: None,
     });
     assert_eq!(pending(&guard), Some(MemoryAction::Enable));
+}
+
+#[test]
+fn a_switch_held_for_a_hook_read_that_fails_is_refused() {
+    let (mut runtime, workspace) = opened_project();
+    runtime.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert!(runtime.hook_diagnosis_failed());
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("memory.hooks_unread")
+    );
+    assert_eq!(
+        opened(&runtime).and_then(|project| project.pending_action),
+        None
+    );
+    assert!(!runtime.hook_diagnosis_failed(), "nothing else was held");
 }
 
 #[test]

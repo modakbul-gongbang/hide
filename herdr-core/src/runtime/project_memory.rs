@@ -43,7 +43,9 @@ pub(super) struct ProjectMemoryWork {
     /// started lands, by catalog Project.
     enable_after_hook_update: Option<String>,
     /// The Project whose switch was pressed before this Mac's hooks were
-    /// first read; the press runs again once they are (issue 1086).
+    /// first read, shown pending; the press runs again once they are, or is
+    /// refused if the read fails (issue 1086). One at a time: a press for
+    /// another Project meanwhile is refused as busy.
     enable_after_hook_read: Option<String>,
     /// The tracker of the cards on their way into the repository.
     pub(super) promotions: super::memory_promotion::PromotionTracking,
@@ -541,7 +543,14 @@ impl Runtime {
             .action
             .as_ref()
             .filter(|(workspace_id, _)| self.memory_opened(workspace_id))
-            .map(|(_, action)| *action);
+            .map(|(_, action)| *action)
+            .or_else(|| {
+                self.project_memory
+                    .enable_after_hook_read
+                    .as_deref()
+                    .is_some_and(|workspace_id| self.memory_opened(workspace_id))
+                    .then_some(MemoryAction::Enable)
+            });
         let ai_ready = self.ai_active() && self.ai_settings.is_some() && !self.usage_paused();
         let Some(project) = self
             .snapshot
@@ -620,7 +629,21 @@ impl Runtime {
             // The hooks are read once the core starts; a press before that
             // waits for the read rather than asking for another.
             if self.hook_diagnosis.is_none() {
+                if self
+                    .project_memory
+                    .enable_after_hook_read
+                    .as_ref()
+                    .is_some_and(|held| *held != payload.workspace_id)
+                {
+                    self.set_error(
+                        "memory.action_busy",
+                        "Wait for Memory to turn on in the other Project",
+                        false,
+                    );
+                    return true;
+                }
                 self.project_memory.enable_after_hook_read = Some(payload.workspace_id);
+                self.sync_project_memory();
                 return true;
             }
             let parts = self.local_hook_parts_to_repair();
@@ -758,6 +781,21 @@ impl Runtime {
         }
         self.sync_project_memory();
         self.refresh_project_memory();
+        true
+    }
+
+    /// The hooks could not be read: a switch press held for that read is
+    /// refused, so the switch the operator pressed does not stay pending.
+    pub(crate) fn hook_diagnosis_failed(&mut self) -> bool {
+        if self.project_memory.enable_after_hook_read.take().is_none() {
+            return false;
+        }
+        self.set_error(
+            "memory.hooks_unread",
+            "Hide could not read the agent hooks; turn Memory on again",
+            false,
+        );
+        self.sync_project_memory();
         true
     }
 
