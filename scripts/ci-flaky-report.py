@@ -16,6 +16,13 @@ step reads its tool's own report (Playwright's JSON, nextest's JUnit):
     ci-flaky-report.py --suite web --playwright web/e2e-report.json
     ci-flaky-report.py --suite rust --junit target/nextest/ci/junit.xml
 
+The nightly performance lane has no tests and no retry: its judge
+(`scripts/web-shell-measure/nightly.py`) writes a record whose `failures` are
+the checks the run failed, and `--measurement` writes each as an error
+annotation titled `Failed measurement`, with the check on the first line:
+
+    ci-flaky-report.py --measurement nightly-summary.json
+
 A run with a flaky test also sets the step output `flaky=true`, so the lane
 keeps the same logs it keeps for a failure: the first attempt's daemon, Herdr
 and input logs are the evidence its issue needs, and a passing job uploads
@@ -23,11 +30,11 @@ nothing otherwise.
 
 The nightly's report job (`--nightly`) is the one writer of `nightly-failure`
 issues, so the run's cap, the recurrence comments and the closing never race:
-one issue per test a lane annotated, or, for a failed job with no such
-annotation, per lane and failed step; a comment per run attempt on the issue
-already open for the same failure; and a lane that passes a scheduled run on
-main closes its issues. docs/TESTING.md, "Flaky tests" and "Nightly failures",
-owns the policy.
+one issue per test or measurement a lane annotated, or, for a failed job with
+no such annotation, per lane and failed step; a comment per run attempt on the
+issue already open for the same failure; and a lane that passes a scheduled
+run on main closes its issues. docs/TESTING.md, "Flaky tests" and "Nightly
+failures", owns the policy.
 
     ci-flaky-report.py --nightly --lane-input all
     ci-flaky-report.py --nightly --repo OWNER/REPO --run RUN_ID --dry-run
@@ -71,6 +78,10 @@ TOKEN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})
 FAILED_TITLE = "Failed test"
 UNANNOTATED_TITLE = "Failed tests not annotated"
 ANNOTATED_TESTS = 8
+# A failed check of a performance measurement. It names no file: a figure can
+# move with any change, so every pull request merged since the lane's last
+# green nightly is a candidate.
+MEASUREMENT_TITLE = "Failed measurement"
 
 NIGHTLY_LABEL = "nightly-failure"
 INFRA_LABEL = "infra"
@@ -182,13 +193,13 @@ def escape_property(text):
     return escape_data(text).replace(":", "%3A").replace(",", "%2C")
 
 
-def annotate(failed, write=print):
-    """Writes each test that failed its retry as a `Failed test` annotation on the job."""
+def annotate(failed, write=print, title=FAILED_TITLE):
+    """Writes each test that failed its retry (or each failed measurement) as an annotation on the job."""
     for test in failed[:ANNOTATED_TESTS]:
         properties = [f"file={escape_property(test['file'])}"] if test.get("file") else []
         if test.get("line"):
             properties.append(f"line={int(test['line'])}")
-        properties.append(f"title={escape_property(FAILED_TITLE)}")
+        properties.append(f"title={escape_property(title)}")
         name = " ".join(test["name"].splitlines())
         write(f"::error {','.join(properties)}::{escape_data(name + chr(10) + clean(test['error']))}")
     if len(failed) > ANNOTATED_TESTS:
@@ -349,6 +360,12 @@ def unannotated_count(annotation):
 
 def test_failure(job, lane, annotation):
     name, _, error = (annotation.get("message") or "").partition("\n")
+    if annotation.get("title") == MEASUREMENT_TITLE:
+        # Its candidates are every merged pull request, so it names no paths.
+        return {
+            "kind": "measurement", "lane": lane, "key": marker_text(f"{lane}:measurement {name}"), "job": job,
+            "name": name, "error": error, "paths": None, "infra": False,
+        }
     path = annotation.get("path")
     # A test with no file is annotated on GitHub's default path.
     file = None if path in (None, "", ".github") else path
@@ -447,7 +464,7 @@ class Nightly:
                 continue
             lane = lane_of(job["name"])
             annotations = listing(self.call, annotation_path(job))
-            tests = [a for a in annotations if a.get("title") == FAILED_TITLE]
+            tests = [a for a in annotations if a.get("title") in (FAILED_TITLE, MEASUREMENT_TITLE)]
             left = sum(unannotated_count(a) for a in annotations if a.get("title") == UNANNOTATED_TITLE)
             unannotated += left
             if tests or left:
@@ -475,7 +492,7 @@ class Nightly:
         return None
 
     def candidates(self, green, paths):
-        """Pull requests merged into main since `green` that touched `paths`, or None when the range is too long to read."""
+        """Pull requests merged into main since `green` that touched `paths` (all of them for None), or None when the range is too long to read."""
         base, head = green["head_sha"], self.run["head_sha"]
         shas, total = set(), None
         for page in range(1, PAGES + 1):
@@ -496,6 +513,9 @@ class Nightly:
         found = []
         for pull in sorted(merged, key=lambda pull: pull["number"]):
             number = pull["number"]
+            if paths is None:
+                found.append(number)
+                continue
             if number not in self.pr_files:
                 files = listing(self.call, f"repos/{self.repo}/pulls/{number}/files")
                 self.pr_files[number] = [f["filename"] for f in files] + [f["previous_filename"] for f in files if f.get("previous_filename")]
@@ -504,6 +524,8 @@ class Nightly:
         return found
 
     def subject(self, failure):
+        if failure["kind"] == "measurement":
+            return f"\"{failure['name']}\""
         if failure["kind"] == "test":
             where = f"{failure['file']}:{failure['line']}" if failure["file"] and failure["line"] else failure["file"]
             return f"`{where}` \"{failure['name']}\"" if where else f"`{failure['name']}`"
@@ -517,16 +539,21 @@ class Nightly:
             candidates = "- Candidate pull requests: unknown without a green nightly to start from\n"
         else:
             since = f"- Last green nightly of this lane: {green['head_sha'][:12]} ({green['html_url']})\n"
-            numbers = self.candidates(green, failure["paths"]) if failure["paths"] else []
-            touched = ", ".join(f"`{path}`" for path in failure["paths"][:6]) + (", ..." if len(failure["paths"]) > 6 else "")
+            paths = failure["paths"]
+            numbers = self.candidates(green, paths) if paths is None or paths else []
+            if paths is None:
+                touched = "any path, since a measurement moves with any change"
+            else:
+                touched = ", ".join(f"`{path}`" for path in paths[:6]) + (", ..." if len(paths) > 6 else "")
             if numbers is None:
                 listed = f"unknown, more than {PAGES * 100} commits since then"
             else:
                 listed = ", ".join(f"#{number}" for number in numbers) or "none"
             candidates = f"- Candidate pull requests (merged since then, touching {touched or 'nothing named'}): {listed}\n"
-        what = f"- Test: {self.subject(failure)}\n" if failure["kind"] == "test" else f"- Step: \"{failure['step']}\"\n"
+        label = {"test": "Test", "measurement": "Measurement"}.get(failure["kind"])
+        what = f"- {label}: {self.subject(failure)}\n" if label else f"- Step: \"{failure['step']}\"\n"
         # The lane is in the title: the same test failing on two systems is two issues, told apart in a list.
-        title = f"Nightly failure ({failure['lane']}): " + (failure["name"] if failure["kind"] == "test" else failure["step"])
+        title = f"Nightly failure ({failure['lane']}): " + (failure["step"] if failure["kind"] == "step" else failure["name"])
         labels = [NIGHTLY_LABEL] + ([INFRA_LABEL] if failure["infra"] else [])
         return {
             "title": title[:200],
@@ -660,12 +687,24 @@ def nightly(args, env, call=gh):
     return 0
 
 
+def measurement(path):
+    """Annotates each check a performance lane's record failed; a run that wrote no record has its failed step instead."""
+    if not path.is_file():
+        print("no record; nothing to annotate")
+        return 0
+    failures = json.loads(path.read_text(encoding="utf-8"))["failures"]
+    annotate([{"file": None, "line": None, "name": f["name"], "error": f["error"]} for f in failures], title=MEASUREMENT_TITLE)
+    print(f"{len(failures)} failed measurement(s)" if failures else "no failed measurement")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--suite", choices=("web", "desktop", "rust"))
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--playwright", type=Path, help="a Playwright JSON report")
     source.add_argument("--junit", type=Path, nargs="+", help="cargo-nextest JUnit reports (a lane writes one per nextest run)")
+    source.add_argument("--measurement", type=Path, help="a performance lane's record (scripts/web-shell-measure/nightly.py)")
     parser.add_argument("--system", default=os.environ.get("RUNNER_OS", "unknown"))
     parser.add_argument("--nightly", action="store_true", help="the nightly report job: file, comment on and close nightly-failure issues")
     parser.add_argument("--repo", help="OWNER/REPO (default: GITHUB_REPOSITORY)")
@@ -676,6 +715,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.nightly:
         return nightly(args, os.environ)
+    if args.measurement:
+        return measurement(args.measurement)
     if not args.suite or not (args.playwright or args.junit):
         parser.error("a lane's report needs --suite and --playwright or --junit")
     paths = [args.playwright] if args.playwright else args.junit
