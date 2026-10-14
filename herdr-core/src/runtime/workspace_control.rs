@@ -413,7 +413,7 @@ impl Runtime {
             let projected_action = parked
                 .as_ref()
                 .map_or_else(|| action.clone(), |parked| parked.action(action.clone()));
-            let applied = (|| {
+            let mut applied = (|| {
                 self.check_browser_scope(&key, &projected_action)?;
                 if let Action::OpenBrowser { area_id, .. } = &projected_action {
                     self.check_browser_area(&key, area_id.as_deref())?;
@@ -427,11 +427,14 @@ impl Runtime {
                     material,
                 )
             })();
-            match &applied {
+            match &mut applied {
                 Ok(done) => {
                     self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
                     if let Some(intent) = lane_intent {
                         self.apply_area_intent_to(&key, intent);
+                        // A view already in front still calls the lane, which
+                        // the page sees only if the change is announced.
+                        done.changed = true;
                     }
                 }
                 Err(_) => self.put_back_parked(&key, parked),

@@ -61,12 +61,12 @@ A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
 
 Unpinned, the lane opens over Agent Views at their right edge, set apart by a shadow and a left border in both themes; the terminals under it keep their grid and layout, are not dimmed, and keep their input and output.
-A click on a terminal pane, or Escape inside the lane, puts the lane away and hands the keyboard to that pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
+A click on a terminal pane, or Escape inside the lane or on its rail, puts the lane away and hands the keyboard to the focused pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
 A lane put away keeps its documents, tabs, scroll, previews and searches, and its rail icon brings it back as it was.
 Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
 Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip says `Pin · too narrow, drawn over`, and widening the window docks the lane again.
+A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip adds `too narrow, drawn over` to the unpin hint, and widening the window docks the lane again.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
 
@@ -75,7 +75,7 @@ The active document's header starts with the tree button, the checkout's name, t
 The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explorer, on and off, the button pressed while it is on; ⌘⇧E while the lane does not show Files opens it on Files with the tree.
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
 The tree stays on when a file is picked, when the lane is put away and comes back, and when another tool shows and Files comes back; only the tree button, ⌘⇧E and closing the lane turn it off.
-With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there opens beside the tree, which goes back to its own width and stays on.
+With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or opened with ⌘P or `hide file open` from the front tab, opens beside the tree, which goes back to its own width and stays on, while a page, a diff or a terminal-link file leaves the tree as it was stored, and ⌘⇧E there changes nothing.
 Closing the last view leaves the lane on Files in that state, and ⌘⇧B on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.

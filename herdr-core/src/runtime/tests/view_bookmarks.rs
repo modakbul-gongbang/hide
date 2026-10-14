@@ -837,7 +837,7 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
     let a = display_id(&runtime, &directory, "a.md");
     view_event(&mut runtime, serde_json::json!({"tool": null}));
     let calls = runtime.snapshot.workspace_view.as_ref().unwrap().lane_calls;
-    control(
+    let selected = control(
         &mut runtime,
         "w-order:t1:p",
         Action::Select {
@@ -846,6 +846,10 @@ fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
             expected_browser_area: None,
         },
         "front-select",
+    );
+    assert!(
+        selected.changed,
+        "selecting the view already in front still announces the lane call"
     );
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
