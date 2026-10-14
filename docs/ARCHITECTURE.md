@@ -2150,7 +2150,7 @@ A first visit starts an empty presentation whose one area takes a freshly minted
 The lane's tool, pin, tree and widths stay checkout-wide, and ordinary focus among already shown Agent areas does not swap the presentation.
 
 Workspace control records the caller's actual tab and native session before an asynchronous read, validates them again at commit, and refuses stale identity without another-tab fallback.
-Under one owner lock, `parked_caller` temporarily projects the caller and suppresses intermediate persistence; `note_control_view` commits its result and restores the complete operator presentation, editor selection and explicit-visibility counters unless `--reveal` was requested.
+Under one owner lock, `parked_caller` temporarily projects the caller and suppresses intermediate persistence; `note_control_view` commits its result and restores the complete operator presentation and editor selection unless `--reveal` was requested.
 Revealing selects the actual caller tab; pane-less checkout callers and GUI events act on the operator presentation.
 An open or select the operator is looking at, revealed or from the front Workspace's active tab or a pane-less caller, calls the lane on Files after the commit, decided before the open adds its view so a tree that showed alone stays beside it; a browser page's own area-bound target calls nothing unless revealed.
 Reconcile, preview retirement, close guards, restart hydration and browser inventory inspect all live presentations, so hidden content neither appears in the operator's strip nor loses its shared buffer or browser authority.

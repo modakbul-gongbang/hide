@@ -427,6 +427,9 @@ export function createActions(send: DispatchFn) {
       ui().showLane();
       return setWorkspaceView({ tool: "files", tree: true });
     }
+    // With no view the tree fills the lane whatever is stored, so a press
+    // there would only flip a setting the operator cannot see (B12).
+    if ((view.layout?.display_count ?? 0) === 0) return diagnostic("toggle file tree: the tree fills a lane with no view");
     setWorkspaceView({ tree: !view.tree });
   };
 
