@@ -5446,7 +5446,7 @@ impl Runtime {
             let intent = if payload.is_directory {
                 super::workspace_view::AreaIntent::RevealFolder
             } else {
-                super::workspace_view::AreaIntent::Views
+                super::workspace_view::AreaIntent::Files
             };
             self.apply_area_intent_to(&key, intent);
         }

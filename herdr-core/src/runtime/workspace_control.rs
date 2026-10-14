@@ -143,7 +143,7 @@ impl Runtime {
                 },
             });
         }
-        self.apply_area_intent_to(key, AreaIntent::Views);
+        self.apply_area_intent_to(key, AreaIntent::Files);
     }
 
     pub fn browser_route_source(

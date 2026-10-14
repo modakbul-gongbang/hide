@@ -399,12 +399,6 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         WORKSPACE_VIEWS,
-        "/workspaces/*/view_visibility/{key}",
-        Mechanism::Owned,
-        Moves::Tab,
-    ),
-    (
-        WORKSPACE_VIEWS,
         "/workspaces/*/view_owner",
         Mechanism::Owned,
         Moves::Tab,
@@ -1305,7 +1299,7 @@ mod tests {
         write(
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_visibility": {"w1:t1": false}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {}}}}, "layout": {"root": {}}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),
         );
