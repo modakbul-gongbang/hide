@@ -290,11 +290,49 @@ impl fmt::Display for AiError {
 
 impl std::error::Error for AiError {}
 
-/// Token accounting a provider reports for one answer, for the log only.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+/// Token accounting a provider reports for one answer.
+///
+/// `input_tokens` and `output_tokens` are what the provider printed first and
+/// are for the log only. `models` is what the usage ledger counts.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AiUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// One entry per model that answered. Empty means the provider took the
+    /// request and reported no usage the ledger accepts, which the router
+    /// hands on as an unknown call rather than as zero tokens. A node on an
+    /// older build sends none.
+    #[serde(default)]
+    pub models: Vec<ModelTokens>,
+}
+
+/// One model's tokens in one answer, in the disjoint components the usage
+/// ledger counts: input excludes both cache categories, reasoning is a subset
+/// of output and one-hour cache writes a subset of cache writes.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ModelTokens {
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub cache_write_1h: u64,
+    pub reasoning: Option<u64>,
+    /// The provider did not split this model's cache writes by lifetime and
+    /// some may have been one-hour writes, so its price is a lower bound.
+    #[serde(default)]
+    pub lower_bound: bool,
+}
+
+/// Told about every backend attempt that reached a provider, before the
+/// answer is validated, so a rejected answer is still counted. A request that
+/// joined another's flight is one execution and is told once. Implementations
+/// queue and return: the router calls this on the request's own thread.
+pub trait AiUsageSink: Send + Sync + fmt::Debug {
+    /// `models` is empty for an attempt that was submitted and reported no
+    /// usage (a timeout, a lost connection, an error frame, a provider whose
+    /// usage is not read): an unknown call.
+    fn attempt(&self, feature_id: &str, provider: ProviderId, models: &[ModelTokens]);
 }
 
 /// One provider answer before the router validates it.

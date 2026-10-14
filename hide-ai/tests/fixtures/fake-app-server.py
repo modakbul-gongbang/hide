@@ -108,7 +108,7 @@ for raw in sys.stdin:
                                   "item": {"type": "agentMessage", "id": "msg-1", "text": text, "phase": "final_answer"}})
         notify("thread/tokenUsage/updated", {"threadId": "thread-1", "turnId": active_turn,
                "tokenUsage": {"last": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1290},
-                              "total": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1290}}})
+                              "total": {"inputTokens": 1234, "outputTokens": 56, "cachedInputTokens": 200, "cacheWriteInputTokens": 34, "reasoningOutputTokens": 12, "totalTokens": 1290}}})
         notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "completed", "items": []}})
     elif method == "turn/interrupt":
         result(rid, {})

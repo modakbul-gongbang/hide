@@ -32,7 +32,7 @@ use crate::process::{self, ProcessMeasurement};
 use crate::program::Program;
 use crate::{
     AiBackend, AiError, AiLogSink, AiRequest, AiResponse, AiUsage, Availability, CancelToken,
-    ModelCatalog, ProviderId,
+    ModelCatalog, ModelTokens, ProviderId,
 };
 
 /// The user's decision for background features.
@@ -235,6 +235,12 @@ impl CodexAppServerBackend {
             .and_then(Value::as_str)
             .ok_or_else(|| AiError::Transient("thread_start_without_id".to_owned()))?
             .to_owned();
+        // The model the server resolved for this thread, which is what the
+        // usage ledger prices (D-11); the configured name may be an alias.
+        let model = thread
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         // Once this is written the server may be running the turn. A lost
         // answer no longer says whether it completed, and only that answer
         // would make a retry safe; a rejection still does.
@@ -257,6 +263,7 @@ impl CodexAppServerBackend {
             .to_owned();
 
         let mut usage = AiUsage::default();
+        let mut total: Option<Value> = None;
         let mut text: Option<String> = None;
         loop {
             if cancel.is_cancelled() {
@@ -291,6 +298,9 @@ impl CodexAppServerBackend {
                     usage.output_tokens = last
                         .and_then(|v| v.get("outputTokens"))
                         .and_then(Value::as_u64);
+                    // Every request is a new thread with one turn, so the
+                    // running total of the last update is this call's sum.
+                    total = params.pointer("/tokenUsage/total").cloned();
                 }
                 "item/completed" => {
                     if params.pointer("/item/type").and_then(Value::as_str) == Some("agentMessage")
@@ -311,6 +321,12 @@ impl CodexAppServerBackend {
                             let value = serde_json::from_str::<Value>(&text).map_err(|_| {
                                 AiError::InvalidOutput("message_not_json".to_owned())
                             })?;
+                            usage.models = model
+                                .as_deref()
+                                .zip(total.as_ref())
+                                .and_then(|(model, total)| ledger_tokens(model, total))
+                                .into_iter()
+                                .collect();
                             Ok(AiResponse { value, usage })
                         }
                         Some("failed") => Err(self.classify_turn_error(
@@ -866,4 +882,33 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.terminate();
     }
+}
+
+/// What the usage ledger counts from a thread's running total, or `None` when
+/// the total does not give it (D-11). `inputTokens` includes both cache
+/// categories, so they come out of it; reasoning is part of output. Required
+/// counts are input and output; a missing cache count is zero, and a
+/// subtraction below zero is an inconsistent report, not a count.
+fn ledger_tokens(model: &str, total: &Value) -> Option<ModelTokens> {
+    let count = |key: &str| total.get(key).and_then(Value::as_u64);
+    let cache_read = count("cachedInputTokens").unwrap_or(0);
+    let cache_write = count("cacheWriteInputTokens").unwrap_or(0);
+    let input = count("inputTokens")?
+        .checked_sub(cache_read)?
+        .checked_sub(cache_write)?;
+    let output = count("outputTokens")?;
+    let reasoning = count("reasoningOutputTokens");
+    if reasoning.is_some_and(|reasoning| reasoning > output) {
+        return None;
+    }
+    Some(ModelTokens {
+        model: model.to_owned(),
+        input,
+        output,
+        cache_read,
+        cache_write,
+        cache_write_1h: 0,
+        reasoning,
+        lower_bound: false,
+    })
 }

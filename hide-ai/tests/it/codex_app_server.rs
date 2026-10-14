@@ -66,6 +66,32 @@ fn a_completed_turn_returns_the_message_as_json_with_usage() {
     });
 }
 
+/// The ledger counts the thread's running total with the cache categories
+/// taken out of `inputTokens`, under the model the server resolved.
+#[test]
+fn a_completed_turn_reports_the_thread_total_as_disjoint_ledger_tokens() {
+    with_mode("ok", || {
+        let response = backend()
+            .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+            .unwrap();
+        let [tokens] = response.usage.models.as_slice() else {
+            panic!("{:?}", response.usage.models);
+        };
+        assert_eq!(tokens.model, "gpt-5.6-luna");
+        assert_eq!(
+            (
+                tokens.input,
+                tokens.output,
+                tokens.cache_read,
+                tokens.cache_write
+            ),
+            (1000, 56, 200, 34)
+        );
+        assert_eq!((tokens.cache_write_1h, tokens.reasoning), (0, Some(12)));
+        assert!(!tokens.lower_bound);
+    });
+}
+
 #[test]
 fn the_child_is_started_with_tools_disabled_and_stdio_listen() {
     with_mode("ok", || {
