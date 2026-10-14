@@ -45,6 +45,7 @@ pub fn read(
     measured: &Measured,
     reuse_unchanged: bool,
 ) -> Option<RepositoryWorktrees> {
+    let until = Instant::now() + WORKTREES_READ_TIME;
     if !path.exists() {
         return Some(RepositoryWorktrees {
             root_path: path.to_string_lossy().into_owned(),
@@ -54,15 +55,16 @@ pub fn read(
     }
     // A folder that is not a repository has no worktrees and is not a
     // failure; the card and the tree both present it as a plain folder.
-    let root = main_worktree(path)?;
+    let root = main_worktree(path, until)?;
     let root_path = root.to_string_lossy().into_owned();
-    Some(read_project(
+    Some(read_project_until(
         &root,
         root_path,
         bases,
         base_override,
         measured,
         reuse_unchanged,
+        until,
     ))
 }
 
@@ -133,9 +135,30 @@ pub fn read_project(
     measured: &Measured,
     reuse_unchanged: bool,
 ) -> RepositoryWorktrees {
-    let until = Instant::now() + WORKTREES_READ_TIME;
-    let default_branch = default_branch(root);
-    let refs = Refs::read(root);
+    read_project_until(
+        root,
+        root_path,
+        bases,
+        base_override,
+        measured,
+        reuse_unchanged,
+        Instant::now() + WORKTREES_READ_TIME,
+    )
+}
+
+/// The read's discovery and metadata share its measurement's absolute end;
+/// entering with a known main worktree does not renew that time.
+fn read_project_until(
+    root: &Path,
+    root_path: String,
+    bases: &BTreeMap<String, String>,
+    base_override: Option<&str>,
+    measured: &Measured,
+    reuse_unchanged: bool,
+    until: Instant,
+) -> RepositoryWorktrees {
+    let default_branch = default_branch(root, until);
+    let refs = Refs::read(root, until);
     let branches = refs.as_ref().map(Refs::branches).unwrap_or_default();
     let valid_override = base_override.filter(|base| resolvable_base(root, base, until).is_some());
     let base_branch = valid_override
@@ -158,7 +181,7 @@ pub fn read_project(
         "unknown"
     }
     .to_owned();
-    let listed = match listed_worktrees(root) {
+    let listed = match listed_worktrees(root, until) {
         Ok(listed) => listed,
         Err(reason) => {
             return RepositoryWorktrees {
@@ -169,9 +192,10 @@ pub fn read_project(
             };
         }
     };
-    let shared_git_path = git(
+    let shared_git_path = git_until(
         root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        until,
     )
     .ok()
     .map(|value| value.trim().to_owned());
@@ -235,8 +259,8 @@ pub fn read_project(
 
 /// The worktrees Git lists for the repository at `root`, its main worktree
 /// first; a bare repository is no worktree.
-fn listed_worktrees(root: &Path) -> Result<Vec<ListedWorktree>, String> {
-    Ok(registered(root)?
+fn listed_worktrees(root: &Path, until: Instant) -> Result<Vec<ListedWorktree>, String> {
+    Ok(registered_until(root, until)?
         .into_iter()
         .enumerate()
         .map(|(index, row)| ListedWorktree {
@@ -465,8 +489,8 @@ impl Inputs {
 struct Refs(BTreeMap<String, (String, String, String)>);
 
 impl Refs {
-    fn read(root: &Path) -> Option<Self> {
-        let output = git(
+    fn read(root: &Path, until: Instant) -> Option<Self> {
+        let output = git_until(
             root,
             &[
                 "for-each-ref",
@@ -474,6 +498,7 @@ impl Refs {
                 "refs/heads",
                 "refs/remotes",
             ],
+            until,
         )
         .ok()?;
         Some(Self(
@@ -957,10 +982,11 @@ fn parse_left_right(output: &str) -> Option<(u32, u32)> {
 /// The main worktree's current branch is deliberately excluded: using it as
 /// a base would make a feature branch look like project policy and hide the
 /// very mismatch the migration action exists to explain.
-fn default_branch(root: &Path) -> Option<String> {
-    if let Ok(output) = git(
+fn default_branch(root: &Path, until: Instant) -> Option<String> {
+    if let Ok(output) = git_until(
         root,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        until,
     ) {
         let branch = output.trim().trim_start_matches("origin/").to_owned();
         if !branch.is_empty() {
@@ -971,10 +997,11 @@ fn default_branch(root: &Path) -> Option<String> {
 }
 
 /// The repository's main working tree, which is what identifies a project.
-fn main_worktree(path: &Path) -> Option<PathBuf> {
-    let common = git(
+fn main_worktree(path: &Path, until: Instant) -> Option<PathBuf> {
+    let common = git_until(
         path,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        until,
     )
     .ok()?
     .trim()
@@ -1502,7 +1529,11 @@ pub use hide_node_link::worktrees::Registered;
 
 /// Every worktree Git registers for `root`, the main worktree first.
 pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
-    let text = git(root, &["worktree", "list", "--porcelain", "-z"])?;
+    registered_until(root, Instant::now() + GIT_DEADLINE)
+}
+
+fn registered_until(root: &Path, until: Instant) -> Result<Vec<Registered>, String> {
+    let text = git_until(root, &["worktree", "list", "--porcelain", "-z"], until)?;
     let mut rows = Vec::new();
     for record in text.split("\0\0").filter(|v| !v.is_empty()) {
         let fields: Vec<_> = record.split('\0').collect();
@@ -2425,9 +2456,9 @@ mod measure_tests {
             measure(
                 measured,
                 &self.root,
-                listed_worktrees(&self.root).unwrap(),
+                listed_worktrees(&self.root, Instant::now() + GIT_DEADLINE).unwrap(),
                 &bases,
-                Refs::read(&self.root).as_ref(),
+                Refs::read(&self.root, Instant::now() + GIT_DEADLINE).as_ref(),
                 reuse_unchanged,
                 time,
             )
