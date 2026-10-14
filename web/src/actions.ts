@@ -1997,10 +1997,6 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "checkout_agents_toggle", payload: { checkout_id: checkoutId } });
     },
 
-    setSidebarTabExpanded(deviceId: string, checkoutId: string, tabId: string, expanded: boolean) {
-      dispatch({ schema_version: 2, kind: "sidebar_tab_expanded", payload: { device_id: deviceId, checkout_id: checkoutId, tab_id: tabId, expanded } });
-    },
-
     toggleLeftSidebar() {
       const state = rest()?.ui_state;
       if (state) setLeftSidebarVisible(!state.left_sidebar_visible);

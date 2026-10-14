@@ -318,7 +318,7 @@ impl Runtime {
             let next = entry
                 .view_presentations
                 .remove(&tab)
-                .unwrap_or_else(|| entry.inherited_presentation(&tab));
+                .unwrap_or_else(|| entry.owner_copy(&tab));
             entry.layout = next.layout;
             entry.views = next.views;
             Some(before.layout.clone())

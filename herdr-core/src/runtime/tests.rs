@@ -86,8 +86,6 @@ mod session_navigation;
 mod session_state;
 #[path = "tests/shortcut_import.rs"]
 mod shortcut_import;
-#[path = "tests/sidebar_tabs.rs"]
-mod sidebar_tabs;
 #[path = "tests/snapshot_delta.rs"]
 mod snapshot_delta;
 #[cfg(unix)]

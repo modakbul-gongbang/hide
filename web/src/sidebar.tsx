@@ -31,7 +31,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu, type SidebarTreeSlot } from "./components/sidebar-agent-row";
 import { TreeRails } from "./components/agent-tree";
 import { sidebarTreeLines } from "./sidebarTree";
-import { moveSidebarKey, sidebarTabGroups } from "./sidebarTabs";
+import { moveSidebarKey, sidebarTabGroups, type SidebarTabGroup } from "./sidebarTabs";
 import { tabSurface } from "./recent";
 import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
@@ -500,7 +500,6 @@ function ProjectList({ actions }: { actions: Actions }) {
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.session_collapsed_checkout_ids ?? NO_IDS);
-  const collapsedTabs = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
@@ -540,7 +539,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
     () => (numbered ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null),
-    [numbered, frontScope, rows, openCheckouts, collapsedTabs, workspaces, raisedOpen],
+    [numbered, frontScope, rows, openCheckouts, workspaces, raisedOpen],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
@@ -1309,7 +1308,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} glyphColumn={CHECKOUT_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1367,7 +1366,7 @@ const FolderRowView = memo(function FolderRowView({
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-project-row)",
             focused ? "bg-secondary" : "hover:bg-accent",
           )}
-          style={{ paddingLeft: CHECKOUT_COLUMN }}
+          style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <CheckoutOpenButton
             workspace={workspace}
@@ -1379,7 +1378,7 @@ const FolderRowView = memo(function FolderRowView({
             expanded={asleep ? undefined : checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
             projectExpanded={asleep ? checkoutRowExpansion(true, context.workspaceScreen && focused, open) : undefined}
           />
-          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-xs">
+          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
             <ProjectName workspace={workspace} hidden grow={false} />
             <CheckoutBadge checkout={checkout} />
@@ -1406,7 +1405,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} glyphColumn={PROJECT_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1582,44 +1581,65 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  * joined by elbow rails. A grandchild's chevron opens the tree popover
  * rooted on it. A dormant conversation has no pane or numbered shortcut.
  */
-function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext }) {
-  const { t } = useInterfaceTranslation();
-  const collapsed = useShellStore((s) => s.rest?.ui_state?.sidebar_collapsed_tabs ?? NO_TAB_FOLDS);
-  const focused = useShellStore((s) => s.focusedPaneId);
-  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
-  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, deviceId, checkout.path, localDeviceId(s.rest)));
-  const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents, collapsed), [checkout, deviceId, agentRows, context.agents, collapsed]);
-  const rowInset = groupTabs ? "var(--spacing-xs)" : inset;
-  return <ul className={cn(groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
-    {groups.map((group, index) => {
-      const header = groupTabs && group.header;
-      const expanded = !header || group.expanded;
-      const selected = workspaceScreen && !expanded && sidebarFocusPane(focused, context.agents, new Set(group.rows.map((row) => row.agent.pane_id))) !== null;
-      const naming = group.tab?.sidebar;
-      const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
-      return <li key={group.tab?.id ?? "unplaced"} className={cn(groupTabs && index > 0 && "mt-sm")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
-        {header && group.tab?.id ? <div data-sidebar-tab-row={group.tab.id} className={cn("group/row relative flex items-center gap-xs rounded-sm py-xs pl-xs pr-xl text-caption", selected ? "bg-secondary" : "hover:bg-accent")}>
-          <Hint label={t("sidebar.tabAgents", { name, count: group.count })} reveals>
-            <button type="button" data-sidebar-tab={group.tab.id} disabled={removing} aria-label={t("sidebar.tabAgents", { name, count: group.count })} aria-current={selected ? "true" : undefined} aria-expanded={expanded}
-              className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => context.actions.openSurface(tabSurface(checkout, group.tab!.id!, deviceId))} />
-          </Hint>
-          <button type="button" disabled={removing} aria-expanded={expanded} aria-label={expanded ? t("sidebar.hideAgentsIn", { name }) : t("sidebar.showAgentsIn", { name })} className="relative flex h-(--size-sidebar-line) w-(--size-agent-mark) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={() => context.actions.setSidebarTabExpanded(deviceId, checkout.id, group.tab!.id!, !expanded)} data-sidebar-tab-toggle={group.tab.id}>
-            {expanded ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
-          </button>
-          <span aria-hidden="true" data-sidebar-tab-icon="true" className="pointer-events-none flex w-(--size-agent-badge-compact) shrink-0 items-center justify-center"><PanelsTopLeftIcon className="size-(--size-icon-sm)" /></span>
-          <span className="pointer-events-none min-w-0 flex-1 truncate text-subtle-foreground" data-sidebar-tab-title="true">{name}</span>
-          <span className="pointer-events-none shrink-0 text-muted-foreground" data-sidebar-tab-count="true" aria-hidden="true">{group.count}</span>
-        </div> : null}
-        {expanded ? <div style={header ? { marginLeft: "var(--size-lineage-indent)" } : undefined}><AgentTreeRows checkoutId={checkout.id} deviceId={deviceId} agentRows={group.rows} inset={rowInset} rootFoldRight={groupTabs && !header} context={context} /></div> : null}
-      </li>;
-    })}
+function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, glyphColumn, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; glyphColumn: string; context: TreeContext }) {
+  const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents), [checkout, deviceId, agentRows, context.agents]);
+  return <ul className={cn("isolate", groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
+    {groups.map((group, index) => (
+      <li key={group.tab?.id ?? "unplaced"} className={cn("relative", groupTabs && index > 0 && "mt-sm")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
+        {groupTabs ? <TabSegmentHead group={group} checkout={checkout} deviceId={deviceId} inset={inset} glyphColumn={glyphColumn} context={context} /> : null}
+        <AgentTreeRows checkoutId={checkout.id} deviceId={deviceId} agentRows={group.rows} inset={inset} context={context} />
+      </li>
+    ))}
     {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
   </ul>;
 }
 
-const NO_TAB_FOLDS: readonly import("./snapshot").SidebarTabKey[] = [];
+/** The named tab's quiet line: a sidebar line and a hairline of air. */
+const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
-function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, rootFoldRight = false, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; rootFoldRight?: boolean; context: TreeContext }) {
+/**
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a hairline guide centered under the
+ * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents wears
+ * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line carrying that glyph and the name. Both
+ * open the real tab, and the hint says its name and agent count.
+ */
+function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
+  const { t } = useInterfaceTranslation();
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, deviceId, checkout.path, localDeviceId(s.rest)));
+  const tab = group.tab;
+  const naming = tab?.sidebar;
+  const manual = naming?.manual_name ?? null;
+  const named = group.glyph && manual !== null;
+  const label = naming ? t("sidebar.tabAgents", { name: manual ?? t("sidebar.tabNumber", { number: naming.number }), count: group.count }) : "";
+  const center = `calc(${glyphColumn} + var(--size-checkout-icon) / 2)`;
+  const glyph = <PanelsTopLeftIcon aria-hidden="true" className="size-(--size-icon-sm)" />;
+  const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
+  // The guide starts under the glyph a head carries, and a row's own padding from the segment's edge without one.
+  // It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so neither it nor the glyph rises over the sticky section header.
+  const guideTop = !group.glyph ? "var(--spacing-xs)"
+    : named ? `calc(${TAB_LINE} / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`
+    : `calc(var(--spacing-xs) + var(--size-sidebar-line) / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`;
+  return (
+    <>
+      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
+      {named ? (
+        <div data-sidebar-tab-line={tab!.id!} className="group/row relative rounded-sm hover:bg-accent" style={{ height: TAB_LINE }}>
+          <Hint label={label} reveals>
+            <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={open} />
+          </Hint>
+          <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: center }}>{glyph}</span>
+          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: inset }}><span className="truncate">{manual}</span></span>
+        </div>
+      ) : group.glyph ? (
+        <Hint label={label} reveals>
+          <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute z-10 flex size-(--size-sidebar-line) -translate-x-1/2 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" style={{ left: center, top: "var(--spacing-xs)" }} onClick={open}>{glyph}</button>
+        </Hint>
+      ) : null}
+    </>
+  );
+}
+
+function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; context: TreeContext }) {
   const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
@@ -1648,7 +1668,6 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, rootFoldRight =
           : null;
         const tree: SidebarTreeSlot = {
           place: line.place,
-          rootFoldRight,
           open: hasChildren ? depth < 2 && !agent.lineage_collapsed : null,
           onToggle: () => context.actions.toggleAgentTree(agent.pane_id),
           popover: hasChildren && depth >= 2 ? {

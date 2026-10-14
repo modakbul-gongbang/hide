@@ -72,13 +72,17 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await closeNewTabPage(page);
 
-    // Tab 2 has no bookmark, so File Views stays; its own agent opens b.md.
+    // Tab 2 is shown for the first time, so it starts with no Views and File
+    // Views off; File Views on again, and its own agent opens b.md.
     await agentTab(page, second).click();
     await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
-    await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
+    await expect(viewTabs(page)).toHaveCount(0);
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(page.locator("[data-view-area]")).toBeVisible();
     await hideFrom(herdr, daemon, secondPane, ["file", "open", "b.md"], 2);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await closeNewTabPage(page);
+    await expect(viewTabs(page)).toHaveCount(1);
 
     // B1, B2: back and forth, one tab click each, and the page sends no
     // View action of its own after the switch.
@@ -87,7 +91,7 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page)).toHaveCount(1);
     expect(sent.get("view_layout") ?? 0).toBe(viewActions);
     await screenshot(page, "view-bookmarks-tab-2-front");
     await agentTab(page, first).click();
@@ -95,11 +99,11 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await screenshot(page, "view-bookmarks-tab-1-front");
 
     // B12: while the operator is on tab 2, tab 1's agent opens c.md. The
-    // screen and strip stay on B's a.md/b.md; tab 1 alone gets c.md.
+    // screen and strip stay on B's b.md; tab 1 alone gets c.md.
     await agentTab(page, second).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "c.md"], 3);
-    await expect(viewTabs(page)).toHaveCount(2);
+    await expect(viewTabs(page)).toHaveCount(1);
     await expect(viewTabs(page).filter({ hasText: "c.md" })).toHaveCount(0);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await screenshot(page, "view-bookmarks-agent-open-behind");

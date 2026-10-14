@@ -138,6 +138,15 @@ impl Letter {
         self.awaiting_intake() || self.waiting_answer
     }
 
+    /// Whether the ledger still keeps the letter at `now`: it is open, or it
+    /// finished less than [`RETENTION_MS`] ago.
+    pub(crate) fn retained(&self, now: u64) -> bool {
+        self.open()
+            || self
+                .finished_at_unix_ms
+                .is_none_or(|finished| now.saturating_sub(finished) < RETENTION_MS)
+    }
+
     pub(crate) fn intake_confirmed(&self) -> bool {
         // Only legacy Delivered proves a hook confirmation. A legacy Ack
         // may have preceded intake, so its missing receipt remains unknown.
@@ -339,12 +348,7 @@ impl Ledger {
 
     pub fn cleanup(&mut self, now: u64) -> bool {
         let before = self.letters.len();
-        self.letters.retain(|letter| {
-            letter.open()
-                || letter
-                    .finished_at_unix_ms
-                    .is_none_or(|finished| now.saturating_sub(finished) < RETENTION_MS)
-        });
+        self.letters.retain(|letter| letter.retained(now));
         self.letters.len() != before
     }
 

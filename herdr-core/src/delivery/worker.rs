@@ -756,10 +756,7 @@ fn run(
                 && !state.letters.iter().any(|letter| {
                     letter.intake_overdue(&state.node_clocks, now)
                         || letter.answer_overdue(now)
-                        || (!letter.open()
-                            && letter.finished_at_unix_ms.is_some_and(|finished| {
-                                now.saturating_sub(finished) >= super::RETENTION_MS
-                            }))
+                        || !letter.retained(now)
                 })
             {
                 continue;
@@ -1578,6 +1575,67 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn the_first_maintenance_pass_after_start_drops_letters_finished_over_a_day_ago() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, target, path) = fixture(root.path());
+        let day = super::super::RETENTION_MS;
+        let mut installed = Ledger::default();
+        let mut report = |intent: &str, finished_ago: u64| {
+            let finished = now() - finished_ago;
+            let letter = mailbox::send(
+                &mut installed,
+                &actor,
+                &target.actor,
+                intent,
+                "body",
+                "report",
+                None,
+                finished,
+            )
+            .unwrap();
+            mailbox::apply(
+                &mut installed,
+                &target.actor,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id.clone()],
+                },
+                finished,
+            )
+            .unwrap();
+            letter.id
+        };
+        let old = report("old", day + 60_000);
+        let recent = report("recent", day - 60_000);
+        ledger::save(&path, &installed).unwrap();
+        runtime
+            .lock()
+            .unwrap()
+            .publish_delivery(Arc::new(installed), false);
+        let (_worker, _client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let kept = |id: &str| {
+            runtime
+                .lock()
+                .unwrap()
+                .delivery_state()
+                .unwrap()
+                .letters
+                .iter()
+                .any(|letter| letter.id == id)
+        };
+        wait_for_ledger("the old finished letter to be dropped", || !kept(&old));
+        assert!(kept(&recent));
+        let saved = ledger::load(&path).unwrap();
+        assert!(saved.letters.iter().all(|letter| letter.id != old));
+        assert!(saved.letters.iter().any(|letter| letter.id == recent));
     }
 
     #[test]

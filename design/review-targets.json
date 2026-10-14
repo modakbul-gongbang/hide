@@ -1513,7 +1513,7 @@
     ]
   },
   "sidebar-status-axis": {
-    "description": "Approved sidebar status axes and neutral selection, retaining tab grouping and lineage.",
+    "description": "Approved sidebar tab segments: one root status axis right of the checkout glyph, a guide under the glyph per tab, the tab glyph and named line, and neutral selection.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-projects-sidebar",
     "scene": "sidebar-status-axis",
@@ -1556,15 +1556,15 @@
       ]
     },
     "states": {
-      "rest": "Expanded 2-1-2 tab groups and selected row."
+      "rest": "Expanded 2-1-2 tab segments (a named tab, a one-agent tab, an unnamed tab) and a selected row."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Do the tab glyphs and grouped status marks share one axis, with disclosure and singleton status on the outer axis?",
-      "Do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
+      "Do all root status marks share one axis right of the checkout glyph, with each tab's guide centered under that glyph and its tab glyph on the guide's column at the head of its first row?",
+      "Does the named tab line read as a quiet head, and do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
     ]
   },
   "project-settings": {

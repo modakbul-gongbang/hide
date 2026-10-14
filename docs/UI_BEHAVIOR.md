@@ -86,7 +86,7 @@ When several tabs request the same file during its read, they share the read and
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
-Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
+Tools stays as it was, and a tab shown for the first time has File Views off.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
@@ -228,9 +228,9 @@ When the last view closes, File Views turns off and Tools stays as it was, with 
 
 Each Agent tab remembers its own View list, area layout, selected Views, active area and File Views visibility.
 Tools, column widths and document editing/saving remain shared by the Workspace.
-A tab with no saved presentation inherits the current list, layout, selection and visibility, with distinct display and browser-area identities.
+A tab shown for the first time starts with no Views and File Views off; it never copies another tab's list, so Views a tab did not open never fill the Workspace.
 Empty presentations remember visibility without consuming View areas or opening an empty column.
-An older schema-2 entry retains its current Views and reads its saved fronts and visibility on first use.
+An older schema-2 entry keeps its current Views for the tab that owns them and reads that tab's saved fronts and visibility on first use.
 
 Showing a tab that no Agent area showed a moment before restores its complete presentation in the frame that shows the tab.
 The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
@@ -258,7 +258,9 @@ An exclusively owned clean document closes with its tab; unsaved content remains
 An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
-The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout; a refused operation preserves existing content.
+The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout.
+An open that would add a 65th View first closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
+Only when nothing can close is the open refused, with the View notice, and existing content stays as it was.
 Web owner: none, the shell draws the existing snapshot projection.
 Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
 Regression owners are `runtime/tests/view_bookmarks.rs`, `web/e2e/{view-bookmarks,file-view-visibility}.spec.ts` and `desktop/e2e/browser.spec.ts`.
@@ -1191,32 +1193,35 @@ Files that change after the confirmation, typically written by an agent as it st
 From the confirmation until Git answers, the checkout row and its agent rows are dimmed with a spinner where the badge was, the row opens nothing, and a right-click or the menu key on it offers no menu at all rather than an empty one; the row leaves the sidebar as the removal finishes, and a failure gives it back as it was.
 A copy that the clipboard refuses goes to the diagnostic log.
 A web checkout row opens its checkout and unfolds its agent rows in one event; activating its already selected, unfolded Workspace folds the agents while keeping that Workspace in front.
+An Overview opened over a Workspace while that event is still unanswered stays open when the checkout lands; the Workspace under the layer changes, the layer does not.
 Click, Enter and Space have the same behavior, and a checkout without agents only opens.
 Its chevron changes disclosure alone, and other checkouts keep their own expansion.
 The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
 A later Herdr projection failure retains these accepted values under the existing focus policy.
 The last-commit age stays in place whatever the pointer does and while the menu is open.
-Opened folder projects use the same icon/title columns, neutral selected fill and unboxed tab blocks as opened checkouts.
+A plain folder row puts its folder glyph and name on the project row's columns, so every top-level row shares one left edge, and its second line follows the name.
+Opened folder projects use the same neutral selected fill and unboxed tab segments as opened checkouts, with the guide under the folder glyph.
 Their required secondary lines and metadata remain visible.
 An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
-Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
-A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
-Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
-A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--size-lineage-indent` (18px) further in and each lineage level retains that same step.
-Tab groups are separated by `--spacing-sm` (8px), without another card or border.
-At a 240px sidebar width, its 8px list inset puts header disclosures and singleton status marks on x18, and tab glyphs and grouped root status marks on x36.
-Headers and quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding; a header touches its own first row.
-Tab glyphs are 12px in a 16px lane; header and singleton titles start at x48, grouped titles at x66, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
-Focused sidebar agent and checkout rows and collapsed tab representatives use the neutral `--secondary` fill.
-A singleton root with descendants in other tabs keeps its lineage disclosure inside the reserved trailing slot; its status mark stays on the outer axis.
-The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
-Headers open their real tab with click, Enter or Space, while the separate chevron changes disclosure only, without focus, read-state or process effects.
-Groups start open, and core-owned `sidebar_collapsed_tabs` saves collapsed choices by device, checkout and tab identity across restart and reconnect.
-When two agents become one, the singleton is shown regardless of the retained choice; a second agent restores the same live tab's name and choice.
-Accepted tab removal retires its choice, failed or disconnected session reads retain it, and stale disclosure targets change nothing.
-A collapsed header represents a focused agent it hides, without unfolding; focus changes reveal the nearest visible row with minimal scrolling, and unchanged focus retains the operator's scroll.
-Arrow Up/Down and Home/End traverse visible header and agent controls, skipping collapsed roots; root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for headers or children.
+Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
+The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
+Groups stay separated by `--spacing-sm` (8px), without a card or border.
+Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
+Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
+Each group draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows; the gap between two guides is the tab boundary, and a single-agent tab is a short segment with no glyph.
+A tab with two or more recognized agent panes wears the tab glyph at the head of its guide, on the guide's column and its first row's line, and the guide continues below it; the head adds no row.
+Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
+Pointer or keyboard focus on the glyph shows its hint, the tab's manual name or localized `Tab N` from the core's stable number, and its agent count.
+The glyph is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
+A tab with two or more agents and a manual name also gets one quiet line at its head, a sidebar line and a hairline high: the tab glyph on the guide's column and the name in 11px subtle text starting on the status-mark column.
+The line opens the tab as the glyph does, and the existing tab Rename still sets or clears the name; automatic tabbar titles remain independent.
+An unnamed tab never draws `Tab N` text, and a single-agent tab draws no glyph and no line even when named.
+A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
+When two agents become one the segment keeps its guide and loses the glyph and line, and a second agent brings them back with the name the tab still has.
+At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, tab glyphs on the same center, root status marks starting at x46 and titles at x82; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and the head adds none.
+Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
+Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab glyphs or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
@@ -1769,6 +1774,7 @@ The session group carries its current loading or failure state; a successful sea
 The creator-session action in an output panel opens the same record.
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
+After them come the agents the core links to a pull request of that number (its session made it or its branch has it; every one the core links, a merged one included, which is more than the agent's PR mark draws), in `Agents` on every device, so `#275` reaches the agent that works on pull request 275 though no word of its row holds the number; an issue's number brings no agent.
 An agent is found by its title, by the name Herdr knows it by (`hide agent spawn --name`, `herdr agent rename`), by its place and by its state sentence; the core carries the Herdr name on the agent row (`herdr_name`), on this machine and on a device alike, and leaves it out when Herdr has none or has only a name Hide made up from a pane id (a task's `hide-claude-w9j-p52`, a wake's or a fork's), which would print the id the rule below keeps off every row.
 A query holding `:`, as every pane's Herdr id does (`w9J:p52`, as Copy pane ID or `$HERDR_PANE_ID` gives it), lists first the agents whose id holds it in its case, on every device, the whole id before longer ones (`:p5` lists `w9J:p5`, then `w9J:p52`); without a `:` no id matches, and no row prints the id.
 Only digits in the query match a number by substring on other rows.
@@ -1800,7 +1806,7 @@ On a screen with nothing in front, such as Settings, the palette shows Recent al
 
 ### The detail
 
-The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout and last words, and `N분 전 읽음` for the GitHub-backed ones.
+The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout, the pull requests the core links to it (`#275, #260`) and last words, and `N분 전 읽음` for the GitHub-backed ones.
 A pull request or an issue with sessions in the link record adds `세션 N`, the count the record's summary carries (PRD link-graph B35); with none there is no line, and the list and Related are unchanged.
 Under `관계` it draws the same groups the empty list draws for the row, when it has more than itself; the footer line says what ↵ does.
 

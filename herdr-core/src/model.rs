@@ -1706,14 +1706,6 @@ fn sidebar_tab_naming<S: serde::Serializer>(
     .serialize(serializer)
 }
 
-/// The disclosure belongs to one physical tab on one device and checkout.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SidebarTabKey {
-    pub device_id: String,
-    pub checkout_id: String,
-    pub tab_id: String,
-}
-
 /// Why a quiet row is waiting rather than finished or stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -3086,8 +3078,6 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub session_collapsed_checkout_ids: Vec<String>,
     #[serde(default)]
-    pub sidebar_collapsed_tabs: Vec<SidebarTabKey>,
-    #[serde(default)]
     pub session_open_folds: Vec<String>,
     #[serde(default = "default_panel_visible")]
     pub left_sidebar_visible: bool,
@@ -3691,7 +3681,6 @@ impl Default for UiStateSnapshot {
             resolved_sessions: BTreeMap::new(),
             session_resolution_inputs: BTreeMap::new(),
             session_collapsed_checkout_ids: Vec::new(),
-            sidebar_collapsed_tabs: Vec::new(),
             session_open_folds: Vec::new(),
             left_sidebar_visible: true,
             device_rail_visible: true,
