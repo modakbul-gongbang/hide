@@ -103,13 +103,13 @@ it("shows direct child counts and the core-ranked child line without raising an 
   } finally { await unmount(); }
 });
 
-it("keeps an own approval in the same band and compacts children to the total and raised subtree asks", async () => {
+it("keeps an own approval in the same band and shows only raised subtree asks in the compact trigger", async () => {
   const agents = childrenFixture();
   agents[0]!.descendant_mark = { kind: "raised", count: 2 };
   const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "approval", reason: "Run the verification command", raised: undefined, action: null, more: 1 } }, agents);
   try {
     const trigger = container.querySelector<HTMLButtonElement>("[data-pane-tree]")!;
-    expect(trigger.textContent).toBe("5!2");
+    expect(trigger.textContent).toBe("!2");
     expect(trigger.getAttribute("aria-label")).toContain("Descendant requests needing you: 2");
     expect(container.textContent).toContain("Run the verification command");
     expect(container.querySelector("[data-pane-child-summary]")).toBeNull();

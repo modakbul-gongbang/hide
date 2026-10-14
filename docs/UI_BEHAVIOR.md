@@ -375,17 +375,18 @@ The PR mark shows the pane's own PRs only, as Sessions draws them (below); a des
 The fork mark, a small fork icon after the title, is drawn only on a pane Fork agent made; its tooltip and accessible name read `Forked from <source name>` while the source still runs the conversation it was forked from, and the mark is then a button, reachable by keyboard, that opens the source; once the source closed or moved on to another conversation it reads `Forked from another pane` and opens nothing (`web/src/PaneHeaderBand.tsx`, `PaneForkMark`; the fact is the core's, `PaneForkSnapshot.forked_from`).
 A delegated child and a handed-off root have none, and neither does a fork made while forks were children (PRD fork-operator-root B20, B21).
 A device's pane header wears the mark too, as its rows do, although a device's pane offers no fork.
-The B2 tree button starts the second row over the terminal: a tree icon, the live direct child count, positive core state counts, and a chevron open the existing tree popover ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
+The B2 tree button starts the second row over the terminal: positive core state counts and a chevron open the existing tree popover, with no separate total or internal divider ([status-model.md](status-model.md#the-descendant-mark-and-the-tree-popover)).
 The state counts show working as a blue dot, reported results as a green check, child requests as a blue ring, unknown as a dim tilde, and resting as a dim ring; `! N` in warning colour is exclusively the core's operator-raised request count over the subtree.
 An ordinary child's question, approval or error adds to the blue request ring, not the operator's `!` count; a check is a reported completion, not verified delivery of a task.
-The tooltip and accessible name spell out every count, including those hidden by the compact form.
-If the parent or a known descendant's device is not connected, the button keeps the last topology total with a dim disconnected mark and its connection reason, and suppresses state totals and the representative activity line until the connection returns.
+The tooltip and accessible name spell out the live direct child total and every state count, including those hidden by the compact form.
+When the compact form has no raised count, or no state counts are available, a tree icon keeps the child popover recognizable.
+If the parent or a known descendant's device is not connected, the button shows a dim disconnected mark, keeping the last topology total and connection reason in its tooltip and accessible name, and suppresses state totals and the representative activity line until the connection returns.
 When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space beside its provider.
 With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
-An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact child total and raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
+An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
 The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.
 The child button opens with the raised branches expanded whenever its core raised count is positive; `외 N건` remains only when this child button is unavailable, providing the same raised-tree access.
