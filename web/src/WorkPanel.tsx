@@ -1,5 +1,5 @@
 import { TriangleAlertIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { Hint } from "./components/ui/tooltip";
@@ -44,6 +44,18 @@ export function WorkPanel({ actions }: { actions: Actions }) {
   const lens: WorkLens = hasPrs ? work.lens : "sessions";
   const label = project?.label ?? t("overview.allProjects");
   const hidden = recordOpen && lens === "sessions";
+  const live = useShellStore((state) => state.connection === "live");
+  // PRs shares the one visible-board demand Sessions reports (AgentSessions does it for its own lens).
+  useEffect(() => {
+    if (!live || lens !== "prs") return;
+    const report = () => actions.observeRequestView(document.visibilityState === "visible");
+    report();
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      document.removeEventListener("visibilitychange", report);
+      actions.observeRequestView(false);
+    };
+  }, [actions, live, lens]);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-work-panel={lens}>
       {hidden ? null : (

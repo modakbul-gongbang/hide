@@ -67,7 +67,7 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${root}"]`).first().click();
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
     const panel = page.locator("[data-session-panel]");
     const childRow = (pane: string) => panel.locator(`[data-session-child="${pane}"]`);
     const open = (pane: string) => panel.locator(`[data-session-chevron="${pane}"]`).click();
@@ -106,7 +106,7 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await expect(page.locator(`[data-pane-view="${deeper}"]`)).toHaveAttribute("data-focused", "true");
     // The child's checkout is a Workspace seen for the first time, with Tools off.
     if (!await page.locator("[data-tool-tabs]").isVisible()) await page.getByRole("button", { name: "Tools", exact: true }).click();
-    if (!await panel.isVisible()) await page.locator('[data-tool-tab="agent_sessions"]').click();
+    if (!await panel.isVisible()) await page.locator('[data-tool-tab="work"]').click();
     await expect(childRow(deeper).locator('[data-session-focus="row"]')).toHaveAttribute("aria-current", "true");
     await open(grandchild);
     await expect(childRow(deeper)).toHaveCount(0);

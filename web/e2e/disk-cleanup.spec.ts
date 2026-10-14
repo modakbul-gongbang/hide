@@ -61,6 +61,9 @@ function fakeGh(dir: string, branch: string, head: string): string {
 const key = args.slice(0, 2).join(" ");
 const answers = { "pr list": ${JSON.stringify(pulls)}, "repo view": '{"nameWithOwner":"acme/repo"}', "issue list": "[]" };
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (args.join(" ").includes("--state merged")) { console.log("[]"); process.exit(0); }
 if (key in answers) { console.log(answers[key]); process.exit(0); }
 console.error("unsupported: " + args.join(" "));

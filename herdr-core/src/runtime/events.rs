@@ -3696,7 +3696,7 @@ impl Runtime {
             Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
             Event::PrDelegate(payload) => self.delegate_pr(payload),
             Event::PrOpen(payload) => self.open_pull_request_card(payload),
-            Event::PrCardRead(payload) => self.read_pr_card(payload),
+            Event::PrCardRead(payload) => self.look_again_pr_card(payload),
             Event::PrMerge(payload) => self.merge_pull_request(payload),
             Event::PrUpdateBranch(payload) => self.update_pull_request_branch(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),

@@ -46,7 +46,7 @@ const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum,
 async function ensureSessions(page: Page) {
   if (!await page.locator("[data-session-panel]").isVisible()) {
     if (!await page.locator("[data-tool-tabs]").isVisible()) await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
   }
   await expect(page.locator("[data-session-panel]")).toBeVisible();
 }
@@ -90,8 +90,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText(["Sessions", "Explorer", "History", "Memory"]);
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText([/^Work/, "Explorer", "History", "Memory"]);
+    await page.locator('[data-tool-tab="work"]').click();
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
@@ -142,7 +142,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-tool-tab="agent_sessions"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-tool-tab="work"]')).toHaveAttribute("aria-selected", "true");
     await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
     await head("resolved").click();
@@ -160,7 +160,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.keyboard.press(chord("sidebar_agents"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await modal.getByRole("tab", { name: "repo", exact: true }).click();
-    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
+    expect(await modal.locator("[data-lens-tile]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "sessions"]);
     await expect(modal.locator('[data-lens-tile="sessions"]')).toContainText("Conversation history");
     await page.keyboard.press("Escape");
     await openAllProjectsPage(page);

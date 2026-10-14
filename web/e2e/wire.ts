@@ -90,7 +90,7 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
  * toolbar's Tools icon turns it on, and its icon tabs choose the tool (PRD
  * three-column-panel D-04).
  */
-export async function showTool(page: Page, tool: "explorer" | "changes" | "memory"): Promise<void> {
+export async function showTool(page: Page, tool: "work" | "explorer" | "changes" | "memory"): Promise<void> {
   const shown = page.locator(`[data-tool="${tool}"]`);
   if (await shown.isVisible()) return;
   const column = page.locator('[data-column="tools"]');

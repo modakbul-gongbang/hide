@@ -80,6 +80,9 @@ const key = args.slice(0, 2).join(" ");
 const byRepository = ${JSON.stringify(byRepository)};
 if (fs.existsSync(${JSON.stringify(down)})) { console.error("dial tcp: network is unreachable"); process.exit(1); }
 if (key === "auth status") process.exit(0);
+if (key === "api user") { console.log("example-user"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) { console.log("[]"); process.exit(0); }
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) { console.log('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'); process.exit(0); }
 if (key === "pr list") {
   const repository = byRepository[process.cwd().replaceAll("\\\\", "/").split("/").pop()];
   console.log(!repository ? "[]" : args.join(" ").includes("--state open") ? repository.open : repository.all);

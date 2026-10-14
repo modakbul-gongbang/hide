@@ -210,6 +210,18 @@ export function HideAiTab({ actions }: { actions: Actions }) {
               data-ai-agent-summary={String(ai?.agent_summary ?? true)}
             />
           </Row>
+          <Row label={t("hideAi.prSummaries")} detail={<Note>{t("hideAi.prSummariesDescription")}</Note>}>
+            <Switch
+              checked={ai?.pr_summary ?? true}
+              disabled={!ai}
+              onCheckedChange={(checked) => {
+                changed();
+                actions.setPrSummary(checked);
+              }}
+              aria-label={t("hideAi.prSummaries")}
+              data-ai-pr-summary={String(ai?.pr_summary ?? true)}
+            />
+          </Row>
           <Row
             label={t("hideAi.worktreeNames")}
             detail={

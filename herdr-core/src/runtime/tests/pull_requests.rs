@@ -519,6 +519,38 @@ fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
     assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
 }
 
+/// B33: Look again dismisses a failed write's notice and reads the card; the
+/// read the core starts itself after a moved head keeps the notice drawn.
+#[test]
+fn looking_again_dismisses_a_failed_write_and_the_automatic_read_does_not() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    runtime.pr_card_slot("w", 2).write = Some(crate::model::PrWriteSnapshot {
+        action: "update_branch",
+        head: HEAD.into(),
+        method: None,
+        phase: "failed",
+        reason: Some("head_moved"),
+    });
+    runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
+        workspace_id: "w".into(),
+        pr_number: 2,
+    });
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "failed");
+
+    runtime.pr_card_slot("w", 2).reading = false;
+    let look = event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+    );
+    assert!(runtime.dispatch_json(&look));
+    assert_eq!(card(&runtime, 2).write, None);
+}
+
 /// B37, D-29: a summary is made once per head commit and shown with the
 /// card; a new head drops it; turning the switch off takes it away.
 #[test]

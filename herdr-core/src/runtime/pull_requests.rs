@@ -751,7 +751,23 @@ impl Runtime {
             .find(|card| card.workspace_id == workspace_id && card.number == number)
     }
 
-    /// `pr_card_read`: the parts of the card the list does not carry, read on
+    /// `pr_card_read` from the operator (Look again): a failed write's notice
+    /// is the card of a pull request they have now looked at again, so it is
+    /// dismissed, and the card is read.
+    pub(super) fn look_again_pr_card(&mut self, payload: PrCardReadPayload) -> bool {
+        let dismissed = self
+            .existing_pr_card(&payload.workspace_id, payload.pr_number)
+            .is_some_and(|card| {
+                let failed = card.write.as_ref().is_some_and(|write| write.phase == "failed");
+                if failed {
+                    card.write = None;
+                }
+                failed
+            });
+        self.read_pr_card(payload) || dismissed
+    }
+
+    /// The card's read: the parts of the card the list does not carry, read on
     /// a worker. The last read's parts stay drawn while a new one runs; a
     /// read already running is not started twice (D-06, B52).
     pub(super) fn read_pr_card(&mut self, payload: PrCardReadPayload) -> bool {

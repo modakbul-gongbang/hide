@@ -144,6 +144,9 @@ const key = args.slice(0, 2).join(" ");
 const done = (text) => { console.log(text); process.exit(0); };
 if (args.join(" ").includes("--state merged")) done("[]");
 if (key === "auth status") process.exit(0);
+if (key === "api user") done("example-user");
+if (process.argv.slice(2).join(" ").includes("review-requested:@me")) done("[]");
+if (process.argv.slice(2).join(" ").includes("HidePrFacts")) done('{"data":{"repository":{"pullRequests":{"nodes":[]}}}}');
 if (key === "pr list") { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000); done(${JSON.stringify(pulls)}); }
 if (key === "repo view") done('{"nameWithOwner":"acme/repo"}');
 if (key === "issue list") done(${JSON.stringify(issues)});

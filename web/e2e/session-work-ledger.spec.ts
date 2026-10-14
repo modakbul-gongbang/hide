@@ -17,7 +17,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
@@ -84,7 +84,7 @@ test("@platform cancel leaves missed work open and retry reconciles an issue who
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
     const first = Date.now();
     github.clock(first, first);
     seedFirstWork(herdr, first);
@@ -126,7 +126,7 @@ test("@platform GitHub connection retry preserves the edited preview and creates
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
     seedFirstWork(herdr, Date.now());
     const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
     await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
