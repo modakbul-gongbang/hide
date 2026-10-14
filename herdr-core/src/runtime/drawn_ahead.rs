@@ -173,6 +173,7 @@ impl Runtime {
             });
             if !payload.panes.iter().any(|pane| pane.pane_id == tab.pane_id) {
                 payload.panes.push(crate::sidebar::SessionPanePayload {
+                    terminal_id: None,
                     failed_terminal_id: None,
                     foreground_process: None,
                     pane_id: tab.pane_id.clone(),
@@ -273,6 +274,7 @@ impl Runtime {
                     .find(|pane| pane.pane_id == *target)
                     .and_then(|pane| pane.cwd.clone());
                 payload.panes.push(crate::sidebar::SessionPanePayload {
+                    terminal_id: None,
                     failed_terminal_id: None,
                     foreground_process: None,
                     pane_id: created.clone(),

@@ -5,13 +5,43 @@ use crate::fake_herdr::FakeHerdr;
 /// a new/now-active peer in the tab the user selected.
 #[test]
 fn failed_tab_close_rechecks_membership_and_live_peers() {
-    for (failed_tab, peer_status, extra, allowed) in [
-        ("w1:t1", "idle", false, true),
-        ("w1:t2", "idle", false, false),
-        ("w1:t1", "working", false, false),
-        ("w1:t1", "unknown", false, false),
-        ("w1:t1", "blocked", false, false),
-        ("w1:t1", "idle", true, false),
+    for (
+        failed_tab,
+        peer_status,
+        extra,
+        approved_terminal,
+        approved_session,
+        current_session,
+        allowed,
+    ) in [
+        ("w1:t1", "idle", false, None, None, None, true),
+        ("w1:t2", "idle", false, None, None, None, false),
+        ("w1:t1", "working", false, None, None, None, false),
+        ("w1:t1", "unknown", false, None, None, None, false),
+        ("w1:t1", "blocked", false, None, None, None, false),
+        ("w1:t1", "idle", true, None, None, None, false),
+        ("w1:t1", "working", false, Some("live"), None, None, true),
+        ("w1:t1", "blocked", false, Some("live"), None, None, true),
+        ("w1:t1", "unknown", false, Some("live"), None, None, false),
+        ("w1:t1", "working", false, Some("old"), None, None, false),
+        (
+            "w1:t1",
+            "working",
+            false,
+            Some("live"),
+            Some("original"),
+            Some("original"),
+            true,
+        ),
+        (
+            "w1:t1",
+            "working",
+            false,
+            Some("live"),
+            Some("original"),
+            Some("new"),
+            false,
+        ),
     ] {
         let herdr = FakeHerdr::start("failed-tab-scope", move |method, _| match method {
             "session.snapshot" => {
@@ -23,6 +53,12 @@ fn failed_tab_close_rechecks_membership_and_live_peers() {
                 if extra {
                     panes.push(json!({"pane_id":"w1:p3","terminal_id":"new","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":"idle","revision":1}));
                 }
+                if let Some(session) = current_session {
+                    let mut peer = panes[1].clone();
+                    peer["agent"] = json!("claude");
+                    peer["agent_session"] = json!({"source":"herdr:claude", "agent":"claude", "kind":"id", "value":session});
+                    value["snapshot"]["agents"] = json!([peer]);
+                }
                 value["snapshot"]["panes"] = json!(panes);
                 value
             }
@@ -33,6 +69,20 @@ fn failed_tab_close_rechecks_membership_and_live_peers() {
             &herdr.connector(),
             &CloseEffectRequest {
                 safety: Some(CloseSafety {
+                    approved_peers: approved_terminal
+                        .map(|terminal| {
+                            vec![ClosePeer {
+                                pane_id: "w1:p2".into(),
+                                terminal_id: terminal.into(),
+                                session: approved_session.map(|value| {
+                                    crate::sidebar::SessionAgentSessionPayload {
+                                        kind: "id".into(),
+                                        value: value.into(),
+                                    }
+                                }),
+                            }]
+                        })
+                        .unwrap_or_default(),
                     pane_ids: vec!["w1:p1".into(), "w1:p2".into()],
                     deadline: Instant::now() + Duration::from_secs(5),
                 }),
@@ -54,7 +104,7 @@ fn failed_tab_close_rechecks_membership_and_live_peers() {
 
 #[test]
 fn failed_pane_close_preserves_a_new_working_descendant_in_another_tab() {
-    let herdr = FakeHerdr::start("failed-descendant", |method, _| match method {
+    let herdr = FakeHerdr::start("failed-descendant", |method, params| match method {
         "session.snapshot" => {
             let mut value = snapshot(false);
             let parent = json!({"pane_id":"w1:p1","terminal_id":"original","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent":"claude","agent_status":"unknown","revision":1,"restore_error":"ENOENT",
@@ -66,12 +116,20 @@ fn failed_pane_close_preserves_a_new_working_descendant_in_another_tab() {
             value["snapshot"]["agents"] = json!([parent, child]);
             value
         }
-        other => panic!("protected descendant must prevent {other}"),
+        "pane.close" => {
+            assert_eq!(
+                params["pane_id"], "w1:p1",
+                "Close only this must leave the child running"
+            );
+            json!({"type":"ok"})
+        }
+        other => panic!("unexpected {other}"),
     });
     let result = run_close_effect(
         &herdr.connector(),
         &CloseEffectRequest {
             safety: Some(CloseSafety {
+                approved_peers: Vec::new(),
                 pane_ids: vec!["w1:p1".into()],
                 deadline: Instant::now() + Duration::from_secs(5),
             }),
@@ -86,8 +144,8 @@ fn failed_pane_close_preserves_a_new_working_descendant_in_another_tab() {
             },
         },
     );
-    assert_eq!(result.unwrap_err().code(), Some("close_target_changed"));
-    assert_eq!(herdr.methods(), ["session.snapshot"]);
+    assert!(result.is_ok());
+    assert_eq!(herdr.methods(), ["session.snapshot", "pane.close"]);
 }
 
 /// B6: time spent obtaining permission cannot become extra mutation time.
@@ -100,6 +158,7 @@ fn an_expired_failed_close_sends_no_snapshot_or_mutation() {
         &herdr.connector(),
         &CloseEffectRequest {
             safety: Some(CloseSafety {
+                approved_peers: Vec::new(),
                 pane_ids: vec!["w1:p1".into()],
                 deadline: Instant::now(),
             }),
@@ -143,6 +202,7 @@ fn failed_close_cannot_mutate_after_its_fresh_read_consumes_the_deadline() {
         &herdr.connector(),
         &CloseEffectRequest {
             safety: Some(CloseSafety {
+                approved_peers: Vec::new(),
                 pane_ids: vec!["w1:p1".into()],
                 deadline: start + Duration::from_secs(5),
             }),

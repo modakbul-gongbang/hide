@@ -256,6 +256,8 @@ pub struct SessionAgentSessionPayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionPanePayload {
+    #[serde(default)]
+    pub terminal_id: Option<String>,
     /// Authoritative failed terminal incarnation, independent of agent activity.
     #[serde(default)]
     pub failed_terminal_id: Option<String>,
@@ -630,6 +632,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let title = manual_title.or(task).or(native_title);
     let identity_label = title.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
+        close_session: agent.agent_session.clone(),
         state: Default::default(),
         resolved: None,
         resolved_recent: false,
@@ -1015,6 +1018,7 @@ mod tests {
                 panes: panes
                     .iter()
                     .map(|id| PaneSnapshot {
+                        terminal_id: None,
                         failed_terminal_id: None,
                         id: (*id).to_owned(),
                         herdr_label: None,

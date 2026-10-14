@@ -785,7 +785,7 @@ impl Runtime {
                     .flatten()
             })
             .collect();
-        let scope_pane_ids = session
+        let scope_pane_ids: Vec<String> = session
             .workspaces
             .iter()
             .flat_map(|workspace| workspace.checkouts.iter())
@@ -802,22 +802,46 @@ impl Runtime {
             .flat_map(|tab| tab.panes.iter())
             .filter_map(|pane| remote_pane_source_id(&target_id, &pane.id).map(str::to_owned))
             .collect();
+        let approved_peers = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| pane.requires_close_confirmation && pane.failed_terminal_id.is_none())
+            .filter_map(|pane| {
+                let source = remote_pane_source_id(&target_id, &pane.id)?;
+                scope_pane_ids.contains(&source.to_owned()).then_some(())?;
+                Some(live::ClosePeer {
+                    pane_id: source.to_owned(),
+                    terminal_id: pane.terminal_id.clone()?,
+                    session: session
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
         if let Err(message) = live::spawn_remote_control_checked(
             context,
             request_id,
             action,
             connection_generation,
             failed_terminals,
-            scope_pane_ids,
-            std::time::Instant::now()
-                + std::time::Duration::from_millis(
-                    remote_operation_key
-                        .as_ref()
-                        .and_then(|key| self.remote_operations.get(key))
-                        .and_then(|operation| operation.deadline_at_unix_ms)
-                        .unwrap_or_else(unix_milliseconds)
-                        .saturating_sub(unix_milliseconds()),
-                ),
+            live::CloseSafety {
+                pane_ids: scope_pane_ids,
+                approved_peers,
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        remote_operation_key
+                            .as_ref()
+                            .and_then(|key| self.remote_operations.get(key))
+                            .and_then(|operation| operation.deadline_at_unix_ms)
+                            .unwrap_or_else(unix_milliseconds)
+                            .saturating_sub(unix_milliseconds()),
+                    ),
+            },
         ) {
             if let Some((operation_target, operation_request)) = remote_operation_key.as_ref() {
                 self.fail_remote_operation(operation_target, operation_request, message.clone());

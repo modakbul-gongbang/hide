@@ -1058,9 +1058,19 @@ pub struct CloseCaptureOutcome {
     pub item: Option<ClosedItem>,
 }
 
+/// The work included in the operator's existing close confirmation.
+#[derive(Clone, Debug)]
+pub struct ClosePeer {
+    pub pane_id: String,
+    pub terminal_id: String,
+    pub session: Option<crate::sidebar::SessionAgentSessionPayload>,
+}
+
 /// Fresh terminal-close authorization and the admission's shared deadline.
 #[derive(Clone, Debug)]
 pub struct CloseSafety {
+    /// Only the working terminals included in the admitted confirmation.
+    pub approved_peers: Vec<ClosePeer>,
     pub pane_ids: Vec<String>,
     pub deadline: Instant,
 }
@@ -1396,51 +1406,30 @@ fn check_failed_terminals(
                     .filter(|pane| &pane.tab_id == tab_id)
                     .filter(|pane| !expected.iter().any(|(id, _)| id == &pane.pane_id))
                     .all(|pane| {
-                        matches!(pane.agent_status.as_str(), "idle" | "done")
+                        let approved = safety.approved_peers.iter().any(|peer| {
+                            peer.pane_id == pane.pane_id
+                                && peer.terminal_id == pane.terminal_id
+                                && peer.session.as_ref()
+                                    == snapshot
+                                        .agents
+                                        .iter()
+                                        .find(|agent| agent.pane_id == pane.pane_id)
+                                        .and_then(|agent| agent.agent_session.as_ref())
+                        });
+                        let allowed = |status: &str| {
+                            matches!(status, "idle" | "done")
+                                || (approved && matches!(status, "working" | "blocked"))
+                        };
+                        allowed(&pane.agent_status)
                             && snapshot
                                 .agents
                                 .iter()
                                 .filter(|agent| agent.pane_id == pane.pane_id)
-                                .all(|agent| {
-                                    matches!(agent.agent_status.as_deref(), Some("idle" | "done"))
-                                })
+                                .all(|agent| agent.agent_status.as_deref().is_some_and(allowed))
                     })
         }),
     };
-    let selected = match target {
-        CloseCaptureTarget::Pane { pane_id } => vec![pane_id.as_str()],
-        CloseCaptureTarget::Tab { tab_id } => snapshot
-            .panes
-            .iter()
-            .filter(|pane| &pane.tab_id == tab_id)
-            .map(|pane| pane.pane_id.as_str())
-            .collect(),
-    };
-    let protected_descendant = snapshot.agents.iter().any(|agent| {
-        if selected.contains(&agent.pane_id.as_str())
-            || matches!(agent.agent_status.as_deref(), Some("idle" | "done"))
-        {
-            return false;
-        }
-        let mut parent = agent.spawned_from_pane_id.as_deref();
-        let mut seen = std::collections::HashSet::new();
-        while let Some(id) = parent {
-            if selected.contains(&id) {
-                return true;
-            }
-            if !seen.insert(id) {
-                break;
-            }
-            parent = snapshot
-                .agents
-                .iter()
-                .find(|candidate| candidate.pane_id == id)
-                .and_then(|candidate| candidate.spawned_from_pane_id.as_deref());
-        }
-        false
-    });
     if scope_valid
-        && !protected_descendant
         && expected.iter().all(|(id, terminal)| {
             snapshot.panes.iter().any(|pane| {
                 &pane.pane_id == id && &pane.terminal_id == terminal && pane.restore_error.is_some()
@@ -3386,8 +3375,11 @@ pub fn spawn_remote_control(
         action,
         connection_generation,
         Vec::new(),
-        Vec::new(),
-        Instant::now() + Duration::from_secs(5),
+        CloseSafety {
+            approved_peers: Vec::new(),
+            pane_ids: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        },
     )
 }
 
@@ -3397,13 +3389,8 @@ pub(crate) fn spawn_remote_control_checked(
     action: RemoteControlAction,
     connection_generation: u64,
     failed_terminals: Vec<(String, String)>,
-    scope_pane_ids: Vec<String>,
-    deadline: Instant,
+    safety: CloseSafety,
 ) -> Result<(), String> {
-    let safety = CloseSafety {
-        pane_ids: scope_pane_ids,
-        deadline,
-    };
     let target_id = context.target_id.clone();
     let worker_name = match &action {
         RemoteControlAction::Pane(PaneControlAction::Focus { .. }) => {

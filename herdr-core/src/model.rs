@@ -946,6 +946,9 @@ pub struct DeviceTestStageSnapshot {
 /// rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
+    /// Raw Herdr session bound to destructive close approval, never a label fallback.
+    #[serde(skip_serializing)]
+    pub close_session: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub state: crate::agent_state::RowState,
     pub resolved: Option<crate::agent_state::sessions::Resolution>,
     /// Resolved within the last 24 hours, so Sessions still lists it under Resolved.
@@ -1857,6 +1860,9 @@ pub struct TabSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    /// Internal incarnation used to bind a close approval to its terminal.
+    #[serde(skip_serializing)]
+    pub terminal_id: Option<String>,
     /// Herdr could not restore this terminal. Never inferred from its cwd or agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed_terminal_id: Option<String>,

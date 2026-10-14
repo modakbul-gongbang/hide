@@ -613,6 +613,7 @@ fn working_payload() -> SessionSnapshotPayload {
 
 fn pane(id: &str, cwd: &str) -> PaneSnapshot {
     PaneSnapshot {
+        terminal_id: None,
         failed_terminal_id: None,
         id: id.to_owned(),
         herdr_label: None,

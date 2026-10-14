@@ -488,6 +488,7 @@ impl SessionReplica {
                                 let agent =
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
+                                    terminal_id: Some(pane.terminal_id.clone()),
                                     failed_terminal_id: pane
                                         .restore_error
                                         .as_ref()

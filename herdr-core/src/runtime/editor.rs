@@ -1312,6 +1312,24 @@ impl Runtime {
             })
             .map(|agent| agent.pane_id.clone())
             .collect::<Vec<_>>();
+        let approved_peer_terminals = tab
+            .panes
+            .iter()
+            .filter(|pane| protected_agent_pane_ids.contains(&pane.id))
+            .filter_map(|pane| {
+                pane.terminal_id.as_ref().map(|terminal| live::ClosePeer {
+                    pane_id: pane.id.clone(),
+                    terminal_id: terminal.clone(),
+                    session: self
+                        .snapshot
+                        .navigator
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
         let restore_checkout_id = tab.checkout_id.clone();
         let selection_before = self.close_selection_state(restore_checkout_id.as_deref());
         let label = match &request.target {
@@ -1337,6 +1355,7 @@ impl Runtime {
                 scope_pane_ids,
                 pane_ids: pane_ids.clone(),
                 protected_agent_pane_ids,
+                approved_peer_terminals,
                 label,
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1585,6 +1604,7 @@ impl Runtime {
                 },
                 pane_ids,
                 protected_agent_pane_ids: Vec::new(),
+                approved_peer_terminals: Vec::new(),
                 label: request.context.tab_label.clone(),
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1693,6 +1713,7 @@ impl Runtime {
         ));
         let effect = live::CloseEffectRequest {
             safety: (!request.failed_terminals.is_empty()).then(|| live::CloseSafety {
+                approved_peers: operation.approved_peer_terminals.clone(),
                 pane_ids: operation.scope_pane_ids.clone(),
                 deadline: std::time::Instant::now()
                     + std::time::Duration::from_millis(

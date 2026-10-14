@@ -631,6 +631,7 @@ mod tests {
 
     fn agent(pane_id: &str) -> SidebarAgentSnapshot {
         SidebarAgentSnapshot {
+            close_session: None,
             state: Default::default(),
             resolved: None,
             resolved_recent: false,

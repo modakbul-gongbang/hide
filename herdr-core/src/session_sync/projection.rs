@@ -138,6 +138,7 @@ impl ProjectionState {
             .panes
             .iter()
             .map(|pane| SessionPanePayload {
+                terminal_id: Some(pane.terminal_id.clone()),
                 failed_terminal_id: pane
                     .restore_error
                     .as_ref()
