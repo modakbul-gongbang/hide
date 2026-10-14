@@ -1509,7 +1509,7 @@
     "judgment": [
       "Cost is visible before token categories; agent details expand beneath each date.",
       "Filters and summary wrap at narrow widths; horizontal scrolling stays within the table.",
-      "The popover uses thirty small contribution squares, with daily hover, keyboard preview and click-to-pin."
+      "The popover switches between seven daily bars and thirty small contribution squares, with matching totals, daily hover, keyboard preview and click-to-pin."
     ]
   },
   "sidebar-status-axis": {

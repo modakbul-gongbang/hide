@@ -114,6 +114,9 @@ pub struct WorkTask {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MissedKind {
+    /// Read only from records `context_label.v9` wrote; v10 no longer asks
+    /// for it, because the task verdict, the pull request and CI already
+    /// carry an assigned task's own remainder.
     Leftover,
     Problem,
     FollowUp,

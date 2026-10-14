@@ -14,7 +14,7 @@ There is no output token ceiling in the request, because no provider contract ho
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
 
-The session label requests use `context_label.v9`, retaining nullable goals at both boundaries; the existing END request adds a work judgment: new, continued or no assigned work, at most three short missed items, resolved item ids and one output-task choice.
+The session label requests use `context_label.v10`, retaining nullable goals at both boundaries; the existing END request adds a work judgment: new, continued or no assigned work, at most three short missed items (a problem found outside the assigned task or a proposed follow-up nobody has taken), resolved item ids and one output-task choice.
 There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
 END waits for a known ledger context instead of treating missing parent authority or open work as empty.
 
