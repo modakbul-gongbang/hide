@@ -26,7 +26,7 @@ function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
   return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
 
-it("numbers grouped roots in physical tab order, skipping folded trees, children and duplicate raised occurrences", () => {
+it("numbers grouped roots in physical tab order, skipping children and duplicate raised occurrences", () => {
   const agents = [agent("a", { group: "needs_you", lineage_child_pane_ids: ["child"], lineage_collapsed: false }), agent("b"), agent("c"), agent("single"), agent("child", { delegated: true, lineage_parent_pane_id: "a" })];
   const checkout = checkoutWith(["t1", "t2", "t3"]);
   for (const [index, panes] of [[0, ["a", "b", "child"]], [1, ["c"]], [2, ["single"]]] as const) {
@@ -46,10 +46,6 @@ it("numbers grouped roots in physical tab order, skipping folded trees, children
   expect(keycaps("a", "c1")).toBeNull();
   expect(keycaps("b", "c1")).toBe(2);
   expect(keycaps("child", "c1")).toBeNull();
-  rest.ui_state = { ...rest.ui_state, sidebar_collapsed_tabs: [{ device_id: "local", checkout_id: "c1", tab_id: "t1" }] } as SnapshotRest["ui_state"];
-  expect([...numberedAgents(agentListOrder(state)).values()]).toEqual(["a", "c", "single"]);
-  expect(numberedTarget("agents", 2, state)).toBe("c");
-  expect(numberedTarget("agents", 4, state)).toBeNull();
 });
 
 describe("numbering (electron-digit-shortcuts-hints D-02)", () => {

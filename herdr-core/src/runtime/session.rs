@@ -760,9 +760,6 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        let live_tabs = payload.tabs.iter().map(|tab| tab.tab_id.clone()).collect();
-        let own_device = self.node.clone();
-        let sidebar_pruned = self.prune_sidebar_tabs(own_device.as_str(), &live_tabs);
         self.snapshot.navigator.devices = workspace::devices(
             &self.node,
             self.machine_name.as_deref(),
@@ -785,7 +782,7 @@ impl Runtime {
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
         self.refresh_agent_scopes();
-        sidebar_pruned || previous != self.snapshot.navigator || previous_card != self.snapshot.card
+        previous != self.snapshot.navigator || previous_card != self.snapshot.card
     }
     /// Puts one strip entry at a new place in its checkout's strip.
     ///
@@ -2048,17 +2045,6 @@ impl Runtime {
         }
         changed |= self.expire_remote_operations(unix_milliseconds());
         if let Some(session) = observed_session.as_ref() {
-            let live_tabs = self
-                .device_raw_sessions
-                .get(target_id)
-                .unwrap_or(session)
-                .workspaces
-                .iter()
-                .flat_map(|workspace| &workspace.checkouts)
-                .flat_map(|checkout| &checkout.tabs)
-                .filter_map(|tab| tab.id.clone())
-                .collect();
-            changed |= self.prune_sidebar_tabs(target_id, &live_tabs);
             changed |= self.observe_remote_operations(target_id, session);
         }
         if session_ok {
