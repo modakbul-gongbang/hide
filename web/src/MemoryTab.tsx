@@ -260,7 +260,7 @@ function ProgressRow({ group, pull, agents, project, actions }: { group: MemoryP
         {group.cards.length > 1 ? <span className="shrink-0 text-caption text-muted-foreground">+{group.cards.length - 1}</span> : null}
       </div>
       <div className="col-start-2 flex min-w-0 items-center gap-sm text-caption" data-memory-running={promotion?.state === "running" ? first.number : undefined} data-memory-unconfirmed={promotion?.state === "unconfirmed" ? "true" : undefined}>
-        {group.pr !== null ? <button type="button" className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground" onClick={() => actions.openPullRequestRow(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.progress.pr", { number: String(group.pr) })}</button> : null}
+        {group.pr !== null ? <button type="button" className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground" onClick={() => actions.openPrCard(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.progress.pr", { number: String(group.pr) })}</button> : null}
         <span className={cn("min-w-0 flex-1 truncate", status.tone)} title={reason}>{reason}</span>
         {promotion?.state === "running" && group.pr === null ? <Elapsed since={promotion.started_at_unix_ms} className="shrink-0 text-muted-foreground" data-memory-elapsed={first.number} /> : null}
         {status.agentLink && pane ? <button type="button" className="pointer-events-auto shrink-0 text-subtle-foreground hover:text-foreground" onClick={() => actions.openAgent(pane)} data-memory-agent={first.number}>{t("memory.progress.agent")}</button> : null}
@@ -273,7 +273,7 @@ function ProgressRow({ group, pull, agents, project, actions }: { group: MemoryP
         {row.body_preview ? <p className="line-clamp-2 whitespace-pre-wrap break-words text-caption text-muted-foreground">{row.body_preview}</p> : null}
       </div>)}
       <div className="flex flex-wrap items-center gap-sm">
-        {group.pr !== null ? <Button size="sm" variant="outline" onClick={() => actions.openPullRequestRow(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.openPr", { number: String(group.pr) })}</Button> : null}
+        {group.pr !== null ? <Button size="sm" variant="outline" onClick={() => actions.openPrCard(project.workspace_id, group.pr!)} data-memory-open-pr={group.pr}>{t("memory.openPr", { number: String(group.pr) })}</Button> : null}
         {pane ? <Button size="sm" variant="ghost" onClick={() => actions.openAgent(pane)} data-memory-open-agent={first.number}>{t("memory.progress.openAgent")}</Button> : null}
       </div>
     </div> : null}
@@ -510,7 +510,7 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
         ) : null}
         {row.promotion?.state === "pr_open" && row.promotion.pr_number !== null ? (
           <span className="flex items-center gap-sm text-caption text-subtle-foreground">
-            <button type="button" aria-label={t("memory.openPr", { number: String(row.promotion.pr_number) })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequestRow(project.workspace_id, row.promotion!.pr_number)}>
+            <button type="button" aria-label={t("memory.openPr", { number: String(row.promotion.pr_number) })} className="rounded-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPrCard(project.workspace_id, row.promotion!.pr_number!)}>
               <PrMark state="pending" number={row.promotion.pr_number} />
             </button>
             {t("memory.prOpen")}

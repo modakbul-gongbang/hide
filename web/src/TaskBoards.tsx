@@ -121,8 +121,10 @@ export type BoardHandlers = {
   openGitHub: (url: string, deviceId: string) => void;
   /** `N worktrees without an issue`: the Agents graph with its `Worktrees without agents` line open (B4). */
   showCheckouts: () => void;
-  /** A PR chip, or `N PRs without an issue` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
-  openPullRequestRow: (owner: Workspace, number: number | null) => void;
+  /** A PR chip: the pull request's card (PRD work-tab-pr-lens D-28). */
+  openPrCard: (owner: Workspace, number: number) => void;
+  /** `N PRs without an issue`: the Work tool's PRs basis (B45). */
+  openWorkPrs: () => void;
 };
 
 /** What Start and Edit say on a card and in the panel (B7). */
@@ -345,7 +347,7 @@ function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: reado
   if (!first) return null;
   return (
     <Hint label={t("board.showPrs", { names: foldNames(pullRequests.map((value) => `#${value.number}`)) })}>
-      <FoldLine onClick={() => handlers.openPullRequestRow(first.owner, null)} data={{ "data-loose-prs": String(pullRequests.length) }}>
+      <FoldLine onClick={() => handlers.openWorkPrs()} data={{ "data-loose-prs": String(pullRequests.length) }}>
         {t("board.loosePrs", { count: pullRequests.length })}
       </FoldLine>
     </Hint>
@@ -702,7 +704,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
           {card.pr && checkout ? (
             <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
-              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
+              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPrCard(owner, number)} now={Date.now()} />
             </span>
           ) : null}
         </div>

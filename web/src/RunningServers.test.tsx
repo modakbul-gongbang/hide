@@ -22,7 +22,7 @@ afterAll(() => browserCanvas.restore());
 
 const view: WorkspaceView = {
   device_id: "local", path: "/projects/studio", views: false, tools: false,
-  tool: "explorer", views_width: null, tools_width: null, views_called: 0, views_calls: 0,
+  tool: "explorer", work: { lens: "sessions", only_checkout: false }, views_width: null, tools_width: null, views_called: 0, views_calls: 0,
 };
 function checkout(servers: { host: string; port: number }[]): Checkout {
   return { agent_scope: emptyScope(),

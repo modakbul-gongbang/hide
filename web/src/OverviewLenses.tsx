@@ -38,8 +38,8 @@ export type LensHandlers = {
   openIssue: (project: Workspace, task: Task) => void;
   /** ⌘-click anywhere, a PR chip's included: the page on GitHub. */
   openGitHub: (url: string, deviceId: string) => void;
-  /** A PR chip: its row on the Project's PRs tab (PRD overview-lenses-prs B21). */
-  openPullRequestRow: (project: Workspace, number: number) => void;
+  /** A PR chip: its card in File Views (PRD work-tab-pr-lens D-28). */
+  openPrCard: (project: Workspace, number: number) => void;
   /** `Clean up`: the Delete worktree dialog for that worktree. */
   cleanup: (project: Workspace, checkout: Checkout) => void;
   /** A fold line, by `foldId`: the line of one project opens or closes in place. */
@@ -56,7 +56,7 @@ export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIss
     openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
     openAgent: actions.openAgent,
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-    openPullRequestRow: (project, number) => actions.openPullRequestRow(project.id, number),
+    openPrCard: (project, number) => actions.openPrCard(project.id, number),
     cleanup: (project, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: project.id, checkoutId: checkout.id }),
   };
 }

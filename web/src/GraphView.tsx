@@ -467,7 +467,7 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
         ) : (
           <>
             {box.task ? <IssueChip project={project} task={box.task} handlers={handlers} now={now} /> : null}
-            <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} onRow={(number) => handlers.openPullRequestRow(project, number)} now={now} />
+            <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} onRow={(number) => handlers.openPrCard(project, number)} now={now} />
             {ahead > 0 || behind > 0 ? <span data-graph-head-distance={`${ahead}:${behind}`}>{distanceText(ahead, behind)}</span> : null}
             {unread ? (
               <Hint label={t("graph.gitUnread")}>

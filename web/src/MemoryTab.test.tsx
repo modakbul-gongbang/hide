@@ -9,6 +9,7 @@ import { clientI18n } from "./i18n/translator";
 import type { MemoryRow, ProjectMemory, SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { emptyScope } from "../test/legacyAgentScope";
 import type { DispatchFn } from "./ws";
 
 const browserCanvas = vi.hoisted(() => {
@@ -26,7 +27,7 @@ const rest = {
   navigator: {
     focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "p",
     devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }],
-    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
+    workspaces: [{ id: "p", label: "herdr-ide", device_id: "local", agent_scope: emptyScope(), checkouts: [{ id: "c", workspace_id: "p", path: "/p", label: "main", tabs: [], active_tab_id: null, strip: [] }] }],
   },
 } as unknown as SnapshotRest;
 const row = (number: number, overrides: Partial<MemoryRow> = {}): MemoryRow => ({
@@ -145,7 +146,7 @@ describe("the Memory tab", () => {
     expect(group?.textContent).toContain(expected);
     expect(group?.textContent).not.toContain("1,050");
     await click("[data-memory-open-pr='1050']");
-    expect(useUiStore.getState().overviewLens).toMatchObject({ tab: "prs", prs: { panel: 1050, focus: 1050 } });
+    expect(sent("pr_open")).toEqual([{ workspace_id: "p", pr_number: 1050 }]);
   });
 
   it("selection hides row promotion actions while unknown authority still needs an answer", async () => {

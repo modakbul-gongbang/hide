@@ -164,7 +164,7 @@ function displayCommands(
     const label = labelOf();
     if (id === "reveal_external") {
       // A page is not a file of the checkout.
-      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, external.node, translate, revealBlocked(display));
+      const [entry] = display.kind === "browser" || display.kind === "pull_request" ? [] : revealExternalEntry(external.host, external.device, external.node, translate, revealBlocked(display));
       return entry ? { ...entry, hidden: false } : { id, label, unavailable: null, hidden: true };
     }
     const edge = menuEdge(id);
@@ -181,8 +181,8 @@ function displayCommands(
       hidden = unavailable !== null;
     } else if (id === "select_in_tree") {
       unavailable = revealBlocked(display);
-      // A page is not a file of the checkout.
-      hidden = display.kind === "browser";
+      // A page or a pull request's card is not a file of the checkout.
+      hidden = display.kind === "browser" || display.kind === "pull_request";
     }
     const named = id === "copy_path" && display.kind === "browser" ? translate("documents.view.copyAddress") : label;
     return { id, label: named, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
@@ -229,6 +229,7 @@ export function menuEdge(id: ViewMenuId): Edge | null {
 /** What a display is, for its tooltip and accessible name (B21): kind, full path and state. */
 export function displayIdentity(display: ViewDisplaySnapshot, t: TFunction<"translation">): string {
   if (display.kind === "browser" && !display.url) return t("panes.area.newTab");
+  if (display.kind === "pull_request") return t("work.card.aria", { number: display.pr ?? 0 });
   if (display.kind === "browser") return t("documents.view.identityPage", { target: `${display.title ? `${display.title} · ` : ""}${display.url ?? ""}` });
   const kind = display.kind === "diff" ? (display.committed ? t("documents.view.kindBranchDiff") : t("documents.view.kindWorkingDiff")) : t("documents.view.kindFile");
   const state =

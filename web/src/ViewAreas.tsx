@@ -1,4 +1,5 @@
-import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { GitPullRequestIcon, GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { PrCardView } from "./PrCard";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
@@ -119,6 +120,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
 function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
+  if (display.kind === "pull_request") return <PrCardView workspace={{ device_id: workspace.device_id, path: workspace.path }} number={display.pr ?? 0} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
@@ -218,6 +220,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
 /** A file's type mark or the diff's comparison mark; never colour alone (D-15). */
 export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
   if (display.kind === "browser") return <GlobeIcon aria-hidden="true" data-view-mark="browser" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
+  if (display.kind === "pull_request") return <GitPullRequestIcon aria-hidden="true" data-view-mark="pull_request" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
   if (display.kind === "diff") {
     return (
       <span aria-hidden="true" data-view-mark="diff" className="shrink-0 font-mono text-warning">

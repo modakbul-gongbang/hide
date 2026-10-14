@@ -148,6 +148,7 @@ function deviceViews(views: boolean): WorkspaceView {
     views,
     tools: false,
     tool: "explorer",
+    work: { lens: "sessions", only_checkout: false },
     views_width: null,
     tools_width: null,
     views_called: 0, views_calls: 0,

@@ -302,6 +302,56 @@ export type PullRequest = {
   closing_issues?: IssueReference[];
   /** The one state its mark draws, decided by the core (`PrState::of`). */
   state: PrState;
+  /** The branch it merges into. */
+  base_branch?: string;
+  /** The GitHub values the Work tab's PRs list and the card read (`PullRequestWork`). */
+  work?: PullRequestWork;
+};
+
+export type MergeState = "unknown" | "clean" | "has_hooks" | "unstable" | "dirty" | "behind" | "blocked" | "draft";
+
+/** The values `gh` gave beyond badge, checks and review (`PullRequestWork`). */
+export type PullRequestWork = {
+  author: string | null;
+  author_is_bot: boolean;
+  /** The signed-in account wrote it. */
+  mine: boolean;
+  merge_state: MergeState;
+  review_requests: { kind: "user" | "team"; name: string }[];
+  asked_of_me: "none" | "direct" | "team";
+  failed_checks: { name: string; url: string | null }[];
+  pending_checks: number;
+  queue_position: number | null;
+  review_requested_at_unix_ms: number | null;
+};
+
+/** What a pull request's card reads beyond the list, per head commit (`PrCardSnapshot`). */
+export type PrCard = {
+  workspace_id: string;
+  number: number;
+  reading: boolean;
+  head: string | null;
+  body: string | null;
+  files: { path: string; additions: number; deletions: number; generated: boolean }[] | null;
+  files_total: number;
+  threads: { reviewer: string | null; path: string; line: number | null; text: string }[] | null;
+  merge: { methods: PrMergeMethod[]; queue: boolean; can_merge: boolean } | null;
+  /** Parts the last read could not get. */
+  failed: ("body" | "files" | "threads")[];
+  /** hide-ai's summary at `head`; absent while off, paused, failed or not made. */
+  summary?: string;
+  write: PrWrite | null;
+};
+
+export type PrMergeMethod = "merge" | "squash" | "rebase";
+
+/** The Merge or branch update asked for from a card, and how it went (`PrWriteSnapshot`). */
+export type PrWrite = {
+  action: "merge" | "update_branch";
+  head: string;
+  method: PrMergeMethod | null;
+  phase: "working" | "done" | "failed";
+  reason: "head_moved" | "denied" | "conflict" | "not_mergeable" | "unreachable" | "failed" | null;
 };
 
 /** Why a `gh` lookup failed, as the core names it; the catalogs word each (issueSettings.gh*). */
@@ -498,7 +548,7 @@ export type PrFeedback = {
 };
 
 /** The Overview's pull-request work in flight (`PrWorkSnapshot`), one slot each. */
-export type PrWork = { link: PrLink | null; feedback: PrFeedback | null };
+export type PrWork = { link: PrLink | null; feedback: PrFeedback | null; cards?: PrCard[] };
 
 export type Purpose = { text: string; origin: string };
 
@@ -1000,7 +1050,9 @@ export type ViewDisplaySnapshot = {
   path: string;
   /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff" | "browser";
+  kind: "file" | "diff" | "browser" | "pull_request";
+  /** The pull request a `pull_request` display is the card of. */
+  pr?: number | null;
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1373,6 +1425,8 @@ export type BackgroundAi = {
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
+  /** The `PR 요약` switch; absent from an older daemon, which has none. */
+  pr_summary?: boolean;
   /** The share of an agent's week Hide AI may use (Settings › Hide AI › Usage limit); null is No limit. Absent from an older daemon, which has none. */
   usage_limit?: number | null;
   providers: AiProvider[];

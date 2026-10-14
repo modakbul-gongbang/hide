@@ -9,7 +9,13 @@
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 /** The Tools column's one tool. */
-export type Tool = "agent_sessions" | "explorer" | "changes" | "memory";
+export type Tool = "work" | "explorer" | "changes" | "memory";
+
+/** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
+export type WorkLens = "sessions" | "prs";
+
+/** The Work tool's basis and scope chip, kept per Workspace (B2). `only_checkout` is the front checkout only. */
+export type WorkView = { lens: WorkLens; only_checkout: boolean };
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
@@ -21,6 +27,8 @@ export type WorkspaceView = {
   tools: boolean;
   /** The one tool the Tools column holds, kept while the column is off. */
   tool: Tool;
+  /** The Work tool's basis and scope. */
+  work: WorkView;
   /** The File Views column's width in CSS pixels, or null for the default until it is resized. */
   views_width: number | null;
   /** The Tools column's width, the same way. */
