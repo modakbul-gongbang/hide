@@ -1575,7 +1575,7 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  */
 function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, inset, glyphColumn, context }: { checkout: Checkout; groupTabs: boolean; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; glyphColumn: string; context: TreeContext }) {
   const groups = useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, context.agents), [checkout, deviceId, agentRows, context.agents]);
-  return <ul className={cn(groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
+  return <ul className={cn("isolate", groupTabs && "mt-sm")} data-checkout-agents-open={checkout.id}>
     {groups.map((group, index) => (
       <li key={group.tab?.id ?? "unplaced"} className={cn("relative", groupTabs && index > 0 && "mt-sm")} data-sidebar-tab-group={group.tab?.id ?? undefined}>
         {groupTabs ? <TabSegmentHead group={group} checkout={checkout} deviceId={deviceId} inset={inset} glyphColumn={glyphColumn} context={context} /> : null}
@@ -1607,12 +1607,13 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
   const glyph = <PanelsTopLeftIcon aria-hidden="true" className="size-(--size-icon-sm)" />;
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
   // The guide starts under the glyph a head carries, and a row's own padding from the segment's edge without one.
+  // It stands above a selected or hovered row's fill, so only a tab boundary breaks it; the list isolates its stacking so neither it nor the glyph rises over the sticky section header.
   const guideTop = !group.glyph ? "var(--spacing-xs)"
     : named ? `calc(${TAB_LINE} / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`
     : `calc(var(--spacing-xs) + var(--size-sidebar-line) / 2 + var(--size-icon-sm) / 2 + var(--spacing-xxs))`;
   return (
     <>
-      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
+      <span aria-hidden="true" data-sidebar-tab-guide={tab?.id ?? ""} className="pointer-events-none absolute z-10 w-(--size-hairline) bg-lineage-rail" style={{ left: `calc(${center} - var(--size-hairline) / 2)`, top: guideTop, bottom: "var(--spacing-xs)" }} />
       {named ? (
         <div data-sidebar-tab-line={tab!.id!} className="group/row relative rounded-sm hover:bg-accent" style={{ height: TAB_LINE }}>
           <Hint label={label} reveals>
