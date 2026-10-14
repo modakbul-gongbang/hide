@@ -1080,7 +1080,9 @@ test("a Workspace holds at most sixty-four views: opening one more closes the vi
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps-views", files);
   try {
-    // B19, contract 2
+    // B19, contract 2. Seeded as a schema 2 file, the File Views column
+    // on with the Explorer: the core reads it through the lane migration,
+    // so the cap holds across that path too.
     const seeded = {
       schema_version: 2,
       workspaces: [

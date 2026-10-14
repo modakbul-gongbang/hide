@@ -137,9 +137,8 @@ async function metaClick(page: Page, point: { x: number; y: number }): Promise<v
 /**
  * Pins the files tool so it docks, and waits for the pane's grid to settle.
  * A docked lane narrows Agent Views once (PRD right-lane B5) and stays
- * through the terminal clicks below; past the first open, which brings the
- * tree beside it, a link that opens a file or page moves nothing and the
- * printed rows stay where the probe reads them.
+ * through the terminal clicks below, so a link that opens a file or page
+ * moves nothing and the printed rows stay where the probe reads them.
  */
 async function dockFiles(page: Page, paneId: string): Promise<void> {
   const before = await paneCols(page, paneId);
@@ -210,7 +209,7 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   ({ app } = await launch(run.env));
   // The window is the size a CI screen allows (macOS keeps it within the
   // screen), and the shell is zoomed out so its body is wide enough to dock
-  // the lane beside the pane, with its tree once the first link opens, and
+  // the lane beside the pane, with its tree once a folder link shows it, and
   // the pane still wide enough that no printed line wraps (PRD right-lane
   // B5, B10, B19).
   await fitWindow(app, { width: 1024, height: 681 });
@@ -254,17 +253,12 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
     "end-of-links",
   );
 
-  // A URL opens as a browser display in the Workspace, and the program hears
-  // no click. It opens beside the tree that filled the empty lane, which stays
-  // on, so the docked lane widens by it and the pane rewraps once (PRD
-  // right-lane B10, B12).
+  // A URL opens as a browser display in the Workspace, and the program hears no click.
   const clicksBefore = sent.get("terminal_click") ?? 0;
   let point = await pointOf(page, paneId, `${origin}/a.html`, { offset: 4 });
   await hoverLink(page, paneId, point);
   await page.mouse.click(point.x, point.y);
   await expect(viewTab(page, "Page A")).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('[data-lane-tree="beside"]')).toBeVisible();
-  await narrowed(page, paneId, grid.cols);
   expect(sent.get("terminal_click") ?? 0).toBe(clicksBefore);
   expect(dialogs).toEqual([]);
 
@@ -275,6 +269,8 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect(viewTab(page, "linked.ts")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 42");
+  // The file opens in the files tool and leaves the tree off (PRD right-lane B16).
+  await expect(page.locator("[data-lane-tree]")).toHaveCount(0);
   await screenshot(page, "terminal-link-file-at-line");
   expect(sent.get("reveal_path")).toBe(1);
   point = await pointOf(page, paneId, "missing/nothing.ts", { offset: 2 });
@@ -316,11 +312,16 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 7", { timeout: 20_000 });
   expect(sent.get("reveal_path")).toBe(2);
 
-  // A folder is revealed and selected in the file tree (PRD right-lane B16).
+  // A folder is revealed in the file tree: the docked lane widens by the
+  // tree, and the pane narrows and rewraps once before the next row is read
+  // (PRD right-lane B10, B16).
   point = await pointOf(page, paneId, "./src", { offset: 1 });
   await hoverLink(page, paneId, point);
+  const beforeFolder = await paneCols(page, paneId);
   await page.mouse.click(point.x, point.y);
   await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("[data-lane-tree]")).toBeVisible();
+  await narrowed(page, paneId, beforeFolder);
   expect(sent.get("reveal_path")).toBe(3);
 
   // A path the terminal wrapped is one link from its second row.
