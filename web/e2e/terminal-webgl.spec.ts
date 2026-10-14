@@ -53,11 +53,13 @@ async function selectMarker(page: Page, pane: string) {
     return { row, col: lines[row]!.indexOf("BEFORE_GPU_LOSS"), grid: window.__hideProbe!.paneGrid(id)! };
   }, pane);
   const box = (await page.locator(`[data-terminal="${pane}"] .xterm-screen`).boundingBox())!;
-  const x = box.x + (cells.col + 0.1) * box.width / cells.grid.cols;
+  const cellWidth = box.width / cells.grid.cols;
+  const x = box.x + (cells.col + 0.1) * cellWidth;
   const y = box.y + (cells.row + 0.5) * box.height / cells.grid.rows;
-  await page.mouse.move(x, y);
+  // Start inside the text: the split divider's hit area covers the first column.
+  await page.mouse.move(x + "BEFORE_GPU_LOSS".length * cellWidth, y);
   await page.mouse.down();
-  await page.mouse.move(x + "BEFORE_GPU_LOSS".length * box.width / cells.grid.cols, y, { steps: 4 });
+  await page.mouse.move(x, y, { steps: 4 });
   await page.mouse.up();
   await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id), pane)).toBe("BEFORE_GPU_LOSS");
 }
