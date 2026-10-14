@@ -798,8 +798,8 @@ function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardH
 }
 
 /**
- * An agent on an issue card or in its panel: its mark, provider, title and
- * age, then the core's line, the question in warning. The row opens that
+ * An agent on an issue card or in its panel: its status mark, title and age
+ * (the product's name is in the hover hint, not drawn), then the core's line, the question in warning. The row opens that
  * agent's pane; resting half a second on its line opens everything it last
  * said (B8, B9). A delegated child is indented one step per level (B13).
  */
@@ -816,7 +816,7 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
       data-depth={depth}
       onClick={(event) => event.stopPropagation()}
     >
-      <Hint label={[agent.identity_label, agentProductName(agent.agent_kind)].join("\n")} reveals>
+      <Hint label={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")} reveals>
         <button type="button" aria-label={rowAccessibleName(t, agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
       </Hint>
       <span className="pointer-events-none relative flex min-w-0 items-center gap-xs">
