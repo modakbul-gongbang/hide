@@ -1741,6 +1741,16 @@ impl LinkStore {
                         created: line.role == SessionRole::Created,
                     });
                 }
+                // Only work counts: a session that made the pull request or
+                // worked on its branch, not one that printed its address.
+                if line.role != SessionRole::Created && !line.on_branch {
+                    continue;
+                }
+                summary
+                    .pr_workers
+                    .entry(pr.number)
+                    .or_default()
+                    .extend(line.ids.iter().cloned());
                 if let Some(checkout) = line
                     .cwd
                     .as_deref()
@@ -1752,11 +1762,6 @@ impl LinkStore {
                         .entry(pr.number)
                         .or_default()
                         .insert(checkout.path.clone());
-                }
-                // Only work counts: a session that made the pull request or
-                // worked on its branch, not one that printed its address.
-                if line.role != SessionRole::Created && !line.on_branch {
-                    continue;
                 }
                 // A checkout's sessions are the ones that started in it since
                 // it was added, so a worktree made again at a used path

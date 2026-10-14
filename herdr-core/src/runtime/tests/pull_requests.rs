@@ -519,6 +519,88 @@ fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
     assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
 }
 
+/// D-22, B31: GitHub accepts any head that is its current one, so a write
+/// whose head differs from the head the list's state was judged on is
+/// refused before a worker starts, and both are read again.
+#[test]
+fn a_write_on_a_head_other_than_the_lists_is_refused_before_anything_runs() {
+    let mut listed = pull_request(2, "open-work", PullRequestBadge::Open, None);
+    listed.head_oid = Some("f".repeat(40));
+    let mut runtime = pr_runtime(vec![listed]);
+    let mut before = runtime.github_generations.get("/repo").copied();
+    for (kind, payload) in [
+        (
+            "pr_merge",
+            serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+        ),
+        (
+            "pr_update_branch",
+            serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD}),
+        ),
+    ] {
+        assert!(runtime.dispatch_json(&event(kind, payload)));
+        let write = card(&runtime, 2).write.unwrap();
+        assert_eq!(
+            (write.phase, write.reason),
+            ("failed", Some("head_moved")),
+            "{kind}"
+        );
+        let rows = runtime.github_generations.get("/repo").copied();
+        assert!(rows > before, "the list is read again after {kind}");
+        before = rows;
+    }
+}
+
+/// B14, B20: a merged pull request's card reads like any other; only a write
+/// needs the pull request open.
+#[test]
+fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        3,
+        "done-work",
+        PullRequestBadge::Merged,
+        Some(unix_milliseconds() - 2 * DAY),
+    )]);
+    assert!(
+        runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
+            workspace_id: "w".into(),
+            pr_number: 3,
+        })
+    );
+    let read = card(&runtime, 3);
+    assert!(
+        read.reading || !read.failed.is_empty(),
+        "the card has a read"
+    );
+    let merge = event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 3, "head": HEAD, "method": "merge"}),
+    );
+    runtime.dispatch_json(&merge);
+    assert_eq!(
+        card(&runtime, 3).write,
+        None,
+        "nothing is written to a merged one"
+    );
+}
+
+/// B44: checks running on a listed pull request nobody's agent works on are
+/// read again each minute while the Work tool's lens or a card is shown.
+#[test]
+fn pending_checks_on_a_pull_request_without_an_agent_are_read_again_each_minute() {
+    let mut pending = pull_request(2, "open-work", PullRequestBadge::Open, None);
+    pending.checks = PullRequestChecks::Pending;
+    let mut runtime = pr_runtime(vec![pending]);
+    let start = std::time::Instant::now();
+    let generation = |runtime: &Runtime| runtime.github_generations.get("/repo").copied();
+    let before = generation(&runtime);
+    runtime.observe_request_view(true, start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(30));
+    assert_eq!(generation(&runtime), before, "not a minute yet");
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert!(generation(&runtime) > before, "a minute later");
+}
+
 /// B33: Look again dismisses a failed write's notice and reads the card; the
 /// read the core starts itself after a moved head keeps the notice drawn.
 #[test]

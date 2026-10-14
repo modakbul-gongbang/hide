@@ -276,8 +276,14 @@ pub struct ProjectLinkSummary {
     /// Session id → the pull requests it made or worked on.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
-    /// Pull request number → the paths of the checkouts its sessions ran in,
-    /// whatever the session did there. Core only: the Work tab's
+    /// Pull request number → the ids of the sessions that made it or worked
+    /// on its branch; a session that only printed its address is not one.
+    /// Core only: the Work tab's agent of a pull request reads it (PRD
+    /// work-tab-pr-lens D-09).
+    #[serde(skip)]
+    pub pr_workers: BTreeMap<u64, BTreeSet<String>>,
+    /// Pull request number → the paths of the checkouts its working sessions
+    /// ran in (the same sessions as `pr_workers`). Core only: the Work tab's
     /// `<checkout> only` scope reads it (PRD work-tab-pr-lens D-19).
     #[serde(skip)]
     pub pr_checkouts: BTreeMap<u64, BTreeSet<String>>,

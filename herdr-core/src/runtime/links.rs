@@ -920,10 +920,10 @@ pub(super) fn associate_pr_sessions(
     for pull_request in pull_requests {
         let number = u64::from(pull_request.number);
         let sessions: Vec<String> = summary
+            .and_then(|summary| summary.pr_workers.get(&number))
             .into_iter()
-            .flat_map(|summary| &summary.sessions)
-            .filter(|(_, chips)| chips.iter().any(|chip| chip.number == number))
-            .map(|(id, _)| id.clone())
+            .flatten()
+            .cloned()
             .collect();
         let checkouts: Vec<String> = summary
             .and_then(|summary| summary.pr_checkouts.get(&number))

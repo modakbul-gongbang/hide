@@ -210,6 +210,26 @@ impl Runtime {
         workspace_id: &str,
         number: u32,
     ) -> Result<(Option<String>, WorkspaceSnapshot, PullRequestSnapshot), String> {
+        self.find_pull_request(workspace_id, number, true)
+    }
+
+    /// A pull request the list shows, open or settled: a card of a merged
+    /// pull request reads and draws like any other (B14, B20); only a write
+    /// needs it open.
+    fn listed_pull_request(
+        &self,
+        workspace_id: &str,
+        number: u32,
+    ) -> Result<(Option<String>, WorkspaceSnapshot, PullRequestSnapshot), String> {
+        self.find_pull_request(workspace_id, number, false)
+    }
+
+    fn find_pull_request(
+        &self,
+        workspace_id: &str,
+        number: u32,
+        open_only: bool,
+    ) -> Result<(Option<String>, WorkspaceSnapshot, PullRequestSnapshot), String> {
         let (node, workspace) = self
             .issue_project(workspace_id)
             .filter(|(_, workspace)| workspace.is_git)
@@ -217,7 +237,9 @@ impl Runtime {
         let pull_request = workspace
             .pull_requests
             .iter()
-            .find(|pull_request| pull_request.number == number && !pull_request.badge.is_settled())
+            .find(|pull_request| {
+                pull_request.number == number && !(open_only && pull_request.badge.is_settled())
+            })
             .cloned()
             .ok_or_else(|| format!("PR #{number}은 열려 있지 않습니다"))?;
         Ok((node, workspace, pull_request))
@@ -775,7 +797,7 @@ impl Runtime {
     /// read already running is not started twice (D-06, B52).
     pub(super) fn read_pr_card(&mut self, payload: PrCardReadPayload) -> bool {
         let number = payload.pr_number;
-        let (machine, project) = match self.open_pull_request(&payload.workspace_id, number) {
+        let (machine, project) = match self.listed_pull_request(&payload.workspace_id, number) {
             Ok((machine, workspace, _)) => (machine, workspace),
             Err(message) => {
                 self.set_error("pr_card_read.unknown_pull_request", message, false);
@@ -907,8 +929,8 @@ impl Runtime {
         request: crate::github::card::Write,
     ) -> bool {
         let action = write.action;
-        let (machine, project) = match self.open_pull_request(&workspace_id, number) {
-            Ok((machine, workspace, _)) => (machine, workspace),
+        let (machine, project, pull_request) = match self.open_pull_request(&workspace_id, number) {
+            Ok((machine, workspace, pull_request)) => (machine, workspace, pull_request),
             Err(message) => {
                 self.set_error(format!("pr_{action}.unknown_pull_request"), message, false);
                 return true;
@@ -924,6 +946,26 @@ impl Runtime {
         let card = self.pr_card_slot(&workspace_id, number);
         if card.write.as_ref().is_some_and(|w| w.phase == "working") {
             return false;
+        }
+        // GitHub only proves the head is its current one. The state that
+        // enabled the button (checks, merge state) was judged on the list's
+        // head, so a card read at another head is refused and both are read
+        // again before anything is written (D-22, B31).
+        if pull_request
+            .head_oid
+            .as_deref()
+            .is_some_and(|listed| !listed.eq_ignore_ascii_case(&write.head))
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "pull_requests", "kind": "pr_write.head_differs_from_list",
+                "project": workspace_id, "pr": number, "action": action,
+            }));
+            let mut refused = write;
+            refused.phase = "failed";
+            refused.reason = Some("head_moved");
+            card.write = Some(refused);
+            self.reread_pull_request(machine.as_deref(), &project.path, &workspace_id, number);
+            return true;
         }
         card.write = Some(write);
         crate::diagnostic!(serde_json::json!({
@@ -987,21 +1029,34 @@ impl Runtime {
                 }));
                 write.phase = "failed";
                 write.reason = Some(failure.reason);
-                // A moved head means the card shows an old PR: read it again.
+                // A moved head means the card shows an old PR, and a branch
+                // update that conflicted has made the row a conflict: read it again.
                 failure.reason == "head_moved"
+                    || (action == "update_branch" && failure.reason == "conflict")
             }
         };
         if reread {
-            match machine {
-                None => self.refresh_pull_requests(root),
-                Some(node) => self.reread_node_github(node, root),
-            }
-            self.read_pr_card(PrCardReadPayload {
-                workspace_id: workspace_id.to_owned(),
-                pr_number: number,
-            });
+            self.reread_pull_request(machine, root, workspace_id, number);
         }
         true
+    }
+
+    /// The list of the project's pull requests and the card of one, read again.
+    fn reread_pull_request(
+        &mut self,
+        machine: Option<&str>,
+        root: &str,
+        workspace_id: &str,
+        number: u32,
+    ) {
+        match machine {
+            None => self.refresh_pull_requests(root),
+            Some(node) => self.reread_node_github(node, root),
+        }
+        self.read_pr_card(PrCardReadPayload {
+            workspace_id: workspace_id.to_owned(),
+            pr_number: number,
+        });
     }
 }
 
@@ -1047,7 +1102,7 @@ impl Runtime {
         if kept.is_some() || !ready || self.pr_summaries_asked.contains(&asked) {
             return;
         }
-        let Ok((_, _, pull_request)) = self.open_pull_request(workspace_id, number) else {
+        let Ok((_, _, pull_request)) = self.listed_pull_request(workspace_id, number) else {
             return;
         };
         let Some(card) = self.existing_pr_card(workspace_id, number) else {
@@ -1106,9 +1161,9 @@ impl Runtime {
                 let key = (workspace_id.to_owned(), number);
                 if !self.pr_summaries.contains_key(&key)
                     && self.pr_summaries.len() >= PR_SUMMARY_CACHE_LIMIT
-                    && let Some(oldest) = self.pr_summaries.keys().next().cloned()
+                    && let Some(first_key) = self.pr_summaries.keys().next().cloned()
                 {
-                    self.pr_summaries.remove(&oldest);
+                    self.pr_summaries.remove(&first_key);
                 }
                 self.pr_summaries
                     .insert(key, (head.to_owned(), text.clone()));

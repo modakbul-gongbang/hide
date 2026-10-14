@@ -426,11 +426,11 @@ struct WaitingExplorerChange {
     request: ExplorerRequest,
 }
 
-/// How many Explorer changes wait behind the running one. A drag and the
-/// keys that follow it queue one or two; past this the newest is refused.
 /// Pull request summaries kept for their head commit (D-29).
 const PR_SUMMARY_CACHE_LIMIT: usize = 64;
 
+/// How many Explorer changes wait behind the running one. A drag and the
+/// keys that follow it queue one or two; past this the newest is refused.
 const EXPLORER_QUEUE_LIMIT: usize = 4;
 
 fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {

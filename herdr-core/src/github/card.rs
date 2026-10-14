@@ -70,7 +70,7 @@ pub(crate) fn parse(output: &str) -> Result<CardRead, String> {
         ..CardRead::default()
     };
     match pull_request["body"].as_str() {
-        Some(body) => read.body = Some(body.to_owned()),
+        Some(body) => read.body = Some(capped_body(body)),
         None => read.failed.push("body"),
     }
     let attributes = repository["attributes"]["text"]
@@ -143,6 +143,18 @@ pub(crate) fn parse(output: &str) -> Result<CardRead, String> {
         ),
     });
     Ok(read)
+}
+
+/// How much of a body the card keeps: GitHub allows 65,536 characters, and
+/// up to eight cards are kept and sent whole, so the tail past this is cut
+/// at a character boundary (engineering principle 15).
+const BODY_CAP_CHARS: usize = 20_000;
+
+fn capped_body(body: &str) -> String {
+    match body.char_indices().nth(BODY_CAP_CHARS) {
+        Some((end, _)) => body[..end].to_owned(),
+        None => body.to_owned(),
+    }
 }
 
 fn first_sentence(text: &str) -> String {
@@ -352,6 +364,14 @@ mod tests {
     use hide_node_link::gh::GithubFailureCategory;
 
     const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn a_body_past_the_cap_is_cut_at_a_character_boundary() {
+        let long = "가".repeat(BODY_CAP_CHARS + 5);
+        let kept = capped_body(&long);
+        assert_eq!(kept.chars().count(), BODY_CAP_CHARS);
+        assert_eq!(capped_body("short"), "short");
+    }
 
     const CARD: &str = r##"{"data":{"repository":{
         "mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":false,

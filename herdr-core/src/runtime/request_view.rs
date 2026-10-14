@@ -195,9 +195,9 @@ impl Runtime {
     }
 
     /// Once a minute while the request view is shown, asks GitHub again for
-    /// each local project a row's pull request has checks running in, so a
-    /// finished run moves its row without a new turn (D-32, B12). Nothing is
-    /// asked while no window shows the view or no checks are running.
+    /// each local project a pull request has checks running in, so a finished
+    /// run moves its row without a new turn (D-32, B12, work-tab-pr-lens B44).
+    /// Nothing is asked while no window shows the view or no checks are running.
     pub(crate) fn reread_pending_checks(&mut self, now: std::time::Instant) {
         if !self.request_view_observed
             || self
@@ -207,30 +207,20 @@ impl Runtime {
             return;
         }
         self.pending_checks_read_at = Some(now);
+        // Every listed open pull request with checks running counts, an
+        // agent's or not: the Work tool's PRs lens and a card draw them
+        // all (PRD work-tab-pr-lens B44).
         let running: BTreeSet<String> = self
-            .snapshot
-            .navigator
-            .agents
+            .github
+            .projects
             .iter()
-            .filter_map(|row| row.request.as_ref())
-            .flat_map(|request| request.pull_requests.iter())
-            .filter(|pull_request| {
-                pull_request.live
-                    && !pull_request.badge.is_settled()
-                    && pull_request.checks == crate::model::PullRequestChecks::Pending
+            .filter(|project| {
+                project.pull_requests.iter().any(|pull_request| {
+                    !pull_request.badge.is_settled()
+                        && pull_request.checks == crate::model::PullRequestChecks::Pending
+                })
             })
-            .filter_map(|pull_request| {
-                self.github
-                    .projects
-                    .iter()
-                    .find(|project| {
-                        project
-                            .pull_requests
-                            .iter()
-                            .any(|known| known.url == pull_request.url)
-                    })
-                    .map(|project| project.root_path.clone())
-            })
+            .map(|project| project.root_path.clone())
             .collect();
         for project in running {
             self.refresh_pull_requests(&project);
