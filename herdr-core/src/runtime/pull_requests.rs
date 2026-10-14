@@ -1031,6 +1031,16 @@ impl Runtime {
         let reread = match answer {
             Ok(()) => {
                 write.phase = "done";
+                // A merge with a method is made now; one asked of a merge
+                // queue only joins it, and GitHub's list says when it lands.
+                let merged_now = action == "merge" && write.method.is_some();
+                if merged_now {
+                    self.merged_here.insert((root.to_owned(), number));
+                    let mut github = self.github.clone();
+                    self.read_merges_made_here(&mut github);
+                    self.github = github;
+                    self.apply_pull_requests();
+                }
                 true
             }
             Err(failure) => {

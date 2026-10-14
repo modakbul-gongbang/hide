@@ -287,10 +287,12 @@ test("the card opens as a File Views tab and Merge goes out on the head it showe
     await expect(card.locator("[data-pr-card-confirm]")).toBeVisible();
     expect(writes(gh.state)).toEqual([]);
     await card.locator("[data-pr-card-confirm-yes]").click();
-    await expect(card.locator('[data-pr-card-write="done"]')).toBeVisible({ timeout: 30_000 });
+    await expect(work.locator('[data-pr-group="needs_you"] [data-pr="31"]')).toHaveCount(0, { timeout: 30_000 });
     expect(sent.get("pr_merge")).toBe(1);
     expect(last.get("pr_merge")).toMatchObject({ pr_number: 31, head: head(gh.state, 31) });
     expect(writes(gh.state)).toEqual([["pr", "merge", "31", "--merge", "--match-head-commit", head(gh.state, 31)]]);
+    // The merged pull request has left Needs You and its card draws no Merge.
+    await expect(card.locator("[data-pr-card-merge]")).toHaveCount(0);
   });
 });
 

@@ -1689,6 +1689,12 @@ pub struct Runtime {
     /// Local projects whose first read has been answered, with or without a
     /// result; until then a project without an answer is loading.
     github_settled: HashSet<String>,
+    /// Pull requests whose Merge Hide just saw GitHub accept, as (project
+    /// root, number): the list reads them as merged at once, since GitHub's
+    /// own list can still answer open (merge state unknown) for a moment
+    /// after its own merge. An entry leaves when a read shows the pull
+    /// request merged or closed, or no longer lists it.
+    merged_here: HashSet<(String, u32)>,
     /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
     /// stated, so a count is logged once rather than on every wake.
     github_over_limit: usize,
@@ -2189,6 +2195,7 @@ impl Runtime {
             github_remotes: HashMap::new(),
             github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),
+            merged_here: HashSet::new(),
             github_over_limit: 0,
             github_store: None,
             disk_generation: 0,

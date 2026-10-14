@@ -519,6 +519,52 @@ fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
     assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
 }
 
+/// A merge GitHub accepted reads as merged at once, and keeps reading so
+/// while GitHub's own list still answers open, until a read says merged.
+#[test]
+fn a_merge_that_went_through_reads_as_merged_before_the_list_says_so() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let badge = |runtime: &Runtime| runtime.github.project("/repo").unwrap().pull_requests[0].badge;
+    let open_list = runtime.github.clone();
+    runtime.dispatch_json(&event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+    ));
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    runtime.ingest_pr_write("w", 2, None, "/repo", Ok(()));
+    assert_eq!(badge(&runtime), PullRequestBadge::Merged);
+
+    // The next read still says open: the merge Hide saw wins over it.
+    let mut stale = open_list.clone();
+    runtime.read_merges_made_here(&mut stale);
+    assert_eq!(
+        stale.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Merged
+    );
+
+    // A read that says merged is taken as it is, and the mark is let go.
+    let mut said = open_list;
+    said.projects[0].pull_requests[0].badge = PullRequestBadge::Merged;
+    said.projects[0].pull_requests[0].merged_at_unix_ms = Some(7);
+    runtime.read_merges_made_here(&mut said);
+    assert_eq!(
+        said.project("/repo").unwrap().pull_requests[0].merged_at_unix_ms,
+        Some(7)
+    );
+    let mut open_again = said.clone();
+    open_again.projects[0].pull_requests[0].badge = PullRequestBadge::Open;
+    runtime.read_merges_made_here(&mut open_again);
+    assert_eq!(
+        open_again.project("/repo").unwrap().pull_requests[0].badge,
+        PullRequestBadge::Open
+    );
+}
+
 /// D-22, B31: GitHub accepts any head that is its current one, so a write
 /// whose head differs from the head the list's state was judged on is
 /// refused before a worker starts, and both are read again.

@@ -1115,6 +1115,7 @@ impl Runtime {
         self.github_remotes.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
+        self.merged_here.retain(|(path, _)| known(path));
         // A sighting that grew old while its project's answer was owed (no
         // window attached, no read) sets off nothing when the answer lands.
         self.github_sighted
@@ -1474,6 +1475,7 @@ impl Runtime {
         }
         let mut merged = github;
         keep_previous_reads(&mut merged, &self.github);
+        self.read_merges_made_here(&mut merged);
         if self.github == merged {
             // Nothing to show changed, but a project that returned nothing
             // stops loading.
@@ -1491,6 +1493,37 @@ impl Runtime {
         // A promoted card's pull request may have opened, merged or closed.
         self.track_memory_promotions();
         true
+    }
+
+    /// Marks the pull requests Hide merged as merged in `github` until a read
+    /// says so itself: Hide knows its own merge went through, so the pull
+    /// request leaves Needs You at once instead of waiting in an unknown merge
+    /// state for the next poll.
+    pub(super) fn read_merges_made_here(&mut self, github: &mut crate::model::GithubSnapshot) {
+        let now = unix_milliseconds();
+        self.merged_here.retain(|(root, number)| {
+            let Some(project) = github.projects.iter_mut().find(|p| &p.root_path == root) else {
+                return false;
+            };
+            let Some(pull_request) = project
+                .pull_requests
+                .iter_mut()
+                .find(|p| p.number == *number)
+            else {
+                return false;
+            };
+            if matches!(
+                pull_request.badge,
+                crate::model::PullRequestBadge::Merged | crate::model::PullRequestBadge::Closed
+            ) {
+                return false;
+            }
+            pull_request.badge = crate::model::PullRequestBadge::Merged;
+            pull_request.review = None;
+            pull_request.merged_at_unix_ms = Some(now);
+            pull_request.closed_at_unix_ms = Some(now);
+            true
+        });
     }
 
     fn bump_github_generation(&mut self, project_path: &str) {
