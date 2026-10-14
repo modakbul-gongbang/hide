@@ -13,6 +13,7 @@ usage: summarize.py echo [--max-p95-ms N] <echo-*.json...>
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -114,6 +115,62 @@ def echo(paths, threshold=None):
     }
 
 
+def driven_workload(doc, covered_ms):
+    """Require independent sequence progress in each pane and window third.
+
+    This establishes sampled workload coverage, not an output-rate or input
+    latency SLA. A missing observation makes a driven verdict unverified.
+    """
+    if doc.get("driver_launch_complete") is not True or doc.get("driver_cleanup_complete") is not True:
+        raise ValueError("workload launch or retirement was not confirmed")
+    span = doc.get("window")
+    if not isinstance(span, dict):
+        raise ValueError("missing workload observation window")
+    start, end, duration, requested = numbers([span.get(k) for k in ("start", "end", "duration_ms", "requested_ms")])
+    if not (120_000 <= requested <= 600_000 and duration >= requested and
+            math.isclose(end - start, duration, abs_tol=0.01) and math.isclose(duration, covered_ms, abs_tol=0.01)):
+        raise ValueError("workload window does not match recorded frame duration")
+    panes = doc.get("driven_panes")
+    if (not isinstance(panes, list) or not 1 <= len(panes) <= 6 or
+            any(not isinstance(pane, str) or not pane for pane in panes) or len(set(panes)) != len(panes)):
+        raise ValueError("missing or invalid driven pane set")
+    evidence = doc.get("workload_evidence")
+    if not isinstance(evidence, dict) or evidence.get("method") != "pane_sequence_progress_v1" or evidence.get("sample_interval_ms") != 500:
+        raise ValueError("missing per-pane sequence observations")
+    records = evidence.get("panes")
+    if (not isinstance(records, list) or len(records) != len(panes) or
+            any(not isinstance(row, dict) for row in records) or [row.get("pane_id") for row in records] != panes):
+        raise ValueError("workload observations do not cover every driven pane")
+    run_id = None
+    for index, row in enumerate(records):
+        marker = row.get("marker")
+        if not isinstance(marker, str) or not re.fullmatch(r"f[0-9a-f]{16}" + str(index) + ":", marker):
+            raise ValueError("missing or mismatched per-pane workload marker")
+        if run_id is not None and marker[1:17] != run_id:
+            raise ValueError("pane observations came from different workload runs")
+        run_id = marker[1:17]
+        phases = row.get("phases")
+        if not isinstance(phases, list) or len(phases) != 3:
+            raise ValueError("workload needs beginning, middle and final observations")
+        previous = -1
+        for phase, progress in enumerate(phases):
+            if not isinstance(progress, dict):
+                raise ValueError("missing workload phase")
+            count = progress.get("observations")
+            first, last = progress.get("first"), progress.get("last")
+            if type(count) is not int or not 2 <= count <= 1202 or not isinstance(first, dict) or not isinstance(last, dict):
+                raise ValueError("per-pane progress was not observed within every window third")
+            first_ms, last_ms = numbers([first.get("at_ms"), last.get("at_ms")])
+            low, high = phase * requested / 3, (phase + 1) * requested / 3
+            if not (low <= first_ms < last_ms and (last_ms < high if phase < 2 else last_ms <= duration)):
+                raise ValueError("workload progress lies outside its recorded window third")
+            first_seq, last_seq = first.get("sequence"), last.get("sequence")
+            if type(first_seq) is not int or type(last_seq) is not int or not previous < first_seq < last_seq <= 2**53 - 1:
+                raise ValueError("workload sequence did not advance independently in every phase")
+            previous = last_seq
+    return evidence
+
+
 def frames(path):
     doc = measurement(path)
     errors = []
@@ -129,13 +186,21 @@ def frames(path):
         dts = []
     over = sum(1 for v in dts if v > BUDGET_MS)
     complete = bool(dts) and sum(dts) >= 120_000 and doc.get("done") is True and not doc.get("error")
+    workload = None
+    try:
+        workload = driven_workload(doc, sum(dts))
+    except (ValueError, OverflowError) as error:
+        errors.append(str(error))
+    valid = not errors and complete
     fraction = (over / len(dts)) if dts else None
     return {
         "count": len(dts),
         "covered_ms": sum(dts),
         "window": doc.get("window"),
         "complete": complete,
-        "valid": not errors and complete,
+        "valid": valid,
+        "workload_valid": workload is not None,
+        "workload_evidence": workload,
         "errors": errors,
         "over_16_7ms": over,
         "fraction": fraction,
@@ -143,7 +208,7 @@ def frames(path):
         "budget_ms": BUDGET_MS,
         "max_dt_ms": max(dts) if dts else None,
         "ws_frames_during_run": doc.get("ws_frames_during_run"),
-        "pass": complete and fraction is not None and fraction <= 0.01,
+        "pass": valid and fraction is not None and fraction <= 0.01,
     }
 
 
