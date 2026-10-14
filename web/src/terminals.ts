@@ -21,13 +21,13 @@
 // assembled here (`selection.ts`), not by xterm.
 
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IDisposable, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { submitFiles } from "./attachments";
 import { keySystem } from "./host";
 import { terminalKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
+import { loadTerminalRenderer } from "./terminalRenderer";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { keyPayload, noteTerminalFocus } from "./keyTarget";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
@@ -41,6 +41,8 @@ import type { DispatchFn } from "./ws";
 type Instance = {
   term: Terminal;
   fit: FitAddon;
+  /** Lives with the instance, including while parked; no retry after fallback. */
+  renderer: IDisposable | null;
   dispatch: DispatchFn;
   /** Where a clicked link goes; replaced on every attach, like `dispatch`. */
   links: TerminalLinkActions;
@@ -216,6 +218,7 @@ export function attachedPaneIds(): string[] {
 
 function disposeInstance(paneId: string, instance: Instance) {
   instance.disposeHandlers();
+  instance.renderer?.dispose();
   instance.term.dispose();
   instance.element.remove();
   instances.delete(paneId);
@@ -520,6 +523,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
   const instance: Instance = {
     term,
     fit,
+    renderer: null,
     dispatch,
     links,
     link,
@@ -608,11 +612,9 @@ export function attachTerminal(
   shown.links = links;
   if (fresh) {
     shown.term.open(shown.element);
-    try {
-      shown.term.loadAddon(new WebglAddon());
-    } catch {
-      /* xterm's DOM renderer remains */
-    }
+    shown.renderer = loadTerminalRenderer(shown.term, (reason) => {
+      if (probeEnabled()) useShellStore.getState().noteDiagnostic(`terminal.renderer pane=${paneId} mode=dom reason=${reason}`);
+    });
     // Clicking into a pane is the operator moving keyboard focus; the core
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.
