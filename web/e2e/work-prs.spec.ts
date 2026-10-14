@@ -309,6 +309,8 @@ test("a branch update on a pull request that moved is refused, looked at again, 
     await behind.locator('[data-pr-card-confirm-yes="update"]').click();
     await expect(behind.locator('[data-pr-card-write="failed"]')).toHaveAttribute("data-pr-card-write-reason", "head_moved", { timeout: 30_000 });
     await screenshot(page, "work-pr-card-moved-light");
+    // Until Look again has read the card the refused write cannot be repeated.
+    await expect(behind.locator("[data-pr-card-update]")).toBeDisabled();
     // Look again reads the list and the card; the update goes out once both
     // show the new head, on the head the card showed (B33).
     await behind.locator("[data-pr-card-look-again]").click();
@@ -367,6 +369,7 @@ test("a card read at another head than the list's cannot merge: the write is ref
     await card.locator("[data-pr-card-merge]").click();
     await card.locator('[data-pr-card-confirm-yes="merge"]').click();
     await expect(card.locator('[data-pr-card-write="failed"]')).toHaveAttribute("data-pr-card-write-reason", "head_moved", { timeout: 30_000 });
+    await expect(card.locator("[data-pr-card-merge]")).toBeDisabled();
     expect(writes(gh.state)).toEqual([]);
   });
 });

@@ -376,7 +376,8 @@ function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr
   if (!open) return null;
   const base = pr.base_branch ?? "";
   const methodLabel = method ? t(`work.card.method.${method}`) : "";
-  const canAsk = head !== null && !writing;
+  // A refused write leaves both buttons off until Look again has read the card: a second press would repeat the refused write against the head it was refused on.
+  const canAsk = head !== null && !writing && write?.phase !== "failed";
   const MergeButton = (
     <span className="flex min-w-0 items-center gap-xs" data-pr-card-merge-slot="true">
       <Button variant={primary === "merge" ? "default" : "secondary"} size="sm" disabled={why !== null || queued || !canAsk} onClick={() => head !== null && setConfirm({ action: "merge", head, method, queue })} data-pr-card-merge={queue ? "queue" : "merge"}>
