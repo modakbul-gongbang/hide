@@ -4,6 +4,7 @@ import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { dumpOnFailure } from "./failure-dump";
 import { enterWorkspace, screenshot } from "./wire";
 
 const agentTab = (page: Page, id: string) => page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`);
@@ -24,6 +25,13 @@ function savedVisibility(daemon: Daemon, tab: string): boolean | undefined {
     workspaces: { view_visibility?: Record<string, boolean> }[];
   };
   return stored.workspaces.find((workspace) => workspace.view_visibility?.[tab] !== undefined)?.view_visibility?.[tab];
+}
+
+function savedSelectedPane(daemon: Daemon): string | null | undefined {
+  const stored = JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")) as {
+    selected_pane_id?: string | null;
+  };
+  return stored.selected_pane_id;
 }
 
 test("Agent tabs keep File Views on or off through switching and restart @platform", async ({ page }) => {
@@ -63,13 +71,31 @@ test("Agent tabs keep File Views on or off through switching and restart @platfo
     await expect(fileViews(page)).toBeHidden();
     await screenshot(page, "file-view-visibility-second-off");
 
-    await expect.poll(() => savedVisibility(daemon!, first)).toBe(true);
-    await expect.poll(() => savedVisibility(daemon!, second)).toBe(false);
+    const persisted = () => ({
+      selected_pane_id: savedSelectedPane(daemon!),
+      view_visibility: { [first]: savedVisibility(daemon!, first), [second]: savedVisibility(daemon!, second) },
+    });
+    const expectedPane = created.result.root_pane.pane_id;
+    await dumpOnFailure("file-view-visibility-persisted", () => ({ expectedPane, ...persisted() }), async () => {
+      await expect.poll(() => savedVisibility(daemon!, first)).toBe(true);
+      await expect.poll(() => savedVisibility(daemon!, second)).toBe(false);
+      // Visibility was saved earlier; Windows restart also needs the last pane selection on disk.
+      await expect.poll(() => savedSelectedPane(daemon!)).toBe(expectedPane);
+    });
+    const beforeRestart = persisted();
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
-    await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
-    await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+    await dumpOnFailure("file-view-visibility-restored", async () => ({
+      expectedPane, beforeRestart,
+      restoredPane: await page.evaluate(() => window.__hideProbe?.paneId() ?? null),
+      restoredTabs: await page.locator('[data-agent-tab-bar] [data-tab]').evaluateAll((tabs, ids) =>
+        tabs.filter((tab) => ids.includes(tab.getAttribute("data-tab")!))
+          .map((tab) => ({ tab: tab.getAttribute("data-tab"), selected: tab.getAttribute("aria-selected") })), [first, second]),
+    }), async () => {
+      await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+    });
     await agentTab(page, first).click();
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
