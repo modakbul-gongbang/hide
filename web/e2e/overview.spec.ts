@@ -798,7 +798,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
     await tile("issues").locator("[data-lens-tile-button]").click();
     const loosePrs = column("review").locator("[data-loose-prs]");
-    await restOn(page, loosePrs, ["View on the PRs tab", "#12"]);
+    await restOn(page, loosePrs, ["Show in Work › PRs", "#12"]);
     await loosePrs.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
     await expect(overview.locator('[data-pr="12"]')).toBeVisible();

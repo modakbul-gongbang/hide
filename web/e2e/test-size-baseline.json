@@ -24,10 +24,6 @@
       "lines": 323,
       "expect": 115
     },
-    "overview-prs.spec.ts::a project's PRs tab: grouped pull requests, Link issue, Assign and Clean up": {
-      "lines": 290,
-      "expect": 103
-    },
     "overview.spec.ts::a project's Overview: tiles, the Agents graph, and the Issues board": {
       "lines": 827,
       "expect": 328
