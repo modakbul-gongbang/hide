@@ -77,7 +77,7 @@ On revisit, check restored text and new ordered input separately from retained m
 | Hidden retained terminals survive a tab switch without resizing or losing output | `runtime::tests::snapshot_delta` retained-view tests, affected web/desktop app scenarios | A retained buffer does not establish scroll, selection, sustained output or native paint latency. |
 | Owned terminal children end with daemon/link owners | `hided/tests/it/terminal_children.rs` and remote/core-move journeys | A functional teardown assertion does not establish zero survivors for every OS or owner-death mode. |
 | Measurements refuse production device routes before dialing | `scripts/tests/test_measure_device_guard.py`, `device-guard.sh` | Guard fixtures do not establish a real device's speed, login or cleanup. |
-| Key-echo summaries retain clock-offset cross-checks | `scripts/tests/test_measure_echo_summary.py` | That test does not validate the legacy S0 threshold, reject negative legacy samples or establish measured latency. |
+| Echo and frame summaries refuse invalid or incomplete data; echo acceptance requires an explicit threshold | `scripts/tests/test_measure_echo_summary.py` | Synthetic records prove the verdict rules, not a measured latency, physical input or native presentation. |
 
 Rust owners run in the planned Rust lane, app scenarios in their planned web/desktop/remote lanes, and script owners in `policy`.
 Read actual job outcomes and retries; this mapping describes checked-in ownership and does not claim an executed PASS.
@@ -433,28 +433,30 @@ Use a qualified verdict when coverage is bounded: "no whole-body blanking observ
 Published figures and their measurement boundaries live in the dated [performance observations](PERFORMANCE_RESULTS.md).
 That report is an observed candidate result, not a new threshold or a replacement for the measurement contract here.
 
-`scripts/web-shell-measure/run.sh` exercises the product `hided` with the retained S0 workload shape.
-A shared workload shape does not establish a calibrated clock or a matched current baseline.
+`scripts/web-shell-measure/run.sh` exercises the product `hided` with separate screen-key and driven-output workloads.
+Baseline and candidate must use the same driver revision, fixture, browser mode and measurement boundary.
 It owns every process it starts: an isolated pinned Herdr server on a socket inside a run-specific mode-0700 directory under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one linked Git checkout and workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with an automatically assigned CDP port on the page opened with `?probe=1`.
 The runner reads Chrome's CDP port from its own profile and sends the page URL over standard input so the token is absent from the Chrome command line.
 The operator's socket is only read, before and after, for the topology counts written beside the results.
 
-Legacy output echo is three trials of fifty `herdr pane send-text` markers.
-`echo.mjs` subtracts its Node-clock CLI return timestamp from the page-clock xterm write completion; it records both hops but does not calibrate their offset.
-It can also observe the marker before the CLI returns, so CLI return is not a causal start for that marker's output.
-Do not use this field or `summarize.py`'s frozen S0 `pass` boolean as calibrated latency or a matched baseline/candidate acceptance result; the summarizer counts negative samples without refusing the gate.
-The retained S0 constant describes the legacy tool's behavior only.
-For screen-key claims, use `key-echo.mjs`'s page-clock keydown-to-write samples and compare per-condition trial distributions against the agreed current baseline.
-A CLI output-path latency claim needs a corrected causal start and an established common clock; until that driver is corrected and checked, report it as unverified.
+Echo is three trials of fifty screen-key samples from `key-echo.mjs`, each timed from renderer keydown to xterm write completion on the page's clock.
+The collector records the boundary, expected sample count and successful completion explicitly.
+`summarize.py echo` rejects missing, incomplete, negative, nonfinite or nonnumeric samples and an unproven clock boundary; one invalid trial prevents an aggregate verdict, and invalid input exits nonzero.
+A valid run reports distributions with `pass: null` until the caller supplies `--max-p95-ms N`, the acceptance limit agreed before the run; a failed explicit limit also exits nonzero.
+No historical S0 value is a default threshold.
+The removed CLI-return collector mixed clocks and could start after output was already parsed, so its historical files cannot pass the current summary contract.
+Neither the screen-key samples nor xterm write completion prove physical-key-to-screen latency or compositor presentation.
 
 Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`; the result is the fraction of frames over 16.7 ms, the WebSocket frame count the page received during the window, and the pane tail that proves the driver ran.
-This is a live driven pipeline, not the in-page replay the spike used: a replay mode would put spike code into the product, and the threshold is absolute, so the live run is the stricter measurement.
+The frame summary refuses invalid durations, an unfinished run or less than 120 s of recorded callbacks before evaluating the existing 16.7 ms budget and one-percent fraction.
+An output-only frame window contains no injected echo markers; use the separate `keys` scenario for input timing while other panes print.
+A callback interval remains distinct from native presentation.
 
 Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `bash scripts/verify-web.sh web build` and `bash scripts/verify-cargo.sh release`.
 For an unattended comparison, append `--isolated-headless`: Chrome has no native window and the runner records that operator topology observation was skipped, without contacting the operator socket.
 Use that same browser mode for baseline and candidate, and report it with the results; a headless measurement does not prove native presentation.
 `MEASURE_SCENARIO=areas2` or `areas3` shows two or three Agent tabs through the real area menu, each with one pane.
-All shown panes receive the same line-every-8-ms driver; the measured pane also receives fifty echo markers during that load, recorded in `echo-driven-summary.json` separately from its idle echo trials.
+All shown panes receive the same line-every-8-ms driver during the frame window; idle key echo is measured separately before it.
 `resources-idle.json` and `resources-driven.json` record twenty one-second CPU-time deltas and RSS sums for the owned hided, Herdr and Chrome process trees, independently of the echo and frame samples.
 Each sample also keeps the root's own RSS and each child's RSS by its accounting name, because a child caught between fork and exec reads as a second copy of its parent's pages: a bound on hided's memory reads `hided_self_rss_max_kb` (hided alone), and the tree sum says what its children add.
 For `single`, `multi`, `areas2` or `areas3`, append `--memory-series` after `--isolated-headless` to extend the driven frame window to ten minutes and collect eleven one-minute process-tree RSS samples in `memory-series.json`.
@@ -471,7 +473,7 @@ The driver and the marker still go to the one measured pane, so the other panes 
 This five-tab fixture does not cross attach eviction.
 `runtime::tests::terminal::only_the_last_five_shown_tabs_keep_their_panes_attached` proves the core policy; separately visit a sixth tab, require the oldest attachment and renderer instance to retire, revisit for restored content and new ordered input, then repeat the cycle.
 Core metadata assertions alone do not prove renderer disposal or long-lived heap stability.
-The summary emits the same legacy gate as the single-pane run; neither boolean establishes current matched echo acceptance.
+The same validity checks and explicit echo-threshold contract apply to every fixture shape.
 A headed run opens Chrome with backgrounding/occlusion switches disabled; a headless run has no native window.
 Record that mode and actual callback cadence with the load, and do not focus or move the operator's windows to improve a measurement.
 Neither the switches nor a callback count prove physical compositor presentation.
@@ -531,15 +533,13 @@ Failed setup or changed driver files invalidate a comparison; keep the run as di
 
 ### Screen key echo, lost keys and the terminal path's cost
 
-`echo.mjs` puts bytes into the pane with `herdr pane send-text`, so it times only the output path; a change to how a key travels needs the key typed on the screen (PRD core-host-node-terminal D-07).
 `key-echo.mjs` types into the measured pane's terminal with CDP `Input.dispatchKeyEvent`, which takes the shell's own keydown path and its `/ws` `key` frame.
 Each sample is one key: the marker `aNNNN` is typed and waited for, then its last key `z` is typed, and the sample is the xterm write completion that first shows `aNNNNz` minus that key's keydown, both read on the page's clock (the keydown by a capture-phase listener the harness installs on `window`); the pane runs `stty -echo -icanon; cat`, so the drawn character is the pane's echo.
 The CDP dispatch hop before the keydown is left out; these figures characterize the path from renderer keydown onward, and do not establish physical-key-to-screen latency or the cost of input delivery before that listener runs.
-The harness refuses a sample that is negative on that one clock, or whose keydown never reached the page, rather than counting it.
+The harness refuses a sample that is nonfinite or negative on that one clock, or whose keydown never reached the page, rather than counting it.
 Beside each sample it keeps the same completion minus the driver's own clock before the key was sent (`node_t0_samples`) and the driver's offset from the page's clock, read by a round trip bracketed on the driver's clock (`clock_offset_ms` per hop), and `summarize.py echo` reports both per trial; they are a cross-check, not the measurement.
 Until 2026-10-10 the sample was that two-clock value: the driver and the page each fix their time origin when they start, and the constant between them changed per run (+75, -21 and -22 ms in three runs of PR #898's comparison), so key echo numbers measured before then carry an unknown per-run offset; only a large one showed, as impossible samples.
-`echo.mjs` still times from the driver's clock (`herdr pane send-text` returning) to the page's write completion, so its samples carry the same kind of offset.
-It also records every `/ws` frame the page received while it typed, by type (`ws_frames_by_type`), so a key that made the core publish shows as a `delta` frame (B5).
+The key collector also records every `/ws` frame the page received while it typed, by type (`ws_frames_by_type`), so a key that made the core publish shows as a `delta` frame (B5).
 
 `key-count.mjs` types `MEASURE_KEY_COUNT` keys (10,000 for the claim) one CDP `Input.dispatchKeyEvent` each, the same key path as `key-echo.mjs`, spelling distinct markers (`mNNNNN` and a space, Enter after every 100th, `#` last), then reads the pane's logical lines back from the pane's own isolated Herdr and compares them with what was typed: `exact` when they match key for key, otherwise how many keys never arrived (`keys_lost`), arrived outside the longest in-order common run (`keys_reordered`) or arrived without being typed (`keys_unexpected`), with the markers that are missing for a reader (D-08).
 CDP `Input.insertText` does not reach the shell's key path, so it cannot stand in for typing.
@@ -550,7 +550,7 @@ It never stops at the first loss.
 It records, in order: idle resources over `MEASURE_IDLE_SECONDS` (60) in `resources-idle.json`; the idle key echo (`key-echo-idle.json`); every pane printing a line per 8 ms (a private `drive.py` beside `cat`) while resources are sampled over `MEASURE_DRIVEN_SECONDS` (120, `resources-driven.json`), with the page's `/ws` frames by type, the full redraws it asked for (`ws-driven.json`) and the core log's terminal and redraw records before and after (`driven-diagnostics-*.json`); the key echo again on the measured pane, back to a plain `cat` so its marker arrives whole, while the other four keep printing (`key-echo-driven.json`); the key count when `MEASURE_KEY_COUNT` is set (`key-count.json`); and the page navigated to `about:blank` while the panes print for `MEASURE_WINDOWLESS_SECONDS` (60, `resources-windowless.json`, browser omitted from that sampler), then navigated back, with each pane's drawn text length (`reopen-panes.json`), the page's frames and full-redraw requests around that navigation away and back (`ws-reopen.json`, `ws-count.mjs`) and the core log's terminal, redraw and resume records (`reopen-diagnostics.json`, `diag-counts.py`).
 `summarize.py resources` reads hided's median one-second CPU and its largest RSS from a resources file; `summarize.py echo` reads a key echo file like an echo file.
 Chrome remains alive during this detach/reconnect phase; verify private `/health` client retirement and reacquisition independently, and use the isolated desktop lifetime journey for native last-window or browser-process exit.
-The echo summary also emits the legacy S0 threshold for key samples; use its distributions with the current matched comparison, not that unrelated boolean.
+Use valid trial distributions with the current matched comparison; supply an explicit echo threshold only when that absolute limit belongs to the agreed claim.
 
 A comparison runs the baseline and the candidate `hided` (release builds, each from its own worktree, `MEASURE_HIDED_BIN`) in alternating trials on the same machine, idle and driven reported separately, with nearest-rank p50 and p95 per condition and the load recorded beside each trial; the claim's thresholds are the PRD's (B2: p50 and p95 no more than 5 ms above the baseline; B21: median CPU no more than 10% above and largest RSS no more than 32 MiB above; B19: windowless median CPU no more than 10% above), never a past run's figure.
 Keep `--isolated-headless` the same for both builds.

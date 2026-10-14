@@ -18,13 +18,29 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SUMMARIZE = ROOT / 'scripts' / 'web-shell-measure' / 'summarize.py'
 
 
-def summarize(doc):
+def run_summary(kind, docs, *args):
     with tempfile.TemporaryDirectory() as folder:
-        path = Path(folder) / 'key-echo-idle.json'
-        path.write_text(json.dumps(doc))
-        out = subprocess.run(['python3', str(SUMMARIZE), 'echo', str(path)],
-                             check=True, capture_output=True, text=True).stdout
-    return json.loads(out)['trials'][0]
+        paths = []
+        for index, doc in enumerate(docs):
+            path = Path(folder) / f'trial-{index}.json'
+            path.write_text(json.dumps(doc))
+            paths.append(str(path))
+        result = subprocess.run(['python3', str(SUMMARIZE), kind, *args, *paths],
+                                capture_output=True, text=True)
+    return result.returncode, json.loads(result.stdout)
+
+
+def record(samples):
+    return {'samples': samples, 'expected_samples': len(samples), 'complete': True,
+            'boundary': 'page_keydown_to_xterm_write'}
+
+
+def summarize(doc):
+    complete = {**record(doc['samples']), **doc}
+    status, summary = run_summary('echo', [complete])
+    if status != 0:
+        raise AssertionError(summary)
+    return summary['trials'][0]
 
 
 class EchoSummaryClocks(unittest.TestCase):
@@ -42,6 +58,81 @@ class EchoSummaryClocks(unittest.TestCase):
         trial = summarize({'samples': [5.0, 6.0], 'hops': [{'sample': 0}, {'sample': 1}]})
         self.assertNotIn('clock_offset_ms', trial)
         self.assertNotIn('node_t0_p50_ms', trial)
+
+
+class MeasurementValidity(unittest.TestCase):
+    def test_impossible_samples_never_pass_or_contribute_percentiles(self):
+        for samples in ([-5, -4, -3, -2, -1], [1, float('nan')],
+                        [float('inf')], [True], ['1'], [None], []):
+            with self.subTest(samples=samples):
+                status, result = run_summary('echo', [record(samples)])
+                self.assertNotEqual(status, 0)
+                self.assertFalse(result['pass'])
+                self.assertFalse(result['valid'])
+                self.assertTrue(result['trials'][0]['errors'])
+                self.assertIsNone(result['median_trial_p95_ms'])
+
+    def test_unproven_clock_or_incomplete_trial_never_passes(self):
+        cases = [dict(record([1, 2]), boundary='driver_cli_return_to_page_write'),
+                 dict(record([1, 2]), expected_samples=3),
+                 dict(record([1, 2]), complete=False),
+                 dict(record([1, 2]), error='setup failed')]
+        for field in ('boundary', 'expected_samples', 'complete', 'samples'):
+            missing = record([1, 2])
+            del missing[field]
+            cases.append(missing)
+        for doc in cases:
+            with self.subTest(doc=doc):
+                status, result = run_summary('echo', [doc])
+                self.assertNotEqual(status, 0)
+                self.assertFalse(result['valid'])
+                self.assertFalse(result['pass'])
+
+    def test_one_invalid_trial_cannot_be_hidden_by_good_trials(self):
+        docs = [record([1, 2]), record([1, 2]), record([-1, 2])]
+        status, result = run_summary('echo', docs)
+        self.assertNotEqual(status, 0)
+        self.assertFalse(result['pass'])
+        self.assertIsNone(result['median_trial_p95_ms'])
+
+    def test_valid_observations_have_no_implicit_historical_threshold(self):
+        status, result = run_summary('echo', [record([1, 2, 3])])
+        self.assertEqual(status, 0)
+        self.assertTrue(result['valid'])
+        self.assertEqual(result['median_trial_p95_ms'], 3)
+        self.assertIsNone(result['threshold_ms'])
+        self.assertIsNone(result['pass'])
+
+    def test_an_explicit_threshold_judges_only_complete_valid_trials(self):
+        for maximum, expected in ((10, True), (10.1, False)):
+            with self.subTest(maximum=maximum):
+                status, result = run_summary('echo', [record([1, 2, maximum])], '--max-p95-ms', '10')
+                self.assertEqual(status, 0 if expected else 1)
+                self.assertEqual(result['pass'], expected)
+                self.assertTrue(result['valid'])
+
+    def test_no_trials_is_an_invalid_measurement(self):
+        status, result = run_summary('echo', [])
+        self.assertNotEqual(status, 0)
+        self.assertFalse(result['valid'])
+        self.assertFalse(result['pass'])
+
+    def test_invalid_frames_are_not_silently_dropped(self):
+        good = [{'dt': 16}] * 7500
+        for bad in ({}, {'dt': -1}, {'dt': float('nan')}, {'dt': float('inf')}, {'dt': True}):
+            with self.subTest(bad=bad):
+                status, result = run_summary('frames', [{'frames': [*good, bad], 'done': True}])
+                self.assertNotEqual(status, 0)
+                self.assertFalse(result['pass'])
+                self.assertFalse(result['complete'])
+
+    def test_an_unfinished_frame_window_does_not_pass(self):
+        for doc, expected in (({'frames': [{'dt': 16}] * 7500, 'done': True}, True),
+                              ({'frames': [{'dt': 16}] * 7500, 'done': False}, False),
+                              ({'frames': [{'dt': 16}], 'done': True}, False)):
+            status, result = run_summary('frames', [doc])
+            self.assertEqual(result['pass'], expected)
+            self.assertEqual(status, 0 if expected else 1)
 
 
 if __name__ == '__main__':

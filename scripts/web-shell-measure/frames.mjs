@@ -2,9 +2,7 @@
 // Frame budget on the product web shell over a driven window: a rAF loop
 // injected into the page records every frame's dt while the fixture pane
 // prints a line every 8 ms (the S0 driver). Prints {frames, window, done}.
-import { spawn, execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { connectPage } from "./cdp.mjs";
 
 const cdpPort = process.env.MEASURE_CDP_PORT;
@@ -44,11 +42,6 @@ await Promise.all(drivers.map((driver) => new Promise((resolve, reject) => {
   driver.on("error", reject);
   driver.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`driver exited ${code}`)));
 })));
-await new Promise((resolve) => setTimeout(resolve, 2000));
-const { stdout } = await promisify(execFile)(process.execPath, [fileURLToPath(new URL("./echo.mjs", import.meta.url))], {
-  env: { ...process.env, MEASURE_ECHO_REPEATS: "50" }, timeout: 30000, maxBuffer: 1024 * 1024,
-});
-const drivenEcho = JSON.parse(stdout);
 const deadline = Date.now() + windowMs + 10_000;
 while (Date.now() < deadline) {
   if (await page.evaluate("window.__framesDone === true")) break;
@@ -57,4 +50,4 @@ while (Date.now() < deadline) {
 const result = await page.evaluate("({frames: window.__frames, window: window.__framesWindow, done: window.__framesDone})");
 const arrivalsAfter = await page.evaluate("window.__hideProbe.arrivals()");
 page.close();
-console.log(JSON.stringify({ ...result, ws_frames_during_run: arrivalsAfter - arrivalsBefore, driver_exit: 0, driven_panes: drivenPanes, workload: "one line per 8 ms per shown pane; 50 echo samples in the measured pane", driven_echo: drivenEcho }));
+console.log(JSON.stringify({ ...result, ws_frames_during_run: arrivalsAfter - arrivalsBefore, driver_exit: 0, driven_panes: drivenPanes, workload: "one line per 8 ms per shown pane" }));
