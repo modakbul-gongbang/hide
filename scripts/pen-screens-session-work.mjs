@@ -6,7 +6,7 @@
 // Component / Agent tree parts, as the Sessions rows draw it.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
-export function sessionWorkScreens({frame, text, icon, screenButton, screenBadge, themedXref}) {
+export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}) {
   const WIDTH = 372;
   const STEP = 19;
   const label = (id, content, fill = '$--foreground', extra = {}) => text(id, content, {size: '$--text-caption', fill, ...extra});
@@ -69,7 +69,10 @@ export function sessionWorkScreens({frame, text, icon, screenButton, screenBadge
     ...words.map((word, index) => said(`${id}-w${index}`, word.text ?? word, word)),
     ...misses.map((miss, index) => missed(`${id}-m${index}`, miss.text, miss)),
   ]);
-  const toggle = (id, on) => screenBadge(`${id}-words`, '내 말', {variant: on ? 'secondary' : 'outline'});
+  // 내 말 보기: an icon-only pressed button, the speech bubble filled while on.
+  const toggle = (id, on) => frame(`${id}-words`, '내 말 보기', {width: 22, height: 20, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: '$--radius-xs', ...(on ? {fill: '$--secondary'} : {})}, [
+    icon(`${id}-words-g`, 'message-circle', {size: 12, fill: on ? '$--foreground' : '$--muted-foreground'}),
+  ]);
   const children = id => [
     heading(`${id}-children`, '자식', '1'),
     frame(`${id}-child`, 'Delegated child', {width: 'fill_container', height: 24, layout: 'horizontal', gap: 6, alignItems: 'center', stroke: '$--lineage-rail', strokeWidth: {left: 1}, strokeAlignment: 'inner', padding: [0, 0, 0, 8]}, [

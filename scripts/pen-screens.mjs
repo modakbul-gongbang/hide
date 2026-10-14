@@ -5001,7 +5001,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
     {name: 'Screen / Core move', build: () => buildCoreMove(tokens, root)},
     {name: 'Screen / Session record', build: () => {
-      const build = sessionWorkScreens({frame,text,icon,screenButton,screenBadge,themedXref});
+      const build = sessionWorkScreens({frame,text,icon,screenButton,themedXref});
       return screenSheet('screen-session-record','Screen / Session record','Sessions work record (PRD session-record-redesign): every PR the session and its descendants made, assigned work as a checklist with missed work under its task, the operator\'s words behind 내 말, summaries off, and states. Production SessionRecord and NewIssueDialog.',build,build);
     }},
   ];
