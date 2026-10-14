@@ -3130,6 +3130,106 @@ mod tests {
     }
 
     #[test]
+    fn a_codex_session_has_its_developer_receipt_recorded_and_is_analyzed() {
+        // Codex writes the instructions it adds to a turn, Memory's receipt
+        // among them, as `developer` records. The core refused every page
+        // holding one, so each Codex session failed its receipt walk and its
+        // analysis again whenever its file grew.
+        const CODEX: &str = "0199a000-0000-7000-8000-00000000c0de";
+        let fixture = Fixture::new();
+        let auth = fixture
+            .store()
+            .receipt_auth_tag(
+                &fixture.project_id,
+                "codex",
+                CODEX,
+                "UserPromptSubmit",
+                "m1@1",
+            )
+            .unwrap();
+        let receipt = format!(
+            "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"m1@1\" auth=\"{auth}\" />"
+        );
+        let message = |role: &str, kind: &str, text: &str, at: &str| {
+            json!({"timestamp": at, "type": "response_item", "payload": {"type": "message",
+                "role": role, "content": [{"type": kind, "text": text}]}})
+        };
+        let lines = [
+            json!({"timestamp": "2026-10-11T00:00:00Z", "type": "session_meta", "payload": {
+                "id": CODEX, "timestamp": "2026-10-11T00:00:00Z", "cwd": fixture.root,
+                "originator": "codex_cli_rs", "cli_version": "0.160.0", "source": "cli"}}),
+            message(
+                "developer",
+                "input_text",
+                "<permissions instructions>",
+                "2026-10-11T00:00:00Z",
+            ),
+            message(
+                "user",
+                "input_text",
+                "Always run tests with nextest before a merge",
+                "2026-10-11T00:00:01Z",
+            ),
+            message("developer", "input_text", &receipt, "2026-10-11T00:00:01Z"),
+            message(
+                "user",
+                "input_text",
+                "Keep commits small",
+                "2026-10-11T00:00:02Z",
+            ),
+            message(
+                "user",
+                "input_text",
+                "Never force-push main",
+                "2026-10-11T00:00:03Z",
+            ),
+            message(
+                "assistant",
+                "output_text",
+                "Nextest runs before every merge",
+                "2026-10-11T00:00:04Z",
+            ),
+        ]
+        .map(|line| format!("{line}\n"));
+        let folder = fixture.home.join(".codex/sessions/2026/10/11");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join(format!("rollout-2026-10-11T00-00-00-{CODEX}.jsonl")),
+            lines.concat(),
+        )
+        .unwrap();
+        // The extraction cites the operator's first line, where it starts.
+        let rule = lines[..2].iter().map(String::len).sum::<usize>();
+        fixture.answer(&[]);
+        fixture.backend.answers.lock().unwrap()[0]["candidates"][0]["source_offsets"] =
+            json!([rule]);
+
+        let ((reports, _), records) = crate::diagnostics::capture(|| {
+            fixture.pass_for(("codex", CODEX.to_owned()), false, true)
+        });
+        assert_eq!(reports, ["analyzing", "learned one"]);
+        assert!(
+            !memory_kinds(&records)
+                .iter()
+                .any(|kind| kind.ends_with("failed")),
+            "{records:?}"
+        );
+        // The walk records the Claude Code session's receipt and this one's.
+        let store = fixture.store();
+        let seeded = store
+            .item_by_number(&fixture.project_id, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(seeded.provided_session_count, 2);
+        let learned = store
+            .item_by_number(&fixture.project_id, 2)
+            .unwrap()
+            .expect("the analysis wrote a card");
+        assert_eq!(learned.title, "Tests run with nextest");
+        assert_eq!(learned.human_source_count, 1);
+    }
+
+    #[test]
     fn the_daily_cap_defers_analysis_without_a_provider_call() {
         // B5. The provider's weekly usage is not a reason to hold analysis
         // back here (PRD hide-ai-usage-limit D-04, B9): that is the usage
