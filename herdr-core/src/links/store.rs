@@ -517,11 +517,24 @@ impl LinkStore {
     /// One file's read: its facts join the session it names, and the cursor
     /// moves to where the read stopped. `stamp` is recorded only once the
     /// file has been read to its end, so a partly read file is read again.
+    #[cfg(test)]
     pub fn apply_answer(
         &mut self,
         device: &str,
         answer: &ReadAnswer,
         stamp: &str,
+    ) -> Result<(), String> {
+        self.apply_answer_observed(device, answer, stamp, Some(u64::MAX))
+    }
+
+    /// Only a current project observation may certify a native birth, and
+    /// that birth must precede the node read that witnessed it.
+    pub fn apply_answer_observed(
+        &mut self,
+        device: &str,
+        answer: &ReadAnswer,
+        stamp: &str,
+        origin_before: Option<u64>,
     ) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(failed)?;
         let path = answer.path.as_str();
@@ -582,6 +595,7 @@ impl LinkStore {
             )
             .map_err(failed)?;
         }
+        let seen_session = previous.as_ref().and_then(|row| row.session.clone());
         let previous = previous.filter(|_| continuing);
         // A Codex file names its session only in its first record: a later
         // read of it belongs to the session the cursor recorded.
@@ -620,7 +634,11 @@ impl LinkStore {
                         session_id: id.into(),
                     },
                     facts.cwd.as_deref(),
-                    (!continuing).then_some(facts.first_at_unix_ms).flatten(),
+                    facts.first_at_unix_ms.filter(|at| {
+                        !continuing
+                            && seen_session.as_deref() != Some(id)
+                            && origin_before.is_some_and(|before| *at < before)
+                    }),
                 )?;
                 ledger::apply_reader(&tx, device, agent, id, facts)?;
             }

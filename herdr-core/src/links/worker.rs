@@ -247,6 +247,11 @@ impl LinkClient {
         }
     }
 
+    fn native_origin_before(&self, read_started: u64) -> Option<u64> {
+        let mailbox = self.0.0.lock().ok()?;
+        (!mailbox.stop && mailbox.projects.is_none()).then_some(read_started)
+    }
+
     pub fn projects(&self, projects: Arc<Vec<ProjectFacts>>) {
         self.post(|mailbox| mailbox.projects = Some(projects));
     }
@@ -951,6 +956,7 @@ fn read_turn(
                 continue;
             }
         };
+        let read_started = now_ms();
         let read = hide_node_link::readers::links(
             own,
             vec![ReadRequest {
@@ -1006,7 +1012,12 @@ fn read_turn(
             }));
         }
         let more = answer.has_more && answer.error.is_none();
-        let result = store.apply_answer(&paths.local_device, &answer, &candidate.stamp);
+        let result = store.apply_answer_observed(
+            &paths.local_device,
+            &answer,
+            &candidate.stamp,
+            client.native_origin_before(read_started),
+        );
         if !state.wrote(result, "session") {
             if let Some(listing) = state.listing.as_mut() {
                 listing.failed = true;
@@ -1150,6 +1161,7 @@ fn read_device(
             }
         }
     }
+    let read_started = now_ms();
     let answers = match hide_node_link::readers::links(channel, requests, DEVICE_TIMEOUT) {
         Ok(answers) => answers,
         Err(error) => {
@@ -1192,7 +1204,12 @@ fn read_device(
         if let Some(code) = answer.error.as_deref() {
             log_device(device, "session", code);
         }
-        if let Err(code) = store.apply_answer(device, answer, &candidate.stamp) {
+        if let Err(code) = store.apply_answer_observed(
+            device,
+            answer,
+            &candidate.stamp,
+            client.native_origin_before(read_started),
+        ) {
             log_write(&code, "session");
             *write_failure = Some(code);
             if let Some(listing) = entry.listing.as_mut() {
@@ -1575,6 +1592,105 @@ mod tests {
             };
             Ok(LinkAnswer::Parsed(value.unwrap()))
         }
+    }
+
+    struct ConnectionChangesDuringRead {
+        device: Device,
+        client: LinkClient,
+        observations: Vec<Arc<Vec<ProjectFacts>>>,
+    }
+
+    impl NodeLink for ConnectionChangesDuringRead {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            self.device.reader_features()
+        }
+        fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            let reading = matches!(call, Call::LinkRead { .. });
+            let answer = self.device.call(call, timeout)?;
+            if reading {
+                for facts in &self.observations {
+                    self.client.projects(Arc::clone(facts));
+                }
+            }
+            Ok(answer)
+        }
+    }
+
+    #[test]
+    fn a_connection_edit_during_native_intake_cannot_certify_the_old_repository() {
+        intake_connection_changes(false);
+    }
+
+    #[test]
+    fn an_a_to_b_to_a_edit_during_native_intake_cannot_certify_the_old_repository() {
+        intake_connection_changes(true);
+    }
+
+    fn intake_connection_changes(return_to_original: bool) {
+        let directory = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        device_session(home.path());
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let project = |repository: &str, connection_epoch| ProjectFacts {
+            key: hide_project::project_id("mini", Path::new("/mini/app")),
+            device_id: "mini".into(),
+            root: "/mini/app".into(),
+            repository: Some(repository.into()),
+            connection_epoch,
+            ..Default::default()
+        };
+        store
+            .apply_project(&project("acme/original", 0), CREATED - 70_000)
+            .unwrap();
+        let client = LinkClient::full_mailbox_for_test();
+        let mut observations = vec![Arc::new(vec![project("acme/new", 1)])];
+        if return_to_original {
+            observations.push(Arc::new(vec![project("acme/original", 2)]));
+        }
+        let node = ConnectionChangesDuringRead {
+            device: Device {
+                home: home.path().into(),
+                connected: AtomicBool::new(true),
+            },
+            client: client.clone(),
+            observations,
+        };
+        let candidates = links::candidates(home.path(), 0, None).unwrap();
+        assert_eq!(candidates.len(), 1);
+        let mut queue = DeviceQueue {
+            queue: candidates.into(),
+            ..Default::default()
+        };
+        let mut failure = None;
+        read_device(&mut store, "mini", &node, &mut queue, &mut failure, &client);
+        assert_eq!(failure, None);
+        let identity = SessionIdentity {
+            device_id: "mini".into(),
+            agent: "claude".into(),
+            session_id: "s-mini".into(),
+        };
+        assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
+        // Applying the newest connection and replaying cannot promote unknown.
+        let latest = client.0.0.lock().unwrap().projects.take().unwrap();
+        for facts in latest.iter() {
+            store.apply_project(facts, CREATED + 2_000).unwrap();
+        }
+        let answers = links::read(
+            home.path(),
+            &[ReadRequest {
+                agent: hide_session::Agent::Claude,
+                path: home
+                    .path()
+                    .join(".claude/projects/-mini-app/s-mini.jsonl")
+                    .to_string_lossy()
+                    .into(),
+                checkpoint: None,
+            }],
+        );
+        store
+            .apply_answer_observed("mini", &answers[0], "replay", Some(now_ms()))
+            .unwrap();
+        assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
     }
 
     #[derive(Default)]

@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
-import { enterWorkspace, showProjectRow } from "./wire";
+import { countSent, enterWorkspace, sendEvent, showProjectRow } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
@@ -136,6 +136,51 @@ test("@platform repository edits keep old session identity and a fresh preview c
     expect(JSON.parse(fs.readFileSync(github.issue,"utf8")).url).toBe("https://github.com/acme/override/issues/77");
     const effects = fs.readFileSync(github.contexts,"utf8").trim().split("\n").map(line=>JSON.parse(line) as {args:string[];repository:string|null});
     expect(effects.filter(call=>call.args[0]==="issue"&&call.args[1]==="create").map(call=>call.repository)).toEqual(["acme/override"]);
+    expect(originalRepository(daemon.stateDir,original)).toBe("acme/repo");
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("@platform a recovered provider cannot authorize a typed create in another session repository", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    const last = new Map<string, Record<string, unknown>>();
+    countSent(page, last);
+    const github = workFixture(herdr);
+    daemon = await startHided(herdr,"session-issue-recovered-provider",undefined,github.env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await workRepositoryReady(daemon.stateDir);
+    await enterWorkspace(page,"fixture");
+    await page.getByRole("button",{name:"Tools",exact:true}).click();
+    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    const original = seedFirstWork(herdr,Date.now()).session;
+    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
+    await expect(root).toContainText(FIRST_GOAL,{timeout:45_000});
+    await root.hover();
+    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
+    const missed = page.locator('[data-session-record]').locator('[data-missed-work]',{hasText:MISSED});
+    await expect.poll(()=>originalRepository(daemon!.stateDir,original),{timeout:30_000}).toBe("acme/repo");
+    await connectRepository(page,"acme/override");
+    await workRepositoryReady(daemon.stateDir,"acme/override");
+    fs.writeFileSync(github.repositoryUnavailable,"provider unavailable during preview");
+    await missed.locator('[data-missed-issue]').click();
+    const form = page.locator('[data-new-issue]');
+    await expect(form).toContainText("Couldn't read GitHub",{timeout:30_000});
+    fs.rmSync(github.repositoryUnavailable,{force:true});
+    const before = fs.readFileSync(github.calls,"utf8").trim().split("\n").length;
+    // A second client sends the typed create directly, bypassing only the
+    // shell's Retry button; the core must enforce immutable session authority.
+    await sendEvent(page,daemon,"issue_create",{
+      workspace_id: await form.getAttribute("data-new-issue"),
+      title: "Recovered provider must keep the original target", body: "No issue in the override",
+      missed: last.get("session_issue_draft"),
+    });
+    await expect.poll(()=>fs.readFileSync(github.calls,"utf8").trim().split("\n").slice(before)
+      .some(line=>{const args=JSON.parse(line) as string[];return args[0]==="repo"&&args[1]==="view";})).toBe(true);
+    await expect(form).toContainText("issue_repository_changed",{timeout:30_000});
+    expect(fs.existsSync(github.issue)).toBe(false);
+    const calls=fs.readFileSync(github.calls,"utf8").trim().split("\n").map(line=>JSON.parse(line) as string[]);
+    expect(calls.filter(args=>args[0]==="issue"&&args[1]==="create")).toHaveLength(0);
     expect(originalRepository(daemon.stateDir,original)).toBe("acme/repo");
   } finally { daemon?.stop(); herdr.stop(); }
 });

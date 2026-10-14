@@ -413,6 +413,9 @@ fn read_draft(
         .repository
         .as_deref()
         .ok_or("issue_draft_repository_unknown")?;
+    // Provider failure may retain an editable draft, but never grants the
+    // current checkout authority over this session's immutable original.
+    place.repository = Some(original.into());
     let gh_place = place.target.as_ref().map_err(Clone::clone)?;
     let repository = crate::github::issue_repository(node.as_ref(), gh_place);
     if let Ok(repository) = &repository {

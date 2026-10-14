@@ -158,6 +158,15 @@ fn recent_requests_before_historical_native_ingestion_cannot_prove_original_repo
 
 #[test]
 fn a_pruned_native_session_resuming_from_its_cursor_does_not_inherit_todays_repository() {
+    pruned_native_session_resumes(false);
+}
+
+#[test]
+fn a_pruned_native_session_replaced_under_the_same_identity_keeps_unknown_origin() {
+    pruned_native_session_resumes(true);
+}
+
+fn pruned_native_session_resumes(replaced: bool) {
     let directory = tempfile::tempdir().unwrap();
     let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
     let native_dir = directory.path().join(".claude/projects/repo");
@@ -209,18 +218,58 @@ fn a_pruned_native_session_resuming_from_its_cursor_does_not_inherit_todays_repo
     store
         .apply_project(&origin_project("device-a", "acme/today", 1), now)
         .unwrap();
-    use std::io::Write;
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(&file)
-        .unwrap()
-        .write_all(line(now + 1_000).as_bytes())
-        .unwrap();
+    if replaced {
+        let replacement = native_dir.join("replacement.jsonl");
+        std::fs::write(&replacement, line(now + 1_000)).unwrap();
+        std::fs::rename(replacement, &file).unwrap();
+    } else {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .write_all(line(now + 1_000).as_bytes())
+            .unwrap();
+    }
     let resumed = read(first.checkpoint);
-    assert!(!resumed.rescanned);
+    assert_eq!(resumed.rescanned, replaced);
     assert!(resumed.facts.first_at_unix_ms.is_some_and(|at| at > now));
     store.apply_answer("device-a", &resumed, "resumed").unwrap();
     assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
+}
+
+#[test]
+fn native_birth_at_or_after_read_start_cannot_certify_a_repository() {
+    for first_at in [2_000, 2_001] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        store
+            .apply_project(&origin_project("device-a", "acme/original", 0), 1_000)
+            .unwrap();
+        let answer = hide_session::links::ReadAnswer {
+            agent: hide_session::Agent::Codex,
+            path: "/fixture/session-a.jsonl".into(),
+            checkpoint: None,
+            has_more: false,
+            rescanned: true,
+            error: None,
+            facts: hide_session::links::LinkFacts {
+                session_id: Some("session-a".into()),
+                cwd: Some("/repo".into()),
+                first_at_unix_ms: Some(first_at),
+                last_at_unix_ms: Some(first_at),
+                ..Default::default()
+            },
+        };
+        store
+            .apply_answer_observed("device-a", &answer, "read", Some(2_000))
+            .unwrap();
+        assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+        store
+            .apply_answer_observed("device-a", &answer, "replay", Some(3_000))
+            .unwrap();
+        assert_eq!(store.ledger_record(&session()).unwrap().repository, None);
+    }
 }
 
 #[test]
