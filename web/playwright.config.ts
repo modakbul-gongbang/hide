@@ -42,8 +42,8 @@ export default defineConfig({
     // when WebGL is missing. A spec that does need WebGL sets its own
     // `launchOptions`.
     launchOptions: { args: ["--disable-webgl"] },
-    // Wide enough for the Workspace body's three columns side by side (PRD
-    // three-column-panel D-07); a test about a narrower body sets its own.
+    // Wide enough for a pinned lane to dock beside Agent Views (PRD
+    // right-lane B19); a test about a narrower body sets its own.
     viewport: { width: 1920, height: 1080 },
   },
   webServer: undefined,
