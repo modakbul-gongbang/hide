@@ -302,6 +302,8 @@ type UiStore = {
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
   sessionWorkTarget: import("./snapshot").WorkSession | null;
+  /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
+  sessionRecordWords: boolean;
   /**
    * The task and removal this page started, so their later answers (an agent
    * start after the creation dialog closed, a removal that finished after its
@@ -380,6 +382,7 @@ type UiStore = {
   setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setSessionWorkTarget: (target: import("./snapshot").WorkSession | null) => void;
+  setSessionRecordWords: (on: boolean) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
   setOpening: (opening: Opening | null) => void;
@@ -428,6 +431,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   notice: null,
   workspaceDialog: null,
   sessionWorkTarget: null,
+  sessionRecordWords: false,
   watchedTask: null,
   focusWhenListed: null,
   opening: null,
@@ -509,6 +513,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setNotice: (notice) => set({ notice }),
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
   setSessionWorkTarget: (sessionWorkTarget) => set({ sessionWorkTarget }),
+  setSessionRecordWords: (sessionRecordWords) => set({ sessionRecordWords }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),
   setOpening: (opening) => set({ opening }),
