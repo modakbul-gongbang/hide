@@ -1,6 +1,7 @@
 import { ArrowRightIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../AgentMark";
+import { agentProductName } from "../agentAdapters";
 import { markTone } from "../agentRow";
 import { deviceConnected, localDeviceId } from "../devices";
 import { useInterfaceTranslation } from "../i18n/client";
@@ -326,7 +327,7 @@ function TreeItem({
       data-tree-pane={child.pane_id}
       data-agent-child={child.pane_id}
       data-depth={line.depth}
-      aria-label={[child.identity_label, child.agent_kind, reason ?? statusText(t, child.status_code), ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
+      aria-label={[child.identity_label, agentProductName(child.agent_kind), reason ?? statusText(t, child.status_code), ask && !unavailable ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
       className={cn("items-stretch gap-none py-none", ask && !unavailable && "ring-1 ring-inset ring-foreground")}
     >
       <TreeRails place={place} />
@@ -334,8 +335,7 @@ function TreeItem({
       <span className="flex min-w-0 flex-1 flex-col gap-xxs py-xs pl-xs">
         <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
           <StatusMark symbol={unavailable ? "⊘" : child.symbol} className={unavailable ? "text-muted-foreground" : markTone(child)} />
-          <AgentMark kind={child.agent_kind} />
-          <span className="min-w-0 flex-1 truncate text-foreground" title={child.identity_label}>
+          <span className="min-w-0 flex-1 truncate text-foreground" title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}>
             {child.identity_label}
           </span>
           <AgentPrHover agent={child} staleness={staleness} />

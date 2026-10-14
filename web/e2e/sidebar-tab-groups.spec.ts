@@ -81,6 +81,9 @@ test("2-1-2 tab segments share one root column right of the kind glyph, with gui
     expect(marks).toHaveLength(5);
     expect(new Set(marks.map((mark) => mark.x)).size).toBe(1);
     expect(marks[0]!.x).toBeGreaterThanOrEqual(kind.x + kind.width);
+    // The title follows the status mark alone, one mark and one gap after it (agent-mark-quiet B1): no provider logo stands between them.
+    const titles = await Promise.all((await page.locator("[data-project-list] li[data-pane][data-depth='0'] [data-agent-title]").all()).map(position));
+    expect(titles.map((title) => title.x - marks[0]!.x)).toEqual(titles.map(() => 16));
 
     // Each segment's guide is 1px, centered under the kind glyph, and the gap between segments is 8px.
     const center = kind.x + kind.width / 2;

@@ -354,10 +354,9 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
 // on a parent whose chevron shows at rest, and `unfolded` or null leaves the
 // slot empty at rest. A list with nothing to fold (an Overview card) passes
 // `none`, and the row has no fold slot at all.
-function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
+function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, selectedFill = '$--color-selected', inset = 4, width = 268}) {
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: selectedFill} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
-    'sar-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
     // 12/400 in every state: attention and selection brighten the title, never thicken it.
     'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'sar-elapsed': {content: age},
@@ -387,10 +386,9 @@ function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
   return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
-    'ath-row-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
     'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'ath-row-age': {content: age},
     'ath-row-rail': {enabled: depth > 1},
@@ -411,10 +409,9 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     ...(statusAxis ? {
       'ath-row-lane': {layoutPosition: 'absolute', x: depth === 0 ? width - 20 : inset + 18 * (depth - 1), y: 0, width: 12, enabled: Boolean(chevron)},
       'ath-row-body': {padding: [4, 24, 4, 0]},
-      'ath-row-provider': {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
     } : {}),
-    // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark or provider.
-    ...(more ? {'ath-row-mark': {enabled: false}, 'ath-row-provider': {enabled: false}} : {}),
+    // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark.
+    ...(more ? {'ath-row-mark': {enabled: false}} : {}),
   };
   return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--secondary'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
 }
@@ -700,7 +697,7 @@ function issueBoardParts(tokens) {
     const [symbol, color] = AGENT_MARK[agent.mark];
     const lineWidth = width - 44;
     return screenSidebarAgentRow(id, {
-      title: fitText(agent.title, width - 92, 12), symbol, color, provider: agent.provider ?? 'claude', age: agent.age,
+      title: fitText(agent.title, width - 92, 12), symbol, color, age: agent.age,
       line: agent.line ? fitText(agent.line, lineWidth, 11) : null, lineFill: agent.tone === 'request' ? '$--warning' : '$--foreground',
       bright: ATTENTION.has(agent.mark), inset: 0, width, fold: 'none',
     });
@@ -924,7 +921,7 @@ function issueBoardParts(tokens) {
           screenIconButton(`${id}-w-ws`, 'square-terminal', {size: small}),
         ]),
         ...panel.work.agents.map((agent, index) => screenSidebarAgentRow(`${id}-w-a${index}`, {
-          title: fitText(agent.title, room - 100, 12), symbol: AGENT_MARK[agent.mark][0], color: AGENT_MARK[agent.mark][1], provider: agent.provider ?? 'claude', age: agent.age,
+          title: fitText(agent.title, room - 100, 12), symbol: AGENT_MARK[agent.mark][0], color: AGENT_MARK[agent.mark][1], age: agent.age,
           line: agent.line ?? null, lineFill: agent.tone === 'request' ? '$--warning' : '$--foreground', bright: ATTENTION.has(agent.mark), inset: agent.depth ? 16 : 0, width: room, fold: 'none',
         })),
         ...(panel.work.pr ? [frame(`${id}-w-pr`, 'Pull request', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: room}, [
@@ -1134,7 +1131,7 @@ function graphParts(tokens) {
     ]);
   }
 
-  // A row (B6, B17, B22): the mark, provider, title and age on one line, a
+  // A row (B6, B17, B22): the status mark, title and age on one line, a
   // step in and a corner arrow when it is a delegation inside this checkout,
   // the tucked badge before the age, and only while the agent asks the
   // question as a second line in warning.
@@ -1145,13 +1142,12 @@ function graphParts(tokens) {
     const tucked = value.tucked ? value.tucked.map(({symbol: glyph, color: tone, count}, index) => frame(`${id}-tk${index}`, 'Tucked mark', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
       screenStatusMark(tokens, `${id}-tk${index}-m`, glyph, tone), caption(`${id}-tk${index}-n`, String(count), '$--foreground', true),
     ])) : [];
-    const room = g.boxWidth - 2 * sm - indent - mark - 14 - 4 * xs - 36 - (value.depth ? iconSmall + xs : 0) - (tucked.length ? 44 : 0);
+    const room = g.boxWidth - 2 * sm - indent - mark - 3 * xs - 36 - (value.depth ? iconSmall + xs : 0) - (tucked.length ? 44 : 0);
     const first = frame(`${id}-l1`, 'Line', {
       layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: g.boxWidth, height: g.rowHeight, padding: [0, '$--spacing-sm', 0, sm + indent],
     }, [
       ...(value.depth ? [icon(`${id}-in`, 'corner-down-right', {size: iconSmall, fill: '$--muted-foreground'})] : []),
       screenStatusMark(tokens, `${id}-m`, symbol, color),
-      frame(`${id}-p`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${value.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
       text(`${id}-t`, fitText(value.title, room, 13), {size: '$--text-body', weight: asking ? '600' : '400'}),
       spacer(`${id}-sp`),
       ...(tucked.length ? [frame(`${id}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: g.rowLine, cornerRadius: '$--radius-sm', fill: '$--secondary'}, tucked)] : []),
@@ -1159,8 +1155,8 @@ function graphParts(tokens) {
     ]);
     return frame(id, value.title, {x: 0, y: top, layout: 'vertical', gap: 0, width: g.boxWidth, height: rowHeightOf(value)}, [
       first,
-      ...(asking ? [frame(`${id}-l2`, 'Question', {layout: 'horizontal', alignItems: 'center', width: g.boxWidth, height: g.rowLine, padding: [0, '$--spacing-sm', 0, sm + indent + mark]}, [
-        caption(`${id}-q`, fitText(value.line, g.boxWidth - 2 * sm - indent - mark, 11), '$--warning'),
+      ...(asking ? [frame(`${id}-l2`, 'Question', {layout: 'horizontal', alignItems: 'center', width: g.boxWidth, height: g.rowLine, padding: [0, '$--spacing-sm', 0, sm + indent + mark + xs]}, [
+        caption(`${id}-q`, fitText(value.line, g.boxWidth - 2 * sm - indent - mark - xs, 11), '$--warning'),
       ])] : []),
     ]);
   }
@@ -1248,7 +1244,7 @@ const local = number => ({source: 'local', label: `L-${number}`});
 const BUG = ['bug', '$--destructive'];
 const ENHANCEMENT = ['enhancement', '$--agent-working'];
 const ISSUE_192 = {task: gh(192), labels: [BUG], title: 'hided has no SIGTERM handler: AI children die with the stdin pipe', branch: '192-hided-sigterm-handler', ahead: 3, files: 4, needsYou: true, agents: [
-  {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
+  {mark: 'ask', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
   {mark: 'work', title: '종료 경로 테스트 작성', age: '2m'},
 ]};
 const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladder, row heights and width', branch: '186-sidebar-typography', pr: {number: 208, state: 'pending', checks: 'passing', review: 'review_required'}, needsYou: true, agents: [
@@ -1429,9 +1425,9 @@ function prParts(tokens) {
 // box per checkout and a line per delegation), the box states and the filter
 // that matches nothing, then the Issues tab's board and Dependencies mode,
 // #218's Tasks board under its new name.
-const SIGTERM_ASK = {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
+const SIGTERM_ASK = {mark: 'ask', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
 const SIGTERM_REVIEW = {mark: 'work', title: '리뷰: 종료 경로 회귀', age: '2m'};
-const TAB_GROUPS_IMPL = {mark: 'seen', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'};
+const TAB_GROUPS_IMPL = {mark: 'seen', title: 'Agent tab groups 구현', age: '8m'};
 const CODEX_REST = {mark: 'seen', title: '체크아웃 기능 구현 및 정리', age: '2h'};
 
 function buildProjectOverview(tokens) {
@@ -1506,7 +1502,7 @@ function buildProjectOverview(tokens) {
           {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'work', title: 'Overview 진입 흐름', age: '1m'},
         ]})),
         stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, state: 'failed', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
-          {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
+          {mark: 'work', title: '리뷰 반영', age: '3m'},
         ]})),
         stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, state: 'merged'}, rows: [CODEX_REST]})),
       ]),
@@ -1542,7 +1538,7 @@ function buildProjectOverview(tokens) {
         stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
           card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, state: 'failed', checks: 'pending', review: 'changes_requested'}, agents: [
-            {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
+            {mark: 'work', title: '리뷰 반영', age: '3m'},
           ]}),
         ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
         doneColumn(`ov-done-${suffix}`, 12, [
@@ -1594,7 +1590,7 @@ function buildProjectOverview(tokens) {
       task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'example · 9월 27일', updated: '9월 27일',
       work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
         {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
-        {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
+        {mark: 'ask', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
       ], pr: {number: 221, state: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
       body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
       comments: [['example · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
@@ -3310,21 +3306,21 @@ function buildSettings(tokens, root) {
 
 // The ⌘K palette (PRD cmdk-navigation) and the ⌘P file palette on the same
 // shell: the sidebar's Search row that opens ⌘K, the query row with its Esc
-// keycap, two-line rows with the agent's own mark and ↵ on the selected row,
+// keycap, two-line rows with the agent's status mark and ↵ on the selected row,
 // and for ⌘K a detail beside the list. Rows are authored here on local tokens, as the
 // Overview board authors its agent rows, since no library master draws a
-// palette row; the keycaps are System / Kbd refs. The marks are the provider
-// artwork the web shell bundles (web/src/assets), not a stand-in.
+// palette row; the keycaps are System / Kbd refs. An agent's row leads with its
+// status mark and draws no provider logo (PRD agent-mark-quiet D-09).
 function buildPalette(tokens) {
   const W = num(tokens, '--size-search-sheet-w');
   const SIDEBAR = num(tokens, '--size-sidebar-ideal');
   const MARK = num(tokens, '--size-agent-badge-compact');
   const ROW = W - 2 * num(tokens, '--spacing-xxs');
-  const MARKS = {claude: '../web/src/assets/agent-claude.png', codex: '../web/src/assets/agent-codex.png'};
   function build(suffix) {
     const id = (name) => `pal-${name}-${suffix}`;
     const kbd = (key, label) => themedXref(id(key), 'kbd-m', label, {}, {'kbd-t': {content: label}});
-    const mark = (key, kind) => frame(id(key), 'Agent mark', {width: MARK, height: MARK, cornerRadius: '$--radius-xs', fill: {type: 'image', url: MARKS[kind], mode: 'fill'}}, []);
+    // An agent's result leads with its status mark in the icon slot, and no provider logo (PRD agent-mark-quiet D-09).
+    const mark = (key, symbol, fill) => frame(id(key), 'Status mark slot', {width: MARK, height: MARK, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [screenStatusMark(tokens, `${id(key)}-s`, symbol, fill)]);
     const glyph = (key, name) => frame(id(key), 'Icon', {width: MARK, height: MARK, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [
       icon(`${id(key)}-i`, name, {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
     ]);
@@ -3373,7 +3369,6 @@ function buildPalette(tokens) {
       ]),
       frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
         screenStatusMark(tokens, id('side-a0s'), '?', '$--warning'),
-        mark('side-a0m', 'claude'),
         text(id('side-a0t'), 'mailbox 원격 에이전트 구현', {weight: '500'}),
       ]),
     ]);
@@ -3430,15 +3425,15 @@ function buildPalette(tokens) {
       row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide', selected: true}),
       row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'hide'}),
       row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters'}),
-      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done'}),
-      row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'hide › main · Working'}),
+      row('q3', {lead: mark('q3m', '✓', '$--success'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done'}),
+      row('q4', {lead: mark('q4m', '●', '$--agent-working'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'hide › main · Working'}),
     ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'hide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
 
     const typed = wide('typed', {query: 'sand', list: [
       heading('g-issues', 'Issues'),
       row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide'}),
       heading('g-agents', 'Agents'),
-      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done', selected: true}),
+      row('t1', {lead: mark('t1m', '✓', '$--success'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done', selected: true}),
       heading('g-checkouts', 'Checkouts'),
       row('t2', {lead: glyph('t2i', 'git-branch'), title: 'hide / fix/mailbox-sandbox-letters', detail: '~/projects/hide.worktrees/sandbox', mono: true}),
       frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
@@ -4100,13 +4095,13 @@ function buildProjectsSidebar(tokens) {
   const AGENTS = {
     deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'hide › main', bright: true},
     blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
-    research: {title: '두 프로젝트 비교 조사', status: 'seen', provider: 'codex', age: '14m', place: 'Home'},
+    research: {title: '두 프로젝트 비교 조사', status: 'seen', age: '14m', place: 'Home'},
     ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'hide › ci-shards', bright: true},
     readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'hide › main'},
-    principle: {title: '원칙 문서 정리', status: 'working', provider: 'codex', age: '3m', place: 'oh-my-principle › main'},
+    principle: {title: '원칙 문서 정리', status: 'working', age: '3m', place: 'oh-my-principle › main'},
     sasu: {title: '판정 로그 확인', status: 'seen', age: '1h', place: 'sasu › main'},
-    batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
-    build: {title: '릴리스 빌드 확인', status: 'working', provider: 'codex', age: '1m', place: 'hide › main'},
+    batch: {title: '배치 감시', status: 'asking', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
+    build: {title: '릴리스 빌드 확인', status: 'working', age: '1m', place: 'hide › main'},
   };
   // A raised group: its heading with the whole count, its most recent rows up to
   // the cap, and a More fold for the rest.
@@ -4153,9 +4148,9 @@ function buildProjectsSidebar(tokens) {
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
           segment(`psb-seg-main-${s}`, {glyph: true, rows: [
             tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
-            tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
-            tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+            tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
+            tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', age: '40m', depth: 2, rail: true, last: true}),
             tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
             tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
             tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
@@ -4183,9 +4178,9 @@ function buildProjectsSidebar(tokens) {
     const remoteNeeds = [
       ['batch', {place: 'Home'}],
       ['batch', {title: '릴리스 노트 검토', age: '7m', line: '이 문구로 확정할까요?', place: 'hide › main'}],
-      ['batch', {title: '프런트모스트 창 고정', provider: 'claude', age: '12m', line: '접근성 권한을 요청할까요?', place: 'hide › quick/246-frontmost'}],
+      ['batch', {title: '프런트모스트 창 고정', age: '12m', line: '접근성 권한을 요청할까요?', place: 'hide › quick/246-frontmost'}],
       ['batch', {title: '판정 로그 재실행', age: '20m', line: '실패한 3건을 다시 돌릴까요?', place: 'sasu › main'}],
-      ['batch', {title: '디스크 정리', provider: 'claude', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
+      ['batch', {title: '디스크 정리', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
     ];
     const remote = deviceSidebar('remote', s, {
       height: WIN_H, needs: {p: `psb-rm-${s}`, rows: remoteNeeds, total: 12},
@@ -4437,11 +4432,11 @@ function buildProjectsSidebar(tokens) {
       checkoutRow(`psb-axis-checkout-${s}`, {name: 'main', kind: 'primary', age: '8m', marks: {working: 4, idle: 1}, expanded: true}),
       segment(`psb-axis-a-${s}`, {glyph: true, name: '아주 긴 한국어 탭 이름과 작업…', rows: [
         tree(`psb-axis-one-${s}`, {title: '탭 경계·여백 정리', status: 'working', age: '1m', selected: true}),
-        tree(`psb-axis-two-${s}`, {title: '왼쪽 pane 검토', status: 'working', provider: 'codex', age: '8m'}),
+        tree(`psb-axis-two-${s}`, {title: '왼쪽 pane 검토', status: 'working', age: '8m'}),
       ]}),
-      segment(`psb-axis-single-${s}`, {rows: [tree(`psb-axis-three-${s}`, {title: '세션 기록 동기화', status: 'working', provider: 'codex', age: '2s'})]}),
+      segment(`psb-axis-single-${s}`, {rows: [tree(`psb-axis-three-${s}`, {title: '세션 기록 동기화', status: 'working', age: '2s'})]}),
       segment(`psb-axis-b-${s}`, {glyph: true, rows: [
-        tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', provider: 'codex', age: '6m'}),
+        tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', age: '6m'}),
         tree(`psb-axis-five-${s}`, {title: '탐색 개선', status: 'seen', age: '11m'}),
       ]}),
     ]));
@@ -4556,20 +4551,21 @@ function buildMobile(tokens, root) {
     return frame(id, 'New agent', {width: 32, height: 32, cornerRadius: PILL, fill: '$--secondary', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-i`, 'plus', {size: 18, fill: FG})]);
   }
   const INSET = 16 + XS + 14 + XS;
+  // A list row has no provider logo (PRD agent-mark-quiet B12): its lines start under the title, after the status mark alone. The detail head keeps the logo and INSET.
+  const LIST_INSET = 16 + XS;
   function sectionLabel(id, label, count) {
     return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, height: 32, padding: [SP.md, SP.lg, 2, SP.lg]}, [
       text(`${id}-t`, label, {size: '$--text-body', weight: '500', fill: MUTED}),
       text(`${id}-c`, String(count), {size: '$--text-body', fill: MUTED, mono: true}),
     ]);
   }
-  function agentRow(id, {title, status, kind = 'claude', project, branch, machine = null, age, request = null, news = null, dim = false}) {
+  function agentRow(id, {title, status, project, branch, machine = null, age, request = null, news = null, dim = false}) {
     const attention = status === 'question' || status === 'approval' || status === 'error';
-    const titleW = CONTENT_W - 16 - XS - 14 - SM - 36 - SM - 16;
+    const titleW = CONTENT_W - 16 - XS - SM - 36 - SM - 16;
     const line2 = request ?? news ?? null;
     return frame(id, title, {layout: 'vertical', gap: 3, width: PHONE_W, height: line2 ? 82 : 64, padding: [SP.sm, SP.lg, SP.sm, SP.lg]}, [
       frame(`${id}-l1`, 'Line 1', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', width: CONTENT_W, height: 22}, [
         mark(`${id}-m`, status),
-        provider(`${id}-p`, kind),
         frame(`${id}-tw`, 'Title', {width: titleW, height: 22, alignItems: 'center', clip: true, padding: [0, 0, 0, SP.xs]}, [
           text(`${id}-t`, fit(title, titleW, 15), {size: 15, weight: attention ? '600' : dim ? '400' : '500', fill: dim ? MUTED : attention ? FG : SUBTLE}),
         ]),
@@ -4577,11 +4573,11 @@ function buildMobile(tokens, root) {
         text(`${id}-a`, age, {size: '$--text-body', fill: MUTED, mono: true}),
         icon(`${id}-c`, 'chevron-right', {size: 16, fill: MUTED}),
       ]),
-      frame(`${id}-l2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET]}, [
+      frame(`${id}-l2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, LIST_INSET]}, [
         text(`${id}-pb`, fit(`${project} · ${branch}`, CONTENT_W - 120, 12), {size: '$--text-body', fill: MUTED}),
         ...(machine ? [chip(`${id}-mc`, machine, {glyph: 'server'})] : []),
       ]),
-      ...(line2 ? [frame(`${id}-l3`, 'Line 3', {layout: 'horizontal', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET], alignItems: 'center'}, [
+      ...(line2 ? [frame(`${id}-l3`, 'Line 3', {layout: 'horizontal', width: CONTENT_W, height: 18, padding: [0, 0, 0, LIST_INSET], alignItems: 'center'}, [
         text(`${id}-rq`, fit(line2, CONTENT_W - 40, 13), {size: '$--text-subhead', fill: request ? WARN : FG}),
       ])] : []),
       spacer(`${id}-sp`),

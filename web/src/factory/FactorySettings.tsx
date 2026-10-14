@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { BanIcon, ChevronRightIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon, SquareTerminalIcon, UserIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { agentAdapter } from "../agentAdapters";
+import { agentAdapter, agentProductName } from "../agentAdapters";
 import { PROVIDER_KINDS } from "../agentPicker";
 import { AgentPicker } from "../components/agent-picker";
 import { formatElapsed } from "../components/elapsed";
@@ -329,8 +329,8 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
             <div className="grid grid-cols-[auto_1fr] items-center gap-x-md gap-y-xs">
               {argAgents(config).map((agent) => (
                 <Fragment key={agent}>
-                  <span className="text-caption text-subtle-foreground">{agentAdapter(agent)?.label ?? agent}</span>
-                  <TextField reset={refusals} value={(config.worker_args[agent] ?? []).join(" ")} mono wide placeholder={t("factory.settings.adv.workerArgsFor", { agent: agentAdapter(agent)?.label ?? agent })} onCommit={(value) => set("worker_args", `${agent}=${value}`)} data={`worker_args:${agent}`} />
+                  <span className="text-caption text-subtle-foreground">{agentProductName(agent)}</span>
+                  <TextField reset={refusals} value={(config.worker_args[agent] ?? []).join(" ")} mono wide placeholder={t("factory.settings.adv.workerArgsFor", { agent: agentProductName(agent) })} onCommit={(value) => set("worker_args", `${agent}=${value}`)} data={`worker_args:${agent}`} />
                 </Fragment>
               ))}
             </div>

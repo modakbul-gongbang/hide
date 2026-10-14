@@ -2,7 +2,9 @@ import { CircleDotIcon, FactoryIcon, FolderIcon, GlobeIcon, GitBranchIcon, Loade
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
+import { markTone } from "./agentRow";
+import { StatusMark } from "./components/status-mark";
 import { PrMark } from "./components/pr-mark";
 import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
@@ -268,7 +270,14 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 }
 
 function EntryIcon({ entry }: { entry: SearchEntry }) {
-  if (entry.kind === "agent" || entry.kind === "session") return <AgentMark kind={entry.agentKind} />;
+  // An agent draws its status mark in the slot, a conversation an empty slot of the same width, so every title starts on one column (PRD agent-mark-quiet D-09).
+  if (entry.kind === "agent" || entry.kind === "session") {
+    return (
+      <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
+        {entry.agent ? <StatusMark symbol={entry.agent.symbol} className={markTone(entry.agent)} /> : null}
+      </span>
+    );
+  }
   if (entry.prState) {
     return (
       <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
@@ -296,12 +305,13 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
   const depth = entry.depth ?? 0;
   return (
     <CommandItem asChild value={entry.id} onSelect={onSelect}>
-      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
+      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} title={entry.agentKind ? agentProductName(entry.agentKind) : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
         <EntryIcon entry={entry} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-xs">
             {entry.tag === "parent" ? <span className="shrink-0 text-caption text-muted-foreground">{t("search.parent")}</span> : null}
             <span className="min-w-0 truncate font-medium">{entry.title}</span>
+            {entry.agentKind ? <span className="sr-only">, {agentProductName(entry.agentKind)}</span> : null}
             {entry.chip ? <DeviceChip label={entry.chip.label} local={entry.chip.local} className="max-w-2/5" /> : null}
           </span>
           {entry.subtitle ? <span data-palette-detail="true" className="truncate text-caption text-muted-foreground">{entry.subtitle}</span> : null}
@@ -430,7 +440,7 @@ function Creators({ entry, links, summaries, onRecord }: { entry: SearchEntry; l
     const work = project.work?.find((work) => workKey(work.session) === workKey(creator.source));
     return [{ session: creator.source, title: work ? recordTitle(work, summaries) : creator.source.session_id }];
   }));
-  return creators.length ? <div className="mt-md" data-output-creators="true"><p className="text-caption text-muted-foreground">{t("sessionWork.creator")}</p>{creators.map((creator) => <Button key={workKey(creator.session)} variant="link" size="sm" className="max-w-full" onClick={() => onRecord(creator.session)}><AgentMark kind={creator.session.agent} /><span className="truncate">{creator.title}</span></Button>)}</div> : null;
+  return creators.length ? <div className="mt-md" data-output-creators="true"><p className="text-caption text-muted-foreground">{t("sessionWork.creator")}</p>{creators.map((creator) => <Button key={workKey(creator.session)} variant="link" size="sm" className="max-w-full" title={agentProductName(creator.session.agent)} onClick={() => onRecord(creator.session)}><span className="truncate">{creator.title}</span><span className="sr-only">, {agentProductName(creator.session.agent)}</span></Button>)}</div> : null;
 }
 
 function ActionLine({ text, key_ }: { text: ReactNode; key_: boolean }) {

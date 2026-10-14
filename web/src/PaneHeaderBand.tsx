@@ -2,7 +2,7 @@ import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, List
 import type { TFunction } from "i18next";
 import { useMemo } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { askWhat, VerbText } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { reviewWord, sessionPulls, type SessionPull } from "./prMark";
@@ -140,6 +140,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
   const minutes = band.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - band.since_unix_ms) / 60_000));
   // The path from the root already ends with the agent named; the wait is its verb's (B5).
   const who = raised ? [
+    agentProductName(raised.agent_kind),
     raised.path.join(" › "),
     [raised.checkout, minutes === null ? null : t("agentSessions.waited", { minutes, verb: t(`agentSessions.verb.${verb}`) })].filter(Boolean).join(" · "),
   ].filter(Boolean).join("\n") : null;
@@ -157,7 +158,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
     <VerbText verb={verb} />
     <Hint label={navigation ?? what}><span className={cn("min-w-0 flex-[3] truncate", failed && "text-destructive")} role={failed ? "alert" : navigation ? "status" : undefined} data-pane-band-navigation={navigation ? failed ? "failed" : "pending" : undefined}>{navigation ?? what}</span></Hint>
     {unreachable && !navigation ? <span className="min-w-0 max-w-1/4 shrink truncate text-muted-foreground" title={unreachable} data-pane-band-unreachable="true">{unreachable}</span> : null}
-    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 flex-1 items-center gap-xxs text-muted-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
+    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 flex-1 items-center gap-xxs text-muted-foreground" data-pane-band-who={raised.pane_id}><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
     {raised?.unreceived_by && minutes !== null ? <span className="min-w-0 max-w-1/4 flex-1 truncate text-muted-foreground" data-pane-band-unreceived="true">{t("agentSessions.unreceived", { name: raised.unreceived_by, minutes })}</span> : null}
     {raised?.unreceived_by ? null : <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro text-muted-foreground" />}
     {more}
@@ -239,8 +240,8 @@ function ChildSummary({ child, connection }: { child: AgentRow; connection: stri
   const { t } = useInterfaceTranslation();
   const line = child.state.line;
   const summary = connection ?? (line ? lineText(t, child, line) : child.identity_label);
-  return <Hint label={connection ?? [child.identity_label, summary].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
-    <span className="flex min-w-0 flex-1 items-center gap-xxs" data-pane-child-summary={child.pane_id}>{connection ? null : <AgentMark kind={child.agent_kind} />}<span className="min-w-0 truncate">{summary}</span></span>
+  return <Hint label={connection ?? [child.identity_label, agentProductName(child.agent_kind), summary].filter((text, index, all) => all.indexOf(text) === index).join(" · ")}>
+    <span className="flex min-w-0 flex-1 items-center gap-xxs" data-pane-child-summary={child.pane_id}><span className="min-w-0 truncate">{summary}</span></span>
   </Hint>;
 }
 
