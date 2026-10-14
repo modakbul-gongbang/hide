@@ -375,6 +375,8 @@ A refused, failed or unknown operation drops the waiting operations behind it, b
 A tab creation, split, zoom, resize or pane close Hide asked for reaches the screen before Herdr confirms it (PRD instant-pane-topology D-07): Herdr's answer takes tens of milliseconds, but its layout event arrives hundreds of milliseconds later.
 The prediction is drawn onto the session payload after every confirmation has read Herdr's own layout (`runtime/drawn_ahead.rs`), so the operation records, the close pipeline and the focus readback judge Herdr's layout and never their own drawing.
 A zoom, a resize and a close are drawn at the request; a split and a created tab are drawn at the answer, because only the answer names the new pane, and a created tab waits for its pane's layout as a one-pane tab of the checkout's owner workspace (at most `PROVISIONAL_TAB_LIMIT`, each dropped at the close stage timeout).
+Opening an owner can acknowledge the new tab before its workspace is known; the same bounded provisional record holds that creation without inventing a workspace or treating its missing layout as a retired pane.
+Herdr's layout, the existing timeout or connection loss ends that provisional record.
 Geometry is laid out with the same split arithmetic that projects Herdr's layouts (`pane_prediction.rs`), so the confirmed layout replaces the drawn one without a jump when they agree; when they do not, Herdr's wins and `pane.prediction_mismatch` records both shapes.
 A close is drawn on the canvas only: the closing pane keeps its sidebar row, session and read state until Herdr confirms the close.
 Whether a close waits in its tab's line is Herdr's layout's answer, not the drawing's: once a close draws its sibling gone, a ⌘W on the pane left drawn alone still closes one of two panes in Herdr's tab, so it waits behind the close ahead instead of meeting it in progress, stays drawn until it runs, and leaves with its tab.
@@ -615,6 +617,9 @@ Every shown Agent tab stays attached; recently shown tabs fill the remaining ret
 The total is `max(ATTACHED_TAB_LIMIT, shown_count)`, at most six tabs, so an unseen attach never displaces a shown tab.
 Herdr renders a pane for every attached client, so the core releases tabs outside that bounded set through the ordinary session drop.
 A released pane keeps its projection entry carrying `released`; the shell disposes its terminal and redraws from Herdr's frame on the next visit.
+Terminal metadata belongs to each session pane, independently of which pane is selected.
+An acknowledged new tab awaiting its layout, or a selected pane that retired, cannot erase other retained tabs' metadata; each authoritative layout still prunes panes that actually closed.
+The attach window continues to release its oldest tab normally, and returning to an evicted tab restores its PTY content with a new renderer.
 The idle tick attaches every shown tab's panes, while focus, read and sleep-visit state follow only the active area's tab.
 All shown tabs count as on screen for sleep prevention.
 
@@ -1342,6 +1347,9 @@ A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a deb
 The node's terminal service spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
 A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it binds, and `hide connect` refuses the same value as `start_failed` before spawning one: Herdr hands every pane the path its server started from, that path dies when the app bundle is replaced under a running server, and a daemon that came up on it would answer healthy and then fail every pane attach one by one (`env::herdr_bin_error`).
 The web shell holds no UI authority: it draws the snapshot, writes the hub's terminal frames straight into xterm.js, and sends one event per operator action.
+Each terminal instance owns its one WebGL addon and context-loss subscription through `web/src/terminalRenderer.ts`, including while parked.
+The pinned addon's own transient-restoration window runs first; persistent loss or failed activation disposes the addon and leaves the same Terminal, buffer, selection and grid on xterm's normal renderer.
+Disposal removes the subscription before the addon and precedes terminal destruction; fallback starts no retry, attach, resize or additional work per key or output chunk.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
 
 ### The daemon lives with its Herdr
@@ -1377,9 +1385,12 @@ A folder `HIDE_STATE_DIR` or `XDG_STATE_HOME` chose is never moved (D-04).
 
 With no window attached the daemon does only the work that keeps labels current (D-20, B29).
 `hided` counts web and desktop renderers, tells the core `ui_attached` when the first arrives and when the last leaves (under one lock, so two windows arriving together cannot leave the core told the opposite of the final count), and refuses `ui_attached` from a client, because a window that sent it would pause the readers every other window draws.
-While none is attached the session-sync coordinator rests the readers that only feed what a window draws: foreground processes, provider usage, the hook diagnosis, ports, worktrees, GitHub and disk, and the Background AI probe.
+While none is attached the session-sync coordinator rests the readers that only feed what a window draws: foreground processes, provider usage, ports, worktrees, GitHub and disk, and the Background AI probe.
 Label work, which runs on the coordinator's own wakes, goes on, and the root follower skips its snapshot reads while no client is connected and catches up with one read when the next client arrives (`RootFollower::resume`).
 The readers resume on the coordinator's next wake after a window attaches.
+Local hook diagnosis belongs to the existing kit pump, not the session coordinator: one startup read, another after a successful apply, and a refresh due one second after completion while a window observes Settings.
+The pump serializes diagnosis and installation on its existing worker, keeps one next-read deadline instead of a tick queue, and publishes only changed answers after releasing Runtime.
+Core shutdown stops pump admission before closing its fixed node, rejects replies from that retiring owner and joins the pump outside Runtime.
 `hided/tests/it/connect_build.rs` and `hided/tests/it/handshake.rs` (`the_daemon_outlives_the_idle_window_while_its_herdr_answers`, `the_daemon_exits_after_the_idle_window_when_its_herdr_is_gone`, `a_window_cannot_say_whether_windows_are_attached`) own these rules.
 
 ### The core's node id

@@ -210,7 +210,10 @@ A hook that fails must never be what breaks the operator's agent.
 Exiting zero is not the same as saying nothing.
 The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
-The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
+The Settings screen learns of it through the existing kit worker, with the next diagnosis due one second after the previous read finishes while a window observes Settings (`settings_observed`, the same flag the Hide AI tab sets).
+The same worker reads once at startup and after a successful install; ordinary refreshes stop when Settings is unobserved.
+Diagnosis and installation are serialized, so a pre-install answer cannot overtake a later install, and neither read makes the session coordinator wait.
+Shutdown stops admission, closes the fixed node to end its current call and joins the worker; a retiring answer is not published.
 
 ## Native questions from Factory workers
 
