@@ -260,7 +260,9 @@ impl Runtime {
             let Some(agent) = self.closable_agent(pane_id) else {
                 continue;
             };
-            if agent.requires_close_status_check {
+            if agent.requires_close_status_check
+                && self.failed_terminal_id(&agent.pane_id).is_none()
+            {
                 return self.refuse_tree_close(
                     &then,
                     "tree_close.status_unknown",
@@ -271,7 +273,10 @@ impl Runtime {
                     true,
                 );
             }
-            if agent.requires_close_confirmation && !confirmed {
+            if (agent.requires_close_confirmation
+                && self.failed_terminal_id(&agent.pane_id).is_none())
+                && !confirmed
+            {
                 return self.refuse_tree_close(
                     &then,
                     "tree_close.confirmation_required",

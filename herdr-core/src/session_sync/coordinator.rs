@@ -240,6 +240,7 @@ fn run_coordinator(
                             .ok()
                             .and_then(|guard| guard.delivery_state().ok());
                         if let Some(state) = state {
+                            writer.reconnected();
                             writer.observe(
                                 &state,
                                 &replica.as_ref().unwrap().state.agents,

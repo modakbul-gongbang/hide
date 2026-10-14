@@ -122,6 +122,8 @@ pub(crate) fn of(
             0,
             None,
         )
+    } else if pane.failed_terminal_id.is_some() {
+        band("restore_failed", "error", None, None, None, 0, None)
     } else if let Some(sleep) = &pane.sleep {
         band(
             &sleep.state,

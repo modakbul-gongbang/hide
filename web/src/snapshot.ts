@@ -518,6 +518,7 @@ export type CheckoutAgentSummary = {
 export type MarkCounts = { error: number; approval: number; question: number; working: number; stopped: number; done: number; idle: number };
 
 export type PaneRow = {
+  failed_terminal_id?: string;
   ports?: number[];
   servers?: { host: string; port: number }[];
   id: string;

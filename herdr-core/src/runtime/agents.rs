@@ -409,10 +409,11 @@ impl Runtime {
                 );
             }
             let status_unknown = matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
-                && session
-                    .agents
-                    .iter()
-                    .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+                && session.agents.iter().any(|agent| {
+                    agent.pane_id == pane_id
+                        && (agent.requires_close_status_check
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
+                });
             if status_unknown {
                 self.set_error(
                     "remote.control.close_status_unknown",
@@ -425,10 +426,11 @@ impl Runtime {
             }
             let needs_confirmation =
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
-                    && session
-                        .agents
-                        .iter()
-                        .any(|agent| agent.pane_id == pane_id && agent.requires_close_confirmation);
+                    && session.agents.iter().any(|agent| {
+                        agent.pane_id == pane_id
+                            && (agent.requires_close_confirmation
+                                && self.failed_terminal_id(&agent.pane_id).is_none())
+                    });
             if needs_confirmation && !payload.request.confirmed() {
                 self.set_error(
                     "remote.control.close_confirmation_required",
@@ -645,7 +647,9 @@ impl Runtime {
                     .map(|pane| pane.id.as_str())
                     .collect::<HashSet<_>>();
                 let status_unknown = session.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && (agent.requires_close_status_check
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
                 });
                 if status_unknown {
                     self.set_error(
@@ -658,7 +662,9 @@ impl Runtime {
                     return true;
                 }
                 let needs_confirmation = session.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && (agent.requires_close_confirmation
+                            && self.failed_terminal_id(&agent.pane_id).is_none())
                 });
                 if needs_confirmation && !confirmed {
                     self.set_error(
@@ -750,9 +756,93 @@ impl Runtime {
             format!("Sending {} to {target_id}", action.kind()),
         );
         let dispatched_request_id = request_id.clone();
-        if let Err(message) =
-            live::spawn_remote_control(context, request_id, action, connection_generation)
-        {
+        let failed_terminals = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter().map(move |pane| (tab, pane)))
+            .filter_map(|(tab, pane)| {
+                let source = remote_pane_source_id(&target_id, &pane.id)?;
+                let selected = match &action {
+                    RemoteControlAction::Pane(PaneControlAction::Close { pane_id }) => {
+                        pane_id == source
+                    }
+                    RemoteControlAction::CloseTab { tab_id } => {
+                        tab.id
+                            .as_deref()
+                            .and_then(|id| remote_tab_source_id(&target_id, id))
+                            == Some(tab_id.as_str())
+                    }
+                    _ => false,
+                };
+                selected
+                    .then(|| {
+                        pane.failed_terminal_id
+                            .as_ref()
+                            .map(|id| (source.to_owned(), id.clone()))
+                    })
+                    .flatten()
+            })
+            .collect();
+        let scope_pane_ids: Vec<String> = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .filter(|tab| match &action {
+                RemoteControlAction::CloseTab { tab_id } => {
+                    tab.id
+                        .as_deref()
+                        .and_then(|id| remote_tab_source_id(&target_id, id))
+                        == Some(tab_id.as_str())
+                }
+                _ => false,
+            })
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| remote_pane_source_id(&target_id, &pane.id).map(str::to_owned))
+            .collect();
+        let approved_peers = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter(|pane| pane.requires_close_confirmation && pane.failed_terminal_id.is_none())
+            .filter_map(|pane| {
+                let source = remote_pane_source_id(&target_id, &pane.id)?;
+                scope_pane_ids.contains(&source.to_owned()).then_some(())?;
+                Some(live::ClosePeer {
+                    pane_id: source.to_owned(),
+                    terminal_id: pane.terminal_id.clone()?,
+                    session: session
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
+        if let Err(message) = live::spawn_remote_control_checked(
+            context,
+            request_id,
+            action,
+            connection_generation,
+            failed_terminals,
+            live::CloseSafety {
+                pane_ids: scope_pane_ids,
+                approved_peers,
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        remote_operation_key
+                            .as_ref()
+                            .and_then(|key| self.remote_operations.get(key))
+                            .and_then(|operation| operation.deadline_at_unix_ms)
+                            .unwrap_or_else(unix_milliseconds)
+                            .saturating_sub(unix_milliseconds()),
+                    ),
+            },
+        ) {
             if let Some((operation_target, operation_request)) = remote_operation_key.as_ref() {
                 self.fail_remote_operation(operation_target, operation_request, message.clone());
             }

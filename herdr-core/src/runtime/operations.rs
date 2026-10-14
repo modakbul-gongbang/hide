@@ -31,6 +31,7 @@ pub(super) struct PendingClose {
     /// A newly protected pane invalidates the approval even when the tab's
     /// pane set itself is unchanged.
     pub(super) protected_agent_pane_ids: Vec<String>,
+    pub(super) approved_peer_terminals: Vec<live::ClosePeer>,
     pub(super) label: String,
     pub(super) item: Option<ClosedItem>,
     pub(super) phase: String,
@@ -1217,6 +1218,12 @@ impl Runtime {
         ordered
             .into_iter()
             .map(|(_, _, prediction)| prediction)
+            .filter(|prediction| match prediction {
+                super::pane_prediction::Prediction::Close { pane } => {
+                    self.failed_terminal_id(pane).is_none()
+                }
+                _ => true,
+            })
             .collect()
     }
 

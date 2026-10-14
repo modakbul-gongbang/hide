@@ -18,6 +18,27 @@ pub(super) enum PreparedFileTab {
 }
 
 impl Runtime {
+    /// The projection can admit a failed terminal close; the effect must still
+    /// prove this incarnation and failure against Herdr immediately before closing.
+    pub(super) fn failed_terminal_id(&self, pane_id: &str) -> Option<&str> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|status| status.session.as_ref())
+                    .flat_map(|session| session.workspaces.iter()),
+            )
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .find(|pane| pane.id == pane_id)
+            .and_then(|pane| pane.failed_terminal_id.as_deref())
+    }
     pub(super) fn file_tab_id(workspace_id: &str, checkout_id: &str, path: &str) -> String {
         format!("file:{workspace_id}:{checkout_id}:{path}")
     }
@@ -971,7 +992,9 @@ impl Runtime {
                     .iter()
                     .any(|pane_id| pane_id == &agent.pane_id),
             };
-            in_target && agent.requires_close_status_check
+            in_target
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if activity_status_unknown {
             return Some(
@@ -1008,7 +1031,9 @@ impl Runtime {
                         .iter()
                         .any(|pane_id| pane_id == &agent.pane_id),
                 };
-                in_target && agent.requires_close_confirmation
+                in_target
+                    && (agent.requires_close_confirmation
+                        && self.failed_terminal_id(&agent.pane_id).is_none())
             })
             .map(|agent| agent.pane_id.as_str())
             .collect::<Vec<_>>();
@@ -1203,6 +1228,12 @@ impl Runtime {
         };
         context.replacement_shell &=
             matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
+        // A failed last terminal must remain explicitly closable even when
+        // its folder cannot launch a replacement shell. The project registration stays.
+        context.replacement_shell &= !tab
+            .panes
+            .iter()
+            .all(|pane| pane.failed_terminal_id.is_some());
         if context.replacement_shell && !self.admit_agent_tab(&context.checkout_path) {
             return true;
         }
@@ -1228,6 +1259,19 @@ impl Runtime {
                         && record.close_key.is_none()
                 });
         let request = live::CloseCaptureRequest {
+            failed_terminals: tab
+                .panes
+                .iter()
+                .filter(|pane| match &target {
+                    live::CloseCaptureTarget::Pane { pane_id } => &pane.id == pane_id,
+                    live::CloseCaptureTarget::Tab { .. } => true,
+                })
+                .filter_map(|pane| {
+                    pane.failed_terminal_id
+                        .as_ref()
+                        .map(|id| (pane.id.clone(), id.clone()))
+                })
+                .collect(),
             retain_for_reopen,
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
@@ -1262,10 +1306,30 @@ impl Runtime {
                         .iter()
                         .any(|pane_id| pane_id == &agent.pane_id),
                 };
-                in_target && agent.requires_close_confirmation
+                in_target
+                    && (agent.requires_close_confirmation
+                        && self.failed_terminal_id(&agent.pane_id).is_none())
             })
             .map(|agent| agent.pane_id.clone())
             .collect::<Vec<_>>();
+        let approved_peer_terminals = tab
+            .panes
+            .iter()
+            .filter(|pane| protected_agent_pane_ids.contains(&pane.id))
+            .filter_map(|pane| {
+                pane.terminal_id.as_ref().map(|terminal| live::ClosePeer {
+                    pane_id: pane.id.clone(),
+                    terminal_id: terminal.clone(),
+                    session: self
+                        .snapshot
+                        .navigator
+                        .agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .and_then(|agent| agent.close_session.clone()),
+                })
+            })
+            .collect();
         let restore_checkout_id = tab.checkout_id.clone();
         let selection_before = self.close_selection_state(restore_checkout_id.as_deref());
         let label = match &request.target {
@@ -1291,6 +1355,7 @@ impl Runtime {
                 scope_pane_ids,
                 pane_ids: pane_ids.clone(),
                 protected_agent_pane_ids,
+                approved_peer_terminals,
                 label,
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1327,7 +1392,9 @@ impl Runtime {
         self.panes_closing.extend(pane_ids);
         // The node refuses keys for a closing pane from now on.
         self.sync_terminal_intents();
-        self.move_from_closing_target(&request.target, &tab);
+        if request.failed_terminals.is_empty() {
+            self.move_from_closing_target(&request.target, &tab);
+        }
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
         if selection_before != selection_after
             && let Some(operation) = self.close_operations.get_mut(&request.key)
@@ -1537,6 +1604,7 @@ impl Runtime {
                 },
                 pane_ids,
                 protected_agent_pane_ids: Vec::new(),
+                approved_peer_terminals: Vec::new(),
                 label: request.context.tab_label.clone(),
                 item: None,
                 phase: "preparing".to_owned(),
@@ -1644,6 +1712,19 @@ impl Runtime {
             },
         ));
         let effect = live::CloseEffectRequest {
+            safety: (!request.failed_terminals.is_empty()).then(|| live::CloseSafety {
+                approved_peers: operation.approved_peer_terminals.clone(),
+                pane_ids: operation.scope_pane_ids.clone(),
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        operation
+                            .deadline_at_unix_ms
+                            .unwrap_or_default()
+                            .saturating_sub(unix_milliseconds())
+                            .min(CLOSE_STAGE_TIMEOUT_MS),
+                    ),
+            }),
+            failed_terminals: request.failed_terminals.clone(),
             retain_for_reopen: request.retain_for_reopen,
             allow_replacement_create: operation.allow_replacement_create,
             key: request.key.clone(),
@@ -1687,6 +1768,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Tab { tab_id } => tab_id.clone(),
             };
             self.ensure_pending_close_from_request(&live::CloseCaptureRequest {
+                failed_terminals: request.failed_terminals.clone(),
                 retain_for_reopen: request.retain_for_reopen,
                 key: request.key.clone(),
                 connection_generation: request.connection_generation,
@@ -2772,7 +2854,9 @@ impl Runtime {
             .map(|pane| pane.id.as_str())
             .collect::<HashSet<_>>();
         let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
-            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+            pane_ids.contains(agent.pane_id.as_str())
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if status_unknown {
             self.set_error(
@@ -2785,7 +2869,9 @@ impl Runtime {
             return true;
         }
         let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
-            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
+            pane_ids.contains(agent.pane_id.as_str())
+                && (agent.requires_close_confirmation
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
         });
         if requires_confirmation && !confirmed {
             self.set_error(
@@ -2815,12 +2901,11 @@ impl Runtime {
         confirmed: bool,
         may_queue: bool,
     ) -> bool {
-        let status_unknown = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+        let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+            agent.pane_id == pane_id
+                && (agent.requires_close_status_check
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
+        });
         if status_unknown {
             self.set_error(
                 "pane.close_status_unknown",
@@ -2831,12 +2916,11 @@ impl Runtime {
             );
             return true;
         }
-        let requires_confirmation = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .any(|agent| agent.pane_id == pane_id && agent.requires_close_confirmation);
+        let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
+            agent.pane_id == pane_id
+                && (agent.requires_close_confirmation
+                    && self.failed_terminal_id(&agent.pane_id).is_none())
+        });
         if requires_confirmation && !confirmed {
             self.set_error(
                 "pane.close_confirmation_required",
@@ -2883,7 +2967,7 @@ impl Runtime {
                             if *closing == pane_id
                     )
             });
-            if queued {
+            if queued && self.failed_terminal_id(&pane_id).is_none() {
                 self.move_from_closing_target(&live::CloseCaptureTarget::Pane { pane_id }, &tab);
             }
             return true;

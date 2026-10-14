@@ -30,6 +30,8 @@ pub(crate) struct ProjectedTab {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedPane {
+    pub terminal_id: String,
+    pub restore_error: Option<String>,
     pub(crate) foreground_process: Option<String>,
     pub(crate) agent_status: String,
     pub(crate) pane_id: String,
@@ -136,6 +138,11 @@ impl ProjectionState {
             .panes
             .iter()
             .map(|pane| SessionPanePayload {
+                terminal_id: Some(pane.terminal_id.clone()),
+                failed_terminal_id: pane
+                    .restore_error
+                    .as_ref()
+                    .map(|_| pane.terminal_id.clone()),
                 foreground_process: pane.foreground_process.clone(),
                 pane_id: pane.pane_id.clone(),
                 tokens: pane.tokens.clone(),

@@ -210,7 +210,7 @@ pub fn spawn_workspace_creation(
                         paths: Arc::new(paths),
                         session,
                         created_pane_id: created
-                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id)| pane_id)),
+                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id, _)| pane_id)),
                         git_init_error,
                     })
                 });
@@ -627,6 +627,8 @@ fn execute_remote_control(
 /// A tab Hide created in a checkout's owner Herdr workspace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OwnedTab {
+    /// Label returned by creation, only while retaining that exact first tab.
+    pub(crate) initial_label: Option<String>,
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
     pub(crate) pane_id: String,
@@ -663,9 +665,10 @@ pub(crate) fn open_owner_tab(
 ) -> Result<OwnedTab, ControlFailure> {
     let (workspace_id, first_tab) = ensure_owner(connector, owner, focus, env.clone())?;
     let owned = match first_tab {
-        Some((tab_id, pane_id)) if command.is_some() => replace_tab(
+        Some((tab_id, pane_id, initial_label)) if command.is_some() => replace_tab(
             connector,
             OwnedTab {
+                initial_label,
                 workspace_id,
                 tab_id,
                 pane_id,
@@ -677,7 +680,7 @@ pub(crate) fn open_owner_tab(
             env,
             command,
         ),
-        Some((tab_id, pane_id)) => {
+        Some((tab_id, pane_id, initial_label)) => {
             // The owner's first tab is the new tab, so it takes the label the
             // request carries, as `tab.create` would give it; the tab is real
             // either way.
@@ -697,6 +700,7 @@ pub(crate) fn open_owner_tab(
                 }));
             }
             OwnedTab {
+                initial_label,
                 workspace_id,
                 tab_id,
                 pane_id,
@@ -720,12 +724,14 @@ pub(crate) fn open_owner_tab(
 /// pane Herdr made with it when this call opened it (`None` when it was
 /// already open). `env` reaches the first pane only where Herdr takes it
 /// (`workspace.create`); `worktree.open` takes none.
+type FirstTab = (String, String, Option<String>);
+
 fn ensure_owner(
     connector: &dyn ApiConnector,
     owner: &OwnerOpen,
     focus: bool,
     env: std::collections::BTreeMap<String, String>,
-) -> Result<(String, Option<(String, String)>), ControlFailure> {
+) -> Result<(String, Option<FirstTab>), ControlFailure> {
     match owner {
         OwnerOpen::Worktree {
             path,
@@ -759,7 +765,10 @@ fn ensure_owner(
                     "message": error.message(),
                 }));
             }
-            Ok((opened.workspace_id, Some((opened.tab_id, opened.pane_id))))
+            Ok((
+                opened.workspace_id,
+                Some((opened.tab_id, opened.pane_id, Some(opened.tab_label))),
+            ))
         }
         OwnerOpen::Folder {
             path, label, mark, ..
@@ -806,7 +815,7 @@ fn ensure_owner(
                     "message": error.message(),
                 }));
             }
-            Ok((workspace_id, Some((tab_id, pane_id))))
+            Ok((workspace_id, Some((tab_id, pane_id, None))))
         }
     }
 }
@@ -837,6 +846,7 @@ pub(crate) fn create_tab_in(
     }
     .map_err(ControlFailure::Ambiguous)?;
     Ok(OwnedTab {
+        initial_label: None,
         workspace_id: workspace_id.to_owned(),
         tab_id,
         pane_id,
@@ -885,6 +895,7 @@ pub(crate) fn replace_tab(
     }));
     match replaced {
         Ok((tab_id, pane_id)) => OwnedTab {
+            initial_label: None,
             workspace_id: tab.workspace_id,
             tab_id,
             pane_id,
@@ -1030,6 +1041,7 @@ pub enum CloseCaptureTarget {
 
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
+    pub failed_terminals: Vec<(String, String)>,
     /// A sleep close must never acquire the independent ordinary undo route.
     pub retain_for_reopen: bool,
     pub key: String,
@@ -1046,8 +1058,27 @@ pub struct CloseCaptureOutcome {
     pub item: Option<ClosedItem>,
 }
 
+/// The work included in the operator's existing close confirmation.
+#[derive(Clone, Debug)]
+pub struct ClosePeer {
+    pub pane_id: String,
+    pub terminal_id: String,
+    pub session: Option<crate::sidebar::SessionAgentSessionPayload>,
+}
+
+/// Fresh terminal-close authorization and the admission's shared deadline.
+#[derive(Clone, Debug)]
+pub struct CloseSafety {
+    /// Only the working terminals included in the admitted confirmation.
+    pub approved_peers: Vec<ClosePeer>,
+    pub pane_ids: Vec<String>,
+    pub deadline: Instant,
+}
+
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub safety: Option<CloseSafety>,
+    pub failed_terminals: Vec<(String, String)>,
     pub retain_for_reopen: bool,
     pub allow_replacement_create: bool,
     pub replacement: Option<ClosedContext>,
@@ -1140,6 +1171,22 @@ fn capture_close_item(
     connector: &dyn ApiConnector,
     request: &CloseCaptureRequest,
 ) -> Result<CloseCaptureOutcome, String> {
+    // A terminal Herdr could not recreate has no live layout to export.
+    // Keep the close intent, but do not promise an undo that cannot restore it.
+    let targets = match &request.target {
+        CloseCaptureTarget::Pane { pane_id } => vec![pane_id.as_str()],
+        CloseCaptureTarget::Tab { .. } => request
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect(),
+    };
+    if targets
+        .iter()
+        .any(|id| request.failed_terminals.iter().any(|(pane, _)| pane == id))
+    {
+        return Ok(CloseCaptureOutcome { item: None });
+    }
     let layout_value = reopen_request(
         connector,
         &format!("herdr-core:{}:export", request.key),
@@ -1284,6 +1331,21 @@ fn run_close_effect(
     connector: &dyn ApiConnector,
     request: &CloseEffectRequest,
 ) -> Result<(), ApiError> {
+    run_close_effect_with_clock(connector, request, &Instant::now)
+}
+
+fn run_close_effect_with_clock(
+    connector: &dyn ApiConnector,
+    request: &CloseEffectRequest,
+    now: &dyn Fn() -> Instant,
+) -> Result<(), ApiError> {
+    check_failed_terminals(
+        connector,
+        &request.failed_terminals,
+        &request.target,
+        request.safety.as_ref(),
+        now,
+    )?;
     let (method, params) = match &request.target {
         CloseCaptureTarget::Pane { pane_id } => (
             "pane.close",
@@ -1299,9 +1361,102 @@ fn run_close_effect(
         &format!("herdr-core:{}:close", request.key),
         method,
         params,
-        Duration::from_secs(5),
+        close_remaining(request.safety.as_ref(), now())?,
     )
     .map(|_| ())
+}
+
+/// One fresh read per close, on its existing worker, with no runtime lock held.
+/// Refuse the old authorization if any failed terminal was replaced or recovered.
+fn check_failed_terminals(
+    connector: &dyn ApiConnector,
+    expected: &[(String, String)],
+    target: &CloseCaptureTarget,
+    safety: Option<&CloseSafety>,
+    now: &dyn Fn() -> Instant,
+) -> Result<(), ApiError> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let value = request_with_connector(
+        connector,
+        "session.snapshot",
+        wire::empty_params(),
+        close_remaining(safety, now())?,
+    )?;
+    let snapshot = wire::snapshot_response(value)
+        .map_err(|error| ApiError::Malformed(error.message().to_owned()))?;
+    let scope_valid = match target {
+        CloseCaptureTarget::Pane { pane_id } => expected.len() == 1 && expected[0].0 == *pane_id,
+        CloseCaptureTarget::Tab { tab_id } => safety.is_some_and(|safety| {
+            let mut current = snapshot
+                .panes
+                .iter()
+                .filter(|pane| &pane.tab_id == tab_id)
+                .map(|pane| pane.pane_id.clone())
+                .collect::<Vec<_>>();
+            current.sort();
+            let mut approved = safety.pane_ids.clone();
+            approved.sort();
+            current == approved
+                && expected.iter().all(|(id, _)| current.contains(id))
+                && snapshot
+                    .panes
+                    .iter()
+                    .filter(|pane| &pane.tab_id == tab_id)
+                    .filter(|pane| !expected.iter().any(|(id, _)| id == &pane.pane_id))
+                    .all(|pane| {
+                        let approved = safety.approved_peers.iter().any(|peer| {
+                            peer.pane_id == pane.pane_id
+                                && peer.terminal_id == pane.terminal_id
+                                && peer.session.as_ref()
+                                    == snapshot
+                                        .agents
+                                        .iter()
+                                        .find(|agent| agent.pane_id == pane.pane_id)
+                                        .and_then(|agent| agent.agent_session.as_ref())
+                        });
+                        let allowed = |status: &str| {
+                            matches!(status, "idle" | "done")
+                                || (approved && matches!(status, "working" | "blocked"))
+                        };
+                        allowed(&pane.agent_status)
+                            && snapshot
+                                .agents
+                                .iter()
+                                .filter(|agent| agent.pane_id == pane.pane_id)
+                                .all(|agent| agent.agent_status.as_deref().is_some_and(allowed))
+                    })
+        }),
+    };
+    if scope_valid
+        && expected.iter().all(|(id, terminal)| {
+            snapshot.panes.iter().any(|pane| {
+                &pane.pane_id == id && &pane.terminal_id == terminal && pane.restore_error.is_some()
+            })
+        })
+    {
+        Ok(())
+    } else {
+        Err(ApiError::Remote {
+            code: "close_target_changed".into(),
+            message:
+                "The terminal changed before closing. Check its current state and close it again."
+                    .into(),
+        })
+    }
+}
+
+fn close_remaining(safety: Option<&CloseSafety>, now: Instant) -> Result<Duration, ApiError> {
+    match safety {
+        None => Ok(Duration::from_secs(5)),
+        Some(safety) => safety.deadline.checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| ApiError::Remote {
+                code: "close_deadline_expired".into(),
+                message: "The close expired before it was sent. Check its current state and close it again.".into(),
+            }),
+    }
 }
 
 /// A read-only fresh session check for a close whose transport result was
@@ -1815,7 +1970,7 @@ fn ensure_workspace_and_tab(
             reopen_intent_env(key, ReopenIntentStage::Workspace),
         )
         .map_err(|failure| failure.message().to_owned())?;
-        (workspace_id, first_tab.map(|(tab_id, _)| tab_id))
+        (workspace_id, first_tab.map(|(tab_id, _, _)| tab_id))
     };
     let tagged_root = tag_reopen_layout(root, key, ReopenIntentStage::Layout);
     let applied = reopen_request(
@@ -3214,6 +3369,28 @@ pub fn spawn_remote_control(
     action: RemoteControlAction,
     connection_generation: u64,
 ) -> Result<(), String> {
+    spawn_remote_control_checked(
+        context,
+        request_id,
+        action,
+        connection_generation,
+        Vec::new(),
+        CloseSafety {
+            approved_peers: Vec::new(),
+            pane_ids: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        },
+    )
+}
+
+pub(crate) fn spawn_remote_control_checked(
+    context: RemoteControlContext,
+    request_id: String,
+    action: RemoteControlAction,
+    connection_generation: u64,
+    failed_terminals: Vec<(String, String)>,
+    safety: CloseSafety,
+) -> Result<(), String> {
     let target_id = context.target_id.clone();
     let worker_name = match &action {
         RemoteControlAction::Pane(PaneControlAction::Focus { .. }) => {
@@ -3261,7 +3438,44 @@ pub fn spawn_remote_control(
         .name(worker_name)
         .spawn(move || {
             let started = Instant::now();
-            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let target = match &action {
+                RemoteControlAction::Pane(PaneControlAction::Close { pane_id }) => {
+                    Some(CloseCaptureTarget::Pane {
+                        pane_id: pane_id.clone(),
+                    })
+                }
+                RemoteControlAction::CloseTab { tab_id } => Some(CloseCaptureTarget::Tab {
+                    tab_id: tab_id.clone(),
+                }),
+                _ => None,
+            };
+            let result = if !failed_terminals.is_empty()
+                && let Some(target) = target
+            {
+                run_close_effect(
+                    context.api_connector.as_ref(),
+                    &CloseEffectRequest {
+                        safety: Some(safety),
+                        failed_terminals,
+                        target,
+                        retain_for_reopen: false,
+                        allow_replacement_create: false,
+                        replacement: None,
+                        key: request_id.clone(),
+                        connection_generation,
+                    },
+                )
+                .map(|()| RemoteControlOutcome::Acknowledged {
+                    created_tab_id: None,
+                    created_pane_id: None,
+                })
+                .map_err(|error| match error {
+                    ApiError::Remote { .. } => ControlFailure::Definite(error.to_string()),
+                    _ => ControlFailure::Ambiguous(error.to_string()),
+                })
+            } else {
+                execute_remote_control(context.api_connector.as_ref(), &action)
+            };
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -5040,6 +5254,7 @@ mod tests {
             assert_eq!(
                 tab,
                 OwnedTab {
+                    initial_label: None,
                     workspace_id: "w9".to_owned(),
                     tab_id: "w9:t2".to_owned(),
                     pane_id: "w9:p2".to_owned(),

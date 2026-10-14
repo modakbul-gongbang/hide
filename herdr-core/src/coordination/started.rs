@@ -191,6 +191,7 @@ pub(crate) mod tests {
             ledger,
             caller,
             &Mutation::Advance {
+                seed_tab: None,
                 id: id.clone(),
                 path: Some(format!("/repo.worktrees/{branch}")),
                 pane: Some(actor.pane_id.clone()),

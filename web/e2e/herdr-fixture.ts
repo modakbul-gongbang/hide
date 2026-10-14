@@ -59,6 +59,8 @@ export type HerdrFixture = {
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
   stop: () => void;
+  /** Cold restart this private server, changing its files only while it is stopped. */
+  restart: (beforeStart?: () => void) => Promise<void>;
   /**
    * Runs `cleanup` once the server has stopped and its panes' processes are
    * gone, or now when that is already so. A folder a pane's shell started in
@@ -675,11 +677,19 @@ export async function startHerdr({ agents = true, shortRoot = false }: { agents?
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
 
-  const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
-  const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
-  fs.closeSync(log);
   let spawnFailed: Error | null = null;
-  server.once("error", (error) => { spawnFailed = error; });
+  const launchServer = (): ChildProcess => {
+    spawnFailed = null;
+    const log = fs.openSync(path.join(root, "herdr-server.log"), "a");
+    try {
+      const child = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
+      child.once("error", (error) => { spawnFailed = error; });
+      return child;
+    } finally {
+      fs.closeSync(log);
+    }
+  };
+  let server = launchServer();
   let stopped = false;
   const afterStop: (() => void)[] = [];
   const stopServer = () => {
@@ -840,6 +850,19 @@ export async function startHerdr({ agents = true, shortRoot = false }: { agents?
         return result;
       },
       stop,
+      restart: async (beforeStart) => {
+        const owned = process.platform === "win32" && server.pid ? windowsProcessTree(server.pid) : [];
+        const result = spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
+        if (result.status !== 0) throw new Error(`private server stop failed: ${result.stderr}`);
+        await waitFor(() => server.exitCode !== null || server.signalCode !== null, "private server exit before cold restore");
+        if (process.platform === "win32") endWindowsProcesses(owned, root);
+        beforeStart?.();
+        server = launchServer();
+        await waitFor(() => {
+          if (spawnFailed) throw spawnFailed;
+          return fs.existsSync(socket);
+        }, "private cold-restored server socket");
+      },
       afterStop: (cleanup) => {
         if (stopped) cleanup();
         else afterStop.push(cleanup);

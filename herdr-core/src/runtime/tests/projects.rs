@@ -3928,6 +3928,8 @@ fn tab_with_pane(pane_id: &str) -> TabSnapshot {
         empty: false,
         delegated: false,
         panes: vec![crate::model::PaneSnapshot {
+            terminal_id: None,
+            failed_terminal_id: None,
             id: pane_id.to_owned(),
             herdr_label: None,
             terminal_title: None,

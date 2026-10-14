@@ -15,6 +15,9 @@ use super::watch::Watch;
 /// answer it.
 #[derive(Serialize, JsonSchema)]
 pub struct AgentView {
+    /// Naming has its own receipt; it never changes successful spawn identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub names: Option<crate::coordination::naming::Names>,
     pub id: String,
     pub name: String,
     pub machine: String,
@@ -110,7 +113,7 @@ pub fn answer_schemas() -> Value {
 
 /// The fields an answer leaves out when they have no value
 /// (`skip_serializing_if`).
-const OMITTED: &[&str] = &["ack_command"];
+const OMITTED: &[&str] = &["ack_command", "names"];
 
 /// Marks every property of every object schema in `schema` required, but
 /// those in `OMITTED`.
@@ -142,6 +145,13 @@ mod tests {
     fn every_written_field_is_required() {
         let schemas = answer_schemas();
         let agent = schemas["agent"]["required"].as_array().unwrap();
+        assert!(!agent.contains(&json!("names")));
+        assert!(
+            !schemas["agent_list"]["definitions"]["AgentView"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("names"))
+        );
         for field in [
             "parent",
             "origin",
@@ -195,6 +205,7 @@ mod tests {
             (None, Some("agent-1")),
         ] {
             let agent = AgentView {
+                names: None,
                 id: "agent-2".into(),
                 name: "worker".into(),
                 machine: "local".into(),
@@ -213,6 +224,7 @@ mod tests {
             let single = serde_json::to_value(&agent).unwrap();
             let list = serde_json::to_value(AgentList { items: vec![agent] }).unwrap();
             for answer in [&single, &list["items"][0]] {
+                assert!(!answer.as_object().unwrap().contains_key("names"));
                 assert!(answer.as_object().unwrap().contains_key("origin"));
                 assert_eq!(answer["origin"], json!(origin));
                 assert_eq!(answer["parent"], json!(parent));
