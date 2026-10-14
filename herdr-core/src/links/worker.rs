@@ -707,19 +707,11 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             state.panes_at = Some(Instant::now());
         }
         if let Some(parents) = state.parents.take() {
-            let result = store.apply_parents(&parents);
-            state.wrote(result, "parents");
-            for parent in parents.iter() {
-                update_context_ancestors(
-                    client,
-                    store,
-                    &SessionIdentity {
-                        device_id: parent.device_id.clone(),
-                        agent: parent.agent.clone(),
-                        session_id: parent.session_id.clone(),
-                    },
-                );
+            let children = store.apply_parents(&parents);
+            for child in children.iter().flatten() {
+                update_context_ancestors(client, store, child);
             }
+            state.wrote(children.map(|_| ()), "parents");
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         for session in contexts {
@@ -1578,8 +1570,8 @@ mod tests {
     }
 
     /// The ledger's links can name a session it holds no record of: a Pi or
-    /// omp child is named by its file where its reader names it by its own
-    /// id, a spawn is known before its file is read, and retention removes a
+    /// omp child is named by its file until its reader reads it, a spawn is
+    /// known before its file is read, and retention removes a
     /// session while its file's cursor stays. Each was a write failure on
     /// every read answer that reached it, about one every two seconds, and
     /// the failure kept the parent's work from the turns that continue it.

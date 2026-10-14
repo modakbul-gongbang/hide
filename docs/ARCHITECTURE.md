@@ -846,7 +846,11 @@ Oldest entries beyond a retention cap are removed with a diagnostic, and the exi
 A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.
 The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
 A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
-A lineage edge or a file's cursor can name a session the ledger holds no row for: a spawn known before its file is read, a Pi or omp child its spawn names by its file where its reader names it by its own id, a session retention removed while its file's cursor stays.
+The record calls a session what its reader calls it, the id in the session's own records, and a lineage edge is keyed the same way.
+Herdr reports a Pi or omp session as its file, so a registration names such a session by a path; the store names it by the reader's id for that file, which the file's cursor holds once the reader has read it (`session_name` in `links/store.rs`).
+Before that read the edge stays under the file, and the read that first names the file moves it to the reader's id in the same transaction, as it would have been recorded had the read come first; Pi 1.0.4 writes its file only at the first message, so a just-spawned Pi child has no file and no record yet (`a_pi_or_omp_child_spawned_by_its_file_is_in_its_parents_record`).
+Edges an earlier build left under a file the reader had read move once at open, recorded in `meta` as `session_names` rather than a schema version, since the tables keep their shape and an older build still opens the file (`edges_left_under_read_files_move_to_the_readers_names_once`).
+A lineage edge or a file's cursor can still name a session the ledger holds no row for: a spawn known before its file is read, a session retention removed while its file's cursor stays.
 Such a session has no record of its own: a tree lists only the children the ledger records, and its label context carries its parent's name and no work, never a failed write (`a_session_the_ledger_never_recorded_fails_no_write_and_stops_no_context`).
 
 START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v10`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
