@@ -12,6 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { initGithubRepository } from "./github-remote";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
@@ -208,7 +209,7 @@ async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: stri
     const origin = path.join(herdr.root, "origin.git");
     fs.mkdirSync(repo);
     git(herdr.root, ["init", "--bare", origin]);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
