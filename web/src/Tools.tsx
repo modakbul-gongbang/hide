@@ -92,7 +92,7 @@ export function ToolRail({ actions }: { actions: Actions }) {
               onClick={() => actions.toggleTool(tool)}
             >
               {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
-              <Icon aria-hidden="true" className="size-(--size-icon-lg)" />
+              <Icon aria-hidden="true" className="size-(--size-icon)" />
               <span className="whitespace-nowrap tracking-tight [:lang(ja)_&]:[font-feature-settings:'palt']" data-lane-tool-name="true">
                 {name}
               </span>
