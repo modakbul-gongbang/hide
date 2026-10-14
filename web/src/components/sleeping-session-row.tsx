@@ -27,7 +27,7 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
         </span>
       </Hint>
       <Hint label={[session.identity_label, agentProductName(session.kind), session.reason, caption].filter(Boolean).join("\n")}>
-        <span className="min-w-0 flex-1 truncate text-subtle-foreground">{session.identity_label}</span>
+        <span className="min-w-0 flex-1 truncate text-subtle-foreground">{session.identity_label}<span className="sr-only">, {agentProductName(session.kind)}</span></span>
       </Hint>
       {session.wake_available ? (
         <Button variant="ghost" size="sm" onClick={() => actions.wakeSleepingSession(session.sleep_id)}>{t("panes.sleep.wake")}</Button>

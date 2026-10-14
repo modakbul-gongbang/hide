@@ -1244,7 +1244,7 @@ const local = number => ({source: 'local', label: `L-${number}`});
 const BUG = ['bug', '$--destructive'];
 const ENHANCEMENT = ['enhancement', '$--agent-working'];
 const ISSUE_192 = {task: gh(192), labels: [BUG], title: 'hided has no SIGTERM handler: AI children die with the stdin pipe', branch: '192-hided-sigterm-handler', ahead: 3, files: 4, needsYou: true, agents: [
-  {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
+  {mark: 'ask', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
   {mark: 'work', title: '종료 경로 테스트 작성', age: '2m'},
 ]};
 const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladder, row heights and width', branch: '186-sidebar-typography', pr: {number: 208, state: 'pending', checks: 'passing', review: 'review_required'}, needsYou: true, agents: [
@@ -1425,9 +1425,9 @@ function prParts(tokens) {
 // box per checkout and a line per delegation), the box states and the filter
 // that matches nothing, then the Issues tab's board and Dependencies mode,
 // #218's Tasks board under its new name.
-const SIGTERM_ASK = {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
+const SIGTERM_ASK = {mark: 'ask', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
 const SIGTERM_REVIEW = {mark: 'work', title: '리뷰: 종료 경로 회귀', age: '2m'};
-const TAB_GROUPS_IMPL = {mark: 'seen', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'};
+const TAB_GROUPS_IMPL = {mark: 'seen', title: 'Agent tab groups 구현', age: '8m'};
 const CODEX_REST = {mark: 'seen', title: '체크아웃 기능 구현 및 정리', age: '2h'};
 
 function buildProjectOverview(tokens) {
@@ -1502,7 +1502,7 @@ function buildProjectOverview(tokens) {
           {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'work', title: 'Overview 진입 흐름', age: '1m'},
         ]})),
         stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, state: 'failed', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
-          {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
+          {mark: 'work', title: '리뷰 반영', age: '3m'},
         ]})),
         stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, state: 'merged'}, rows: [CODEX_REST]})),
       ]),
@@ -1538,7 +1538,7 @@ function buildProjectOverview(tokens) {
         stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
           card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, state: 'failed', checks: 'pending', review: 'changes_requested'}, agents: [
-            {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
+            {mark: 'work', title: '리뷰 반영', age: '3m'},
           ]}),
         ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
         doneColumn(`ov-done-${suffix}`, 12, [
@@ -1590,7 +1590,7 @@ function buildProjectOverview(tokens) {
       task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'example · 9월 27일', updated: '9월 27일',
       work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
         {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
-        {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
+        {mark: 'ask', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
       ], pr: {number: 221, state: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
       body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
       comments: [['example · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
@@ -4075,13 +4075,13 @@ function buildProjectsSidebar(tokens) {
   const AGENTS = {
     deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'hide › main', bright: true},
     blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
-    research: {title: '두 프로젝트 비교 조사', status: 'seen', provider: 'codex', age: '14m', place: 'Home'},
+    research: {title: '두 프로젝트 비교 조사', status: 'seen', age: '14m', place: 'Home'},
     ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'hide › ci-shards', bright: true},
     readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'hide › main'},
-    principle: {title: '원칙 문서 정리', status: 'working', provider: 'codex', age: '3m', place: 'oh-my-principle › main'},
+    principle: {title: '원칙 문서 정리', status: 'working', age: '3m', place: 'oh-my-principle › main'},
     sasu: {title: '판정 로그 확인', status: 'seen', age: '1h', place: 'sasu › main'},
-    batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
-    build: {title: '릴리스 빌드 확인', status: 'working', provider: 'codex', age: '1m', place: 'hide › main'},
+    batch: {title: '배치 감시', status: 'asking', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
+    build: {title: '릴리스 빌드 확인', status: 'working', age: '1m', place: 'hide › main'},
   };
   // A raised group: its heading with the whole count, its most recent rows up to
   // the cap, and a More fold for the rest.
@@ -4128,9 +4128,9 @@ function buildProjectsSidebar(tokens) {
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
           tabGroupHeader(`psb-tab-main-${s}`, '탭 1', 14),
           tree(`psb-t0-${s}`, {grouped: true, title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-          tree(`psb-t1-${s}`, {grouped: true, title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
-          tree(`psb-t2-${s}`, {grouped: true, title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
-          tree(`psb-t3-${s}`, {grouped: true, title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+          tree(`psb-t1-${s}`, {grouped: true, title: 'P8 읽기 전용 준비', status: 'waiting', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+          tree(`psb-t2-${s}`, {grouped: true, title: '테스트 작성', status: 'approval', age: '12m', depth: 2, rail: true}),
+          tree(`psb-t3-${s}`, {grouped: true, title: '문서 정리', status: 'done', age: '40m', depth: 2, rail: true, last: true}),
           tree(`psb-t4-${s}`, {grouped: true, title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
           tree(`psb-t5-${s}`, {grouped: true, title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
           tree(`psb-t6-${s}`, {grouped: true, title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
@@ -4157,9 +4157,9 @@ function buildProjectsSidebar(tokens) {
     const remoteNeeds = [
       ['batch', {place: 'Home'}],
       ['batch', {title: '릴리스 노트 검토', age: '7m', line: '이 문구로 확정할까요?', place: 'hide › main'}],
-      ['batch', {title: '프런트모스트 창 고정', provider: 'claude', age: '12m', line: '접근성 권한을 요청할까요?', place: 'hide › quick/246-frontmost'}],
+      ['batch', {title: '프런트모스트 창 고정', age: '12m', line: '접근성 권한을 요청할까요?', place: 'hide › quick/246-frontmost'}],
       ['batch', {title: '판정 로그 재실행', age: '20m', line: '실패한 3건을 다시 돌릴까요?', place: 'sasu › main'}],
-      ['batch', {title: '디스크 정리', provider: 'claude', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
+      ['batch', {title: '디스크 정리', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
     ];
     const remote = deviceSidebar('remote', s, {
       height: WIN_H, needs: {p: `psb-rm-${s}`, rows: remoteNeeds, total: 12},
@@ -4417,8 +4417,8 @@ function buildProjectsSidebar(tokens) {
         spacer(`psb-axis-checkout-spacer-${s}`), text(`psb-axis-checkout-age-${s}`, '8m', {size: '$--text-caption', fill: MUTED}),
       ]),
       frame(`psb-axis-block-a-${s}`, 'Tab 1', {width: 224, layout: 'vertical'}, [axisHeader('a', '아주 긴 한국어 탭…'), axisRow('one', {title: '탭 경계·여백 정리', age: '1m', selected: true}), axisRow('two', {title: '왼쪽 pane 검토', age: '8m', provider: 'codex'})]),
-      axisRow('single', {title: '세션 기록 동기화', age: '2s', provider: 'codex'}, false),
-      frame(`psb-axis-block-b-${s}`, 'Tab 3', {width: 224, layout: 'vertical'}, [axisHeader('b', '탭 3'), axisRow('three', {title: 'PR 질문 표시 개선', age: '6m', provider: 'codex'}), axisRow('four', {title: '탐색 개선', age: '11m', symbol: '○', color: MUTED})]),
+      axisRow('single', {title: '세션 기록 동기화', age: '2s'}, false),
+      frame(`psb-axis-block-b-${s}`, 'Tab 3', {width: 224, layout: 'vertical'}, [axisHeader('b', '탭 3'), axisRow('three', {title: 'PR 질문 표시 개선', age: '6m'}), axisRow('four', {title: '탐색 개선', age: '11m', symbol: '○', color: MUTED})]),
     ]);
   }
   const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];

@@ -82,8 +82,9 @@ test("2-1-2 sidebar groups align titles and navigate only visible rows", async (
     const singleTitle = tree(page, single.tab.tab_id).locator("[data-agent-title]");
     const position = async (row: ReturnType<Page["locator"]>) => (await row.boundingBox())!;
     await page.evaluate(() => document.fonts.ready);
-    expect((await position(groupedTitle)).x - (await position(title)).x).toBe(18);
-    expect((await position(singleTitle)).x).toBe((await position(title)).x);
+    // An agent row leads with its status mark alone (agent-mark-quiet B1): its title starts one mark and one gap after the mark, 20px nearer the edge than it did behind the logo.
+    expect((await position(groupedTitle)).x - (await position(title)).x).toBe(-2);
+    expect((await position(singleTitle)).x - (await position(title)).x).toBe(-20);
     const row = tree(page, herdr.tab).locator("[data-pane]").first();
     const sidebarBounds = await position(page.locator("nav[data-sidebar] > .sidebar-header-container"));
     const status = await position(row.locator("[data-agent-status-mark]"));

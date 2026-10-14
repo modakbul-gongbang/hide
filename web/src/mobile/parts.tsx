@@ -15,8 +15,10 @@ export const TONE_TEXT: Record<Tone, string> = {
   subtle: "text-muted-foreground",
 };
 
-/** The column a list row's detail lines start in: under the title, after the status mark alone. The detail screen's head also draws the provider logo, so its lines start at `--size-mobile-row-inset`. */
+/** The column a list row's detail lines start in: under the title, after the status mark alone. */
 export const LIST_INSET = "pl-[calc(var(--size-agent-mark)+var(--spacing-sm))]";
+/** The detail head also draws the logo, so its lines start under the title after both marks. */
+export const DETAIL_INSET = "pl-(--size-mobile-row-inset)";
 
 /** The row's head: the detail screen (`large`) names the agent with its logo, a list row does not (PRD agent-mark-quiet B12). */
 export function AgentHead({ agent, large }: { agent: PhoneAgent; large: boolean }) {

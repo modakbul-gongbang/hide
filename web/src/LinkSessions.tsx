@@ -166,7 +166,6 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
     <li
       tabIndex={0}
       aria-label={[request, agentProductName(line.agent)].join(", ")}
-      title={agentProductName(line.agent)}
       className="group/link-line relative flex gap-sm rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
       data-link-session={line.id}
       data-link-live={live?.kind}

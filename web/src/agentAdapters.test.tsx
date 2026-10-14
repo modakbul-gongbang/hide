@@ -11,6 +11,8 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { LinkSessions } from "./LinkSessions";
 import { disarmKeyTarget } from "./keyTarget";
 import { resumeProvider } from "./linkPanel";
+import { AgentHead } from "./mobile/parts";
+import type { PhoneAgent } from "./mobile/protocol";
 import { NO_CHOICE, START_KINDS, selectionOf } from "./mobile/start";
 import type { Checkout, LinkPanel, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -52,6 +54,13 @@ it.each([["claude", "Claude Code"], [" CLAUDE-CODE ", "Claude Code"], ["codex", 
 });
 it.each([null, undefined])("has no product name for %s", (kind) => {
   expect(agentProductName(kind)).toBeNull();
+});
+
+// The phone's list row leads with the status mark alone; only the detail screen's head draws the logo (agent-mark-quiet B12).
+it("draws the provider logo in the phone detail head and not in a list row", () => {
+  const agent = { symbol: "●", tone: "working", agent_kind: "codex", title: "작업", emphasized: false } as unknown as PhoneAgent;
+  expect(renderToStaticMarkup(<AgentHead agent={agent} large={false} />)).not.toContain("data-agent-mark");
+  expect(renderToStaticMarkup(<AgentHead agent={agent} large />)).toContain('data-agent-mark="codex"');
 });
 
 it.each(["future-agent"])("keeps %s ineligible for resume", (kind) => {
@@ -100,6 +109,9 @@ it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" GROK ", "grok"], 
   try {
     useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ agent_scope: emptyScope(), id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
     await act(async () => root.render(<TooltipProvider><LinkSessions panel={panel} project={project} branchOf={() => "task"} onRetry={() => undefined} empty={null} actions={actions} /></TooltipProvider>));
+    // The row draws no provider logo and names the product instead (agent-mark-quiet B7, B11).
+    expect(container.querySelector("[data-agent-mark]")).toBeNull();
+    expect(container.querySelector("[data-link-agent]")?.textContent).toBe(agentAdapter(kind)?.label);
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();
     expect(button?.getAttribute("aria-disabled")).not.toBe("true");

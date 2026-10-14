@@ -27,7 +27,6 @@ import {
   type ProjectGraph,
   type StatusChip,
 } from "./agentGraph";
-import { agentProductName } from "./agentAdapters";
 import { badgeParts, badgeWords, lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
@@ -551,7 +550,6 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
         <button
           type="button"
           aria-label={rowAccessibleName(t, agent, device)}
-          title={agentProductName(agent.agent_kind)}
           data-graph-focus="row"
           data-graph-open={agent.pane_id}
           className="absolute inset-0 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"

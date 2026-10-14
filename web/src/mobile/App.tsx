@@ -190,7 +190,7 @@ function SleepingRow({ session }: { session: PhoneSleepingSession }) {
   return (
     <li className="flex min-h-(--size-touch-target) flex-col gap-xs py-md" data-phone-sleeping={session.sleep_id}>
       <div className="flex min-w-0 items-center gap-sm">
-        <MoonIcon aria-label={caption} className="size-(--size-status-mark) shrink-0 text-muted-foreground" />
+        <span className="flex size-(--size-agent-mark) shrink-0 items-center justify-center"><MoonIcon aria-label={caption} className="size-(--size-status-mark) text-muted-foreground" /></span>
         <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}<span className="sr-only">, {agentProductName(session.agent_kind)}</span></span>
       </div>
       <div className={`flex min-w-0 items-center justify-between gap-sm ${LIST_INSET}`}>

@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode } from "react";
 import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { markTone } from "./agentRow";
 import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed } from "./components/elapsed";
@@ -272,6 +273,7 @@ export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, cont
             <StatusMark symbol={agent.symbol} className={markTone(agent)} />
             <AgentMark kind={agent.agent_kind} />
             <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">{agentProductName(agent.agent_kind)}</span>
             <Elapsed since={agent.changed_at_unix_ms} className="font-mono text-caption text-muted-foreground" />
           </span>
           <p className={cn("whitespace-pre-wrap break-words text-caption", tone)}>{message}</p>
