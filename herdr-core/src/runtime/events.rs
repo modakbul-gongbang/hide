@@ -969,11 +969,15 @@ pub(super) struct PrFeedbackReadPayload {
 
 /// `pr_card_read`: what the card shows beyond the list (D-06), asked when
 /// the card opens, when its pull request changed, and by a part's retry.
+/// `look_again` is the operator's Look again after a refused write, which
+/// also dismisses its notice and reads the list; no automatic read does.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PrCardReadPayload {
     pub(super) workspace_id: String,
     pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) look_again: bool,
 }
 
 /// `pr_merge`: Merge from the card (D-21, D-22), conditioned on the head
@@ -3696,7 +3700,8 @@ impl Runtime {
             Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
             Event::PrDelegate(payload) => self.delegate_pr(payload),
             Event::PrOpen(payload) => self.open_pull_request_card(payload),
-            Event::PrCardRead(payload) => self.look_again_pr_card(payload),
+            Event::PrCardRead(payload) if payload.look_again => self.look_again_pr_card(payload),
+            Event::PrCardRead(payload) => self.read_pr_card(payload),
             Event::PrMerge(payload) => self.merge_pull_request(payload),
             Event::PrUpdateBranch(payload) => self.update_pull_request_branch(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),

@@ -178,7 +178,7 @@ fn is_open(pr: &PullRequestSnapshot) -> bool {
 /// session of theirs made or worked on, review asks made of them or their
 /// team, and bots'. A merged one needs the first two. A teammate's pull
 /// request none of these reach is not listed.
-fn listed(pr: &PullRequestSnapshot) -> bool {
+pub(crate) fn listed(pr: &PullRequestSnapshot) -> bool {
     let work = &pr.work;
     match pr.badge {
         PullRequestBadge::Closed => false,

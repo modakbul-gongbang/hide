@@ -1456,6 +1456,11 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number } });
     },
 
+    /** The operator's Look again after a refused write: dismisses its notice and reads the list and the card. */
+    lookAgainPrCard(workspaceId: string, number: number) {
+      dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number, look_again: true } });
+    },
+
     /** Merge (or add to the merge queue) from a card, conditioned on the head commit the card showed (D-21, D-22). */
     mergePullRequest(workspaceId: string, number: number, head: string, method: PrMergeMethod | null) {
       dispatch({ schema_version: 2, kind: "pr_merge", payload: { workspace_id: workspaceId, pr_number: number, head, ...(method ? { method } : {}) } });

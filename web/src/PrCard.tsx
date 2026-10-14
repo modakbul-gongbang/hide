@@ -82,7 +82,7 @@ export function PrCardView({ workspace, number, actions }: { workspace: { device
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-lg p-lg">
         {pr ? <Head project={project} pr={pr} entry={entry} card={card} actions={actions} /> : <p className="text-caption text-muted-foreground" data-pr-card-unlisted={number}>{t("work.card.unlisted", { number })}</p>}
         {pr && entry ? <ReasonBox entry={entry} card={card} /> : null}
-        {pr ? <Blocked pr={pr} entry={entry} card={card} actions={actions} /> : null}
+        {pr ? <Blocked pr={pr} entry={entry} card={card} actions={actions} projectId={project.id} /> : null}
         {pr && entry ? <AgentSaid entry={entry} /> : null}
         {pr ? <Body card={card} actions={actions} projectId={project.id} number={number} /> : null}
         {pr ? <Files pr={pr} project={project} card={card} actions={actions} /> : null}
@@ -183,7 +183,7 @@ function ReasonBox({ entry, card }: { entry: PrEntry; card: PrCard | null }) {
 }
 
 /** What blocks it (B25): a conflict, each failed check with its log, each unresolved thread. Nothing blocked, no section. */
-function Blocked({ pr, entry, card, actions }: { pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
+function Blocked({ pr, entry, card, actions, projectId }: { pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions; projectId: string }) {
   const { t } = useInterfaceTranslation();
   const open = pr.state !== "merged" && pr.state !== "closed";
   const conflict = open && pr.work?.merge_state === "dirty";
@@ -203,7 +203,7 @@ function Blocked({ pr, entry, card, actions }: { pr: PullRequest; entry: PrEntry
           {check.url ? <button type="button" className="shrink-0 rounded-xs text-muted-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequest(check.url!, device, true)}>{t("work.card.checkLog")}</button> : null}
         </p>
       ))}
-      {threadsFailed ? <PartState part="threads" card={card} actions={actions} projectId={entry?.project.id ?? ""} number={pr.number} /> : null}
+      {threadsFailed ? <PartState part="threads" card={card} actions={actions} projectId={projectId} number={pr.number} /> : null}
       {threads.length > 0 ? <h4 className="text-micro text-muted-foreground">{t("work.card.threads")}</h4> : null}
       {threads.map((thread, index) => {
         const place = thread.line == null ? thread.path : `${thread.path}:${thread.line}`;
@@ -368,7 +368,7 @@ function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr
   const writing = write?.phase === "working";
   const head = card?.head ?? null;
   const github = (path = "") => actions.openPullRequest(`${pr.url}${path}`, project.device_id, true);
-  const confirming = confirm !== null && confirmHolds(confirm, { head, queue, method, mergeBlocked: why !== null }) ? confirm : null;
+  const confirming = confirm !== null && confirmHolds(confirm, { head, queue, method, mergeBlocked: why !== null, behind: pr.work?.merge_state === "behind" }) ? confirm : null;
   useEffect(() => {
     if (confirm !== null && confirming === null) setConfirm(null);
   }, [confirm, confirming]);
@@ -433,7 +433,7 @@ function WriteLine({ write, base, card, actions, projectId, number }: { write: P
   return (
     <p role="alert" className="flex flex-wrap items-center gap-sm text-caption text-warning" data-pr-card-write="failed" data-pr-card-write-reason={reason}>
       <span>{t(`work.card.fail.${reason}`, { base })}</span>
-      {reason === "head_moved" || reason === "not_mergeable" ? <Button size="sm" variant="secondary" disabled={card?.reading === true} onClick={() => actions.readPrCard(projectId, number)} data-pr-card-look-again="true">{t("work.card.lookAgain")}</Button> : null}
+      {reason === "head_moved" || reason === "not_mergeable" ? <Button size="sm" variant="secondary" disabled={card?.reading === true} onClick={() => actions.lookAgainPrCard(projectId, number)} data-pr-card-look-again="true">{t("work.card.lookAgain")}</Button> : null}
     </p>
   );
 }

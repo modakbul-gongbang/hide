@@ -207,21 +207,55 @@ impl Runtime {
             return;
         }
         self.pending_checks_read_at = Some(now);
-        // Every listed open pull request with checks running counts, an
-        // agent's or not: the Work tool's PRs lens and a card draw them
-        // all (PRD work-tab-pr-lens B44).
+        // A pull request the Work list shows (D-25), an agent's or not, with
+        // checks running counts: the lens and a card draw them (PRD
+        // work-tab-pr-lens B44). A teammate's pull request nothing reaches is
+        // not read for.
         let running: BTreeSet<String> = self
-            .github
-            .projects
+            .snapshot
+            .navigator
+            .workspaces
             .iter()
-            .filter(|project| {
-                project.pull_requests.iter().any(|pull_request| {
-                    !pull_request.badge.is_settled()
-                        && pull_request.checks == crate::model::PullRequestChecks::Pending
-                })
+            .filter(|workspace| {
+                self.github
+                    .projects
+                    .iter()
+                    .any(|project| project.root_path == workspace.path)
+                    && workspace.pull_requests.iter().any(|pull_request| {
+                        !pull_request.badge.is_settled()
+                            && pull_request.checks == crate::model::PullRequestChecks::Pending
+                            && crate::agent_state::work::board::listed(pull_request)
+                    })
             })
-            .map(|project| project.root_path.clone())
+            .map(|workspace| workspace.path.clone())
             .collect();
+        // A row of the request view with a pull request of its own checks running.
+        let agents: BTreeSet<String> = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .filter_map(|row| row.request.as_ref())
+            .flat_map(|request| request.pull_requests.iter())
+            .filter(|pull_request| {
+                pull_request.live
+                    && !pull_request.badge.is_settled()
+                    && pull_request.checks == crate::model::PullRequestChecks::Pending
+            })
+            .filter_map(|pull_request| {
+                self.github
+                    .projects
+                    .iter()
+                    .find(|project| {
+                        project
+                            .pull_requests
+                            .iter()
+                            .any(|known| known.url == pull_request.url)
+                    })
+                    .map(|project| project.root_path.clone())
+            })
+            .collect();
+        let running: BTreeSet<String> = running.union(&agents).cloned().collect();
         for project in running {
             self.refresh_pull_requests(&project);
         }

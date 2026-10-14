@@ -59,7 +59,7 @@ describe("mergeWhy", () => {
 
 describe("confirmHolds", () => {
   const merge = { action: "merge", head: "a".repeat(40), method: "squash", queue: false } as const;
-  const same = { head: "a".repeat(40), queue: false, method: "squash", mergeBlocked: false } as const;
+  const same = { head: "a".repeat(40), queue: false, method: "squash", mergeBlocked: false, behind: true } as const;
 
   it("holds while the card shows what the confirmation named", () => {
     expect(confirmHolds(merge, same)).toBe(true);
@@ -72,6 +72,7 @@ describe("confirmHolds", () => {
     expect(confirmHolds(merge, { ...same, method: "rebase" })).toBe(false);
     expect(confirmHolds(merge, { ...same, mergeBlocked: true })).toBe(false);
     expect(confirmHolds({ ...merge, action: "update", method: null }, { ...same, head: null })).toBe(false);
+    expect(confirmHolds({ ...merge, action: "update", method: null }, { ...same, behind: false })).toBe(false);
   });
 });
 

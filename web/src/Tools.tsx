@@ -78,7 +78,7 @@ function ToolTabs({ tool, actions, id }: { tool: Tool; actions: Actions; id: str
               className={`relative flex min-w-0 items-center justify-center gap-xxs px-sm text-caption outline-none hover:bg-accent focus-visible:bg-accent ${selected ? "text-foreground" : "text-subtle-foreground"}`}
               onClick={() => actions.showTool(each)}
             >
-              <span className="truncate">{t(TOOL_NAMES[each])}</span>
+              <span className={each === "work" ? "shrink-0" : "truncate"}>{t(TOOL_NAMES[each])}</span>
               {each === "work" && work > 0 ? <span className="shrink-0 tabular-nums text-warning" data-work-count={work}>{work}</span> : null}
               {each === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="size-(--size-status-mark) shrink-0 rounded-full bg-warning" data-tool-dot="memory" /> : null}
               {selected ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}

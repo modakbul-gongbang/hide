@@ -179,7 +179,7 @@ function PrRow({ entry, actions, showProject, folded }: { entry: PrEntry; action
           </span>
         </div>
         <div className="pointer-events-none relative flex min-w-0 pl-[calc(var(--size-pr-icon)+var(--spacing-xs))]">
-          <ReasonLine reason={reason} group={group} noAgent={group === "blocked"} />
+          <ReasonLine reason={reason} group={group} noAgent={group === "blocked"} className="whitespace-normal break-words" />
           {lastMoved ? <span className="ml-xs shrink-0 truncate text-micro text-muted-foreground" data-pr-last-moved="true">· {t("work.fold.lastMoved", { date: lastMoved })}</span> : null}
         </div>
       </div>
@@ -246,6 +246,7 @@ function RowActions({ entry, actions, linking, onLinking }: { entry: PrEntry; ac
             {row.group !== "merged" ? <DropdownMenuItem onSelect={delegate} data-pr-menu-delegate="true">{t("prList.delegate")}</DropdownMenuItem> : null}
             {linkable ? <DropdownMenuItem onSelect={() => onLinking(true)} data-pr-menu-link="true">{t("prList.linkIssue")}</DropdownMenuItem> : null}
             {linkable ? <DropdownMenuItem onSelect={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_new_issue", workspaceId: project.id, prNumber: pr.number })} data-pr-menu-new-issue="true">{t("prList.newIssue")}</DropdownMenuItem> : null}
+            <DropdownMenuItem onSelect={() => actions.openPullRequest(pr.url, project.device_id, true)} data-pr-menu-github="true">{t("work.card.github")}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(pr.head_branch ?? "")} data-pr-menu-copy="true">{t("prList.copyBranch")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

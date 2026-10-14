@@ -126,12 +126,13 @@ export type Confirmed = { action: "merge" | "update"; head: string; method: PrMe
 
 /**
  * Whether a confirmation still holds: the card shows the same head, the same
- * queue and, for a merge, the same method, and Merge is still allowed. Else
+ * queue and, for a merge, the same method and Merge still allowed, or for an
+ * update the branch still behind its base. Else
  * it closes and nothing is sent, so a click on Yes never writes what the
  * operator was not shown.
  */
-export function confirmHolds(confirm: Confirmed, now: { head: string | null; queue: boolean; method: PrMergeMethod | null; mergeBlocked: boolean }): boolean {
+export function confirmHolds(confirm: Confirmed, now: { head: string | null; queue: boolean; method: PrMergeMethod | null; mergeBlocked: boolean; behind: boolean }): boolean {
   if (confirm.head !== now.head || confirm.queue !== now.queue) return false;
-  if (confirm.action === "update") return true;
+  if (confirm.action === "update") return now.behind;
   return !now.mergeBlocked && (now.queue || confirm.method === now.method);
 }

@@ -197,6 +197,7 @@ impl Runtime {
         self.read_pr_card(PrCardReadPayload {
             workspace_id: payload.workspace_id,
             pr_number: number,
+            look_again: false,
         });
         true
     }
@@ -1067,6 +1068,7 @@ impl Runtime {
         self.read_pr_card(PrCardReadPayload {
             workspace_id: workspace_id.to_owned(),
             pr_number: number,
+            look_again: false,
         });
     }
 }

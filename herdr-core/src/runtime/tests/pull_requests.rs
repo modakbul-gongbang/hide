@@ -565,6 +565,7 @@ fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
         runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
             workspace_id: "w".into(),
             pr_number: 3,
+            look_again: false,
         })
     );
     let read = card(&runtime, 3);
@@ -590,7 +591,10 @@ fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
 fn pending_checks_on_a_pull_request_without_an_agent_are_read_again_each_minute() {
     let mut pending = pull_request(2, "open-work", PullRequestBadge::Open, None);
     pending.checks = PullRequestChecks::Pending;
-    let mut runtime = pr_runtime(vec![pending]);
+    pending.work.mine = true;
+    let mut teammates = pull_request(3, "theirs", PullRequestBadge::Open, None);
+    teammates.checks = PullRequestChecks::Pending;
+    let mut runtime = pr_runtime(vec![pending, teammates]);
     let start = std::time::Instant::now();
     let generation = |runtime: &Runtime| runtime.github_generations.get("/repo").copied();
     let before = generation(&runtime);
@@ -621,13 +625,23 @@ fn looking_again_dismisses_a_failed_write_and_the_automatic_read_does_not() {
     runtime.read_pr_card(crate::runtime::events::PrCardReadPayload {
         workspace_id: "w".into(),
         pr_number: 2,
+        look_again: false,
     });
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "failed");
+
+    // The web's automatic read (a moved pull request, the card opening) is
+    // the plain event and keeps the notice.
+    runtime.pr_card_slot("w", 2).reading = false;
+    assert!(runtime.dispatch_json(&event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+    )));
     assert_eq!(card(&runtime, 2).write.unwrap().phase, "failed");
 
     runtime.pr_card_slot("w", 2).reading = false;
     let look = event(
         "pr_card_read",
-        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "look_again": true}),
     );
     assert!(runtime.dispatch_json(&look));
     assert_eq!(card(&runtime, 2).write, None);
@@ -897,4 +911,18 @@ fn a_merged_pull_request_attaches_to_its_worktree_after_a_restart_from_the_saved
     assert_eq!(shown_on_task(&second), (Some(1), Some(1)));
     second.ingest_worktrees(catalog_at("a-new-commit"), 0);
     assert_eq!(shown_on_task(&second), (None, None));
+}
+
+/// B44: a teammate's pull request that nothing of the operator's reaches is
+/// not on the list, so its running checks are not read for each minute.
+#[test]
+fn a_teammates_pending_checks_the_list_does_not_show_are_not_read_for() {
+    let mut theirs = pull_request(3, "theirs", PullRequestBadge::Open, None);
+    theirs.checks = PullRequestChecks::Pending;
+    let mut runtime = pr_runtime(vec![theirs]);
+    let start = std::time::Instant::now();
+    let before = runtime.github_generations.get("/repo").copied();
+    runtime.observe_request_view(true, start);
+    runtime.reread_pending_checks(start + std::time::Duration::from_secs(61));
+    assert_eq!(runtime.github_generations.get("/repo").copied(), before);
 }
