@@ -298,12 +298,10 @@ Record operator agent count separately from private pane/agent and attached-chil
 
 ## 4. Reproduce with real interactions
 
-Sidebar tab grouping is snapshot-derived, not a terminal-input path (`web/src/sidebarTabs.ts`).
-Each affected checkout scans its tabs, physical panes, agents and visible ownership rows when those inputs or saved disclosure change; terminal echo changes none of those inputs.
-The feature adds no resident process, timer, queue or per-key I/O.
-A disclosure event admits one current device/checkout/tab and persists only an actual changed choice; its saved set cannot grow beyond admitted live tabs and accepted session removal prunes stale keys, retaining disconnected devices until reconnect or device removal.
-Core disclosure tests own admission, idempotence, focus preservation, save/load and retirement; sidebar grouping tests own count/root separation, cross-tab subtree ownership and singleton fold restoration.
-The web and desktop `sidebar-tab-groups.spec.ts` journeys own isolated lifecycle, rename/reset and native-window observation, without implying a latency or memory improvement.
+Sidebar tab segments are snapshot-derived, not a terminal-input path (`web/src/sidebarTabs.ts`).
+Each affected checkout scans its tabs, physical panes, agents and visible ownership rows when those inputs change; terminal echo changes none of those inputs.
+The feature adds no resident process, timer, queue, saved state or per-key I/O.
+Sidebar grouping tests own count/root separation and cross-tab subtree ownership, and the web and desktop `sidebar-tab-groups.spec.ts` journeys own the live geometry, rename/reset and native-window observation, without implying a latency or memory improvement.
 
 `desktop/e2e/*.spec.ts` and `web/e2e/*.spec.ts` are the primary reproduction path: Playwright drives the real window against an isolated `hided` and a private, pinned Herdr server, and both run in CI.
 Read the closest existing spec before writing a new one; `desktop/e2e/browser.spec.ts` covers the occluded-window case; the fixture launches every desktop app with `--disable-backgrounding-occluded-windows` and without activating it (see [BUILD.md](BUILD.md#the-desktop-app)), so an occluded window keeps painting for capture.

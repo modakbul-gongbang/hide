@@ -160,15 +160,14 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 
 ## Web screen list
 
-The Projects Sidebar screen and production gallery include actual-tab headers over multi-agent root groups, a header-free singleton, 18px grouped-root indentation and the existing 18px lineage step.
-Headers use the sidebar caption and row tokens, expose name/count and disclosure only, and separate tab groups with `--spacing-sm` rather than another card.
-The approved status-axis cutout adds the left disclosure and 12px tab glyph, 28px rows, an 8px block gap and neutral `--secondary` selection.
-The tab glyph and grouped status share one axis, and the disclosure and singleton status share the outer axis.
-`sidebar-status-axis` is a production Sidebar gallery scene with invented 2-1-2 tab facts, paired with the `psb-axis-l` and `psb-axis-d` Pen cutouts by `design/review-targets.json`.
-The `sidebar-status-axis` target captures the real checkout row with 8px of surrounding sidebar padding to match the approved 240px cutout.
+The Projects Sidebar screen and production gallery draw tabs as segments, not depth: one root status axis on the checkout name's column, a 1px guide per tab centered under the checkout's kind glyph, the tab glyph at the head of a tab of two or more agents, and one quiet line for a named tab.
+The segments separate with `--spacing-sm` rather than another card, keep the existing 18px lineage step, and use neutral `--secondary` selection; a plain folder's glyph and name stand on the project row's columns.
+`sidebar-status-axis` is a production Sidebar gallery scene with invented 2-1-2 tab facts (a named tab, a one-agent tab, an unnamed tab), paired with the `psb-axis-l` and `psb-axis-d` Pen cutouts by `design/review-targets.json`.
+The `sidebar-status-axis` target captures the real checkout row with 8px of surrounding sidebar padding to match the 240px cutout.
 Its 900px square browser viewport keeps the device rail and every row visible; `capturePadding` changes the screenshot bounds only, never the rendered layout.
 `sidebar-tab-groups.spec.ts` owns the live tab geometry and `sidebar-root-only.spec.ts` owns the visible singleton lineage disclosure to children in other tabs.
-`scripts/pen-screens.mjs` owns the corresponding composed header and grouped tree offsets; `web/src/gallery/sceneData.ts` supplies explicit tab naming metadata and applies the same disclosure event for interactive comparison.
+`scripts/pen-screens.mjs` owns the composed segment, guide and root offsets (`segment`, `tree`); `web/src/gallery/sceneData.ts` supplies explicit tab naming metadata.
+No `System /` or `Component /` master carries a tab part, so `design/hide-ui.lib.pen` is unchanged: the segment is drawn from primitives in the screen file.
 
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
