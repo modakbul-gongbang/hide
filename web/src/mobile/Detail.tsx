@@ -97,7 +97,7 @@ export function Detail({ onBack }: { onBack: () => void }) {
         {agent ? (
           <div className="mt-xs flex flex-col gap-xs">
             <AgentHead agent={agent} large />
-            <Place agent={agent} />
+            <Place agent={agent} inset="pl-(--size-mobile-row-inset)" />
           </div>
         ) : null}
       </header>

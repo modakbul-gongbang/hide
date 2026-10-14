@@ -28,7 +28,7 @@ function row(id: string, over: Partial<AgentRow> = {}): AgentRow {
   } as AgentRow;
 }
 
-it("badges the Sessions row of an agent Hide AI started, names Hide AI in its label, and leaves the operator's row plain", async () => {
+it("draws the owl on the Sessions row of an agent Hide AI started, names Hide AI in its label, and leaves the operator's row plain", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const agents = [row("operator"), row("started", { hide_ai: { task: { kind: "memory_promote", target: "m43" } } })];
   const scope: AgentScope = { ...emptyScope(),
@@ -48,11 +48,14 @@ it("badges the Sessions row of an agent Hide AI started, names Hide AI in its la
     await act(async () => root.render(<TooltipProvider><AgentSessions actions={createActions(() => true)} /></TooltipProvider>));
     const started = container.querySelector('[data-session-row="started"]');
     expect(started).not.toBeNull();
-    expect(started?.querySelector("[data-hide-ai-badge]")).not.toBeNull();
+    expect(started?.querySelector("[data-hide-mark]")).not.toBeNull();
+    expect(started?.querySelector("[data-agent-mark]")).toBeNull();
+    expect(started?.querySelector("[data-session-focus]")?.getAttribute("aria-label")).toContain("Claude Code");
     expect(started?.querySelector("[data-session-focus]")?.getAttribute("aria-label")).toContain("Hide AI · Promote Memory · m43");
     const operators = container.querySelector('[data-session-row="operator"]');
     expect(operators).not.toBeNull();
-    expect(operators?.querySelector("[data-hide-ai-badge]")).toBeNull();
+    expect(operators?.querySelector("[data-hide-mark]")).toBeNull();
+    expect(operators?.querySelector("[data-agent-mark]")).toBeNull();
     expect(operators?.querySelector("[data-session-focus]")?.getAttribute("aria-label")).not.toContain("Hide AI");
   } finally {
     await act(async () => root.unmount());

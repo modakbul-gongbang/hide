@@ -23,7 +23,7 @@ import type { SurfaceKind } from "./recent";
 import { commandLabel } from "./shortcutLabels";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
-import { agentMarkOf } from "./agentLogos";
+import { agentProductName } from "./agentAdapters";
 import { closeScope, closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
 import { RowMark, SubtreeList } from "./components/subtree-list";
 
@@ -85,7 +85,8 @@ export function CycleOverlay() {
               data-cycle-row={item.target.kind === "surface" ? item.target.surface.id : item.target.kind === "pane" ? item.target.paneId : item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
-              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: item.agent.agent_kind }), item.agent && statusText(t, item.agent.status_code), itemDetail, item.chip?.label].filter(Boolean).join(", ")}
+              title={item.agent ? agentProductName(item.agent.agent_kind) : undefined}
+              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: agentProductName(item.agent.agent_kind) }), item.agent && statusText(t, item.agent.status_code), itemDetail, item.chip?.label].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
               <CycleMarks item={item} title={itemTitle} />
@@ -107,13 +108,14 @@ export function CycleOverlay() {
 
 /**
  * A row's marks, in the sidebar agent row's order and spacing: the one
- * agent's status mark, never its colour alone, then which agent it is; a
- * tab with no single agent wears the neutral mark the tab strip draws. Other
+ * agent's status mark, never its colour alone, and no provider logo (the name
+ * is in the row's label and tooltip); a tab with no single agent wears the
+ * neutral mark the tab strip draws. Other
  * rows keep the empty status slot, so every title starts in one column.
  */
 function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
   return (
-    <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (agentMarkOf(item.agent.agent_kind)?.id ?? "neutral") : item.kind}>
+    <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? "status" : item.kind}>
       <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
         {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_code} /> : null}
       </span>
@@ -126,7 +128,8 @@ function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
 
 /** The every-project Overview and a Project's Overview wear the marks their sidebar rows wear. */
 function KindMark({ item, title }: { item: CycleItem; title: string }) {
-  if (item.kind === "herdr") return <AgentMark kind={item.agent?.agent_kind} />;
+  // An agent's status mark is already drawn beside this slot; a tab with no single agent keeps the neutral mark (PRD agent-mark-quiet D-09).
+  if (item.kind === "herdr") return item.agent ? null : <AgentMark kind={null} />;
   if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   if (item.kind === "main") return <HouseIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   return displayMark({ kind: item.kind, label: title });

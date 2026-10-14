@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import type { NodeUsage, UsageAmount } from "../generated/hided-ws";
 import { AgentMark } from "../AgentMark";
-import { agentAdapter } from "../agentAdapters";
+import { agentProductName } from "../agentAdapters";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { allTokens, compactTokens, selectedUsage, sumUsageDays, usageDate, usagePeriodDays } from "../usageHistory";
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 const PAGE_DAYS = 30;
 const HEADINGS = ["usage.history.dateAgent", "usage.history.costHeading", "usage.history.newTokens", "usage.history.inputHeading", "usage.history.outputHeading", "usage.history.cacheWriteHeading", "usage.history.cacheReadHeading", "usage.history.totalTokens"] as const;
-const agentName = (name: string) => agentAdapter(name)?.label ?? name;
+const agentName = agentProductName;
 
 export function UsageHistoryTable({ node }: { node: NodeUsage }) {
   const { t, i18n } = useInterfaceTranslation();

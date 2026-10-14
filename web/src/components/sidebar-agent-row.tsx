@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { AgentMark } from "../AgentMark";
+import { HideMark } from "../AgentMark";
+import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
@@ -138,7 +139,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
+  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agentProductName(agent.agent_kind), agent.detail?.trim(), place].filter(Boolean).join("\n");
   const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -193,8 +194,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
           <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
-          {/* In a project's tree the Hide AI group says who started the row; alone, the provider's icon wears the badge (D-03, D-04). */}
-          <AgentMark kind={agent.agent_kind} hideAi={agent.hide_ai && !tree ? "sidebar" : null} />
+          {/* In a project's tree the Hide AI group says who started the row; alone, the Hide owl stands beside the status mark (PRD agent-mark-quiet D-04). The provider's logo is only on the pane's own header. */}
+          {agent.hide_ai && !tree ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">

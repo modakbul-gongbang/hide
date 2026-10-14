@@ -1,7 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, CornerLeftUpIcon, LoaderCircleIcon, MessageSquareIcon, PlayIcon, CircleHelpIcon, SquareTerminalIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { rowLine } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -165,7 +165,8 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   return (
     <li
       tabIndex={0}
-      aria-label={request}
+      aria-label={[request, agentProductName(line.agent)].join(", ")}
+      title={agentProductName(line.agent)}
       className="group/link-line relative flex gap-sm rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
       data-link-session={line.id}
       data-link-live={live?.kind}
@@ -173,9 +174,8 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
       data-link-file={line.file}
     >
       <span className="relative flex w-(--size-agent-badge-compact) shrink-0 flex-col items-center pt-xxs" aria-hidden="true">
-        <span className={cn(gone && "opacity-(--opacity-secondary)")}>
-          <AgentMark kind={line.agent} />
-        </span>
+        {/* The rail's node: the line's provider is named in its detail line, not drawn as a logo (PRD agent-mark-quiet D-06). */}
+        <span className={cn("size-(--size-tab-status-dot) rounded-full bg-border", gone && "opacity-(--opacity-secondary)")} />
         {last ? null : <span className="mt-xs w-(--size-hairline) flex-1 bg-border" />}
       </span>
       <div className={cn("flex min-w-0 flex-1 flex-col gap-xxs", last ? "pb-xxs" : "pb-md")}>
@@ -190,6 +190,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
           </span>
         ) : null}
         <span className="flex min-w-0 flex-wrap items-center gap-x-xs gap-y-xxs text-caption text-muted-foreground">
+          <span data-link-agent={line.agent}>{agentProductName(line.agent)}</span>
           {live?.kind === "working" ? (
             <span className="inline-flex items-center gap-xs" data-link-state="working">
               <span aria-hidden="true" className="size-(--size-tab-status-dot) rounded-full bg-agent-working" />

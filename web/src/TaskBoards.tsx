@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed, formatElapsed } from "./components/elapsed";
@@ -816,10 +816,9 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
       data-depth={depth}
       onClick={(event) => event.stopPropagation()}
     >
-      <button type="button" aria-label={rowAccessibleName(t, agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
+      <button type="button" aria-label={rowAccessibleName(t, agent, null)} title={agentProductName(agent.agent_kind)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
       <span className="pointer-events-none relative flex min-w-0 items-center gap-xs">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
-        <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body", turn ? "text-foreground" : "text-subtle-foreground")}>{agent.identity_label}</span>
         <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground" />
       </span>

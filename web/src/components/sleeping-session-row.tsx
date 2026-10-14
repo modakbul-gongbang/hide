@@ -1,6 +1,6 @@
 import { Loader2Icon, MoonIcon } from "lucide-react";
-import { AgentMark } from "../AgentMark";
 import type { Actions } from "../actions";
+import { agentProductName } from "../agentAdapters";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { SleepingSession } from "../snapshot";
 import { sleepingCaption } from "../sleeping-session";
@@ -26,8 +26,7 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
             : <MoonIcon aria-hidden="true" className="size-(--size-status-mark)" />}
         </span>
       </Hint>
-      <AgentMark kind={session.kind} />
-      <Hint label={[session.identity_label, session.reason, caption].filter(Boolean).join("\n")}>
+      <Hint label={[session.identity_label, agentProductName(session.kind), session.reason, caption].filter(Boolean).join("\n")}>
         <span className="min-w-0 flex-1 truncate text-subtle-foreground">{session.identity_label}</span>
       </Hint>
       {session.wake_available ? (

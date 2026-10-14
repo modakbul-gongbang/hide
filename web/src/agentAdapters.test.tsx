@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { AGENT_ADAPTERS, agentAdapter } from "./agentAdapters";
+import { AGENT_ADAPTERS, agentAdapter, agentProductName } from "./agentAdapters";
 import { PROVIDER_KINDS } from "./agentPicker";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { LinkSessions } from "./LinkSessions";
@@ -44,6 +44,14 @@ it.each(["future-agent", "gemini-cli", "", null, undefined])("keeps %s neutral",
   const markup = renderToStaticMarkup(<AgentMark kind={kind} />);
   expect(markup).toContain('data-agent-mark="neutral"');
   expect(markup).not.toContain("<img");
+});
+
+// A row without a logo names its agent by product, never by the raw Herdr kind (PRD agent-mark-quiet B6, B7).
+it.each([["claude", "Claude Code"], [" CLAUDE-CODE ", "Claude Code"], ["codex", "Codex"], ["future-agent", "future-agent"]])("names %s as %s", (kind, name) => {
+  expect(agentProductName(kind)).toBe(name);
+});
+it.each([null, undefined])("has no product name for %s", (kind) => {
+  expect(agentProductName(kind)).toBeNull();
 });
 
 it.each(["future-agent"])("keeps %s ineligible for resume", (kind) => {

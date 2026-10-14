@@ -27,7 +27,7 @@ import {
   type ProjectGraph,
   type StatusChip,
 } from "./agentGraph";
-import { AgentMark } from "./AgentMark";
+import { agentProductName } from "./agentAdapters";
 import { badgeParts, badgeWords, lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
@@ -551,6 +551,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
         <button
           type="button"
           aria-label={rowAccessibleName(t, agent, device)}
+          title={agentProductName(agent.agent_kind)}
           data-graph-focus="row"
           data-graph-open={agent.pane_id}
           className="absolute inset-0 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -562,7 +563,6 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
       <span className="pointer-events-none relative flex h-(--graph-row-height) min-w-0 items-center gap-xs pr-sm" style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent))` }}>
         {row.depth > 0 ? <CornerDownRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" data-graph-indent="true" /> : null}
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
-        <AgentMark kind={agent.agent_kind} />
         {/* The title takes what is left, so it gives way before a chip's project name, the one thing a chip says (issue 718). */}
         <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", asking && "font-semibold")} data-graph-row-title="true">
           {agent.identity_label}
@@ -595,7 +595,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
         )}
       </span>
       {asking ? (
-        <span className={cn("pointer-events-none relative block truncate pr-sm text-caption", said ? lineTone(said, agent) : "text-warning")} style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent) + var(--size-agent-mark))` }} data-graph-row-line={agent.pane_id}>
+        <span className={cn("pointer-events-none relative block truncate pr-sm text-caption", said ? lineTone(said, agent) : "text-warning")} style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent) + var(--size-agent-mark) + var(--spacing-xs))` }} data-graph-row-line={agent.pane_id}>
           {row.line}
         </span>
       ) : null}
