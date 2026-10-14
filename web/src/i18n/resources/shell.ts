@@ -1,6 +1,8 @@
 import type { Catalog, Catalogs } from "../schema";
 
 export const shellEnglish = {
+  "sidebar.tabNumber": "Tab {{number}}",
+  "sidebar.tabAgents": "{{name}}, {{count}} agents",
   "shell.openingLastWorkspace": "Opening your last Workspace…",
   "shell.openTimeout": "It did not come forward in time; nothing changed.",
   "shell.renderFailed": "This area could not be drawn. It is drawn again on the next change.",
@@ -138,6 +140,8 @@ export const shellEnglish = {
 } as const;
 
 const ko = {
+  "sidebar.tabNumber": "탭 {{number}}",
+  "sidebar.tabAgents": "{{name}}, 에이전트 {{count}}개",
   "shell.openingLastWorkspace": "마지막 Workspace 여는 중…",
   "shell.openTimeout": "시간 안에 열리지 않았습니다. 변경된 내용은 없습니다.",
   "shell.renderFailed": "이 영역을 그리지 못했습니다. 다음 변경 때 다시 그립니다.",
@@ -275,6 +279,8 @@ const ko = {
 } satisfies Catalog<typeof shellEnglish>;
 
 const zhCN = {
+  "sidebar.tabNumber": "标签页 {{number}}",
+  "sidebar.tabAgents": "{{name}}，{{count}} 个智能体",
   "shell.openingLastWorkspace": "正在打开上次的工作区…",
   "shell.openTimeout": "未能在限定时间内打开，未作任何更改。",
   "shell.renderFailed": "无法绘制此区域。下次有变更时会重新绘制。",
@@ -412,6 +418,8 @@ const zhCN = {
 } satisfies Catalog<typeof shellEnglish>;
 
 const ja = {
+  "sidebar.tabNumber": "タブ {{number}}",
+  "sidebar.tabAgents": "{{name}}、エージェント {{count}}件",
   "shell.openingLastWorkspace": "最後に使用したワークスペースを開いています…",
   "shell.openTimeout": "時間内に開けませんでした。変更はありません。",
   "shell.renderFailed": "この領域を描画できませんでした。次の変更時に再描画します。",

@@ -164,18 +164,18 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   };
 }
 
-function paneRead(env: NodeJS.ProcessEnv, bin: string, pane: string): { text: string; failure: string | null } {
+function paneRead(env: NodeJS.ProcessEnv, bin: string, pane: string, timeout = 10_000): { text: string; failure: string | null } {
   const result = spawnSync(bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], {
     env,
     encoding: "utf8",
-    timeout: 10_000,
+    timeout,
   });
   if (result.status === 0) return { text: result.stdout, failure: null };
   return { text: "", failure: `pane read exited ${result.status}: ${result.stderr.trim()}` };
 }
 
-function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
-  return paneRead(env, bin, pane).text;
+function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string, timeout?: number): string {
+  return paneRead(env, bin, pane, timeout).text;
 }
 
 /**
@@ -539,16 +539,23 @@ function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, ar
   const deadline = Date.now() + ms;
   let seen = "";
   for (;;) {
-    const { available, info } = shellAvailability(env, bin, root, pane);
+    const promptRead = paneRead(env, bin, pane, Math.max(1, deadline - Date.now()));
+    const { available, info } = shellAvailability(env, bin, root, pane, Math.max(1, deadline - Date.now()));
     const shell = info.shell_pid;
-    seen = JSON.stringify(info);
-    if (available) {
+    const prompt = promptRead.text.includes("fixture %");
+    seen = JSON.stringify({ prompt, promptFailure: promptRead.failure, processInfo: info });
+    // Foreground ownership can precede shell startup. Later split and resumed
+    // panes need the same prompt barrier as the initial fixture panes.
+    if (available && prompt) {
       try {
         return herdr(env, bin, args);
       } catch (error) {
         // Herdr prints a refusal on stderr; stdout is empty.
         const refusal = String((error as { stderr?: unknown }).stderr ?? error);
-        if (!refusal.includes("agent_pane_busy")) throw error;
+        if (!refusal.includes("agent_pane_busy")) {
+          const failed = error as { status?: number; signal?: string; stdout?: string; stderr?: string };
+          throw new Error(`fixture agent start failed: ${JSON.stringify({ pane, readiness: seen, status: failed.status ?? null, signal: failed.signal ?? null, stdout: failed.stdout ?? null, stderr: failed.stderr ?? null })}; ${String(error)}`, { cause: error });
+        }
         seen = `${seen}; busy answer: ${refusal.trim()}`;
       }
     }

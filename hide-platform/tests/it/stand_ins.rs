@@ -20,6 +20,9 @@
 //! before a test is given it; a test's folder holds a hard link to it, which
 //! is the same file and so shares its check. A folder on another filesystem
 //! gets a copy, started once the same way.
+//! Native macOS executables instead get a private byte copy, ad-hoc signed
+//! and started before the test's deadline. Signing a hard link would change
+//! cargo's output; a rejected native first start must not count as ready.
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -118,11 +121,43 @@ fn stand_in(body: &str) -> PathBuf {
 
 /// Puts `program`, ready to run, at `at`, replacing what is there: as a hard
 /// link, or as a copy started once when `at` is on another filesystem.
+/// Native macOS executables are copied and signed without changing `program`.
 #[cfg(unix)]
 pub fn place(program: &Path, at: &Path) {
     std::fs::create_dir_all(at.parent().unwrap()).unwrap();
     if let Err(error) = std::fs::remove_file(at) {
         assert_eq!(error.kind(), ErrorKind::NotFound, "{}", at.display());
+    }
+    #[cfg(target_os = "macos")]
+    if is_mach_o(program) {
+        std::io::copy(
+            &mut std::fs::File::open(program).unwrap(),
+            &mut std::fs::File::create(at).unwrap(),
+        )
+        .unwrap();
+        let mut command = Command::new("/usr/bin/codesign");
+        command
+            .args(["--force", "--sign", "-"])
+            .arg(at)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = OwnedChild::spawn(&mut command)
+            .unwrap()
+            .capture_until(Instant::now() + READY_GUARD, 64 * 1024)
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} could not be signed: {:?}, {}",
+            at.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::set_permissions(at, std::fs::metadata(program).unwrap().permissions()).unwrap();
+        // This file belongs to its fixture and is removed with it. Do not
+        // remember its identity after deletion or grow the shared-file cache.
+        start_once(at);
+        return;
     }
     match std::fs::hard_link(program, at) {
         Ok(()) => {}
@@ -132,6 +167,32 @@ pub fn place(program: &Path, at: &Path) {
         }
         Err(error) => panic!("{} could not be linked: {error}", at.display()),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn is_mach_o(program: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0; 4];
+    if std::fs::File::open(program)
+        .unwrap()
+        .read(&mut magic)
+        .unwrap()
+        != magic.len()
+    {
+        return false;
+    }
+    // Mach-O's 32/64-bit and universal headers, in either byte order.
+    matches!(
+        u32::from_be_bytes(magic),
+        0xfeed_face
+            | 0xcefa_edfe
+            | 0xfeed_facf
+            | 0xcffa_edfe
+            | 0xcafe_babe
+            | 0xbeba_feca
+            | 0xcafe_babf
+            | 0xbfba_feca
+    )
 }
 
 /// Starts `program` once in this process, unless it already was, and waits
@@ -148,6 +209,11 @@ pub fn ready(program: &Path) {
     if started.contains(&id) {
         return;
     }
+    start_once(program);
+    started.insert(id);
+}
+
+fn start_once(program: &Path) {
     let scratch = tempfile::tempdir().unwrap();
     let deadline = Instant::now() + READY_GUARD;
     loop {
@@ -167,13 +233,21 @@ pub fn ready(program: &Path) {
             .stderr(Stdio::null());
         match OwnedChild::spawn(&mut command) {
             Ok(mut child) => {
-                child.capture_until(deadline, 1).unwrap_or_else(|error| {
+                let output = child.capture_until(deadline, 1).unwrap_or_else(|error| {
                     panic!(
                         "{} did not end its first start, which runs it with `--help` and must end \
                          at once (a body that keeps running exits on that argument first): {error:?}",
                         program.display()
                     )
                 });
+                // A CLI or interpreter may reject --help normally. A signal
+                // before main is not a completed first start.
+                assert!(
+                    output.status.code().is_some(),
+                    "{} first start was killed: {:?}",
+                    program.display(),
+                    output.status
+                );
                 break;
             }
             Err(error)
@@ -184,5 +258,4 @@ pub fn ready(program: &Path) {
             Err(error) => panic!("{} could not start: {error}", program.display()),
         }
     }
-    started.insert(id);
 }

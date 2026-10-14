@@ -514,8 +514,8 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
     }
     const captures = new Map();
     for (const condition of wanted) {
-      const height = manifest.frames.find(frame => frame.theme === condition.theme && frame.width === condition.width)?.height ?? 900;
-      const context = await browser.newContext({viewport: {width: condition.width, height: Math.ceil(height)}, deviceScaleFactor: PIXEL_RATIO});
+      const height = target.viewportHeight ?? manifest.frames.find(frame => frame.theme === condition.theme && frame.width === condition.width)?.height ?? 900;
+      const context = await browser.newContext({viewport: {width: target.viewportWidth ?? condition.width, height: Math.ceil(height)}, deviceScaleFactor: PIXEL_RATIO});
       try {
         const page = await context.newPage();
         const errors = [];
@@ -532,11 +532,19 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
           await page.waitForTimeout(150);
           // Each state is captured at its own frame's height when the bundle has one.
           const own = manifest.frames.find(frame => frame.state === state && ['theme', 'width', 'content', 'scale'].every(key => frame[key] === condition[key]));
-          await page.setViewportSize({width: condition.width, height: Math.ceil(own?.height ?? height)});
+          await page.setViewportSize({width: target.viewportWidth ?? condition.width, height: Math.ceil(target.viewportHeight ?? own?.height ?? height)});
           await enterState(page, state, target);
           const file = path.join(out, 'actual', `${conditionName(condition)}-${state}.png`);
           fs.mkdirSync(path.dirname(file), {recursive: true});
-          await page.locator(target.selector).screenshot({path: file});
+          if (target.capturePadding !== undefined) {
+            const padding = target.capturePadding;
+            if (!Number.isFinite(padding) || padding < 0) throw new Error('capturePadding must be nonnegative');
+            const box = await page.locator(target.selector).boundingBox();
+            if (!box) throw new Error(`No visible capture target: ${target.selector}`);
+            const clip = {x: box.x - padding, y: box.y - padding, width: box.width + 2 * padding, height: box.height + 2 * padding};
+            if (clip.x < 0 || clip.y < 0) throw new Error('The padded capture reaches outside the viewport');
+            await page.screenshot({path: file, clip});
+          } else await page.locator(target.selector).screenshot({path: file});
           captures.set(`${conditionName(condition)}/${state}`, file);
         }
       } finally {

@@ -1650,13 +1650,17 @@ impl StripTabSnapshot {
 
 /// Preserve the established numeric label when a projection has no newer number.
 pub fn tab_number(raw_label: &str, fallback: u32) -> u32 {
+    automatic_tab_number(raw_label).unwrap_or(fallback)
+}
+
+fn automatic_tab_number(raw_label: &str) -> Option<u32> {
     let trimmed = raw_label.trim();
     trimmed
         .strip_prefix("Tab ")
         .unwrap_or(trimmed)
         .trim()
         .parse()
-        .unwrap_or(fallback)
+        .ok()
 }
 
 /// A custom name wins; automatic names follow the focused pane's identity.
@@ -1667,12 +1671,7 @@ pub fn display_tab_label(
     process: Option<&str>,
 ) -> String {
     let trimmed = raw_label.trim();
-    let automatic_number = trimmed
-        .strip_prefix("Tab ")
-        .unwrap_or(trimmed)
-        .trim()
-        .parse::<u32>()
-        .ok();
+    let automatic_number = automatic_tab_number(raw_label);
     if !trimmed.is_empty() && automatic_number.is_none() {
         return trimmed.to_owned();
     }
@@ -1683,6 +1682,33 @@ pub fn display_tab_label(
         .find(|name| !name.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Tab {}", automatic_number.unwrap_or(number)))
+}
+
+/// Sidebar names use only the operator's name, never a pane's automatic title.
+fn sidebar_tab_naming<S: serde::Serializer>(
+    naming: &TabNaming,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct SidebarName<'a> {
+        manual_name: Option<&'a str>,
+        number: u32,
+    }
+    let raw = naming.raw.trim();
+    let numeric = automatic_tab_number(raw).is_some();
+    SidebarName {
+        manual_name: (!raw.is_empty() && !numeric).then_some(raw),
+        number: naming.number,
+    }
+    .serialize(serializer)
+}
+
+/// The disclosure belongs to one physical tab on one device and checkout.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SidebarTabKey {
+    pub device_id: String,
+    pub checkout_id: String,
+    pub tab_id: String,
 }
 
 /// Why a quiet row is waiting rather than finished or stopped.
@@ -1839,7 +1865,7 @@ pub struct TabRenameSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabSnapshot {
-    #[serde(skip_serializing)]
+    #[serde(rename = "sidebar", serialize_with = "sidebar_tab_naming")]
     pub naming: TabNaming,
     pub agent: Option<TabAgentSnapshot>,
     pub id: Option<String>,
@@ -3047,6 +3073,8 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub session_collapsed_checkout_ids: Vec<String>,
     #[serde(default)]
+    pub sidebar_collapsed_tabs: Vec<SidebarTabKey>,
+    #[serde(default)]
     pub session_open_folds: Vec<String>,
     #[serde(default = "default_panel_visible")]
     pub left_sidebar_visible: bool,
@@ -3641,6 +3669,7 @@ impl Default for UiStateSnapshot {
             resolved_sessions: BTreeMap::new(),
             session_resolution_inputs: BTreeMap::new(),
             session_collapsed_checkout_ids: Vec::new(),
+            sidebar_collapsed_tabs: Vec::new(),
             session_open_folds: Vec::new(),
             left_sidebar_visible: true,
             device_rail_visible: true,

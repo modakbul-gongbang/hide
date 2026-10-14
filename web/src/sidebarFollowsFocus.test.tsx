@@ -29,7 +29,7 @@ function checkout(project: string, name: string, panes: string[]) {
     id: `checkout:${project}-${name}`, workspace_id: `workspace:${project}`, label: name, path: `/fixture/${project}/${name}`, branch: name,
     is_primary: name === "main", is_worktree: name !== "main", exists: true, active_tab_id: `tab:${project}-${name}`, strip: [],
     worktree: { branch: name, head_sha: null, last_commit_unix_seconds: null },
-    tabs: [{ id: `tab:${project}-${name}`, label: name, panes: panes.map((id) => ({ id })) }],
+    tabs: [{ id: `tab:${project}-${name}`, label: name, sidebar: { manual_name: name, number: 1 }, panes: panes.map((id) => ({ id })) }],
   };
 }
 
@@ -80,8 +80,9 @@ it("selects and brings into view the row that stands for the focused pane, openi
   const ui = useUiStore.getState();
   const events: Parameters<DispatchFn>[0][] = [];
   const actions = createActions((event) => { events.push(event); return true; });
-  const show = async (focusedCheckout: string, pane: string, inactiveOpen = false) => {
+  const show = async (focusedCheckout: string, pane: string, inactiveOpen = false, tabFolded = false) => {
     const { rest, agents } = catalog(focusedCheckout, inactiveOpen);
+    rest.ui_state = { ...rest.ui_state, sidebar_collapsed_tabs: tabFolded ? [{ device_id: "local", checkout_id: "checkout:alpha-main", tab_id: "tab:alpha-main" }] : [] } as SnapshotRest["ui_state"];
     await act(async () => useShellStore.setState({ rest, agents, focusedPaneId: pane }));
   };
   const current = () => [...container.querySelectorAll('[data-project-list] [aria-current="true"]')];
@@ -131,6 +132,22 @@ it("selects and brings into view the row that stands for the focused pane, openi
     await show("checkout:alpha-main", "pane:parent");
     expect(container.querySelector('[data-agent-open="pane:parent"]')?.getAttribute("aria-current")).toBe("true");
     expect(scrolled).toHaveLength(before);
+
+    // A folded group, including the hidden child's ancestor, is represented by its header.
+    await show("checkout:beta-main", "pane:beta");
+    rowTop = 500;
+    await show("checkout:alpha-main", "pane:child", false, true);
+    const tab = container.querySelector('[data-sidebar-tab="tab:alpha-main"]');
+    expect(tab?.getAttribute("aria-current")).toBe("true");
+    expect(tab?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector('[data-agent-open="pane:parent"]')).toBeNull();
+    expect(scrolled.at(-1)).toBe(tab);
+    const foldedScrolls = scrolled.length;
+    await show("checkout:alpha-main", "pane:child", false, true);
+    await act(async () => useUiStore.setState({ screen: { kind: "main" } }));
+    await act(async () => useUiStore.setState({ screen: { kind: "workspace" } }));
+    expect(scrolled).toHaveLength(foldedScrolls);
+    expect(events.filter((event) => event.kind === "sidebar_tab_expanded")).toEqual([]);
   } finally {
     await act(async () => root.unmount());
     container.remove();

@@ -10,7 +10,16 @@ use hide_platform::process::OwnedChild;
 use crate::programs;
 
 fn hook_command(home: &Path, mode: &str, event: &str) -> Command {
-    let mut command = Command::new(programs::hook());
+    let hook = programs::hook();
+    #[cfg(unix)]
+    let hook = {
+        // HOME is a child of the fixture root, so preparation cannot be
+        // mistaken for a product effect in the refusal test's empty HOME.
+        let at = home.parent().unwrap().join("bin/hide-agent-hooks");
+        crate::stand_ins::place(hook, &at);
+        at
+    };
+    let mut command = Command::new(hook);
     command
         .args([mode, "--runtime", "claude-code", "--event", event])
         .env(hide_platform::host::HOME_VARIABLE, home)
@@ -32,7 +41,8 @@ fn hook_command(home: &Path, mode: &str, event: &str) -> Command {
 
 #[test]
 fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
-    let home = tempfile::tempdir().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir_in(fixture.path()).unwrap();
     let mut command = hook_command(home.path(), "hook", "SessionStart");
     command.arg("--memory-injection");
     let mut child = OwnedChild::spawn(&mut command).unwrap();
@@ -56,7 +66,8 @@ fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
 
 #[test]
 fn prompt_hook_with_open_payload_stdin_does_not_hold_submission() {
-    let home = tempfile::tempdir().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir_in(fixture.path()).unwrap();
     let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
     command.arg("--memory-injection");
     let started = Instant::now();
@@ -156,7 +167,8 @@ impl Drop for OutputPressure {
 
 #[test]
 fn prompt_hook_with_blocked_diagnostic_output_exits_without_holding_submission() {
-    let home = tempfile::tempdir().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir_in(fixture.path()).unwrap();
     let (mut pressure, output) = OutputPressure::new();
     let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
     command.stdin(Stdio::null()).stderr(Stdio::from(output));
@@ -189,7 +201,8 @@ fn prompt_hook_with_blocked_diagnostic_output_exits_without_holding_submission()
 
 #[test]
 fn internal_hook_without_a_positive_owner_is_refused_before_effects() {
-    let home = tempfile::tempdir().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir_in(fixture.path()).unwrap();
     let mut command = hook_command(home.path(), "hook-inner", "UserPromptSubmit");
     command.stdin(Stdio::null());
     let mut child = OwnedChild::spawn(&mut command).unwrap();

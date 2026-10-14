@@ -64,10 +64,12 @@ fn send_payload(mut stdin: impl Write, payload: &str) {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Run {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) status_ok: bool,
+    pub(crate) status: std::process::ExitStatus,
     pub(crate) elapsed: Duration,
 }
 
@@ -161,6 +163,7 @@ impl Machine {
             stdout: String::from_utf8(output.stdout).unwrap(),
             stderr: String::from_utf8(output.stderr).unwrap(),
             status_ok: output.status.success(),
+            status: output.status,
             elapsed: started.elapsed(),
         }
     }

@@ -538,6 +538,7 @@ export type PaneRow = {
 export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
+  sidebar?: { manual_name: string | null; number: number };
   agent?: TabAgent | null;
   id: string | null;
   workspace_id: string | null;
@@ -547,6 +548,8 @@ export type Tab = {
   delegated: boolean;
   panes: PaneRow[];
 };
+
+export type SidebarTabKey = { device_id: string; checkout_id: string; tab_id: string };
 
 export type StripTab = {
   id: string;
@@ -1747,6 +1750,7 @@ export type SnapshotRest = {
     /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
     expanded_checkout_ids?: string[];
     session_collapsed_checkout_ids?: string[];
+    sidebar_collapsed_tabs?: SidebarTabKey[];
     /** Agents whose children the sidebar tree opened; absence is folded. */
     expanded_agent_pane_ids?: string[];
     /** Agents whose children Sessions opened, kept apart from the sidebar's. */

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { agentListOrder, numberedAgents, numberedTabs, numberOf } from "./numbering";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf, sidebarAgentNumbers } from "./numbering";
 
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
@@ -25,6 +25,32 @@ function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff"
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
   return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
+
+it("numbers grouped roots in physical tab order, skipping folded trees, children and duplicate raised occurrences", () => {
+  const agents = [agent("a", { group: "needs_you", lineage_child_pane_ids: ["child"], lineage_collapsed: false }), agent("b"), agent("c"), agent("single"), agent("child", { delegated: true, lineage_parent_pane_id: "a" })];
+  const checkout = checkoutWith(["t1", "t2", "t3"]);
+  for (const [index, panes] of [[0, ["a", "b", "child"]], [1, ["c"]], [2, ["single"]]] as const) {
+    checkout.tabs[index]!.panes = panes.map((id) => ({ id })) as Checkout["tabs"][number]["panes"];
+    checkout.tabs[index]!.sidebar = { manual_name: null, number: index + 1 };
+  }
+  const rest = legacyRest({ navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local" }], workspaces: [{ id: "w1", device_id: "local", expanded: true, checkouts: [checkout] }] }, status: { remote: [] } } as unknown as SnapshotRest, agents);
+  const placed = rest.navigator!.workspaces![0]!.checkouts[0]!;
+  // The core can order roots differently from physical tabs; lineage must stay with its root.
+  const refs = ["c", "a", "child", "b", "single"].map((pane_id) => ({ pane_id, occurrence: 0, depth: pane_id === "child" ? 1 : 0, descendants: pane_id === "a" ? 1 : 0 }));
+  placed.agent_scope.sidebar_tree.rows = refs;
+  placed.agent_scope.sidebar_tree.visible_rows = refs;
+  const state = { rest, agents };
+  expect([...numberedAgents(agentListOrder(state)).values()]).toEqual(["a", "b", "c", "single"]);
+  const keycaps = sidebarAgentNumbers(state, []);
+  expect(keycaps("a", null)).toBe(1);
+  expect(keycaps("a", "c1")).toBeNull();
+  expect(keycaps("b", "c1")).toBe(2);
+  expect(keycaps("child", "c1")).toBeNull();
+  rest.ui_state = { ...rest.ui_state, sidebar_collapsed_tabs: [{ device_id: "local", checkout_id: "c1", tab_id: "t1" }] } as SnapshotRest["ui_state"];
+  expect([...numberedAgents(agentListOrder(state)).values()]).toEqual(["a", "c", "single"]);
+  expect(numberedTarget("agents", 2, state)).toBe("c");
+  expect(numberedTarget("agents", 4, state)).toBeNull();
+});
 
 describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
   it("numbers the strip's Herdr tabs left to right, nine at most, and only those", () => {
