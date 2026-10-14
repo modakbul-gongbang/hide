@@ -1,4 +1,4 @@
-//! Project Memory as a shell shows it in its Tools column's Memory tab (PRD
+//! Project Memory as a shell shows it in its lane's Memory tool (PRD
 //! project-memory-v2 B16, B19-B24): the Project a shell opened Memory for
 //! with `memory_open`, the operator's actions on it, one card in full and a
 //! search.

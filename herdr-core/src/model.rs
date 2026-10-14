@@ -2566,7 +2566,7 @@ pub struct ProjectSessionsSnapshot {
 }
 
 /// Project Memory on the wire: the Project a shell opened Memory for in its
-/// Tools column's Memory tab.
+/// lane's Memory tool.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemorySnapshot {
     pub project: Option<ProjectMemorySnapshot>,

@@ -8,7 +8,7 @@ import { cn } from "./lib/utils";
 // carries the name alone; every caller also gives the full identity in its
 // tooltip and label.
 
-/** The panel a badge sits on, so its ring is that panel's colour (the sidebar's, or a Tools column's card). */
+/** The panel a badge sits on, so its ring is that panel's colour (the sidebar's, or the lane's card). */
 export type BadgeGround = "sidebar" | "card";
 
 const GROUND: Record<BadgeGround, string> = { sidebar: "bg-sidebar", card: "bg-card" };
