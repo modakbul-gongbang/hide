@@ -1741,6 +1741,18 @@ impl LinkStore {
                         created: line.role == SessionRole::Created,
                     });
                 }
+                if let Some(checkout) = line
+                    .cwd
+                    .as_deref()
+                    .filter(|_| line.device_id == row.device)
+                    .and_then(|cwd| deepest_checkout(checkouts, cwd))
+                {
+                    summary
+                        .pr_checkouts
+                        .entry(pr.number)
+                        .or_default()
+                        .insert(checkout.path.clone());
+                }
                 // Only work counts: a session that made the pull request or
                 // worked on its branch, not one that printed its address.
                 if line.role != SessionRole::Created && !line.on_branch {

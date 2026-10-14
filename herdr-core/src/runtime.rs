@@ -1420,6 +1420,9 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     session_issue_work: session_work::SessionIssueWork,
+    /// The minute the Work tab's PRs list was last judged against the clock
+    /// (`runtime/request_view.rs`, `tick_work_clock`).
+    work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
     /// (`runtime/memory_analysis.rs`).
     memory_work: memory_analysis::MemoryWork,
@@ -2080,6 +2083,7 @@ impl Runtime {
             search_generation: 0,
             links_work: links::LinksWork::default(),
             session_issue_work: session_work::SessionIssueWork::default(),
+            work_clock_minute: 0,
             memory_work: Default::default(),
             project_memory: Default::default(),
             editor_tab_history: Vec::new(),

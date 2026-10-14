@@ -182,15 +182,16 @@ pub fn is_commit(value: &str) -> bool {
 }
 
 /// What one repository's open pull requests add to the 5-minute list: each
-/// pull request's place in the merge queue. The newest hundred only, a cap
-/// the screen never states because a queued pull request is a recent one.
-pub fn pr_queue_query(repository: &str) -> Option<String> {
+/// pull request's place in the merge queue and when a review was last asked
+/// of someone on it. The newest hundred only, a cap the screen never states
+/// because a queued or just-asked pull request is a recently active one.
+pub fn pr_facts_query(repository: &str) -> Option<String> {
     if !is_repository(repository) {
         return None;
     }
     let (owner, name) = repository.split_once('/')?;
     Some(format!(
-        "query=query HidePrQueue {{ repository(owner:\"{owner}\",name:\"{name}\") {{ pullRequests(states:OPEN,first:100,orderBy:{{field:UPDATED_AT,direction:DESC}}) {{ nodes {{ number mergeQueueEntry {{ position }} }} }} }} }}"
+        "query=query HidePrFacts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ pullRequests(states:OPEN,first:100,orderBy:{{field:UPDATED_AT,direction:DESC}}) {{ nodes {{ number mergeQueueEntry {{ position }} timelineItems(last:1,itemTypes:[REVIEW_REQUESTED_EVENT]) {{ nodes {{ ... on ReviewRequestedEvent {{ createdAt }} }} }} }} }} }} }}"
     ))
 }
 
@@ -210,8 +211,8 @@ pub fn pr_card_query(repository: &str, number: u32) -> Option<String> {
     ))
 }
 
-fn is_pr_queue_query(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("query=query HidePrQueue { repository(owner:\"") else {
+fn is_pr_facts_query(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("query=query HidePrFacts { repository(owner:\"") else {
         return false;
     };
     let Some((owner, rest)) = rest.split_once("\",name:\"") else {
@@ -220,7 +221,7 @@ fn is_pr_queue_query(value: &str) -> bool {
     let Some((name, _)) = rest.split_once('"') else {
         return false;
     };
-    pr_queue_query(&format!("{owner}/{name}")).is_some_and(|query| query == value)
+    pr_facts_query(&format!("{owner}/{name}")).is_some_and(|query| query == value)
 }
 
 fn is_pr_card_query(value: &str) -> bool {
@@ -405,7 +406,7 @@ pub fn allowed(arguments: &[&str]) -> bool {
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
                 || arguments[3].starts_with("query=query HideIssueDependencies {")
                 || is_issue_attempt_query(arguments[3])
-                || is_pr_queue_query(arguments[3])
+                || is_pr_facts_query(arguments[3])
                 || is_pr_card_query(arguments[3])))
 }
 
@@ -883,7 +884,7 @@ mod tests {
     /// for a repository (and a number), never text a caller edited.
     #[test]
     fn the_queue_and_card_queries_are_only_the_ones_this_crate_builds() {
-        let queue = pr_queue_query("acme/app").unwrap();
+        let queue = pr_facts_query("acme/app").unwrap();
         let card = pr_card_query("acme/app", 12).unwrap();
         for query in [&queue, &card] {
             assert!(allowed(&["api", "graphql", "-f", query]), "{query}");

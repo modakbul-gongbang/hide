@@ -380,7 +380,7 @@ fn add_viewer_facts(
         REVIEW_ASKED_FIELDS,
     ])?;
     let asked = parse_review_asked(&asked).map_err(GhFailure::network)?;
-    let queue = read_queue(run, repository)?;
+    let facts = read_facts(run, repository)?;
     for pull_request in pull_requests {
         let open = is_open(pull_request);
         let number = pull_request.number;
@@ -397,7 +397,9 @@ fn add_viewer_facts(
         } else {
             crate::model::ReviewAsk::None
         };
-        work.queue_position = queue.get(&number).copied();
+        let fact = facts.get(&number);
+        work.queue_position = fact.and_then(|fact| fact.queue_position);
+        work.review_requested_at_unix_ms = fact.and_then(|fact| fact.review_requested_at);
     }
     Ok(())
 }
@@ -412,20 +414,27 @@ fn parse_review_asked(output: &str) -> Result<std::collections::HashSet<u32>, St
     Ok(rows.into_iter().map(|row| row.number).collect())
 }
 
-/// The open pull requests of the repository that are in its merge queue, with
-/// their positions; empty for a repository without one.
-fn read_queue(
+/// What the facts query knows of one open pull request.
+struct PullRequestFacts {
+    queue_position: Option<u32>,
+    review_requested_at: Option<u64>,
+}
+
+/// The newest open pull requests of the repository with their place in its
+/// merge queue and when a review was last asked; a repository without a queue
+/// has no positions.
+fn read_facts(
     run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
     repository: &str,
-) -> Result<HashMap<u32, u32>, GhFailure> {
-    let query = hide_node_link::gh::pr_queue_query(repository).ok_or_else(|| {
+) -> Result<HashMap<u32, PullRequestFacts>, GhFailure> {
+    let query = hide_node_link::gh::pr_facts_query(repository).ok_or_else(|| {
         GhFailure::network("the repository name cannot be asked about its queue".to_owned())
     })?;
     let answer = run(&["api", "graphql", "-f", &query])?;
-    parse_queue(&answer).map_err(GhFailure::network)
+    parse_facts(&answer).map_err(GhFailure::network)
 }
 
-fn parse_queue(output: &str) -> Result<HashMap<u32, u32>, String> {
+fn parse_facts(output: &str) -> Result<HashMap<u32, PullRequestFacts>, String> {
     #[derive(Deserialize)]
     struct Answer {
         data: Data,
@@ -448,10 +457,21 @@ fn parse_queue(output: &str) -> Result<HashMap<u32, u32>, String> {
         number: u32,
         #[serde(rename = "mergeQueueEntry")]
         entry: Option<Entry>,
+        #[serde(rename = "timelineItems")]
+        asked: Option<Asked>,
     }
     #[derive(Deserialize)]
     struct Entry {
         position: u32,
+    }
+    #[derive(Deserialize)]
+    struct Asked {
+        nodes: Vec<AskedNode>,
+    }
+    #[derive(Deserialize)]
+    struct AskedNode {
+        #[serde(rename = "createdAt")]
+        created_at: Option<String>,
     }
     let answer: Answer = serde_json::from_str(output)
         .map_err(|error| format!("gh returned a merge queue Hide could not read: {error}"))?;
@@ -463,7 +483,20 @@ fn parse_queue(output: &str) -> Result<HashMap<u32, u32>, String> {
         .pull_requests
         .nodes
         .into_iter()
-        .filter_map(|node| node.entry.map(|entry| (node.number, entry.position)))
+        .map(|node| {
+            (
+                node.number,
+                PullRequestFacts {
+                    queue_position: node.entry.map(|entry| entry.position),
+                    review_requested_at: node
+                        .asked
+                        .and_then(|asked| asked.nodes.into_iter().next())
+                        .and_then(|asked| asked.created_at)
+                        .as_deref()
+                        .and_then(parse_rfc3339_ms),
+                },
+            )
+        })
         .collect())
 }
 
@@ -3306,8 +3339,8 @@ mod tests {
             match arguments {
                 ["pr", "list", ..] => Ok(r#"[{"number":7},{"number":8}]"#.to_owned()),
                 ["api", "graphql", "-f", query] => {
-                    assert!(query.contains("HidePrQueue"));
-                    Ok(r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergeQueueEntry":null},{"number":8,"mergeQueueEntry":{"position":3}}]}}}}"#.to_owned())
+                    assert!(query.contains("HidePrFacts"));
+                    Ok(r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":7,"mergeQueueEntry":null,"timelineItems":{"nodes":[{"createdAt":"2026-10-14T01:00:00Z"}]}},{"number":8,"mergeQueueEntry":{"position":3},"timelineItems":{"nodes":[]}}]}}}}"#.to_owned())
                 }
                 other => panic!("unexpected {other:?}"),
             }
@@ -3327,6 +3360,11 @@ mod tests {
         );
         assert_eq!(pull_requests[1].work.queue_position, Some(3));
         assert_eq!(
+            pull_requests[0].work.review_requested_at_unix_ms,
+            parse_rfc3339_ms("2026-10-14T01:00:00Z")
+        );
+        assert_eq!(pull_requests[1].work.review_requested_at_unix_ms, None);
+        assert_eq!(
             pull_requests[2].work.asked_of_me,
             crate::model::ReviewAsk::None
         );
@@ -3342,7 +3380,7 @@ mod tests {
             }
         };
         assert!(add_viewer_facts(&run, "acme/app", "hoyeon", &mut pull_requests).is_err());
-        assert!(parse_queue("not json").is_err());
-        assert!(parse_queue(r#"{"data":{"repository":null}}"#).is_err());
+        assert!(parse_facts("not json").is_err());
+        assert!(parse_facts(r#"{"data":{"repository":null}}"#).is_err());
     }
 }

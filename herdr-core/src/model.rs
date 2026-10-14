@@ -4277,6 +4277,16 @@ pub struct PullRequestWork {
     /// Its place in the base branch's merge queue, from 1; absent when it is
     /// not queued.
     pub queue_position: Option<u32>,
+    /// When the latest review request on it was made, which `리뷰 · N시간째`
+    /// counts from.
+    pub review_requested_at_unix_ms: Option<u64>,
+    /// The sessions the link record says made or worked on it, and the
+    /// checkouts (paths) they ran in. Core only: the runtime attaches them
+    /// from the record (`runtime/links.rs`), the grouping reads them.
+    #[serde(skip)]
+    pub sessions: Vec<String>,
+    #[serde(skip)]
+    pub checkouts: Vec<String>,
 }
 
 impl PullRequestSnapshot {

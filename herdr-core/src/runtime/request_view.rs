@@ -16,8 +16,31 @@ use crate::request_view::{self, RowPlace};
 const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runtime {
+    /// The PRs list turns a working agent stalled and a pull request old with
+    /// the clock alone (PRD work-tab-pr-lens D-10, D-11), so the projection
+    /// is judged again once a minute while any pull request is listed. The
+    /// scope cache compares what it computes, so a minute that changes
+    /// nothing publishes nothing.
+    pub(super) fn tick_work_clock(&mut self, at: u64) -> bool {
+        let minute = at / 60_000;
+        if minute == self.work_clock_minute {
+            return false;
+        }
+        self.work_clock_minute = minute;
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .any(|workspace| !workspace.pull_requests.is_empty())
+            && self.refresh_agent_scopes_at(at)
+    }
+
     pub(super) fn refresh_agent_scopes(&mut self) -> bool {
-        self.agent_scope_cache.refresh(&mut self.snapshot) | self.refresh_pane_headers()
+        self.refresh_agent_scopes_at(crate::runtime::unix_milliseconds())
+    }
+
+    fn refresh_agent_scopes_at(&mut self, now: u64) -> bool {
+        self.agent_scope_cache.refresh(&mut self.snapshot, now) | self.refresh_pane_headers()
     }
 
     /// Lays the block on this Mac's rows, whose pull requests come from

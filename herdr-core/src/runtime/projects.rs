@@ -934,6 +934,10 @@ impl Runtime {
                 workspace,
                 link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
             );
+            super::links::associate_pr_sessions(
+                &mut workspace.pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -3222,7 +3226,7 @@ impl Runtime {
                 workspace.home_issues = home_issues;
                 changed = true;
             }
-            let pull_requests = match project {
+            let mut pull_requests = match project {
                 Some(project) if workspace.is_git && workspace.remote_target_id.is_none() => {
                     super::pull_requests::shown_pull_requests(
                         &project.pull_requests,
@@ -3232,6 +3236,12 @@ impl Runtime {
                 }
                 _ => Vec::new(),
             };
+            // The sessions are attached before the comparison, so a pass that
+            // read nothing new compares equal and publishes nothing.
+            super::links::associate_pr_sessions(
+                &mut pull_requests,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             if workspace.pull_requests != pull_requests {
                 workspace.pull_requests = pull_requests;
                 changed = true;

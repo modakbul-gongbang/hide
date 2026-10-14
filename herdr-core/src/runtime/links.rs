@@ -863,6 +863,7 @@ impl Runtime {
         }
         for workspace in &mut self.snapshot.navigator.workspaces {
             associate_landed(workspace, projects.get(&workspace.id));
+            associate_pr_sessions(&mut workspace.pull_requests, projects.get(&workspace.id));
         }
         summaries.projects = projects;
         self.refresh_inactive_groups();
@@ -902,6 +903,37 @@ pub(super) fn associate_landed(
             && summary.is_some_and(|summary| summary.landed.contains(&checkout.path));
         if checkout.landed != landed {
             checkout.landed = landed;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Attaches to each pull request the sessions the link record says made or
+/// worked on it and the checkouts they ran in: what the Work tab's PRs list
+/// reads to find a pull request's live agents (PRD work-tab-pr-lens D-09).
+pub(super) fn associate_pr_sessions(
+    pull_requests: &mut [crate::model::PullRequestSnapshot],
+    summary: Option<&ProjectLinkSummary>,
+) -> bool {
+    let mut changed = false;
+    for pull_request in pull_requests {
+        let number = u64::from(pull_request.number);
+        let sessions: Vec<String> = summary
+            .into_iter()
+            .flat_map(|summary| &summary.sessions)
+            .filter(|(_, chips)| chips.iter().any(|chip| chip.number == number))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let checkouts: Vec<String> = summary
+            .and_then(|summary| summary.pr_checkouts.get(&number))
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        if pull_request.work.sessions != sessions || pull_request.work.checkouts != checkouts {
+            pull_request.work.sessions = sessions;
+            pull_request.work.checkouts = checkouts;
             changed = true;
         }
     }
