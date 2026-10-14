@@ -647,7 +647,15 @@ fn spawn(
                 let owner = crate::checkout_owner::OwnerOpen::Worktree {
                     path: existing.clone(),
                     repository_root: repo.clone(),
-                    label: name.clone(),
+                    label: if existing == *repo {
+                        repo.trim_end_matches('/')
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(repo)
+                            .to_owned()
+                    } else {
+                        branch.clone()
+                    },
                 };
                 // The persistent unique tab label makes an interrupted tab-create
                 // discoverable before a retry could create another child pane.
@@ -854,8 +862,12 @@ fn spawn(
             client,
             authority,
             actor,
-            Mutation::Complete { id: reserved.id },
+            Mutation::Complete {
+                id: reserved.id.clone(),
+            },
         )?;
+        // The receipt-driven lineage worker alone owns naming. Keeping it
+        // out of this path also keeps completed replay entirely offline.
         let ledger = state(client)?;
         Ok(view(
             ledger

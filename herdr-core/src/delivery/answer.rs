@@ -15,6 +15,9 @@ use super::watch::Watch;
 /// answer it.
 #[derive(Serialize, JsonSchema)]
 pub struct AgentView {
+    /// Naming has its own receipt; it never changes successful spawn identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub names: Option<crate::coordination::naming::Names>,
     pub id: String,
     pub name: String,
     pub machine: String,
@@ -195,6 +198,7 @@ mod tests {
             (None, Some("agent-1")),
         ] {
             let agent = AgentView {
+                names: None,
                 id: "agent-2".into(),
                 name: "worker".into(),
                 machine: "local".into(),

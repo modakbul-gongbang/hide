@@ -323,6 +323,15 @@ Changing only responsibility mode on the same intent returns `intent_conflict` b
 Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
 Remote starts through a caller's own device use Hide's existing device start path with the same caller, modes and focus rules.
 
+Spawn creation keeps its recovery marker until the receipt contains the checkout, pane and terminal incarnation.
+The created tab then takes the registered task name; a created workspace takes the checkout branch, or the repository name for its primary checkout.
+The receipt reports separate workspace and tab naming outcomes (`pending`, `applied`, `preserved`, `failed`); a failed rename does not undo the child or its watch.
+The existing lineage worker retries unfinished names once per connection, in bounded batches, without a separate poller.
+Repair requires the receipt's device, checkout, pane and terminal to match the current unique target and its exact recovery marker.
+User labels and targets with insufficient proof are preserved, and successful targets are not renamed again.
+Herdr's rename API has no compare-and-set, so a user rename between the final read and write remains a race.
+Completed intent replay returns the durable receipt without contacting Herdr, including while a device is offline.
+
 `--machine <device id>` starts the child on a connected device instead of the caller's own; it works with delegation and handoff alike.
 The id is the `device_id` that `hide workspace info` shows and the `machine` that `hide agent list` shows for agents there; a device label is not accepted, and the caller's own id is the same as leaving the flag out, so a spawn without `--machine` is exactly the spawn above.
 `--repo` and `--path` are then paths on that device.

@@ -34,6 +34,7 @@ struct Patch {
 struct Batch {
     generation: u64,
     patches: Vec<Patch>,
+    names: Vec<super::naming::Work>,
 }
 #[derive(Debug)]
 struct Completion {
@@ -60,6 +61,9 @@ pub(crate) struct Writer {
     observed_registrations: Option<(usize, u64)>,
     stopping: Arc<AtomicBool>,
     pending_retry: bool,
+    observed_names: Option<(usize, u64)>,
+    attempted_names: HashSet<String>,
+    pending_names: bool,
 }
 
 impl Writer {
@@ -93,6 +97,23 @@ impl Writer {
                             );
                         }
                     }
+                    for work in batch.names {
+                        if stop.load(Ordering::Acquire) { return; }
+                        let state = runtime.upgrade().and_then(|runtime| runtime.lock().ok().and_then(|guard| Some((guard.naming_client()?, guard.delivery_state().ok()?))));
+                        let Some((client, ledger)) = state else {
+                            crate::diagnostic!(serde_json::json!({"component":"spawn_naming", "kind":"checkpoint_unavailable", "spawn_id":work.id}));
+                            continue;
+                        };
+                        // A reconnect may have queued this receipt while its
+                        // earlier attempt was active. Never repeat a target
+                        // that the durable writer has since completed.
+                        let Some(work) = ledger.spawns.iter().find(|record| record.id == work.id).and_then(super::naming::Work::of) else { continue; };
+                        let names = super::naming::run(connector.as_ref(), &work);
+                        let id = work.id.clone();
+                        if let Err(error) = super::naming::save(&client, work, names) {
+                            crate::diagnostic!(json!({"component":"spawn_naming", "kind":"checkpoint_failed", "spawn_id":id, "detail":error}));
+                        }
+                    }
                 }
             })
             .map_err(|_| "lineage_unavailable")?;
@@ -107,7 +128,16 @@ impl Writer {
             observed_registrations: None,
             stopping,
             pending_retry: false,
+            observed_names: None,
+            attempted_names: HashSet::new(),
+            pending_names: false,
         })
+    }
+
+    /// Failed targets get one new attempt on a new authoritative connection.
+    pub(crate) fn reconnected(&mut self) {
+        self.observed_names = None;
+        self.attempted_names.clear();
     }
 
     pub(crate) fn observe(
@@ -117,6 +147,8 @@ impl Writer {
         changed: bool,
         snapshot_started_at: Instant,
     ) {
+        let names_version = (ledger.spawns.len(), ledger.spawn_placement_revision);
+        let names_changed = self.observed_names != Some(names_version);
         let mut failed = false;
         while let Ok(completion) = self.completed.try_recv() {
             if self.in_flight.get(&completion.signature) != Some(&completion.generation) {
@@ -131,6 +163,8 @@ impl Writer {
             }
         }
         if !changed
+            && !names_changed
+            && !self.pending_names
             && !failed
             && !self.pending_retry
             && self.acknowledged.is_empty()
@@ -158,9 +192,30 @@ impl Writer {
                     && !self.acknowledged.contains_key(&signature)
             })
             .collect::<Vec<_>>();
-        if fresh.is_empty() {
+        // Names are inspected only after a ledger change or while draining
+        // the bounded reconnect batch. An ordinary unchanged tick does no plan.
+        let mut names = if names_changed || self.pending_names {
+            ledger
+                .spawns
+                .iter()
+                .filter(|record| {
+                    super::spawn_machine(ledger, record) == Some(&self.device)
+                        && !self.attempted_names.contains(&record.id)
+                })
+                .filter_map(super::naming::Work::of)
+                .take(33)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let more_names = names.len() > 32;
+        names.truncate(32);
+        if fresh.is_empty() && names.is_empty() {
+            self.observed_names = Some(names_version);
+            self.pending_names = false;
             return;
         }
+        let named_ids = names.iter().map(|work| work.id.clone()).collect::<Vec<_>>();
         let signatures = fresh.iter().map(signature).collect::<Vec<_>>();
         let Some(generation) = self.generation.checked_add(1) else {
             return;
@@ -170,10 +225,14 @@ impl Writer {
                 .try_send(Batch {
                     generation,
                     patches: fresh,
+                    names,
                 })
                 .is_ok()
         }) {
             self.generation = generation;
+            self.observed_names = Some(names_version);
+            self.pending_names = more_names;
+            self.attempted_names.extend(named_ids);
             self.in_flight.extend(
                 signatures
                     .into_iter()
@@ -574,6 +633,9 @@ mod tests {
                 observed_registrations: None,
                 stopping: Arc::new(AtomicBool::new(false)),
                 pending_retry: false,
+                observed_names: None,
+                attempted_names: HashSet::new(),
+                pending_names: false,
             },
             batches,
             done,
@@ -661,6 +723,7 @@ mod tests {
             .try_send(Batch {
                 generation: 0,
                 patches: Vec::new(),
+                names: Vec::new(),
             })
             .unwrap();
         writer.observe(&ledger, &missing, true, observed);
@@ -674,6 +737,34 @@ mod tests {
         writer.observe(&ledger, &missing, false, observed);
         assert!(batches.try_recv().is_err());
         assert_eq!(writer.in_flight.len(), 1);
+    }
+
+    /// B13: metadata observations and unrelated durable publications do not
+    /// reschedule names. A reconnect admits one bounded retry per receipt.
+    #[test]
+    fn names_are_bounded_and_retried_only_on_reconnect_or_new_placement() {
+        let (mut writer, batches, _, mut ledger, agents) = writer_fixture();
+        for id in 0..70 {
+            Arc::make_mut(&mut ledger).spawns.push(serde_json::from_value(json!({
+                "id":format!("spawn-{id}"),"parent":"agent-1","intent":format!("intent-{id}"),
+                "name":"task","kind":"claude","repo":"/fixture","branch":"task",
+                "requested_path":null,"args":[],"path":"/fixture/task","pane":format!("w1:p{id}"),
+                "terminal":format!("terminal-{id}"),"child":null
+            })).unwrap());
+        }
+        let now = Instant::now();
+        for count in [32, 32, 6] {
+            writer.observe(&ledger, &agents, false, now);
+            assert_eq!(batches.try_recv().unwrap().names.len(), count);
+        }
+        writer.observe(&Arc::new((*ledger).clone()), &agents, false, now);
+        assert!(
+            batches.try_recv().is_err(),
+            "an unrelated publication cannot retry names"
+        );
+        writer.reconnected();
+        writer.observe(&ledger, &agents, false, now);
+        assert_eq!(batches.try_recv().unwrap().names.len(), 32);
     }
     #[test]
     fn a_registration_that_moves_to_a_woken_pane_has_its_tokens_written_there() {

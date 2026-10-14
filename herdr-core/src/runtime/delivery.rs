@@ -610,6 +610,12 @@ impl Runtime {
         self.delivery_ledger.clone()
     }
 
+    pub(crate) fn naming_client(&self) -> Option<Client> {
+        (!self.effects_held())
+            .then(|| self.delivery_client.clone())
+            .flatten()
+    }
+
     pub(crate) fn invalidate_delivery(&mut self) {
         // Preserve installed bytes for startup recovery. In particular no
         // subsequent pull, tick or bell may acknowledge our old memory image.

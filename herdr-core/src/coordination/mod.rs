@@ -4,6 +4,7 @@
 mod executor;
 pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
+pub(crate) mod naming;
 pub(crate) mod started;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
@@ -143,6 +144,8 @@ impl SpawnMode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<naming::Names>,
     pub id: String,
     /// The caller authorizes the receipt, including a parentless handoff.
     pub parent: String,
@@ -290,6 +293,11 @@ pub(crate) fn view(record: &AgentRecord, ledger: &Ledger) -> Value {
 
 pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
     AgentView {
+        names: ledger
+            .spawns
+            .iter()
+            .find(|spawn| spawn.child.as_deref() == Some(&record.id))
+            .and_then(|spawn| spawn.names.clone()),
         id: record.id.clone(),
         name: record.name.clone(),
         machine: record.machine.clone(),
@@ -556,6 +564,7 @@ pub(crate) fn apply(
                 return Err("capacity".into());
             }
             let record = SpawnRecord {
+                names: Some(naming::Names::default()),
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
                 mode,
@@ -616,6 +625,19 @@ pub(crate) fn apply(
                     .is_some_and(|(stored, next)| stored != next)
             }) {
                 return Err("intent_conflict".into());
+            }
+            if [
+                (record.path.as_ref(), path.as_ref()),
+                (record.pane.as_ref(), pane.as_ref()),
+                (record.terminal.as_ref(), terminal.as_ref()),
+            ]
+            .into_iter()
+            .any(|(previous, next)| next.is_some() && previous != next)
+            {
+                ledger.spawn_placement_revision = ledger
+                    .spawn_placement_revision
+                    .checked_add(1)
+                    .ok_or("capacity")?;
             }
             if path.is_some() {
                 record.path = path.clone()

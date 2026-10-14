@@ -638,6 +638,13 @@ A close Hide asked for, or a pane Herdr has already stopped listing, projects `c
 
 ### Local agent delivery and inactivity watches
 
+Receipt-proven spawn names use the existing lineage worker and delivery writer.
+An append-only receipt count and placement revision guard naming admission, so unrelated letters and unchanged native observations build no naming plan.
+Each batch admits at most 32 receipts, with one active and one pending batch and at most 4,096 attempted receipt ids per connection.
+Each receipt needs at most four one-second Herdr calls and a five-second durable checkpoint wait, all outside Runtime and the session-sync thread.
+The worker checks shutdown between receipts; stopping can wait for the current receipt's bounded calls.
+Workspace and tab outcomes are persisted separately from spawn completion, and completed replay does no naming I/O.
+
 The core's delivery worker owns a separate private ledger and returns mutation success only after atomic persistence outside `Mutex<Runtime>`.
 Runtime holds an immutable ledger projection; one bounded writer queue and separately owned doorbell/watch producers stop and join with Core outside the lock.
 The existing pane input path adds only timestamp assignments (the last input, from a key, paste, phone write or agent-find key; a submission is stamped only by a phone reply or a prompt hook of the pane's own session); the observation adds the time the pane entered `working`; watch snapshots publish start, warning and end transitions.
