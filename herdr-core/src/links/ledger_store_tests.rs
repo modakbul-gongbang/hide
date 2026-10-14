@@ -66,6 +66,94 @@ fn origin_request(store: &mut LinkStore, identity: &SessionIdentity, at: u64) {
 }
 
 #[test]
+fn native_node_paths_identify_fresh_original_work_but_not_history_or_a_sibling() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let wire_root = hide_platform::path::to_wire(&root).unwrap();
+    let transcripts = home.path().join(hide_session::CLAUDE_SESSIONS);
+    std::fs::create_dir_all(&transcripts).unwrap();
+    let env = hide_host::serve::Env::standalone(Some(home.path().to_owned()));
+    let (mut store, _) = LinkStore::open(&home.path().join("links.sqlite3")).unwrap();
+    store
+        .apply_project(
+            &crate::links::ProjectFacts {
+                key: "original".into(),
+                device_id: "device-a".into(),
+                root: wire_root.clone(),
+                repository: Some("acme/original".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+    for (id, cwd, timestamp, expected) in [
+        (
+            "fresh",
+            root.clone(),
+            "1970-01-01T00:00:02Z",
+            Some("acme/original"),
+        ),
+        ("historical", root.clone(), "1970-01-01T00:00:00.999Z", None),
+        (
+            "sibling",
+            root.with_file_name("repository-other"),
+            "1970-01-01T00:00:02Z",
+            None,
+        ),
+    ] {
+        let file = transcripts.join(format!("{id}.jsonl"));
+        // Native agents write the owning OS's cwd, including Windows '\\'.
+        // The node answer must relate it to catalog paths without changing
+        // the immutable birth window or accepting a prefix-only sibling.
+        let record = serde_json::json!({
+            "type": "user", "sessionId": id, "cwd": cwd,
+            "timestamp": timestamp, "entrypoint": "cli",
+            "origin": {"kind": "human"},
+            "message": {"role": "user", "content": "Keep the original repository"}
+        });
+        std::fs::write(&file, format!("{record}\n")).unwrap();
+        let answers: Vec<hide_session::links::ReadAnswer> = serde_json::from_value(
+            hide_host::serve::handle_in(
+                hide_node_link::protocol::Call::LinkRead {
+                    requests: vec![hide_session::links::ReadRequest {
+                        agent: hide_session::Agent::Claude,
+                        path: file.to_string_lossy().into_owned(),
+                        checkpoint: None,
+                    }],
+                },
+                &env,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let answer = &answers[0];
+        assert_eq!(answer.error, None);
+        assert_eq!(
+            answer.facts.cwd.as_deref(),
+            Some(hide_platform::path::to_wire(&cwd).unwrap().as_str())
+        );
+        store
+            .apply_answer_observed("device-a", answer, id, Some(3_000))
+            .unwrap();
+        let record = store
+            .ledger_record(&SessionIdentity {
+                device_id: "device-a".into(),
+                agent: "claude".into(),
+                session_id: id.into(),
+            })
+            .unwrap();
+        assert_eq!(record.repository.as_deref(), expected, "{id}");
+        assert_eq!(
+            record.project.as_deref(),
+            expected.map(|_| wire_root.as_str()),
+            "{id}"
+        );
+    }
+}
+
+#[test]
 fn repository_changes_preserve_original_session_identity_and_refuse_historical_guessing() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("links.sqlite3");

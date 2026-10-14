@@ -247,6 +247,19 @@ test("@platform migrated session work explains unknown origin and cannot create 
     await root.hover();
     await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
     await expect(page.locator('[data-session-record]').locator('[data-missed-work]',{hasText:MISSED})).toBeVisible({timeout:45_000});
+    // This migration starts from completed, durable native work. Windows
+    // fixture shutdown is forced; a rendered goal is not a saved label.
+    const savedLabels = path.join(daemon.stateDir,"labels.json");
+    const node = daemon.node;
+    await expect.poll(() => {
+      if (!fs.existsSync(savedLabels)) return null;
+      const saved = JSON.parse(fs.readFileSync(savedLabels,"utf8")) as {
+        targets?: Record<string,Record<string,{native_session_id?:string;goal?:string;end?:string}>>;
+      };
+      const label = saved.targets?.[node]?.[herdr.panes[0]];
+      return {session:label?.native_session_id,goal:label?.goal,end:label?.end};
+    }, {message:"completed native label reached disk before migration restart",timeout:30_000})
+      .toEqual({session:identity,goal:FIRST_GOAL,end:"done"});
     // Emulate the actual prior schema while this owned daemon is stopped.
     daemon = await daemon.restart((stateDir)=>{
       const db = new DatabaseSync(path.join(stateDir,"links.sqlite3"));
