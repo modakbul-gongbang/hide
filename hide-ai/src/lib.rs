@@ -330,8 +330,9 @@ pub struct ModelTokens {
 /// queue and return: the router calls this on the request's own thread.
 pub trait AiUsageSink: Send + Sync + fmt::Debug {
     /// `models` is empty for an attempt that was submitted and reported no
-    /// usage (a timeout, a lost connection, an error frame, a provider whose
-    /// usage is not read): an unknown call.
+    /// usage (a timeout, a lost connection, a cancel or an unusable answer
+    /// after the prompt went out, a provider whose usage is not read): an
+    /// unknown call.
     fn attempt(&self, feature_id: &str, provider: ProviderId, models: &[ModelTokens]);
 }
 

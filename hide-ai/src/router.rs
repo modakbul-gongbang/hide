@@ -968,11 +968,16 @@ impl AiRouter {
     }
 
     /// Tells the sink what one backend attempt cost. An answer carries its
-    /// usage; a failure counts as an unknown call only when the request was
-    /// submitted and how it ended is not known (`Timeout`,
-    /// `CompletionUnknown`). Every other failure is a refusal or a rejection
-    /// before any model turn, so it cost nothing, and an `InvalidOutput` from
-    /// the backend is one of those: its error carries no usage to count.
+    /// usage. A failure counts as an unknown call when the backend had been
+    /// handed the request, so a model turn may have run and the error carries
+    /// no usage: `Timeout`, `CompletionUnknown`, `Cancelled` and
+    /// `InvalidOutput`. A backend raises none of them before it submits the
+    /// prompt (a spawn or pipe failure is `ProviderUnavailable`, a lost
+    /// session before `turn/start` too). Every other failure is a refusal
+    /// before any model turn and cost nothing. A cancel that never reached a
+    /// backend, and a caller joined onto another's flight, return before this
+    /// is called, and a schema failure of an answer comes after it, so none
+    /// of them is told twice or at all.
     fn tell_usage(
         &self,
         request: &AiRequest,
@@ -984,9 +989,12 @@ impl AiRouter {
         };
         match result {
             Ok(response) => sink.attempt(&request.feature_id, provider, &response.usage.models),
-            Err(AiError::Timeout | AiError::CompletionUnknown(_)) => {
-                sink.attempt(&request.feature_id, provider, &[]);
-            }
+            Err(
+                AiError::Timeout
+                | AiError::CompletionUnknown(_)
+                | AiError::Cancelled
+                | AiError::InvalidOutput(_),
+            ) => sink.attempt(&request.feature_id, provider, &[]),
             Err(_) => {}
         }
     }
@@ -3138,7 +3146,7 @@ mod tests {
     }
 
     #[test]
-    fn a_provider_whose_usage_is_not_read_is_an_unknown_call_and_a_rejection_is_not_counted() {
+    fn a_provider_whose_usage_is_not_read_is_an_unknown_call_and_a_refusal_is_not_counted() {
         let told = Arc::new(Told::default());
         let router = counting_router(
             vec![Metered::new(
@@ -3146,7 +3154,6 @@ mod tests {
                 vec![
                     answered(json!({"summary": "a"}), Vec::new()),
                     Err(AiError::NotAuthenticated),
-                    Err(AiError::InvalidOutput("claude_api_400".to_owned())),
                 ],
             )],
             &told,
@@ -3155,10 +3162,89 @@ mod tests {
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
         let _ = router.execute(&request("p2", "y"), &CancelToken::new());
-        let _ = router.execute(&request("p3", "z"), &CancelToken::new());
         let all = told.all();
         assert_eq!(all.len(), 1, "{all:?}");
         assert!(all[0].2.is_empty());
+    }
+
+    #[test]
+    fn a_backend_failure_after_submission_is_an_unknown_call_for_each_attempt() {
+        let told = Arc::new(Told::default());
+        let router = counting_router(
+            vec![Metered::new(
+                ProviderId::CLAUDE,
+                vec![
+                    // The input is deterministic, so the router asks twice:
+                    // two dispatches, two unknown calls.
+                    Err(AiError::InvalidOutput("no_structured_output".to_owned())),
+                    Err(AiError::InvalidOutput("no_structured_output".to_owned())),
+                    Err(AiError::Cancelled),
+                ],
+            )],
+            &told,
+        );
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::InvalidOutput(_))
+        ));
+        assert!(matches!(
+            router.execute(&request("p2", "y"), &CancelToken::new()),
+            Err(AiError::Cancelled)
+        ));
+        let all = told.all();
+        assert_eq!(all.len(), 3, "{all:?}");
+        assert!(all.iter().all(|attempt| attempt.2.is_empty()), "{all:?}");
+    }
+
+    #[test]
+    fn a_cancel_before_any_backend_was_asked_does_no_work_and_is_not_told() {
+        let told = Arc::new(Told::default());
+        // No scripted outcome: asking the backend would panic.
+        let router = counting_router(vec![Metered::new(ProviderId::CLAUDE, Vec::new())], &told);
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &cancel),
+            Err(AiError::Cancelled)
+        ));
+        assert!(told.all().is_empty());
+    }
+
+    #[test]
+    fn a_joined_caller_that_gives_up_adds_nothing_to_the_one_execution() {
+        let told = Arc::new(Told::default());
+        let sink = Arc::new(Recorder::default());
+        let held = Arc::new(Held::default());
+        let config = RouterConfig {
+            priority: vec![held.id()],
+            usage_sink: Some(Arc::clone(&told) as Arc<dyn AiUsageSink>),
+            ..RouterConfig::default()
+        };
+        let router = Arc::new(AiRouter::with_sleep(
+            vec![held.clone()],
+            config,
+            sink.clone(),
+            Box::new(|_| {}),
+        ));
+        let leader = {
+            let router = Arc::clone(&router);
+            std::thread::spawn(move || {
+                router.execute(&request("same", "same input"), &CancelToken::new())
+            })
+        };
+        held.started.wait();
+        let joiner_cancel = CancelToken::new();
+        let joiner = {
+            let router = Arc::clone(&router);
+            let cancel = joiner_cancel.clone();
+            std::thread::spawn(move || router.execute(&request("same", "same input"), &cancel))
+        };
+        sink.wait_for_events("ai.request.joined", 1);
+        joiner_cancel.cancel();
+        assert!(matches!(joiner.join().unwrap(), Err(AiError::Cancelled)));
+        held.release.open();
+        leader.join().unwrap().unwrap();
+        assert_eq!(told.all().len(), 1);
     }
 
     #[test]

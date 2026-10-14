@@ -396,9 +396,12 @@ What counts is the attempt, not the request:
 
 - A response with usage is told with its per-model tokens, whether or not the answer then passes schema validation. A rejected answer cost the same tokens, and a retry or a fallback is its own attempt.
 - Callers joined onto one in-flight request are told once.
-- A `Timeout` or a `CompletionUnknown` is told as an **unknown call**: it was submitted and its end is unknown.
+- A `Timeout`, a `CompletionUnknown`, a `Cancelled` or a backend-side `InvalidOutput` is told as an **unknown call**: the backend had the prompt, so a model turn may have run, and the error carries no usage.
+  Each is its own attempt: the second of two `InvalidOutput` attempts is a second dispatch, told once more.
 - A response that arrives without usage (Gemini CLI, Pi, Grok today) is also an unknown call.
-- A backend-side `InvalidOutput` or any other failure that carries no usage is not told at all.
+- A refusal before the prompt went out (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `OverBudget`) is not told: it did no model work.
+  Neither is a cancel that returns before a backend is asked, nor a caller joined onto another's flight that gives up, since neither dispatched anything.
+- A schema failure of an answer that did arrive is the answer's own attempt, told once with its usage; the failure adds nothing.
 
 An unknown call is a count on its day, provider and feature. It adds nothing to an amount and makes the day's known amounts a lower bound; the popover marks them `≥` and the table footnotes them.
 
@@ -446,7 +449,8 @@ A fixed 30 second request therefore spends at most 60 seconds across all provide
 `availability()` still reports each provider's own reason next to it.
 
 Every failure is one of two families.
-A refusal (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `InvalidOutput`) means the provider never took the request, so asking again repeats nothing.
+A refusal (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`) means the provider never took the request, so asking again repeats nothing.
+An `InvalidOutput` from a backend is not a refusal: the backend had the prompt and its answer was unusable, so a model turn may have run, and the usage ledger counts it as an unknown call (see Counting Hide AI's own usage).
 A completion-unknown outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request was submitted and its fate is not known: the deadline passed, the caller cancelled, or the connection or child was lost after `turn/start` went out.
 The codex backend draws that line at the `turn/start` write: a lost child before it is `ProviderUnavailable`, a lost or unanswered `turn/start` and anything after it is `CompletionUnknown`.
 
@@ -523,7 +527,8 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Hide AI's counting is partial by design.
-  An `InvalidOutput` that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is not counted, because the error path carries no usage; an error frame's usage is not read either, and a `Cancelled` attempt is not told at all.
+  An `InvalidOutput` or `Cancelled` attempt that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is counted as an unknown call, not with its tokens, because the error path carries no usage; an error frame's usage is not read.
+  A provider's own rejection of a request (an HTTP 4xx, a context limit) is also an `InvalidOutput` the code cannot tell from a wasted turn, so it is an unknown call too and only makes the day's amounts read as a lower bound.
   Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
   A call that ran several models is counted as one call per model entry, so the call count can exceed the attempts.
   Calls before this feature are not backfilled.
