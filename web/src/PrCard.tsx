@@ -191,7 +191,7 @@ function Blocked({ pr, entry, card, actions, projectId }: { pr: PullRequest; ent
   const threads = card?.threads ?? [];
   const device = entry?.project.device_id ?? "";
   // A thread read that failed says so with a retry, never "nothing blocked" (B39, B52).
-  const threadsFailed = card?.failed.includes("threads") === true && !card.reading;
+  const threadsFailed = card?.failed.includes("threads") === true;
   if (!conflict && failed.length === 0 && threads.length === 0 && !threadsFailed) return null;
   return (
     <section className="flex flex-col gap-xs" aria-label={t("work.card.blocked")} data-pr-card-blocked="true">
@@ -239,12 +239,13 @@ function AgentSaid({ entry }: { entry: PrEntry }) {
 /** A card part that has not been read, or could not be (B39, B52). */
 function PartState({ part, card, actions, projectId, number }: { part: "body" | "files" | "threads"; card: PrCard | null; actions: Actions; projectId: string; number: number }) {
   const { t } = useInterfaceTranslation();
-  const failed = card?.failed.includes(part) === true && !card.reading;
+  // The last read's failure stays drawn while a new read runs, so a re-read moves nothing under the pointer.
+  const failed = card?.failed.includes(part) === true;
   if (failed) {
     return (
       <p className="flex items-center gap-sm text-caption text-muted-foreground" data-pr-card-part={part} data-pr-card-part-state="failed">
         {t("work.card.part.failed")}
-        <Button variant="secondary" size="sm" onClick={() => actions.readPrCard(projectId, number)}>{t("common.retry")}</Button>
+        <Button variant="secondary" size="sm" disabled={card?.reading === true} onClick={() => actions.readPrCard(projectId, number)}>{t("common.retry")}</Button>
       </p>
     );
   }
