@@ -440,10 +440,16 @@ export function AgentField({ agent, actions, disabled, onChange }: { agent: Agen
   );
 }
 
-/** Whether a key press belongs to a field or a terminal rather than to the page. */
+/**
+ * Whether a key press belongs to a field, a terminal, a menu or a dialog
+ * rather than to the page. The Overview's layer over a Workspace is a dialog
+ * too, but what it holds is the Overview page, whose keys are its own.
+ */
 export function typing(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true'], .xterm, [role='dialog'], [role='menu'], [role='listbox']") !== null;
+  if (target.isContentEditable) return true;
+  const holder = target.closest("input, textarea, select, [contenteditable='true'], .xterm, [role='dialog'], [role='menu'], [role='listbox']");
+  return holder !== null && !holder.hasAttribute("data-overview-modal");
 }
 
 /**
