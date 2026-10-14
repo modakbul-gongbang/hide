@@ -3,7 +3,8 @@
 // Factory with the setting on becomes one macOS notification, and nothing
 // else does. The first summary is the baseline, so opening the app does not
 // announce what was already waiting. Clicking a notification opens its item
-// on the 라인, or the Factory whose main broke.
+// on the 라인, or the Factory whose main broke. Until the Factory opens
+// (`launch.ts`) it shows none, since a click would have nowhere to go.
 
 import { useEffect, useRef } from "react";
 import type { Actions } from "../actions";
@@ -11,6 +12,7 @@ import { hostBridge } from "../host";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { inboxKey } from "./choices";
+import { FACTORY_OPEN } from "./launch";
 import { itemSentence } from "./Decisions";
 import type { Translate } from "./labels";
 import type { FactorySummary, InboxItem } from "./model";
@@ -60,7 +62,7 @@ export function useFactoryNotifications(actions: Actions) {
   const seen = useRef<NotifySeen | null>(null);
   const bridge = hostBridge();
   useEffect(() => {
-    if (!summary || !bridge) return;
+    if (!FACTORY_OPEN || !summary || !bridge) return;
     const { notices, seen: now } = newFactoryNotices(summary, seen.current);
     seen.current = now;
     for (const notice of notices) {

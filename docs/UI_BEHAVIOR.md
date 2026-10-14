@@ -1442,6 +1442,11 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 
 ### The Factory place
 
+Until the Factory launches its screens are closed, and the rest of this section describes them as they will open (`web/src/factory/launch.ts`).
+While closed, the sidebar's Factory row is its name in the muted colour with a 'Soon' chip ('곧 출시'), and nothing in it can be pressed; no project or secretary row is drawn under it.
+Nothing else reaches the screen either: ⇧⌘F is not claimed and is absent from the shortcut sheet, Settings, Shortcuts, the View menu and the table under Every command, the ⌘K palette has no 'Factory 열기', and the Factory's macOS notifications are not shown.
+The engine, `hide factory` and the snapshot's `factory` section are unchanged, so opening the screens is that one value.
+
 The sidebar has a Factory row of its own under the Overview row, and its badge is the number of items in 결정 필요, with no badge at zero.
 Under it, once a Factory is open, each open Factory has a row with its project name, a pause mark while it is paused, and its own 결정 필요 number in the warning colour when above zero; the row opens the Factory screen filtered to that Factory, and the Factory row opens it for every Factory.
 The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
@@ -2165,7 +2170,6 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Search | `⌘K` | `Ctrl+Shift+K` | `⌘K` | `Ctrl+Shift+K` |
 | Open file | `⌘P` | `Ctrl+Shift+P` | `⌘P` | `Ctrl+Shift+P` |
 | Overview | `⇧⌘O` | `Alt+Shift+O` | `⇧⌘O` | `Alt+Shift+O` |
-| Open Factory | `⇧⌘F` | `Alt+Shift+F` | `⇧⌘F` | `Alt+Shift+F` |
 | Focus sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Agents overview | `⇧⌘A` | `Alt+Shift+A` | `⇧⌘A` | `Ctrl+Alt+A` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |

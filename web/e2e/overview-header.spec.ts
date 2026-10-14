@@ -47,12 +47,13 @@ test("the Project Overview title row keeps a long project name readable at every
       await chooseTheme(page, theme);
       for (const viewport of [1600, 900, 720]) {
         await page.setViewportSize({ width: viewport, height: 800 });
-        // At 1600 the whole name and both words fit; at 900 and 720 the name needs the room, so the actions are icons.
+        // At 1600 the whole name and both words fit; at 900 and 720 the name needs the room, so the actions are icons,
+        // and the Overview layer, the window less its inset, leaves too little for the whole name beside them only at 720.
         await expect.poll(() => actionsAreIcons(page, issue), { message: `New issue as an icon at ${viewport}px` }).toBe(viewport !== 1600);
         await expect(issue.locator("kbd")).toBeVisible({ visible: viewport === 1600 });
         await expect(agent).toBeVisible();
         expect(await width(name), `the name's width at ${viewport}px`).toBeGreaterThanOrEqual(NAME_MIN);
-        expect(await name.evaluate((node) => node.scrollWidth > node.clientWidth), `the name is cut with an ellipsis only at ${viewport}px`).toBe(viewport !== 1600);
+        expect(await name.evaluate((node) => node.scrollWidth > node.clientWidth), `the name is cut with an ellipsis only at ${viewport}px`).toBe(viewport === 720);
         expect(await page.locator("[data-overview-screen]").evaluate((node) => node.scrollWidth <= node.clientWidth), `nothing runs past the page at ${viewport}px`).toBe(true);
         await screenshot(page, `overview-header-${viewport}-${theme}`);
       }

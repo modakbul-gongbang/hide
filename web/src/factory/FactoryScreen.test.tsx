@@ -15,6 +15,9 @@ import { useShellStore } from "../store";
 import type { SnapshotRest } from "../snapshot";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
 import type { DispatchFn } from "../ws";
+
+// The screen as it will be once the Factory opens (`launch.ts`); until then nothing reaches it.
+vi.mock("./launch", () => ({ FACTORY_OPEN: true }));
 import { InitFailure, factoryMachines } from "./CreateSheet";
 import { FactoryScreen } from "./FactoryScreen";
 import { REQUEST_ANSWER_TIMEOUT_MS } from "./request";

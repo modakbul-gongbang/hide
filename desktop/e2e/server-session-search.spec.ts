@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { chord } from "../../web/e2e/chords";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { openServerButton, openSessions, startServer, writeConversation } from "../../web/e2e/server-session-fixture";
 import { assertIsolated, isolate, launch, shellPage, test } from "./fixture";
@@ -59,8 +60,10 @@ test("server picker and conversation search in a background native window", asyn
       await compositorPresents(page);
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, `${name}.png`)]);
     };
+    // Settings by its chord: the Sessions view is the Overview's layer, which covers the sidebar's Settings button.
     const theme = async (value: "light" | "dark") => {
-      await page.getByRole("button", { name: /^Settings \(/ }).click();
+      await page.keyboard.press(chord("settings", "electron"));
+      await expect(page.locator('[data-settings="true"]')).toBeVisible();
       await page.locator('[data-settings-tab="general"]').click();
       await page.locator(`[data-theme-option="${value}"]`).click();
       await page.keyboard.press("Escape");

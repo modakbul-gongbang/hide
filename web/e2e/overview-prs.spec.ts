@@ -188,7 +188,9 @@ async function atRest(page: Page): Promise<void> {
 }
 
 /** Rests the pointer on `target`: a second small move is what a hand makes, and what a tooltip that was left behind needs to let go. */
-async function rest(page: Page, target: import("@playwright/test").Locator): Promise<void> {
+async function rest(page: Page, target: import("@playwright/test").Locator, { leaveHint = false } = {}): Promise<void> {
+  // In the Overview layer an open hint takes the pointer, so the pointer leaves the control that opened it first.
+  if (leaveHint) await page.mouse.move(2, 998, { steps: 4 });
   await target.hover();
   const box = await target.boundingBox();
   if (box) await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2, { steps: 2 });
@@ -309,7 +311,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await expect(row(24).locator("[data-pr-delegate-open]")).toBeVisible();
     await rest(page, row(24).locator("[data-pr-delegate-open]"));
     await expect(page.getByRole("tooltip")).toContainText("First instruction = failed checks and review comments");
-    await rest(page, row(23).locator(`[data-pr-agent="${fixingPane}"]`));
+    await rest(page, row(23).locator(`[data-pr-agent="${fixingPane}"]`), { leaveHint: true });
     await expect(page.locator(`[data-lens-message="${fixingPane}"]`)).toBeVisible();
     expect(total(sent)).toBe(before);
     await page.mouse.move(2, 998, { steps: 4 });
@@ -402,8 +404,8 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await expect(panel).toHaveAttribute("data-pr-panel", "21");
     await expect(row(21).locator("[data-pr-row]")).toBeFocused();
 
-    // The sidebar's PR card has `View on the PRs tab` (B21).
-    await tile("agents").locator("[data-lens-tile-button]").click();
+    // Back on the Workspace, the sidebar's PR card has `View on the PRs tab`, which opens the Overview at its row (B21).
+    await page.getByRole("button", { name: "Close Overview" }).click();
     const sidebarCheckout = page.locator('[data-project-list] [data-checkout][aria-label^="prd/new-issue"]');
     await page.getByRole("button", { name: /^No agents · open PRs/ }).click();
     await sidebarCheckout.hover();

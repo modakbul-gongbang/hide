@@ -2,10 +2,11 @@
 // hided (PRD sidebar-shell B3-B5, sidebar-titlebar-refresh B11-B14, B17-B21,
 // D-07): the top row names the device over the rail and the sidebar and
 // carries a Workspace's path and icons; under it the Search row opens the ⌘K
-// palette with the chord as bound, the Overview row opens All projects, and no
-// Home row is left; a browser tab offers no Add project; the footer's Help
-// menu opens the shortcut sheet, copies the diagnostics, opens the new-issue
-// page and names the version. Captured in Dark and Light.
+// palette with the chord as bound, the Overview row opens All projects, the
+// Factory row is a Soon chip until the Factory opens, and no Home row is left;
+// a browser tab offers no Add project; the footer's Help menu opens the
+// shortcut sheet, copies the diagnostics, opens the new-issue page and names
+// the version. Captured in Dark and Light.
 
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
@@ -13,7 +14,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseTheme, enterWorkspace, screenshot, showProjectRow, sidebarRowsFit, THIS_MACHINE } from "./wire";
-import { chord, commandLabel } from "./chords";
+import { chord, commandLabel, mod } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -64,6 +65,18 @@ test("the Search row and the Overview row under the device, with no Home row and
     await search.focus();
     await page.keyboard.press("Enter");
     await expect(palette.locator("[data-palette-input]")).toBeFocused();
+    await page.keyboard.press("Escape");
+    // Until the Factory opens (src/factory/launch.ts) its row is the name and a Soon chip that opens nothing, and
+    // ⇧⌘F, its old chord, opens no screen: the palette's chord pressed after it shows the press was handled.
+    const soon = page.locator("[data-sidebar-factory-soon]");
+    await expect(soon).toContainText("Factory");
+    await expect(soon).toContainText("Soon");
+    await expect(soon.locator("button")).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-factory]")).toHaveCount(0);
+    await page.keyboard.press(mod("KeyF", { shift: true }));
+    await page.keyboard.press(chord("search"));
+    await expect(palette.locator("[data-palette-input]")).toBeFocused();
+    await expect(page.locator("[data-factory-screen]")).toHaveCount(0);
     await page.keyboard.press("Escape");
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
@@ -116,6 +129,9 @@ test("the window's top row names the device over the rail and the sidebar, and c
     const sidebarBox = (await sidebar.boundingBox())!;
     expect([Math.round(titleBox.x), Math.round(titleBox.width)]).toEqual([Math.round(sidebarBox.x), Math.round(sidebarBox.width)]);
     expect(sidebarBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height - 0.5);
+    // B20: on a screen that is not a Workspace, here All projects where a first run starts, the row's center is empty.
+    await expect(page.locator("[data-overview-page]")).toBeVisible();
+    await expect(center.locator("*")).toHaveCount(0);
 
     // B17, B18: a Workspace puts its project / checkout path and its icons in the row, and no toolbar under it.
     await enterWorkspace(page, "fixture");
@@ -148,12 +164,6 @@ test("the window's top row names the device over the rail and the sidebar, and c
     await expect(project).toBeVisible();
     await page.keyboard.press(chord("toggle_left_sidebar"));
     await expect(title).toBeVisible();
-
-    // B20: on a screen that is not a Workspace the row's center is empty.
-    await page.locator("[data-sidebar-factory]").click();
-    await expect(page.locator("[data-factory-screen]")).toBeVisible();
-    await expect(center.locator("*")).toHaveCount(0);
-    await expect(title.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
   });
 });
 

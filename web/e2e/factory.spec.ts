@@ -7,7 +7,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { chord } from "./chords";
 import { openFactory, seedDag, startFactoryStack, type FactoryStack } from "./factory-fixture";
+import { FACTORY_OPEN } from "../src/factory/launch";
 
+test.skip(!FACTORY_OPEN, "the Factory screen is closed until it launches (src/factory/launch.ts)");
 test.describe.configure({ timeout: 150_000 });
 
 async function withStack(page: Page, label: string, run: (stack: FactoryStack) => Promise<void>) {
