@@ -1,6 +1,7 @@
 import { useInterfaceTranslation } from "../i18n/client";
 import { ChevronDownIcon, CirclePauseIcon, FactoryIcon, FolderGit2Icon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { Badge } from "./ui/badge";
 import { Kbd } from "./ui/kbd";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
@@ -61,8 +62,10 @@ export function SidebarHeader({
    * The Factory place (PRD software-factory-ui D-02, B1, B12, B23): its row
    * with the 내 차례 number, and the secretary's row under it once a Factory
    * exists; `status` is the secretary agent's mark while its pane is listed.
+   * `soon` is the row before the Factory opens: its name and a 'Soon' chip,
+   * which opens nothing (`factory/launch.ts`).
    */
-  factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
+  factory?: "soon" | { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
   onSearch: () => void;
 }) {
@@ -92,7 +95,13 @@ export function SidebarHeader({
           </button>
         </Hint>
       ) : null}
-      {factory ? (
+      {factory === "soon" ? (
+        <div data-sidebar-factory-soon="true" className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body text-muted-foreground">
+          <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t("factory.title")}</span>
+          <Badge>{t("factory.sidebar.soon")}</Badge>
+        </div>
+      ) : factory ? (
         <>
           <Hint label={factory.count > 0 ? t("factory.sidebar.turnHint", { count: factory.count }) : t("factory.title")} shortcut={factory.chord}>
             <button type="button" aria-current={factory.selected ? "page" : undefined} data-sidebar-factory="true" onClick={factory.onOpen}
