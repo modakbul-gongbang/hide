@@ -8,7 +8,7 @@
 // (B33); Update branch reaches a behind pull request (B32). Light and Dark
 // captures land in HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -188,7 +188,8 @@ function moveHead(state: string, number: number, to: string): void {
   fs.writeFileSync(file, JSON.stringify(heads));
 }
 
-test("the Work tab's PRs lens groups by whose move it is and the card merges and updates on the head it showed", async ({ page }) => {
+/** A project on a private Herdr and hided with the fake `gh`, the Work tool open on its PRs lens. */
+async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: string }; work: Locator; sent: Map<string, number>; last: Map<string, Record<string, unknown>> }) => Promise<void>): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
@@ -213,25 +214,33 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first())).click();
     await chooseTheme(page, "light");
-
-    // The Tools column's first tab is Work; its lens switch holds Sessions and PRs (B1, B2).
     await showTool(page, "work");
-    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(4);
     const work = page.locator("[data-work-panel]");
     await expect(work.locator("[data-work-lens]")).toHaveCount(2, { timeout: 30_000 });
     await work.locator('[data-work-lens="prs"]').click();
     await expect(work).toHaveAttribute("data-work-panel", "prs");
+    await expect(work.locator("[data-pr-group]").first()).toBeVisible({ timeout: 30_000 });
+    await fn({ gh, work, sent, last });
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+}
+
+test("the Work tab's PRs lens groups by whose move it is and says why on each row", async ({ page }) => {
+  await openWork(page, async ({ work, sent }) => {
+    // The Tools column's first tab is Work; its lens switch holds Sessions and PRs (B1, B2).
+    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(4);
     expect(sent.get("workspace_view")).toBeGreaterThan(0);
 
     // The groups by whose move it is; each row says why in its second line (B6, B8, B24).
     const groups = work.locator("[data-pr-group]");
-    await expect(groups.first()).toBeVisible({ timeout: 30_000 });
     expect(await groups.evaluateAll((sections) => sections.map((section) => section.getAttribute("data-pr-group")))).toEqual(["needs_you", "blocked", "drafts", "bots", "merged"]);
     const rowsOf = (group: string) => work.locator(`[data-pr-group="${group}"] [data-pr]`).evaluateAll((rows) => rows.map((row) => row.getAttribute("data-pr")));
     await expect(work.locator('[data-pr-group="needs_you"] [data-pr]')).toHaveCount(3);
     expect((await rowsOf("needs_you")).sort()).toEqual(["31", "32", "33"]);
     expect(await rowsOf("blocked")).toEqual(["34"]);
-    // Waiting, Drafts, Bots and merged start folded (B7); a group opens from its header.
+    // Drafts, Bots and merged start folded (B7); a group opens from its header.
     for (const group of ["drafts", "bots", "merged"]) await expect(work.locator(`[data-pr-group="${group}"]`)).toHaveAttribute("data-folded", "true");
     await work.locator('[data-pr-group="drafts"] [data-pr-focus="group"]').click();
     expect(await rowsOf("drafts")).toEqual(["35"]);
@@ -242,9 +251,13 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
     await expect(reason(34)).toHaveAttribute("data-pr-reason", "conflict");
     await expect(work.locator('[data-work-lens="prs"] [data-work-dot]')).toBeVisible();
     await screenshot(page, "work-prs-light");
+  });
+});
 
-    // A row opens the card as a File Views tab, and merge asks once, then goes
-    // out conditioned on the head commit the card showed (B17, B30, B31).
+test("the card opens as a File Views tab and Merge goes out on the head it showed", async ({ page }) => {
+  await openWork(page, async ({ gh, work, sent, last }) => {
+    // A row opens the card, and merge asks once, then goes out conditioned on
+    // the head commit the card showed (B17, B30, B31).
     await work.locator('[data-pr-row="31"]').click();
     const card = page.locator('[data-pr-card="31"]');
     await expect(card).toBeVisible({ timeout: 30_000 });
@@ -267,10 +280,13 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
     expect(sent.get("pr_merge")).toBe(1);
     expect(last.get("pr_merge")).toMatchObject({ pr_number: 31, head: head(gh.state, 31) });
     expect(writes(gh.state)).toEqual([["pr", "merge", "31", "--merge", "--match-head-commit", head(gh.state, 31)]]);
+  });
+});
 
-    // Update branch on a behind pull request whose head moved after the card
-    // was drawn: GitHub refuses, the card says it changed, Look again reads it
-    // and the update then goes out on the new head (B32, B33).
+test("a branch update on a pull request that moved is refused, looked at again, then goes out on the new head", async ({ page }) => {
+  await openWork(page, async ({ gh, work }) => {
+    // GitHub refuses, the card says it changed, Look again reads it and the
+    // update then goes out on the new head (B32, B33).
     await work.locator('[data-pr-row="32"]').click();
     const behind = page.locator('[data-pr-card="32"]');
     await expect(behind).toBeVisible({ timeout: 30_000 });
@@ -290,13 +306,15 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
     const updates = writes(gh.state).filter((args) => args[0] === "api");
     expect(updates).toHaveLength(2);
     expect(updates[1]).toEqual(["api", "--method", "PUT", "repos/acme/repo/pulls/32/update-branch", "-f", `expected_head_sha=${shown.slice(0, 39)}e`]);
+  });
+});
 
-    // The list and the card read without sideways scrolling or an unreadable
-    // line in each language and both themes (B48).
+test("the list and the card read without sideways scrolling in each language and both themes", async ({ page }) => {
+  await openWork(page, async ({ work }) => {
     await work.locator('[data-pr-row="33"]').click();
     const review = page.locator('[data-pr-card="33"]');
     await expect(review).toBeVisible({ timeout: 30_000 });
-    const overflow = (target: typeof work) => target.evaluate((node) => node.scrollWidth - node.clientWidth);
+    const overflow = (target: Locator) => target.evaluate((node) => node.scrollWidth - node.clientWidth);
     for (const [language, theme] of [["ko", "light"], ["ja", "dark"], ["zh-CN", "light"], ["en", "dark"]] as const) {
       await page.keyboard.press(chord("settings"));
       await page.locator('[data-settings-tab="general"]').click();
@@ -311,8 +329,5 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
       await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
       await screenshot(page, `work-prs-${language}-${theme}`);
     }
-  } finally {
-    daemon?.stop();
-    herdr.stop();
-  }
+  });
 });
