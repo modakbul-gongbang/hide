@@ -4967,12 +4967,13 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
+        themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),
         frame(`screen-usage-overview-${suffix}`, 'Overview Usage', {width: 1160, layout: 'vertical', padding: '$--spacing-lg', gap: '$--spacing-lg', fill: '$--background'}, [
           text(`screen-usage-title-${suffix}`, 'Overview · Agents   Tasks   Projects   Usage', {size: '$--text-subhead', weight: '600'}),
           themedXref(`screen-usage-year-${suffix}`, 'usage-history-year-light', 'Date and agent records'),
           text(`screen-usage-limits-${suffix}`, '› 계정 사용 한도', {size: '$--text-caption', fill: '$--muted-foreground'}),
         ])];
-      return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: compact cost-first summary, 30-day contribution grid and date/agent records. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
+      return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: compact cost-first summary, 7-day bars / 30-day contribution grid switch and date/agent records. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
     }},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
