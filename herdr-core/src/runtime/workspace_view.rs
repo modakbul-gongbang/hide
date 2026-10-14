@@ -126,10 +126,11 @@ impl AreaIntent {
         }
     }
 
-    /// Whether the event asks for a view in the files tool, by any route: a
-    /// file, a diff, a page or a terminal link.
+    /// Whether the event asks for a view in the files tool: a file, a diff
+    /// or a page. A terminal link's path asks once it settles in its own
+    /// checkout's Workspace (`settle_reveal_path`).
     pub(super) fn opens_view(event: &Event) -> bool {
-        Self::of(event).is_some() || matches!(event, Event::BrowserOpen(_) | Event::RevealPath(_))
+        Self::of(event).is_some() || matches!(event, Event::BrowserOpen(_))
     }
 }
 

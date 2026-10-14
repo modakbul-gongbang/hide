@@ -643,6 +643,19 @@ fn an_open_asked_from_the_lone_tree_keeps_the_tree_whatever_it_opens() {
     runtime.dispatch_json(&page("https://example.test/page"));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+
+    // A terminal link's file, once it settles in this Workspace.
+    close_only_display(&mut runtime);
+    layout(&mut runtime, serde_json::json!({"tree": false}));
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": directory.join("notes.md"), "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "checkout_id": checkout_id, "is_directory": false,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true), "a link");
 }
 
 /// PRD right-lane B16, D-13: a reveal opens the files tool with its tree,

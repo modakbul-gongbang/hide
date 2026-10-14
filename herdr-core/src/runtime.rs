@@ -2473,16 +2473,7 @@ impl Runtime {
         // however late its view lands (B11, B12).
         let lone_tree = (self.separate_view_areas() && AreaIntent::opens_view(&event))
             .then(|| self.front_lone_tree())
-            .flatten()
-            .filter(|key| match &event {
-                // A link settles in its own checkout's Workspace.
-                Event::RevealPath(payload) => {
-                    self.workspace_key(&payload.workspace_id, &payload.checkout_id)
-                        .as_ref()
-                        == Some(key)
-                }
-                _ => true,
-            });
+            .flatten();
         // A keystroke in a document is as frequent as terminal input and
         // moves no area either: its first edit keeps its own displays open,
         // and the next snapshot read's sync publishes that.

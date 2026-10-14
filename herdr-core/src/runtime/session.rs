@@ -5407,6 +5407,13 @@ impl Runtime {
             );
             return;
         };
+        // A link the operator clicked while this Workspace's files tool
+        // showed the tree alone keeps the tree beside the file (B11, B12).
+        let lone_tree = self.front_lone_tree().filter(|key| {
+            self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+                .as_ref()
+                == Some(key)
+        });
         if self.snapshot.navigator.focused_checkout_id.as_deref()
             != Some(payload.checkout_id.as_str())
         {
@@ -5448,6 +5455,9 @@ impl Runtime {
                 super::workspace_view::AreaIntent::Files
             };
             self.apply_area_intent_to(&key, intent);
+            if lone_tree.as_ref() == Some(&key) {
+                self.keep_lone_tree(&key);
+            }
         }
         self.push_diagnostic(
             "path.revealed",
