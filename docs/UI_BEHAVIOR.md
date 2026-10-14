@@ -948,7 +948,8 @@ The list has no search field, so Escape has nothing to clear in it.
 Until GitHub has answered the lens shows three skeleton rows and no zero is drawn; with nothing concerning the operator it reads `열린 PR 없음` above the folded `Merging · merged`.
 Without `gh` or its sign-in the lens reads one line of why with a `Settings › GitHub` button.
 When a read fails the last pull requests stay, PRs carries ⚠ whose tooltip says `GitHub 읽기 실패 · N분 전 값`, and there is no banner.
-While the lens or a card shows, an open pull request whose checks run is read again every 60 seconds; hover, focus and a rest publish nothing.
+While the lens or a card shows, every listed open pull request whose checks run, an agent's or not, is read again every 60 seconds; hover, focus and a rest publish nothing.
+The lens, the Sessions lens and a card each hold that one demand, and it is released only when the last of them closes.
 
 #### The PR card
 
@@ -963,7 +964,10 @@ A part that could not be read keeps the head and the reason box from the list, a
 The button row leads with the button of the case: `Merge` when the pull request can merge, in a method the repository allows (a choice when it allows several) or `머지 큐에 넣기` in a repository with a merge queue; `브랜치 업데이트` when it is behind; `GitHub에서 리뷰` and `에이전트에게 리뷰 맡기기` for a review asked of the operator; `맡기기` for a blocked pull request with no agent; `pane에서 답하기` for an asking agent; `pane 보기` for a stopped one; `리뷰어 지정` opens the pull request on GitHub.
 Merge and `브랜치 업데이트` are the app's only GitHub writes besides a pull request's body and a new issue, and appear for the operator's own pull requests.
 A Merge that cannot run is disabled with its reason beside it (`검사 13개 도는 중`, `에이전트가 일하는 중`, `main과 충돌`, `필수 리뷰 없음`).
-Pressing it asks once, `#N을 <base>에 머지 · <방식>` with `#N 머지` and `취소`, and the write goes out only for the head commit the card showed: when the pull request moved meanwhile nothing is written and the card says `PR이 바뀌었습니다 · 다시 보기`, whose button reads the card again and clears the notice.
+Pressing it asks once, `#N을 <base>에 머지 · <방식> · <짧은 커밋>` with `#N 머지` and `취소` (focus starts on `취소`), and the write goes out only for the head commit the card showed and the list judged: the confirmation closes by itself when the card's head, method or queue moved, or Merge became unavailable, and the core refuses a write whose head differs from the head the list was read at, so a push between the two reads is never merged unseen.
+When the pull request moved meanwhile nothing is written and the card says `PR이 바뀌었습니다 · 다시 보기`, whose button reads the list and the card again and clears the notice.
+Why Merge is unavailable names the real cause: checks running, checks failed, changes requested, no required review, conflict, draft, an agent working, no permission.
+A merged pull request's card reads and draws like any other, with no Merge.
 A merged pull request moves to `Merging · merged`; asking again for one already merged or queued writes nothing a second time.
 A branch update asks the same way and takes the same head condition; a conflict turns the second line into `충돌 · <base>와 충돌`.
 A failure leaves one line beside the button that says what the operator can do (`권한 없음 · GitHub에서 확인`, `GitHub 응답 없음 · 다시 시도`), the same button tries again, and the detail goes to the diagnostic log.
