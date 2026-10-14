@@ -292,6 +292,12 @@ impl Runtime {
     }
 
     fn changes_target(&self) -> Option<(String, String, String)> {
+        // With no renderer attached nothing draws History, the Explorer's
+        // Git marks or a diff; the selection the operator left stays in the
+        // UI state, so the first renderer back reads the same checkout again.
+        if !self.ui_attached {
+            return None;
+        }
         let section_visible = |section| {
             self.snapshot.ui_state.right_panel_visible
                 && self.snapshot.ui_state.right_panel_section == section

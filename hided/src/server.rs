@@ -3651,14 +3651,21 @@ fn renderer_count(state: &AppState, arrived: bool) {
         state.renderers.fetch_sub(1, Ordering::SeqCst)
     };
     match (arrived, previous) {
-        (true, 0) => dispatch_ui_attached(&state.core, true),
-        (false, 1) => dispatch_ui_attached(&state.core, false),
+        (true, 0) => renderers_drawn(state, true),
+        (false, 1) => renderers_drawn(state, false),
         _ => {}
     }
 }
 
+/// Tells every owner of screen-only reads whether a renderer draws: the core
+/// (`ui_attached`) and the Explorer watch.
+pub(crate) fn renderers_drawn(state: &AppState, attached: bool) {
+    state.watch.set_drawn(attached);
+    dispatch_ui_attached(&state.core, attached);
+}
+
 /// Tells the core whether any window draws its snapshot.
-pub(crate) fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
+fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
     let event = json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "ui_attached",
