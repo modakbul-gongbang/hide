@@ -212,8 +212,14 @@ pub enum AiError {
     /// The connection or the child was lost after the request was
     /// submitted, so whether it completed is unknown.
     CompletionUnknown(String),
-    /// Schema mismatch or a message that is not the answer.
+    /// Schema mismatch or a message that is not the answer. The backend had
+    /// the prompt, so a model turn may have run.
     InvalidOutput(String),
+    /// The provider refused the request itself, before any model turn (an
+    /// HTTP 4xx, a prompt that does not fit, an input error): nothing was
+    /// spent. It is retried and reported as `InvalidOutput` is, and is the
+    /// one input failure the usage ledger does not count.
+    Rejected(String),
     /// A refusal that may clear on its own; nothing was submitted.
     Transient(String),
     /// The provider layer itself failed (a panicked request leader).
@@ -249,7 +255,7 @@ impl AiError {
             Self::Timeout => "timeout",
             Self::Cancelled => "cancelled",
             Self::CompletionUnknown(_) => "completion_unknown",
-            Self::InvalidOutput(_) => "invalid_output",
+            Self::InvalidOutput(_) | Self::Rejected(_) => "invalid_output",
             Self::Transient(_) => "transient",
             Self::Internal(_) => "internal",
             Self::Unsupported(_) => "unsupported",
@@ -270,6 +276,7 @@ impl fmt::Display for AiError {
             Self::ProviderUnavailable(reason)
             | Self::CompletionUnknown(reason)
             | Self::InvalidOutput(reason)
+            | Self::Rejected(reason)
             | Self::Transient(reason)
             | Self::Internal(reason)
             | Self::Unsupported(reason) => write!(f, "{}:{reason}", self.class()),

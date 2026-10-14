@@ -275,17 +275,14 @@ fn each_measured_failure_shape_maps_to_its_class() {
         ("api_403", AiError::NotAuthenticated),
         ("api_429", AiError::UsageLimited { retry_after: None }),
         ("api_500", AiError::Transient("claude_api_500".to_owned())),
-        (
-            "api_400",
-            AiError::InvalidOutput("claude_api_400".to_owned()),
-        ),
+        ("api_400", AiError::Rejected("claude_api_400".to_owned())),
         (
             "structured_output_retries",
             AiError::InvalidOutput("claude_structured_output_retries".to_owned()),
         ),
         (
             "context_limit",
-            AiError::InvalidOutput("claude_context_limit:prompt_too_long".to_owned()),
+            AiError::Rejected("claude_context_limit:prompt_too_long".to_owned()),
         ),
     ];
     for (mode, expected) in cases {

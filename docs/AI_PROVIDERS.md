@@ -399,7 +399,7 @@ What counts is the attempt, not the request:
 - A `Timeout`, a `CompletionUnknown`, a `Cancelled` or a backend-side `InvalidOutput` is told as an **unknown call**: the backend had the prompt, so a model turn may have run, and the error carries no usage.
   Each is its own attempt: the second of two `InvalidOutput` attempts is a second dispatch, told once more.
 - A response that arrives without usage (Gemini CLI, Pi, Grok today) is also an unknown call.
-- A refusal before the prompt went out (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `OverBudget`) is not told: it did no model work.
+- A refusal before the prompt went out (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`, `OverBudget`) and a `Rejected` request (the provider refused the request itself: an HTTP 4xx, a prompt that does not fit, a Gemini input error, a Codex bad request or full context window) are not told: they did no model work.
   Neither is a cancel that returns before a backend is asked, nor a caller joined onto another's flight that gives up, since neither dispatched anything.
 - A schema failure of an answer that did arrive is the answer's own attempt, told once with its usage; the failure adds nothing.
 
@@ -450,6 +450,7 @@ A fixed 30 second request therefore spends at most 60 seconds across all provide
 
 Every failure is one of two families.
 A refusal (`ProviderUnavailable`, `NotAuthenticated`, `UsageLimited`, `Unsupported`, `Transient`) means the provider never took the request, so asking again repeats nothing.
+A `Rejected` request is a refusal that is retried like an `InvalidOutput` and reported to callers as the same `invalid_output` class.
 An `InvalidOutput` from a backend is not a refusal: the backend had the prompt and its answer was unusable, so a model turn may have run, and the usage ledger counts it as an unknown call (see Counting Hide AI's own usage).
 A completion-unknown outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request was submitted and its fate is not known: the deadline passed, the caller cancelled, or the connection or child was lost after `turn/start` went out.
 The codex backend draws that line at the `turn/start` write: a lost child before it is `ProviderUnavailable`, a lost or unanswered `turn/start` and anything after it is `CompletionUnknown`.
@@ -528,7 +529,6 @@ A backend's events are produced on the node; the node holds at most 256 of them 
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Hide AI's counting is partial by design.
   An `InvalidOutput` or `Cancelled` attempt that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is counted as an unknown call, not with its tokens, because the error path carries no usage; an error frame's usage is not read.
-  A provider's own rejection of a request (an HTTP 4xx, a context limit) is also an `InvalidOutput` the code cannot tell from a wasted turn, so it is an unknown call too and only makes the day's amounts read as a lower bound.
   Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
   A call that ran several models is counted as one call per model entry, so the call count can exceed the attempts.
   Calls before this feature are not backfilled.

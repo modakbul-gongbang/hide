@@ -366,8 +366,11 @@ impl CodexAppServerBackend {
                 }
             }
             (Some("unauthorized"), _) | (_, Some(401 | 403)) => AiError::NotAuthenticated,
-            (Some("contextWindowExceeded" | "badRequest" | "sessionBudgetExceeded"), _) => {
-                AiError::InvalidOutput(format!("codex_{}", info.as_str().unwrap_or("bad_request")))
+            (Some(code @ ("contextWindowExceeded" | "badRequest")), _) => {
+                AiError::Rejected(format!("codex_{code}"))
+            }
+            (Some("sessionBudgetExceeded"), _) => {
+                AiError::InvalidOutput("codex_sessionBudgetExceeded".to_owned())
             }
             (Some(code), _) => AiError::Transient(format!("codex_{code}")),
             (None, Some(status)) => AiError::Transient(format!("codex_http_{status}")),

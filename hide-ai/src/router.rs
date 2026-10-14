@@ -849,7 +849,9 @@ impl AiRouter {
                     });
                     let attempts = match &error {
                         AiError::Transient(_) => self.config.max_transient_attempts,
-                        AiError::InvalidOutput(_) => self.config.max_invalid_output_attempts,
+                        AiError::InvalidOutput(_) | AiError::Rejected(_) => {
+                            self.config.max_invalid_output_attempts
+                        }
                         // Submitted, fate unknown: a second attempt could be
                         // a second completion.
                         AiError::Timeout | AiError::CompletionUnknown(_) => 0,
@@ -3165,6 +3167,27 @@ mod tests {
         let all = told.all();
         assert_eq!(all.len(), 1, "{all:?}");
         assert!(all[0].2.is_empty());
+    }
+
+    #[test]
+    fn a_request_the_provider_refused_itself_did_no_work_and_is_not_told() {
+        let told = Arc::new(Told::default());
+        let router = counting_router(
+            vec![Metered::new(
+                ProviderId::CLAUDE,
+                vec![
+                    // Retried like an invalid output, and neither is counted.
+                    Err(AiError::Rejected("claude_api_400".to_owned())),
+                    Err(AiError::Rejected("claude_api_400".to_owned())),
+                ],
+            )],
+            &told,
+        );
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::Rejected(_))
+        ));
+        assert!(told.all().is_empty());
     }
 
     #[test]

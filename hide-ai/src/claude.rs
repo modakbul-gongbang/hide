@@ -487,7 +487,7 @@ fn classify(frame: &Value, run: &Run) -> AiError {
             500.. => AiError::Transient(format!("claude_api_{status}")),
             // A refused request is settled by its input, like a schema the
             // API rejects; asking again with the same input repeats it.
-            _ => AiError::InvalidOutput(format!("claude_api_{status}")),
+            _ => AiError::Rejected(format!("claude_api_{status}")),
         };
     }
     let terminal_reason = frame.get("terminal_reason").and_then(Value::as_str);
@@ -495,7 +495,7 @@ fn classify(frame: &Value, run: &Run) -> AiError {
         terminal_reason
     {
         // The transcript did not fit. Deterministic in the input.
-        return AiError::InvalidOutput(format!("claude_context_limit:{reason}"));
+        return AiError::Rejected(format!("claude_context_limit:{reason}"));
     }
     match frame.get("subtype").and_then(Value::as_str) {
         Some("error_max_structured_output_retries") => {
@@ -850,7 +850,7 @@ mod tests {
             (429, AiError::UsageLimited { retry_after: None }),
             (500, AiError::Transient("claude_api_500".to_owned())),
             (529, AiError::Transient("claude_api_529".to_owned())),
-            (400, AiError::InvalidOutput("claude_api_400".to_owned())),
+            (400, AiError::Rejected("claude_api_400".to_owned())),
         ];
         for (status, expected) in cases {
             let failed = frame(json!({
@@ -880,7 +880,7 @@ mod tests {
         for reason in ["blocking_limit", "prompt_too_long", "rapid_refill_breaker"] {
             let limited = frame(json!({"is_error": true, "terminal_reason": reason}));
             match answer(&run_of(&limited, 1)) {
-                Err(AiError::InvalidOutput(detail)) => {
+                Err(AiError::Rejected(detail)) => {
                     assert!(detail.contains(reason), "{detail}");
                 }
                 other => panic!("{reason} gave {other:?}"),
