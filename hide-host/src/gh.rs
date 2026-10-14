@@ -32,18 +32,21 @@ impl GhFailure {
 // at this external boundary and preserve unknown errors verbatim as network failures.
 fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
     let lower = reason.to_ascii_lowercase();
-    let category = if exit_code == Some(4)
-        || lower.contains("not logged")
-        || lower.contains("gh auth login")
-        || lower.contains("token") && lower.contains("invalid")
-    {
-        GithubFailureCategory::NotLoggedIn
-    } else if lower.contains("no git remotes")
+    // The no-remote answer is read first: it ends by naming `gh auth login`
+    // as the way to add a host (gh 2.76), and read as a login failure it
+    // would be asked again on every read.
+    let category = if lower.contains("no git remotes")
         || lower.contains("none of the git remotes")
         || lower.contains("not a github repository")
         || lower.contains("no github remote")
     {
         GithubFailureCategory::NoGithubRemote
+    } else if exit_code == Some(4)
+        || lower.contains("not logged")
+        || lower.contains("gh auth login")
+        || lower.contains("token") && lower.contains("invalid")
+    {
+        GithubFailureCategory::NotLoggedIn
     } else {
         GithubFailureCategory::NetworkOrRateLimit
     };
@@ -305,7 +308,7 @@ esac"#,
         );
         for (stderr, expected) in [
             (
-                "none of the git remotes configured for this repository point to a known GitHub host",
+                "None of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`",
                 GithubFailureCategory::NoGithubRemote,
             ),
             (

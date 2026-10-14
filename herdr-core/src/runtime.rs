@@ -1669,6 +1669,9 @@ pub struct Runtime {
     /// Projects an answer arrived for since the clock last looked, each with
     /// how that read ended; the next wake starts their wait.
     github_answered: HashMap<String, crate::model::GithubReadOutcome>,
+    /// The remotes each read project's repository had when the clock last
+    /// looked (`Runtime::github_remotes_moved`).
+    github_remotes: HashMap<String, Vec<String>>,
     /// The generation each project was last answered for: the reader returns
     /// its cached entry for every project in a request, and only a moved
     /// generation is a read.
@@ -2170,6 +2173,7 @@ impl Runtime {
             github_wanted: HashSet::new(),
             github_sighted: HashMap::new(),
             github_answered: HashMap::new(),
+            github_remotes: HashMap::new(),
             github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),
             github_over_limit: 0,

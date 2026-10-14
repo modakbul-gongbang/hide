@@ -4276,6 +4276,9 @@ pub enum GithubReadOutcome {
     IssuesFailed,
     /// The pull requests were not read.
     Failed,
+    /// The repository has no GitHub remote: there is nothing to ask GitHub,
+    /// and nothing changes that until its remotes do.
+    NoRemote,
 }
 
 impl GithubReadOutcome {
@@ -4288,7 +4291,9 @@ impl GithubReadOutcome {
 
 impl GithubProjectSnapshot {
     pub fn read_outcome(&self) -> GithubReadOutcome {
-        if !self.pull_requests_read {
+        if self.status.failure_category == Some(GithubFailureCategory::NoGithubRemote) {
+            GithubReadOutcome::NoRemote
+        } else if !self.pull_requests_read {
             GithubReadOutcome::Failed
         } else if !self.issues_read {
             GithubReadOutcome::IssuesFailed

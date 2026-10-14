@@ -29,12 +29,18 @@ pub(super) enum GithubClock {
         failures: u32,
         pull_requests_read: bool,
     },
+    /// The read answered that the repository has no GitHub remote, and the
+    /// catalog knows its remotes. Nothing asks again on the clock: only a
+    /// change in the repository's remotes (`PathIndex::remotes`) or an
+    /// explicit refresh does.
+    NoRemote,
 }
 
 impl GithubClock {
     fn failures(self) -> u32 {
         match self {
             Self::Waiting { failures } | Self::Answered { failures, .. } => failures,
+            Self::NoRemote => 0,
         }
     }
 }
@@ -1055,6 +1061,10 @@ impl Runtime {
                         .get(&workspace.path)
                         .copied()
                         .unwrap_or(0),
+                    remotes: self
+                        .catalog_paths
+                        .remotes(&workspace.path)
+                        .map(<[String]>::to_vec),
                 })
                 .collect(),
         }
@@ -1098,6 +1108,7 @@ impl Runtime {
         let known = |path: &String| paths.contains(path);
         self.github_clock.retain(|path, _| known(path));
         self.github_answered.retain(|path, _| known(path));
+        self.github_remotes.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
         // A sighting that grew old while its project's answer was owed (no
@@ -1109,21 +1120,38 @@ impl Runtime {
         }
         for path in paths {
             let before = self.github_clock.get(&path).copied();
+            if self.github_remotes_moved(&path) {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "read.remotes_changed",
+                    "project": path,
+                }));
+                self.github_answered.remove(&path);
+                self.ask_github_again(&path);
+                continue;
+            }
             if let Some(outcome) = self.github_answered.remove(&path) {
                 let failures = match outcome {
-                    GithubReadOutcome::Read => 0,
+                    GithubReadOutcome::Read | GithubReadOutcome::NoRemote => 0,
                     GithubReadOutcome::IssuesFailed | GithubReadOutcome::Failed => {
                         before.map_or(0, GithubClock::failures).saturating_add(1)
                     }
                 };
-                self.github_clock.insert(
-                    path.clone(),
+                // Remotes the catalog does not know (an included config, an
+                // older node) can gain a GitHub one unseen, so `gh`'s word
+                // that there is none is asked again on the full wait.
+                let clock = if outcome == GithubReadOutcome::NoRemote
+                    && self.catalog_paths.remotes(&path).is_some()
+                {
+                    GithubClock::NoRemote
+                } else {
                     GithubClock::Answered {
                         at: now,
                         failures,
                         pull_requests_read: outcome.pull_requests_read(),
-                    },
-                );
+                    }
+                };
+                self.github_clock.insert(path.clone(), clock);
                 if self.sighted_owed_after_answer(&path, !outcome.pull_requests_read()) {
                     self.ask_github_again(&path);
                 }
@@ -1318,11 +1346,13 @@ impl Runtime {
                 pull_requests_read: true,
                 ..
             }) if self.github_settled.contains(path) => SightedRead::Now,
-            // A read whose pull requests failed is left to its own retry.
+            // A read whose pull requests failed is left to its own retry, and
+            // a repository with no GitHub remote holds no pull request.
             Some(GithubClock::Answered {
                 pull_requests_read: false,
                 ..
-            }) => SightedRead::Never,
+            })
+            | Some(GithubClock::NoRemote) => SightedRead::Never,
             _ => SightedRead::AfterAnswer,
         }
     }
@@ -1338,6 +1368,26 @@ impl Runtime {
             }
         }
         owed
+    }
+
+    /// Whether the remotes of the repository at `path` moved since the
+    /// catalog last said, so its answer may have: a remote added to a
+    /// repository that had none is read at once rather than never. The first
+    /// value seen is remembered, not a move, and a catalog that does not say
+    /// (its path read failed, or an older node) moves nothing.
+    fn github_remotes_moved(&mut self, path: &str) -> bool {
+        let Some(remotes) = self.catalog_paths.remotes(path) else {
+            return false;
+        };
+        match self.github_remotes.get(path) {
+            Some(known) if known.as_slice() == remotes => false,
+            known => {
+                let moved = known.is_some();
+                self.github_remotes
+                    .insert(path.to_owned(), remotes.to_vec());
+                moved
+            }
+        }
     }
 
     /// Asks for `path` again and waits for that answer, as the stale re-read
@@ -3006,6 +3056,7 @@ impl Runtime {
                     root: PathBuf::from(&root),
                     repository: Some(repository),
                     generation: read.generation,
+                    remotes: None,
                 }
             })
             .collect();
