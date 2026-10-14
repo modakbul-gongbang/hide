@@ -116,11 +116,16 @@ Local and device refusals include the same `next_action` recovery advice.
 The selected route receives one request with no retry through another transport; ambiguous node bridges are refused before any command is sent.
 Every write and read uses the time remaining from the request's start, so partial responses cannot renew the deadline.
 Requests and responses are capped at 16 KiB and 64 KiB, and the existing bootstrap and node proof worker caps still apply.
-The letter and Memory children still run independently and in parallel with the same deadlines and fail-open outcomes.
+The letter and Memory children run independently and in parallel under their existing caller deadlines and fail-open outcomes.
 The core takes the Project from the caller's attested checkout, read by that checkout's own node, never from anything the hook sends.
 The lookup performs no provider or embedding call, transcript scan, child-process launch, or database write, and runs off the core's runtime lock.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context, and the hook still exits zero.
-The hook waits for the answer until 1,250 ms after it starts, where the letter pull ends too, so Memory never makes a turn wait longer; the core spends at most 1 s on it once admitted, and candidate, item, and token counts are hard bounded.
+Memory waits for its answer until 1,250 ms after the inner hook starts; the 1,650 ms intake budget reserves its last 400 ms for letter confirmation after a successful stdout flush.
+The prompt supervisor bounds the inner helper at 1,850 ms from the outer helper's start, so the Memory read budget is not the entire prompt hook duration.
+SessionStart has the same Memory read budget, a separate two-second Workspace CLI probe asked beside it when its thread starts, and later count-report calls with their own two-second timeouts; its installed runtime entry has an eight-second timeout.
+The core sets a one-second Memory answer deadline, but owner-scope reply waiting has no receive timeout and a remote call applies its timeout separately to admission, write and answer.
+That deadline is not an enforced end-to-end execution cutoff: the caller can continue without Memory while an admitted daemon job still runs.
+Candidate, item and token counts remain hard bounded; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#project-memory-cost-contract) owns the measurement conditions and this limit.
 A node whose link to the core is down refuses at once with `hide_unavailable`; the hook then records `memory.unavailable`, or `memory.deadline` for an answer that did not come in time, at most once per ten minutes in its private diagnostics, and the turn goes on without Memory.
 A panic on the thread that asks is recorded the same way as `memory.panicked`.
 Stdin is read through a nonblocking descriptor until EOF, the size cap, or the 500 ms payload wait.
