@@ -281,13 +281,20 @@ it("shows a parent's PR mark over its descendants as the Sessions row does, and 
   const { container, unmount } = await mountChip("parent", [parent, child]);
   try {
     const mark = container.querySelector<HTMLButtonElement>("[data-agent-pr=parent]")!;
-    expect(mark.textContent).toBe("PR 1");
-    expect(mark.getAttribute("aria-label")).toBe("PR 1 CI running or review pending");
+    // One PR in the family is that PR's number; the digits-only form is a count of several.
+    expect(mark.textContent).toBe("#1073");
+    expect(mark.getAttribute("aria-label")).toBe("#1073 CI running or review pending");
   } finally { await unmount(); }
   const own = await mountChip("child", [parent, child]);
   try {
-    expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("1073");
+    expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("#1073");
   } finally { await own.unmount(); }
+  const several = await mountChip("parent", [parent, pullRow("child", [1073, 1074])]);
+  try {
+    const mark = several.container.querySelector<HTMLButtonElement>("[data-agent-pr=parent]")!;
+    expect(mark.textContent).toBe("2");
+    expect(mark.getAttribute("aria-label")).toBe("PR 2 CI running or review pending");
+  } finally { await several.unmount(); }
   const none = await mountChip("parent", [{ ...parent, lineage_child_pane_ids: [] }]);
   try {
     expect(none.container.querySelector("[data-agent-pr]")).toBeNull();

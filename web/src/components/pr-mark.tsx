@@ -11,21 +11,23 @@ import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui
 
 /**
  * The one PR mark (docs/UI_BEHAVIOR.md, PR mark): the state's icon in its
- * colour and the bare number, since the icon already says pull request, and
- * `+N` for the other PRs the mark stands for. No border; the icon's colour is
- * the state. `compact` is the same mark without
- * the number, where a row already names the pull request (a checkout's kind
- * glyph, a search row's icon). A stale mark dims.
+ * colour and `#number`, and `+N` for the other PRs the mark stands for. A
+ * mark that stands for several PRs at once (`count`) draws the bare count
+ * instead: `#` means a number, digits alone mean how many. No border; the
+ * icon's colour is the state. `compact` is the same mark without the number,
+ * where a row already names the pull request (a checkout's kind glyph, a
+ * search row's icon). A stale mark dims.
  */
 export function PrMark({
   state,
   number,
+  count,
   more = 0,
   stale = false,
   compact = false,
   className,
   ...rest
-}: { state: PrState; number?: number; more?: number; stale?: boolean; compact?: boolean } & HTMLAttributes<HTMLSpanElement>) {
+}: { state: PrState; number?: number; count?: number; more?: number; stale?: boolean; compact?: boolean } & HTMLAttributes<HTMLSpanElement>) {
   const { icon: Icon, tone } = PR_LOOK[state];
   return (
     <span
@@ -35,7 +37,7 @@ export function PrMark({
       {...rest}
     >
       <Icon aria-hidden="true" className={cn("size-(--size-pr-icon) shrink-0", tone)} />
-      {compact || number === undefined ? null : <span className="text-subtle-foreground">{number}</span>}
+      {compact || (number === undefined && count === undefined) ? null : <span className="text-subtle-foreground">{count ?? `#${number}`}</span>}
       {compact || more === 0 ? null : <span className="text-muted-foreground">+{more}</span>}
     </span>
   );
@@ -70,10 +72,10 @@ export function useAgentStaleness(agent: AgentRow, family?: SessionPull[]): PrSt
 }
 
 /** The words a mark reads out: its number and state, how many more, and when GitHub was last read. */
-function useMarkLabel(state: PrState, number: number, more: number, stale: PrStaleness | undefined, familyCount?: number): string {
+function useMarkLabel(state: PrState, number: number, more: number, stale: PrStaleness | undefined, count?: number): string {
   const { t, i18n } = useInterfaceTranslation();
-  const head = `${familyCount === undefined ? `#${number}` : t("agentSessions.pr.count", { count: familyCount })} ${t(PR_LOOK[state].word)}`;
-  return [familyCount === undefined && more > 0 ? `${head} +${more}` : head, staleLabel(stale, t, requireInterfaceLanguage(i18n.language))].filter(Boolean).join(" · ");
+  const head = `${count === undefined ? `#${number}` : t("agentSessions.pr.count", { count })} ${t(PR_LOOK[state].word)}`;
+  return [count === undefined && more > 0 ? `${head} +${more}` : head, staleLabel(stale, t, requireInterfaceLanguage(i18n.language))].filter(Boolean).join(" · ");
 }
 
 /** The class that makes a mark pressable: the fill under the pointer, the focus ring. */
@@ -85,17 +87,18 @@ export const PR_MARK_PRESS = "flex shrink-0 items-center rounded-xs px-xxs outli
  */
 export function AgentPrMark({ agent, family, staleness, disabled = false, onOpen }: { agent: AgentRow; family?: SessionPull[]; staleness?: PrStaleness; disabled?: boolean; onOpen: (pull: AgentPullRequest) => void }) {
   const { t } = useInterfaceTranslation();
-  const mark = family ? family[0] ? { state: family[0].state, number: family[0].pull.number, more: family.length - 1 } : null : agentMark(agent);
+  // A root's family of one PR is that PR's number; two or more are only counted.
+  const count = family && family.length > 1 ? family.length : undefined;
+  const mark = family ? family[0] ? { state: family[0].state, number: family[0].pull.number, more: 0 } : null : agentMark(agent);
   const entries: { pull: AgentPullRequest; state: PrState; owners?: AgentRow[] }[] = family ?? ownPulls(agent);
-  const label = useMarkLabel(mark?.state ?? "pending", mark?.number ?? 0, mark?.more ?? 0, staleness, family?.length);
+  const label = useMarkLabel(mark?.state ?? "pending", mark?.number ?? 0, mark?.more ?? 0, staleness, count);
   if (!mark) return null;
   return (
     <DropdownMenu>
       <Hint label={label}>
         <DropdownMenuTrigger asChild>
-          <button type="button" disabled={disabled} aria-label={label} data-agent-pr={agent.pane_id} onClick={(event) => event.stopPropagation()} className={cn(PR_MARK_PRESS, family && "gap-xxs")}>
-            <PrMark state={mark.state} number={family ? undefined : mark.number} more={family ? 0 : mark.more} stale={staleness?.stale} />
-            {family ? <span className={cn("font-mono text-caption text-subtle-foreground", staleness?.stale && "opacity-(--opacity-dimmed)")}>{t("agentSessions.pr.count", { count: family.length })}</span> : null}
+          <button type="button" disabled={disabled} aria-label={label} data-agent-pr={agent.pane_id} onClick={(event) => event.stopPropagation()} className={PR_MARK_PRESS}>
+            <PrMark state={mark.state} number={count === undefined ? mark.number : undefined} count={count} more={mark.more} stale={staleness?.stale} />
           </button>
         </DropdownMenuTrigger>
       </Hint>
