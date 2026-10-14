@@ -82,7 +82,7 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
         title: entry.title,
         pills: entry.status ? [entry.status] : [],
         tags: device ? [device] : [],
-        facts: present([[t("search.fact.checkout"), entry.place], [t("search.fact.lastWords"), lastWords(entry)]]),
+        facts: present([[t("search.fact.checkout"), entry.place], [t("search.fact.pr"), (entry.agent?.request?.pull_requests ?? []).map((pr) => `#${pr.number}`).join(", ")], [t("search.fact.lastWords"), lastWords(entry)]]),
         action: t("search.goToAgent"),
       };
     }

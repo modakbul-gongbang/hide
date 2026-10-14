@@ -30,6 +30,16 @@ describe("the palette's detail pane in the operator's language", () => {
     expect(detail.action).toBe("PR ビューで開く");
   });
 
+  it("names the pull requests the core ties to an agent, and has no line for an agent with none", () => {
+    const { t } = initializeInterfaceI18n("ko");
+    const pull = (number: number) => ({ number, title: `PR ${number}`, url: `https://github.com/acme/hide/pull/${number}`, badge: "open", checks: "pending", head_branch: `fix/${number}`, closing_issues: [], live: true, duty: false, created: false, settled_at_unix_ms: null }) as const;
+    const tied = structuredClone(RICH) as typeof RICH;
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: [pull(275), pull(260)] } } : row));
+    const agentFacts = (pane: string) => detailOf(tied, searchEntries(tied, t).find((row) => row.id === `agent:${pane}`)!, now, t, "ko").facts;
+    expect(agentFacts("p-dag")).toContainEqual(["PR", "#275, #260"]);
+    expect(agentFacts("p-parent").map(([label]) => label)).not.toContain("PR");
+  });
+
   it("counts a pull request's recorded sessions and leaves the line out at none", () => {
     const { t } = initializeInterfaceI18n("ko");
     const entry = searchEntries(RICH, t).find((row) => row.id === "pr:w1:275")!;
