@@ -329,8 +329,12 @@ function CenterScreen({ actions }: { actions: Actions }) {
       return;
     }
     if (progress === "landed") {
-      store.setOpening(null);
-      store.setScreen({ kind: "workspace" });
+      // A Workspace already in front keeps an Overview the operator opened
+      // over it while the core was still answering: the layer is theirs, not
+      // the open's. From All projects or an Overview screen the Workspace
+      // comes forward in its place.
+      if (store.screen?.kind === "workspace") store.setOpening(null);
+      else store.setScreen({ kind: "workspace" });
       return;
     }
     store.setOpening(store.screen?.kind === "workspace" ? null : { ...opening, failure: progress });

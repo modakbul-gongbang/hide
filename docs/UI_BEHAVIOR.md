@@ -1190,6 +1190,7 @@ Files that change after the confirmation, typically written by an agent as it st
 From the confirmation until Git answers, the checkout row and its agent rows are dimmed with a spinner where the badge was, the row opens nothing, and a right-click or the menu key on it offers no menu at all rather than an empty one; the row leaves the sidebar as the removal finishes, and a failure gives it back as it was.
 A copy that the clipboard refuses goes to the diagnostic log.
 A web checkout row opens its checkout and unfolds its agent rows in one event; activating its already selected, unfolded Workspace folds the agents while keeping that Workspace in front.
+An Overview opened over a Workspace while that event is still unanswered stays open when the checkout lands; the Workspace under the layer changes, the layer does not.
 Click, Enter and Space have the same behavior, and a checkout without agents only opens.
 Its chevron changes disclosure alone, and other checkouts keep their own expansion.
 The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
