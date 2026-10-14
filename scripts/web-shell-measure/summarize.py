@@ -174,6 +174,8 @@ def driven_workload(doc, covered_ms):
 def frames(path):
     doc = measurement(path)
     errors = []
+    if doc.get("error"):
+        errors.append(str(doc["error"]))
     try:
         rows = doc.get("frames")
         if not isinstance(rows, list) or any(not isinstance(f, dict) or "dt" not in f for f in rows):
@@ -193,6 +195,12 @@ def frames(path):
         errors.append(str(error))
     valid = not errors and complete
     fraction = (over / len(dts)) if dts else None
+    evidence = doc.get("workload_evidence")
+    try:
+        json.dumps(evidence, allow_nan=False)
+    except ValueError:
+        # A malformed non-JSON number must not prevent the invalid verdict.
+        evidence = None
     return {
         "count": len(dts),
         "covered_ms": sum(dts),
@@ -200,7 +208,9 @@ def frames(path):
         "complete": complete,
         "valid": valid,
         "workload_valid": workload is not None,
-        "workload_evidence": workload,
+        # Retain rejected observations for diagnosis, independently of validity.
+        "workload_evidence": evidence,
+        "pane_diagnostics": doc.get("pane_diagnostics"),
         "errors": errors,
         "over_16_7ms": over,
         "fraction": fraction,

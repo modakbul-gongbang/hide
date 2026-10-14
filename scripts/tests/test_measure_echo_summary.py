@@ -157,6 +157,20 @@ class MeasurementValidity(unittest.TestCase):
 
 
 class DrivenWorkloadValidity(unittest.TestCase):
+    def test_failed_collector_preserves_observations_without_a_valid_verdict(self):
+        doc = driven_frames()
+        doc.update(error='frame writer retirement unconfirmed', driver_cleanup_complete=False,
+                   pane_diagnostics={'after_stop': [{'pane_id': 'pane-a', 'retired': False,
+                                                     'tail': 'writer output retained'}]})
+        status, result = run_summary('frames', [doc])
+        self.assertNotEqual(status, 0)
+        self.assertFalse(result['valid'])
+        self.assertFalse(result['pass'])
+        self.assertEqual(result['count'], len(doc['frames']))
+        self.assertEqual(result['workload_evidence'], doc['workload_evidence'])
+        self.assertEqual(result['pane_diagnostics'], doc['pane_diagnostics'])
+        self.assertIn(doc['error'], result['errors'])
+
     def test_failed_unobserved_driver_cannot_pass_on_idle_frames(self):
         doc = {'frames': [{'dt': 16}] * 7500, 'done': True,
                'window': {'start': 0, 'end': 120000, 'duration_ms': 120000},
