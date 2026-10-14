@@ -1695,16 +1695,20 @@ Cost is an estimate at public API rates, not the account's bill; its tooltip sta
 An unpriced model or incomplete native usage makes a known subtotal a lower bound with its reason; a wholly unpriced amount says `Price unavailable`, a missing price table says `Pricing pending`, and a table older than sixty days is marked stale.
 No calls means No data, never a zero dollar amount; a known free price remains zero.
 
-Below the summary, thirty 12-pixel contribution squares show the most recent thirty civil dates in Sunday-first columns, with no calendar numbers or weekday labels.
-The adjacent thirty-day cost and new-token total stay visible while a day is inspected.
+Below the summary, a `7 days` / `30 days` segmented choice switches between seven daily bars and thirty 12-pixel contribution squares; thirty days is the initial view.
+The bars show the most recent seven civil dates, labeled by weekday with Today at the end, and scale new tokens against the largest day in that period.
+The squares show the most recent thirty civil dates in Sunday-first columns, with no calendar numbers or weekday labels.
+The selected period's cost and new-token total stay visible while a day is inspected, below the bars or beside the grass.
 The core prepares daily amounts, boundaries and quartile levels; the page selects and sums those amounts without repricing calls or reading sessions.
 Closed nonzero days set quartiles, or quarters of the maximum with fewer than seven such days; level zero uses secondary and the other four use primary over secondary.
 During initial backfill unread cells are outlined, and file progress and `so far` remain visible.
 Hover or keyboard focus previews a day in the summary; clicking pins it, leaving restores the pinned day, and Today returns to today.
-Up and Down move one day, Left and Right move a week, and Home and End reach the range's ends.
+In the grass, Up and Down move one day and Left and Right move a week; in the bars, Left and Right move one day.
+Home and End reach the visible range's ends.
+Changing period clears the preview, keeps a pinned date within the new range and otherwise returns to today.
 A day change keeps the closed detail row and grass geometry stable; expanded token categories wrap at the available width.
 Hovering a weekly limit outlines the recent seven days, and a five-hour limit outlines today; leaving removes that outline.
-Only thirty date buttons are mounted, and closing the popover removes them.
+Only the chosen seven or thirty date buttons are mounted, and closing the popover removes them.
 
 Account limits follow the grass as compact rows without individual card borders.
 Each visible agent has 5 hours and 7 days rows with a countdown, short inline bar and percent; model-specific limits are indented below their weekly row.

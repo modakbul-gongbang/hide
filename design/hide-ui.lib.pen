@@ -45894,14 +45894,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-rest-light-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-rest-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-rest-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-rest-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-rest-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-rest-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -47732,6 +47801,572 @@
             },
             {
               "type": "frame",
+              "id": "usage-history-Light-week",
+              "name": "week",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "usage-history-Light-week-title",
+                  "name": "week",
+                  "content": "week",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-history-popover-week-light",
+                  "name": "Compact usage",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-history-popover-week-light-date",
+                      "name": "오늘",
+                      "content": "오늘",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-history-popover-week-light-summary",
+                      "name": "Row",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-light-metric-0",
+                          "name": "추정 비용",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-metric-label-0",
+                              "name": "추정 비용",
+                              "content": "추정 비용",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-metric-value-0",
+                              "name": "≈ $8.00",
+                              "content": "≈ $8.00",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-light-metric-1",
+                          "name": "새 토큰",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-metric-label-1",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-metric-value-1",
+                              "name": "4M",
+                              "content": "4M",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-history-popover-week-light-details",
+                      "name": "› 세부 내역",
+                      "content": "› 세부 내역",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-history-popover-week-light-grass-section",
+                      "name": "Last 7 days",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-light-period",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-week-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-week-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-light-bars",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-0",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-0",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-0",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-0",
+                                  "name": "화",
+                                  "content": "화",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-1",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-1",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-1",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 66,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-1",
+                                  "name": "수",
+                                  "content": "수",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-2",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-2",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-2",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 16.5,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-2",
+                                  "name": "목",
+                                  "content": "목",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-3",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-3",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-3",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 33,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-3",
+                                  "name": "금",
+                                  "content": "금",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-4",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-4",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-4",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 49.5,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-4",
+                                  "name": "토",
+                                  "content": "토",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-5",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-5",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-5",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 66,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-5",
+                                  "name": "일",
+                                  "content": "일",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-bar-6",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-light-plot-6",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-light-fill-6",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1,
+                                      "fill": "$--primary",
+                                      "opacity": 1,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-light-weekday-6",
+                                  "name": "오늘",
+                                  "content": "오늘",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": "$--spacing-xxs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-light-period-total",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-cost",
+                              "name": "≈ $28.00",
+                              "content": "≈ $28.00",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-light-total-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-light-tokens",
+                              "name": "14M",
+                              "content": "14M",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "padding": [
+                        12,
+                        0
+                      ]
+                    }
+                  ],
+                  "width": 286,
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "reusable": true
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
               "id": "usage-history-Light-day",
               "name": "day",
               "children": [
@@ -47847,14 +48482,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-day-light-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-day-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-day-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-day-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-day-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-day-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -48840,14 +49544,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-unpriced-light-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-unpriced-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-unpriced-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-unpriced-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-unpriced-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-unpriced-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -49833,14 +50606,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-backfill-light-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-backfill-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-backfill-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-backfill-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-backfill-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-backfill-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -50732,14 +51574,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-sparse-light-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-sparse-light-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-sparse-light-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-sparse-light-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-sparse-light-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-sparse-light-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -51739,14 +52650,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-rest-dark-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-rest-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-rest-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-rest-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-rest-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-rest-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -53577,6 +54557,572 @@
             },
             {
               "type": "frame",
+              "id": "usage-history-Dark-week",
+              "name": "week",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "usage-history-Dark-week-title",
+                  "name": "week",
+                  "content": "week",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400"
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-history-popover-week-dark",
+                  "name": "Compact usage",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-history-popover-week-dark-date",
+                      "name": "오늘",
+                      "content": "오늘",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-history-popover-week-dark-summary",
+                      "name": "Row",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-dark-metric-0",
+                          "name": "추정 비용",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-metric-label-0",
+                              "name": "추정 비용",
+                              "content": "추정 비용",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-metric-value-0",
+                              "name": "≈ $8.00",
+                              "content": "≈ $8.00",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-dark-metric-1",
+                          "name": "새 토큰",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-metric-label-1",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-metric-value-1",
+                              "name": "4M",
+                              "content": "4M",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-history-popover-week-dark-details",
+                      "name": "› 세부 내역",
+                      "content": "› 세부 내역",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-history-popover-week-dark-grass-section",
+                      "name": "Last 7 days",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-dark-period",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-week-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-week-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-dark-bars",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-0",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-0",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-0",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-0",
+                                  "name": "화",
+                                  "content": "화",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-1",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-1",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-1",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 66,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-1",
+                                  "name": "수",
+                                  "content": "수",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-2",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-2",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-2",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 16.5,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-2",
+                                  "name": "목",
+                                  "content": "목",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-3",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-3",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-3",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 33,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-3",
+                                  "name": "금",
+                                  "content": "금",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-4",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-4",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-4",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 49.5,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-4",
+                                  "name": "토",
+                                  "content": "토",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-5",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-5",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-5",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 66,
+                                      "fill": "$--primary",
+                                      "opacity": 0.48,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-5",
+                                  "name": "일",
+                                  "content": "일",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-bar-6",
+                              "name": "Daily usage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "usage-history-popover-week-dark-plot-6",
+                                  "name": "New tokens",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "usage-history-popover-week-dark-fill-6",
+                                      "name": "Amount",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1,
+                                      "fill": "$--primary",
+                                      "opacity": 1,
+                                      "cornerRadius": "$--spacing-xxs"
+                                    }
+                                  ],
+                                  "width": 24,
+                                  "height": 66,
+                                  "layout": "vertical",
+                                  "justifyContent": "end"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "usage-history-popover-week-dark-weekday-6",
+                                  "name": "오늘",
+                                  "content": "오늘",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "gap": "$--spacing-xs"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": "$--spacing-xxs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "usage-history-popover-week-dark-period-total",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-cost",
+                              "name": "≈ $28.00",
+                              "content": "≈ $28.00",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-week-dark-total-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-week-dark-tokens",
+                              "name": "14M",
+                              "content": "14M",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "padding": [
+                        12,
+                        0
+                      ]
+                    }
+                  ],
+                  "width": 286,
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "reusable": true
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-sm"
+            },
+            {
+              "type": "frame",
               "id": "usage-history-Dark-day",
               "name": "day",
               "children": [
@@ -53692,14 +55238,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-day-dark-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-day-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-day-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-day-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-day-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-day-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -54685,14 +56300,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-unpriced-dark-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-unpriced-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-unpriced-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-unpriced-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-unpriced-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-unpriced-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -55678,14 +57362,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-backfill-dark-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-backfill-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-backfill-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-backfill-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-backfill-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-backfill-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -56577,14 +58330,83 @@
                       "name": "Last 30 days",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "usage-history-popover-sparse-dark-period",
-                          "name": "최근 30일                      ",
-                          "content": "최근 30일                                          새 토큰",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "400"
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "usage-history-popover-sparse-dark-chart-label",
+                              "name": "새 토큰",
+                              "content": "새 토큰",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-micro",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-sparse-dark-period-space",
+                              "name": "Space",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "usage-history-popover-sparse-dark-switch",
+                              "name": "Period",
+                              "children": [
+                                {
+                                  "id": "usage-history-popover-sparse-dark-period-7",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "7 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": [],
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "7일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "usage-history-popover-sparse-dark-period-30",
+                                  "type": "ref",
+                                  "ref": "tog-m",
+                                  "name": "30 days",
+                                  "height": 16,
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "tog-t": {
+                                      "content": "30일",
+                                      "fontSize": "$--text-caption",
+                                      "fill": "$--foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "padding": "$--spacing-xxs",
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-sm"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "width": "fill_container",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -59397,6 +61219,10 @@
     "--size-usage-year": {
       "type": "number",
       "value": 800
+    },
+    "--size-usage-bar-plot": {
+      "type": "number",
+      "value": 66
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

@@ -16,6 +16,14 @@
 .usage-cell[data-pending="true"] { background: transparent; box-shadow: inset 0 0 0 var(--size-hairline) var(--border); }
 .usage-cell[data-today="true"] { outline: var(--size-hairline) solid var(--muted-foreground); }
 .usage-cell[data-selected="true"], .usage-cell[data-outline="true"], button.usage-cell:hover, button.usage-cell:focus-visible { outline: var(--size-hairline) solid var(--foreground); }
+.usage-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--spacing-sm); padding: var(--spacing-xxs); }
+.usage-bar { display: flex; flex-direction: column; align-items: center; gap: var(--spacing-xs); min-width: 0; font-size: var(--text-micro); color: var(--muted-foreground); outline: none; }
+.usage-bar-plot { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: var(--size-usage-bar-plot); }
+.usage-bar-fill { width: 100%; max-width: var(--size-control-sm); height: max(var(--size-hairline), var(--usage-bar-height)); border-radius: var(--spacing-xxs); background: var(--primary); opacity: var(--opacity-usage-level-2); }
+.usage-bar[data-pending="true"] .usage-bar-fill { height: 100%; background: transparent; box-shadow: inset 0 0 0 var(--size-hairline) var(--border); }
+.usage-bar[data-selected="true"], .usage-bar:hover, .usage-bar:focus-visible { color: var(--foreground); }
+.usage-bar[data-selected="true"] .usage-bar-fill, .usage-bar:hover .usage-bar-fill, .usage-bar:focus-visible .usage-bar-fill { opacity: 1; }
+.usage-bar[data-outline="true"] .usage-bar-plot, .usage-bar:focus-visible .usage-bar-plot { outline: var(--size-hairline) solid var(--foreground); outline-offset: var(--spacing-xxs); border-radius: var(--spacing-xxs); }
 .usage-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-xxs); font-size: var(--text-micro); color: var(--muted-foreground); }
 .usage-limits { padding-bottom: var(--spacing-sm); border-bottom: var(--size-hairline) solid var(--border); }
 .usage-overview { display: flex; flex-direction: column; gap: var(--spacing-lg); padding: var(--spacing-lg); min-width: 0; }
