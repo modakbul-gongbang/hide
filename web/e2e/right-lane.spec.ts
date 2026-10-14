@@ -77,6 +77,12 @@ test("an opened file comes up over Agent Views without resizing a terminal, and 
     await quietFor(page, 500, "no terminal was fitted again while the lane came and went");
     expect(resizes(lane)).toBe(before);
 
+    // Escape on the rail puts it away too.
+    await railTool(page, "files").click();
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
+    await page.keyboard.press("Escape");
+    await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
+
     // The rail's icon on the tool it shows closes the lane.
     await railTool(page, "files").click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
@@ -172,11 +178,17 @@ test("the tree opens beside the document without narrowing it, stays through a t
     await expect(page.locator("[data-lane-tree-hint]")).toBeVisible();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "overlay");
     await screenshot(page, "right-lane-tree-only");
+    // The chord has nothing to turn off while the tree is all the lane shows.
+    const views = lane.sent.get("workspace_view") ?? 0;
+    await page.keyboard.press(chord("toggle_file_tree"));
+    await quietFor(page, 300, "the chord sent nothing");
+    expect(lane.sent.get("workspace_view") ?? 0).toBe(views);
 
-    // Picking a file opens it beside the tree; the chord turns the tree off.
+    // Picking a file opens it beside the same tree; the chord turns it off.
+    await page.locator("[data-lane-tree]").evaluate((tree) => { (tree as HTMLElement).dataset.probe = "kept"; });
     await page.locator('[data-explorer-row$="/b.md"]').dblclick();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
-    await expect(page.locator('[data-lane-tree="beside"]')).toBeVisible();
+    await expect(page.locator('[data-lane-tree="beside"][data-probe="kept"]')).toBeVisible();
     await page.locator('[data-lane-frame] [data-view-area="true"] .cm-content').click();
     await page.keyboard.press(chord("toggle_file_tree"));
     await expect(page.locator("[data-lane-tree]")).toHaveCount(0);

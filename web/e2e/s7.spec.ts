@@ -92,8 +92,12 @@ async function dragLaneTo(page: Page, x: (body: Box) => number): Promise<void> {
   await page.mouse.move(box.x + box.width / 2, box.y + 200);
   await page.mouse.down();
   await page.mouse.move(x(body), box.y + 200, { steps: 6 });
+  const guide = await boxOf(page.locator("[data-lane-guide]"));
   await page.mouse.up();
   await expect(page.locator("[data-lane-guide]")).toHaveCount(0);
+  // The divider lands where its guide was once the core has the width, so
+  // nothing measured after this moves under a drag still landing.
+  await expect.poll(async () => Math.abs((await boxOf(divider)).x - guide.x)).toBeLessThanOrEqual(1);
 }
 
 /** Narrows the pinned lane to its minimum width. */

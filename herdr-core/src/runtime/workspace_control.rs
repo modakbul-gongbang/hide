@@ -1,6 +1,6 @@
 //! Pane-scoped queries and actions against the live Herdr projection.
 
-use super::Runtime;
+use super::{AreaIntent, Runtime};
 use crate::view_layout::DisplayKind;
 use crate::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, BrowserRouteSource,
@@ -404,12 +404,11 @@ impl Runtime {
             let parked = self.parked_caller(&key, pane_id, &action)?;
             // An open the operator is looking at calls the lane as a click
             // does: from the front tab of the front Workspace, or revealed
-            // (PRD right-lane B17). Read before the open adds its view.
-            let lane_intent = lane_call(&action)
-                .filter(|reveal| {
-                    *reveal || parked.is_none() && self.front_workspace_key().as_ref() == Some(&key)
-                })
-                .map(|_| self.control_open_intent(&key));
+            // (PRD right-lane B17), and keeps a tree that showed alone.
+            let calls_lane = lane_call(&action).is_some_and(|reveal| {
+                reveal || parked.is_none() && self.front_workspace_key().as_ref() == Some(&key)
+            });
+            let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
             let projected_action = parked
                 .as_ref()
                 .map_or_else(|| action.clone(), |parked| parked.action(action.clone()));
@@ -430,8 +429,11 @@ impl Runtime {
             match &mut applied {
                 Ok(done) => {
                     self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
-                    if let Some(intent) = lane_intent {
-                        self.apply_area_intent_to(&key, intent);
+                    if calls_lane {
+                        self.apply_area_intent_to(&key, AreaIntent::Files);
+                        if lone_tree {
+                            self.keep_lone_tree(&key);
+                        }
                         // A view already in front still calls the lane, which
                         // the page sees only if the change is announced.
                         done.changed = true;

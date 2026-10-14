@@ -618,6 +618,33 @@ fn a_file_opened_from_a_closed_lane_or_another_tool_leaves_the_tree_off() {
     );
 }
 
+/// PRD right-lane B11, B12: an open asked while the files tool shows the tree
+/// alone keeps the tree beside what it opens, a page as much as a file, and
+/// a refused open moves nothing.
+#[test]
+fn an_open_asked_from_the_lone_tree_keeps_the_tree_whatever_it_opens() {
+    let (runtime, checkout_id, directory) = strip_checkout("lone-tree");
+    let mut runtime = with_new_views(runtime, "lone-tree");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    close_only_display(&mut runtime);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false));
+    let page = |url: &str| {
+        explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url,
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        )
+    };
+    runtime.dispatch_json(&page("not an address"));
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, false), "refused");
+    runtime.dispatch_json(&page("https://example.test/page"));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(lane(&runtime), (Some(Tool::Files), false, true));
+}
+
 /// PRD right-lane B16, D-13: a reveal opens the files tool with its tree,
 /// opens nothing and is a call; a terminal link's file opens the files tool
 /// and leaves the tree as it was; a linked folder opens the files tool with

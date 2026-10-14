@@ -114,9 +114,6 @@ pub(super) enum AreaIntent {
     Files,
     /// A folder a link names: the files tool with its tree on.
     RevealFolder,
-    /// A file opened while the files tool showed the tree alone: it opens
-    /// beside the tree, which stays on (PRD right-lane B12).
-    BesideTree,
 }
 
 impl AreaIntent {
@@ -127,6 +124,12 @@ impl AreaIntent {
             Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Files),
             _ => None,
         }
+    }
+
+    /// Whether the event asks for a view in the files tool, by any route: a
+    /// file, a diff, a page or a terminal link.
+    pub(super) fn opens_view(event: &Event) -> bool {
+        Self::of(event).is_some() || matches!(event, Event::BrowserOpen(_) | Event::RevealPath(_))
     }
 }
 
@@ -303,28 +306,28 @@ impl Runtime {
             .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.path.clone()))
     }
 
-    /// Whether the front Workspace's lane is on the files tool with no view,
-    /// where the tree fills it (B12).
-    pub(super) fn front_shows_tree_alone(&self) -> bool {
-        self.front_workspace_key()
-            .is_some_and(|key| self.shows_tree_alone(&key))
+    /// The front Workspace, when its files tool shows the tree alone (B12).
+    /// An open asked there keeps the tree beside what it opens (B11), read
+    /// before the open so that a view landing late keeps the same tree.
+    pub(super) fn front_lone_tree(&self) -> Option<WorkspaceKey> {
+        let key = self.front_workspace_key()?;
+        let entry = self.workspace_views.as_ref()?.views.get(&key.0, &key.1)?;
+        (entry.shows_files() && entry.layout.display_count() == 0).then_some(key)
     }
 
-    fn shows_tree_alone(&self, key: &WorkspaceKey) -> bool {
-        self.workspace_views
-            .as_ref()
-            .and_then(|store| store.views.get(&key.0, &key.1))
-            .is_some_and(|entry| entry.shows_files() && entry.layout.display_count() == 0)
-    }
-
-    /// How a view a pane opens through `hide` calls this Workspace's lane,
-    /// read before the open adds the view.
-    pub(super) fn control_open_intent(&self, key: &WorkspaceKey) -> AreaIntent {
-        if self.shows_tree_alone(key) {
-            AreaIntent::BesideTree
-        } else {
-            AreaIntent::Files
+    /// Turns the tree on for an open asked while it showed alone, whichever
+    /// route the open took; true when the stored tree changed.
+    pub(super) fn keep_lone_tree(&mut self, key: &WorkspaceKey) -> bool {
+        let Some(store) = self.workspace_views.as_mut() else {
+            return false;
+        };
+        let entry = store.views.entry(&key.0, &key.1);
+        if entry.tree {
+            return false;
         }
+        entry.tree = true;
+        self.persist_workspace_views();
+        true
     }
 
     pub(super) fn front_workspace_key(&self) -> Option<WorkspaceKey> {
@@ -408,7 +411,7 @@ impl Runtime {
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.tool, entry.tree);
         entry.tool = Some(Tool::Files);
-        if matches!(intent, AreaIntent::RevealFolder | AreaIntent::BesideTree) {
+        if intent == AreaIntent::RevealFolder {
             entry.tree = true;
         }
         let changed = before != (entry.tool, entry.tree);
