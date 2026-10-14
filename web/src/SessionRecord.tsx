@@ -37,6 +37,7 @@ export function SessionRecord({ actions, target }: { actions: Actions; target: W
   const own = section?.session && workKey(section.session) === workKey(target) ? section : null;
   const records = useMemo(() => own?.record ? recordTree(own.record) : [], [own?.record]);
   const sourceNames = useMemo(() => new Map(records.map((record) => [workKey(record.session), recordTitle(record, summaries)])), [records, summaries]);
+  const descendants = useMemo(() => records.slice(1), [records]);
   const wasConnected = useRef(connected);
   useEffect(() => () => { actions.closeSessionRecord(); }, [actions]);
   useEffect(() => {
@@ -51,7 +52,7 @@ export function SessionRecord({ actions, target }: { actions: Actions; target: W
       <p className="mb-sm text-micro text-muted-foreground">{[record.state ? statusText(t, record.state as AgentStatusCode) : null, `${t("sessionWork.children")} ${records.length - 1}`, !summaries ? `${t("sessionWork.requests")} ${record.requests.length}` : null].filter(Boolean).join(" · ")}</p>
       <Outputs outputs={record.outputs} target={target} sourceNames={sourceNames} actions={actions} />
       {summaries
-        ? <Work record={record} descendants={records.slice(1)} words={words} actions={actions} head />
+        ? <Work record={record} descendants={descendants} words={words} actions={actions} head />
         : <Requests record={record} />}
       {record.children.length ? <><SectionHead className="mt-md">{t("sessionWork.children")} <Count>{records.length - 1}</Count></SectionHead><Children record={record} summaries={summaries} words={words} actions={actions} /></> : null}
     </div> : null}
