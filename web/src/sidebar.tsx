@@ -1586,11 +1586,11 @@ function OpenAgentRows({ checkout, groupTabs, deviceId, agentRows, sleeping, ins
   </ul>;
 }
 
-/** The named tab's quiet line: 22 high, the 20px line and a hairline of air. */
+/** The named tab's quiet line: a sidebar line and a hairline of air. */
 const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
 
 /**
- * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a 1px guide centered under the
+ * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a hairline guide centered under the
  * checkout's kind glyph spans the segment's rows, and the gap between two guides is the tab boundary. A tab holding two or more agents wears
  * the tab glyph at the head of its guide, on the first row's line; a manual name adds one quiet line carrying that glyph and the name. Both
  * open the real tab, and the hint says its name and agent count.
@@ -1619,7 +1619,7 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
             <button type="button" data-sidebar-tab={tab!.id!} disabled={removing} aria-label={label} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={open} />
           </Hint>
           <span aria-hidden="true" className="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-subtle-foreground" style={{ left: center }}>{glyph}</span>
-          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex items-center truncate text-micro text-subtle-foreground" style={{ left: inset }}>{manual}</span>
+          <span aria-hidden="true" data-sidebar-tab-name="true" className="pointer-events-none absolute inset-y-0 right-xs flex min-w-0 items-center text-caption text-subtle-foreground" style={{ left: inset }}><span className="truncate">{manual}</span></span>
         </div>
       ) : group.glyph ? (
         <Hint label={label} reveals>
