@@ -424,9 +424,10 @@ impl Runtime {
         let cancel = CancelToken::new();
         let own_node = self.own_node();
         let gate = self.usage_gate();
+        let usage = self.ai_usage();
         let router = settings
             .as_ref()
-            .map(|settings| crate::ai::memory_router(&own_node, settings, &gate));
+            .map(|settings| crate::ai::memory_router(&own_node, settings, &gate, &usage));
         let (nodes, unreached) = self.memory_nodes();
         let delegated = self.delegated_sessions();
         let home = self.home_path.clone().map(|home| (self.node.clone(), home));

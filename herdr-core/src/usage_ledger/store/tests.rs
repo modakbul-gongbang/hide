@@ -548,3 +548,131 @@ fn expired_key_cannot_reenter_after_timezone_moves_its_day_across_the_horizon() 
     assert_eq!(result.expired, 1);
     assert_eq!(store.daily().unwrap(), expected);
 }
+
+fn ai_part(day: &str, model: &str, feature: &str, input: u64) -> AiPart {
+    AiPart {
+        day: day.into(),
+        provider: "claude".into(),
+        feature: feature.into(),
+        model: model.into(),
+        tokens: Tokens {
+            input,
+            output: 20,
+            cache_read: 100,
+            cache_write: 30,
+            cache_write_1h: 10,
+            reasoning: None,
+        },
+        lower_bound: false,
+    }
+}
+
+fn user_version(path: &std::path::Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn hide_ai_rows_survive_a_restart_and_leave_the_schema_version_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let mut store = Store::open(&path).unwrap();
+    store
+        .ai_record(
+            &[
+                ai_part("2026-10-14", "m-1", "labels", 10),
+                ai_part("2026-10-14", "m-1", "labels", 5),
+                ai_part("2026-10-14", "m-1", "memory", 1),
+            ],
+            &[AiUnknown {
+                day: "2026-10-14".into(),
+                provider: "claude".into(),
+                feature: "labels".into(),
+                count: 2,
+            }],
+        )
+        .unwrap();
+    drop(store);
+    let rows = Store::open(&path).unwrap().ai_rows().unwrap();
+    assert_eq!(rows.len(), 3);
+    let labels = rows
+        .iter()
+        .find(|r| r.feature == "labels" && !r.model.is_empty())
+        .unwrap();
+    assert_eq!((labels.totals.calls, labels.totals.tokens.input), (2, 15));
+    // One call per part, the price band of its own prompt size, and no
+    // recorded cost: the price table reads it like any other call.
+    assert_eq!(labels.totals.missing_cost_calls, 2);
+    let unknown = rows.iter().find(|r| r.model.is_empty()).unwrap();
+    assert_eq!((unknown.unknown, unknown.totals.calls), (2, 0));
+    // An older build opens the same file: only the version it knows is set.
+    assert_eq!(user_version(&path), VERSION);
+}
+
+#[test]
+fn a_store_from_before_hide_ai_gains_its_tables_without_a_version_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+    }
+    assert_eq!(user_version(&path), VERSION);
+    let store = Store::open(&path).unwrap();
+    assert!(store.ai_rows().unwrap().is_empty());
+    assert!(!store.ai_limited().unwrap());
+    drop(store);
+    assert_eq!(user_version(&path), VERSION);
+}
+
+#[test]
+fn hide_ai_stops_making_rows_at_the_cap_and_says_so_until_that_day_expires() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = hide_kit::layout::usage_store(dir.path());
+    let mut store = Store::open(&path).unwrap();
+    let day = "2026-10-01";
+    let fill: Vec<_> = (0..AI_ROW_LIMIT)
+        .map(|n| ai_part(day, &format!("model-{n}"), "labels", 1))
+        .collect();
+    assert_eq!(store.ai_record(&fill, &[]).unwrap().refused, 0);
+    assert!(!store.ai_limited().unwrap());
+    // A row that exists still takes a call; a new combination is refused and
+    // the rest of the batch is kept.
+    let outcome = store
+        .ai_record(
+            &[
+                ai_part(day, "model-0", "labels", 7),
+                ai_part("2026-10-02", "brand-new", "labels", 1),
+            ],
+            &[],
+        )
+        .unwrap();
+    assert_eq!(outcome.refused, 1);
+    assert!(store.ai_limited().unwrap());
+    let rows = store.ai_rows().unwrap();
+    assert_eq!(rows.len(), AI_ROW_LIMIT);
+    let first = rows.iter().find(|r| r.model == "model-0").unwrap();
+    assert_eq!(first.totals.calls, 2);
+    drop(store);
+    assert!(Store::open(&path).unwrap().ai_limited().unwrap());
+
+    // The mark outlives a restart and goes with the last day it affected.
+    let mut store = Store::open(&path).unwrap();
+    let zone = jiff::tz::TimeZone::UTC;
+    while store.prune(instant("2028-01-01"), &zone).unwrap() {}
+    assert!(store.ai_rows().unwrap().is_empty());
+    assert!(!store.ai_limited().unwrap());
+}
+
+#[test]
+fn a_hide_ai_name_with_a_control_character_is_refused_not_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&hide_kit::layout::usage_store(dir.path())).unwrap();
+    assert_eq!(
+        store.ai_record(&[ai_part("2026-10-14", "bad\nmodel", "labels", 1)], &[]),
+        Err("usage_field_invalid")
+    );
+    assert!(store.ai_rows().unwrap().is_empty());
+}
