@@ -656,14 +656,21 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
         RightPanelSection::Explorer
     );
 
+    // The tool builds before Work called it Sessions is still a Work.
     layout(&mut runtime, serde_json::json!({"tool": "agent_sessions"}));
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Tool::Work
+    );
+    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
+    layout(&mut runtime, serde_json::json!({"tool": "work"}));
     assert_eq!(
         runtime.snapshot.ui_state.right_panel_section,
         RightPanelSection::AgentSessions
     );
     assert_eq!(
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        Tool::AgentSessions
+        Tool::Work
     );
 
     layout(&mut runtime, serde_json::json!({"tools": false}));

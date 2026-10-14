@@ -253,6 +253,8 @@ pub struct WorkspaceViewSnapshot {
     pub tools: bool,
     /// The one tool the Tools column holds, kept while the column is off.
     pub tool: crate::workspace_views::Tool,
+    /// The Work tool's basis and scope, kept for this Workspace.
+    pub work: crate::workspace_views::WorkView,
     /// The File Views column's width in CSS pixels, or null for the shell's
     /// default until it is resized.
     pub views_width: Option<u32>,
@@ -369,6 +371,10 @@ pub struct ViewDisplaySnapshot {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The pull request a card display shows, by number; absent for every
+    /// other kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u32>,
     /// A browser display's load stamp: a larger one than the host last
     /// loaded asks it to load `url` again. Zero for a file or a diff.
     #[serde(skip_serializing_if = "load_unset")]

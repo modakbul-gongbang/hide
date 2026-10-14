@@ -913,8 +913,12 @@ impl Runtime {
                             DisplayKind::File => "file",
                             DisplayKind::Diff => "diff",
                             DisplayKind::Browser => "browser",
+                            DisplayKind::PullRequest => "pull_request",
                         },
-                        target: display.url.as_ref().unwrap_or(&display.path).clone(),
+                        target: match display.pr {
+                            Some(number) => format!("#{number}"),
+                            None => display.url.as_ref().unwrap_or(&display.path).clone(),
+                        },
                         selected: area.active.as_deref() == Some(display.id.as_str()),
                         active_area: layout.active_area().id == area.id,
                         page: (display.kind == DisplayKind::Browser).then(|| {

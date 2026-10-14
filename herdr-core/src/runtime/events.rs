@@ -967,6 +967,19 @@ pub(super) struct PrFeedbackReadPayload {
     pub(super) pr_number: u32,
 }
 
+/// `pr_open`: a pull request's decision card (PRD work-tab-pr-lens D-02,
+/// D-03, D-28), opened in one event: the Workspace it opens in, the agent
+/// brought forward and the card tab, all chosen by the core. `checkout_id`
+/// is the Workspace the operator asked from, when it is one of the project's.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrOpenPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) checkout_id: Option<String>,
+}
+
 /// `pr_delegate`: an agent started on a pull request's branch with the
 /// operator's first prompt (D-12, D-46): in the checkout on that branch, or
 /// in a new worktree of the existing branch when there is none.
@@ -1441,6 +1454,7 @@ pub(super) enum Event {
     PrLinkIssue(PrLinkIssuePayload),
     PrFeedbackRead(PrFeedbackReadPayload),
     PrDelegate(PrDelegatePayload),
+    PrOpen(PrOpenPayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1683,6 +1697,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pr_link_issue" => decode!(PrLinkIssuePayload, PrLinkIssue),
         "pr_feedback_read" => decode!(PrFeedbackReadPayload, PrFeedbackRead),
         "pr_delegate" => decode!(PrDelegatePayload, PrDelegate),
+        "pr_open" => decode!(PrOpenPayload, PrOpen),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -3639,6 +3654,7 @@ impl Runtime {
             Event::PrLinkIssue(payload) => self.link_pr_issue(payload),
             Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
             Event::PrDelegate(payload) => self.delegate_pr(payload),
+            Event::PrOpen(payload) => self.open_pull_request_card(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),

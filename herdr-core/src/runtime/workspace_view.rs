@@ -140,10 +140,17 @@ pub(super) struct WorkspaceViewPayload {
     /// Whether the Tools column is on.
     #[serde(default)]
     pub(super) tools: Option<bool>,
-    /// `explorer` or `changes` (History): the Tools column's one tool.
-    /// Choosing one turns the column on unless `tools` says otherwise.
+    /// `work`, `explorer`, `changes` (History) or `memory`: the Tools
+    /// column's one tool. Choosing one turns the column on unless `tools`
+    /// says otherwise.
     #[serde(default)]
     pub(super) tool: Option<String>,
+    /// `sessions` or `prs`: the basis the Work tool draws.
+    #[serde(default)]
+    pub(super) work_lens: Option<String>,
+    /// Whether the Work tool's scope is `<checkout> only`.
+    #[serde(default)]
+    pub(super) work_only_checkout: Option<bool>,
     /// The File Views column's width, in CSS pixels.
     #[serde(default)]
     pub(super) views_width: Option<u32>,
@@ -414,6 +421,20 @@ impl Runtime {
             );
             return true;
         }
+        let lens = match payload.work_lens.as_deref() {
+            None => None,
+            Some(value) => match workspace_views::WorkLens::parse(value) {
+                Some(lens) => Some(lens),
+                None => {
+                    self.set_error(
+                        "workspace_view.unknown_work_lens",
+                        format!("{value} is not a Work basis; expected sessions or prs"),
+                        false,
+                    );
+                    return true;
+                }
+            },
+        };
         let tool = match payload.tool.as_deref() {
             None => None,
             Some(value) => match Tool::parse(value) {
@@ -421,7 +442,7 @@ impl Runtime {
                 None => {
                     self.set_error(
                         "workspace_view.unknown_tool",
-                        format!("{value} is not a Workspace tool; expected explorer, changes, agent_sessions or memory"),
+                        format!("{value} is not a Workspace tool; expected work, explorer, changes or memory"),
                         false,
                     );
                     return true;
@@ -480,6 +501,12 @@ impl Runtime {
         }
         if let Some(tools) = tools {
             entry.tools = tools;
+        }
+        if let Some(lens) = lens {
+            entry.work.lens = lens;
+        }
+        if let Some(only) = payload.work_only_checkout {
+            entry.work.only_checkout = only;
         }
         if let Some(width) = payload.views_width {
             entry.views_width = Some(workspace_views::clamp_column_width(width));
@@ -787,6 +814,7 @@ impl Runtime {
             views: view.views,
             tools: view.tools,
             tool: view.tool,
+            work: view.work,
             views_width: view.views_width,
             tools_width: view.tools_width,
             width_request_id: store
@@ -812,7 +840,7 @@ impl Runtime {
             self.snapshot.ui_state.right_panel_section = match view.tool {
                 Tool::Explorer => RightPanelSection::Explorer,
                 Tool::Changes => RightPanelSection::Changes,
-                Tool::AgentSessions => RightPanelSection::AgentSessions,
+                Tool::Work => RightPanelSection::AgentSessions,
                 Tool::Memory => RightPanelSection::Memory,
             };
         }

@@ -61,7 +61,141 @@ fn holds_pull_request(checkout: &CheckoutSnapshot, pull_request: &PullRequestSna
     )
 }
 
+/// The checkout a pull request's card opens in when the operator did not ask
+/// from one of the project's: the one its agent is in, else the one on its
+/// branch, else the project's own (PRD work-tab-pr-lens B22).
+fn card_checkout<'a>(
+    project: &'a WorkspaceSnapshot,
+    pull_request: &PullRequestSnapshot,
+    agent_pane: Option<&str>,
+    asked_from: Option<&str>,
+) -> Option<&'a CheckoutSnapshot> {
+    let in_agent = agent_pane.and_then(|pane| {
+        project.checkouts.iter().find(|checkout| {
+            checkout
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .any(|found| found.id == pane)
+        })
+    });
+    in_agent
+        .or_else(|| {
+            asked_from.and_then(|id| project.checkouts.iter().find(|checkout| checkout.id == id))
+        })
+        .or_else(|| {
+            project
+                .checkouts
+                .iter()
+                .find(|checkout| checkout.exists && holds_pull_request(checkout, pull_request))
+        })
+        .or_else(|| {
+            project
+                .checkouts
+                .iter()
+                .find(|checkout| checkout.is_primary)
+        })
+        .or_else(|| project.checkouts.first())
+}
+
 impl Runtime {
+    /// `pr_open`: the card tab in the chosen Workspace's File Views, brought
+    /// forward when it is already there, and the pull request's live agent
+    /// in front of its Agent Views (D-02, D-03). One event, so a refusal
+    /// partway cannot leave the screen half moved.
+    pub(super) fn open_pull_request_card(&mut self, payload: PrOpenPayload) -> bool {
+        if !self.separate_view_areas() {
+            self.set_error(
+                "pr_open.unsupported",
+                "This shell does not draw View areas",
+                false,
+            );
+            return true;
+        }
+        let Some((_, project)) = self
+            .issue_project(&payload.workspace_id)
+            .filter(|(_, project)| project.is_git)
+        else {
+            self.set_error(
+                "pr_open.unknown_project",
+                "이 core가 아는 Git 프로젝트가 아닙니다",
+                false,
+            );
+            return true;
+        };
+        let Some(pull_request) = project
+            .pull_requests
+            .iter()
+            .find(|pull_request| pull_request.number == payload.pr_number)
+        else {
+            self.set_error(
+                "pr_open.unknown_pull_request",
+                format!("PR #{}은 이 프로젝트의 목록에 없습니다", payload.pr_number),
+                false,
+            );
+            return true;
+        };
+        let lead = project
+            .agent_scope
+            .prs
+            .rows
+            .iter()
+            .find(|row| row.number == payload.pr_number)
+            .and_then(|row| row.agents.first())
+            .map(|agent| agent.pane_id.clone());
+        let Some(target) = card_checkout(
+            &project,
+            pull_request,
+            lead.as_deref(),
+            payload.checkout_id.as_deref(),
+        ) else {
+            self.set_error(
+                "pr_open.no_checkout",
+                "이 프로젝트에는 카드를 열 Workspace가 없습니다",
+                false,
+            );
+            return true;
+        };
+        let key = (project.device_id.clone(), target.path.clone());
+        let (workspace_id, checkout_id) = (project.id.clone(), target.id.clone());
+        let number = payload.pr_number;
+        if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
+            let shown = layout
+                .displays()
+                .find(|display| {
+                    display.kind == crate::view_layout::DisplayKind::PullRequest
+                        && display.pr == Some(number)
+                })
+                .map(|display| display.id.clone());
+            if let Some(id) = shown {
+                layout.focus(&id, stamp)?;
+                return Ok(((), true));
+            }
+            let display = layout.new_pull_request_display(number);
+            let area = layout.active_area().id.clone();
+            layout.insert(&area, display, stamp)?;
+            Ok(((), true))
+        }) {
+            self.set_error(error.kind(), error.message(), false);
+            return true;
+        }
+        self.apply_area_intent_to(&key, AreaIntent::Views);
+        crate::diagnostic!(serde_json::json!({
+            "component": "pull_requests", "kind": "pr_open",
+            "project": workspace_id, "pr": number, "checkout": checkout_id,
+            "agent": lead,
+        }));
+        match lead {
+            Some(pane) => self.focus_pane(pane, PaneFocusOrigin::Operator, None),
+            None => {
+                if self.front_workspace_key().as_ref() != Some(&key) {
+                    self.focus_checkout(&workspace_id, &checkout_id);
+                }
+            }
+        }
+        true
+    }
+
     /// A Git project of this machine or of a node that dials this core,
     /// with the node it is on, and one of its open pull requests, or why not.
     /// A node's pull request is linked and handed on as this machine's is
