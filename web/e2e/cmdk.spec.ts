@@ -275,13 +275,13 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     await page.keyboard.type("#273");
     await expect.poll(() => rowIds(page)).toEqual([expect.stringMatching(/^issue:.*273$/), expect.stringMatching(/^pr:.*:273$/), expect.stringMatching(/^pr:.*:274$/), "github-search"]);
     await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Issues", "Pull requests"]);
-    // B20: Enter on the pull request opens it in its Project's Overview.
+    // B20: Enter on the pull request opens its card in the Workspace (work-tab-pr-lens D-28).
     await page.keyboard.press("ArrowDown");
     await expect(rows(page).nth(1)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator('[data-palette-detail-pane="pr"]')).toContainText("번호로 찾는 PR");
     await page.keyboard.press("Enter");
     await expect(input(page)).toHaveCount(0);
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(page.locator('[data-pr-card="273"]')).toBeVisible({ timeout: 30_000 });
 
     // B16: a query nothing holds says so, and the last row offers the GitHub
     // search. Typing called GitHub no more than reading the project did.

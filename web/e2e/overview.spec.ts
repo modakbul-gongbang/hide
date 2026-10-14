@@ -1,4 +1,4 @@
-import { openAllProjectsPage, openProjectOverview, openProjectPage } from "./overview-entry";
+import { openAllProjectsPage, openCurrentProjectOverview, openProjectOverview, openProjectPage } from "./overview-entry";
 // The Project Overview on an isolated pinned Herdr and hided (PRD
 // overview-lenses-tiles-agents, on top of web-project-overview,
 // task-agents-views and the issue-first rework of 2026-09-28): a Git project
@@ -354,8 +354,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // The lens tabs: Agents chosen, four agents, one the operator's turn, the bar by bucket;
     // Issues three open, the bar by stage; Sessions today's count once read (B1-B5).
-    await expect(overview.locator("[data-lens-tile]")).toHaveCount(4);
-    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
+    await expect(overview.locator("[data-lens-tile]")).toHaveCount(3);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "sessions"]);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveText("1");
@@ -789,7 +789,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // A line of work with no issue (B4): the worktree line's popover says
     // where it goes and names them, its click is the graph with that line open; the pull
-    // request line's is the PRs tab, where each panel offers Link issue
+    // request line's is the Work tool's PRs lens, where each row's menu offers Link issue
     // (overview-lenses-prs B21, link-graph B4).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
     await restOn(page, looseWorktrees, ["View in the Agents graph", "prd/asking"]);
@@ -800,8 +800,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const loosePrs = column("review").locator("[data-loose-prs]");
     await restOn(page, loosePrs, ["Show in Work › PRs", "#12"]);
     await loosePrs.click();
-    await expect(overview).toHaveAttribute("data-overview-view", "prs");
-    await expect(overview.locator('[data-pr="12"]')).toBeVisible();
+    // The Overview closes and the Work tool opens on its PRs lens (work-tab-pr-lens B45).
+    await expect(overview).toHaveCount(0);
+    await expect(page.locator('[data-work-panel="prs"]')).toBeVisible();
+    await openCurrentProjectOverview(page, "repo");
     await tile("issues").locator("[data-lens-tile-button]").click();
 
     // The filter at the facts line's right end (B21): a picked label and the words
