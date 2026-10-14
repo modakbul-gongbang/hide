@@ -883,7 +883,7 @@ const JSON_STORES: &[(&str, &str, &[u64], JsonConverter)] = &[
     (
         WORKSPACE_VIEWS,
         "schema_version",
-        &[1, 2],
+        &[1, 2, 3],
         convert_workspace_views,
     ),
     (LABELS, "version", &[1], convert_labels),
@@ -1803,7 +1803,7 @@ mod tests {
     #[test]
     fn a_store_of_a_version_this_build_does_not_read_is_left_to_its_loader() {
         let dir = tempfile::tempdir().unwrap();
-        let unknown = br#"{"schema_version": 3, "workspaces": [{"device_id": "local"}]}"#;
+        let unknown = br#"{"schema_version": 99, "workspaces": [{"device_id": "local"}]}"#;
         std::fs::write(dir.path().join(WORKSPACE_VIEWS), unknown).unwrap();
         let outcome = convert(dir.path(), &node()).unwrap();
         assert!(outcome.files.is_empty(), "{outcome:?}");

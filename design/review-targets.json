@@ -16,7 +16,7 @@
     "states": { "rest": "Approved record at rest", "off": "Native title and raw requests only", "loading": "First read skeleton", "failed": "Read failure and retry", "draft": "Editable issue draft", "ended": "Folded missed-work group", "search": "Separate session search group" },
     "urlStates": ["off", "loading", "failed", "draft", "ended", "search"],
     "rules": { "noOverlap": true, "noSidewaysOverflow": true },
-    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow Tools column? Native behavior is verified separately."]
+    "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow lane? Native behavior is verified separately."]
   },
   "session-panel": {
     "description": "The Sessions A selection: separate progress and branch metadata, a parent's complete PR count, own child PR marks, and the existing session groups and tree.",

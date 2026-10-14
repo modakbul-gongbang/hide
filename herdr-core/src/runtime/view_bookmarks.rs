@@ -1,5 +1,6 @@
-//! Tab-owned File Views, projected through the existing Workspace snapshot.
-//! The shared editor owns documents; each presentation owns its displays.
+//! Each Agent tab's own views in the files tool, projected through the
+//! Workspace snapshot. The shared editor owns documents; each presentation
+//! owns its displays, and the lane stays the Workspace's.
 
 use super::workspace_view::WorkspaceKey;
 use super::*;

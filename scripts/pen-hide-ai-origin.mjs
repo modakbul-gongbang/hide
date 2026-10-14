@@ -59,7 +59,7 @@ export function buildHideAiOrigin(tokens) {
       cell('Head, one checkout', ref(id('head-one'), HIDE_AI_ORIGIN_MASTERS.head, 'Hide AI head', {}, {'hao-head-count': {content: '1'}})),
       cell('Badge on Claude', ref(id('badge-claude'), HIDE_AI_ORIGIN_MASTERS.badgedIcon, 'Provider icon with Hide badge')),
       cell('Badge on Codex', ref(id('badge-codex'), HIDE_AI_ORIGIN_MASTERS.badgedIcon, 'Provider icon with Hide badge', {}, provider('codex'))),
-      // A Tools column is a card, not the sidebar: the badge's ring takes the panel it sits on.
+      // The lane is a card, not the sidebar: the badge's ring takes the panel it sits on.
       frame(id('on-card'), 'Badge on a card panel', {layout: 'vertical', gap: '$--spacing-xs', alignItems: 'start', width: 'fit_content'}, [
         text(id('on-card-cap'), 'Badge on a card panel (Sessions)', {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
         frame(id('on-card-panel'), 'Card panel', {layout: 'horizontal', padding: '$--spacing-sm', fill: '$--card', cornerRadius: '$--radius-sm', width: 'fit_content'}, [
@@ -78,7 +78,7 @@ export function buildHideAiOrigin(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Hide AI origin', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/AgentMark.tsx and the Hide AI group of web/src/sidebar.tsx (PRD hide-ai-origin-mark D-03, D-04): Hide AI started the agent, a fact the core reads from the coordination record of the spawn. In a project\'s tree the checkouts Hide AI made gather behind the operator\'s under a head, the full Hide mark at the icon size, the name Hide AI and the number of checkouts; the head exists only while the project has one, and the rows inside carry no badge. Where a row stands alone (the sidebar\'s Needs You and Done, Sessions), the provider\'s icon wears an 11 badge on its lower-right corner, a plate in the panel\'s colour holding the 9 mark; a Tools column is a card, so its badge takes the card\'s colour. The work itself (Memory 올리기 · m72) is words on the row, never an icon, because Hide AI will start other work.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/AgentMark.tsx and the Hide AI group of web/src/sidebar.tsx (PRD hide-ai-origin-mark D-03, D-04): Hide AI started the agent, a fact the core reads from the coordination record of the spawn. In a project\'s tree the checkouts Hide AI made gather behind the operator\'s under a head, the full Hide mark at the icon size, the name Hide AI and the number of checkouts; the head exists only while the project has one, and the rows inside carry no badge. Where a row stands alone (the sidebar\'s Needs You and Done, Sessions), the provider\'s icon wears an 11 badge on its lower-right corner, a plate in the panel\'s colour holding the 9 mark; the lane is a card, so its badge takes the card\'s colour. The work itself (Memory 올리기 · m72) is words on the row, never an icon, because Hide AI will start other work.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [head, badgedIcon]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),
