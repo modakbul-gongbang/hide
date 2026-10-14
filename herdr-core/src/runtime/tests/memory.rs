@@ -510,6 +510,44 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
 }
 
 #[test]
+fn a_switch_pressed_before_the_hooks_are_read_turns_memory_on_once_they_are() {
+    // Issue 1086: a press at launch waits for the first hook read instead of
+    // being refused.
+    let (runtime, workspace) = opened_project();
+    let runtime = Arc::new(Mutex::new(runtime));
+    let mut guard = runtime.lock().unwrap();
+    guard.install_worker_context(
+        Arc::downgrade(&runtime),
+        crate::handle::ChangeNotifier::noop(),
+    );
+    let pending = |runtime: &Runtime| opened(runtime).and_then(|project| project.pending_action);
+
+    guard.apply_memory_action(action(&workspace, MemoryAction::Enable));
+    assert_eq!(
+        guard.snapshot.status.last_error, None,
+        "the press is held, not refused"
+    );
+    assert_eq!(pending(&guard), None, "Memory waits for the hook read");
+
+    guard.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
+        runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+            runtime: hide_agent_hooks::AgentRuntime::Codex,
+            label: "Codex".to_owned(),
+            path: "/fixture/.codex/hooks.json".to_owned(),
+            status: hide_agent_hooks::HookStatus::Installed {
+                version: hide_agent_hooks::HOOK_VERSION,
+            },
+            current_version: hide_agent_hooks::HOOK_VERSION,
+            memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                version: "999.0.0".to_owned(),
+            },
+        }],
+        last_report_failure: None,
+    });
+    assert_eq!(pending(&guard), Some(MemoryAction::Enable));
+}
+
+#[test]
 fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
     let mut runtime = runtime();
     runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {

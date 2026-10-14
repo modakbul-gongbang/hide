@@ -42,6 +42,9 @@ pub(super) struct ProjectMemoryWork {
     /// The Project whose Memory turns on once the hook update its switch
     /// started lands, by catalog Project.
     enable_after_hook_update: Option<String>,
+    /// The Project whose switch was pressed before this Mac's hooks were
+    /// first read; the press runs again once they are (issue 1086).
+    enable_after_hook_read: Option<String>,
     /// The tracker of the cards on their way into the repository.
     pub(super) promotions: super::memory_promotion::PromotionTracking,
 }
@@ -185,6 +188,7 @@ impl Runtime {
                 self.project_memory = ProjectMemoryWork {
                     action: self.project_memory.action.take(),
                     enable_after_hook_update: self.project_memory.enable_after_hook_update.take(),
+                    enable_after_hook_read: self.project_memory.enable_after_hook_read.take(),
                     // The tracker follows every Project's promotions and may
                     // be mid-check; closing a read must not drop its flight.
                     promotions: std::mem::take(&mut self.project_memory.promotions),
@@ -613,12 +617,10 @@ impl Runtime {
             // hooks that carry it up to date: the kit's Reinstall of this
             // Mac's hook parts, which owns every hook write (PRD device-parity
             // D-27). Memory turns on once they land.
+            // The hooks are read once the core starts; a press before that
+            // waits for the read rather than asking for another.
             if self.hook_diagnosis.is_none() {
-                self.set_error(
-                    "memory.hooks_unread",
-                    "Hide is still reading the agent hooks; try again in a moment",
-                    false,
-                );
+                self.project_memory.enable_after_hook_read = Some(payload.workspace_id);
                 return true;
             }
             let parts = self.local_hook_parts_to_repair();
@@ -760,8 +762,18 @@ impl Runtime {
     }
 
     /// Turns Memory on for the Project whose switch started a hook update,
-    /// once the hooks carry Memory.
+    /// once the hooks carry Memory; a press held for the first hook read
+    /// runs now as if it had just been pressed.
     pub(super) fn enable_memory_after_hook_update(&mut self) {
+        if let Some(workspace_id) = self.project_memory.enable_after_hook_read.take() {
+            self.apply_memory_action(events::MemoryActionPayload {
+                workspace_id,
+                action: MemoryAction::Enable,
+                number: None,
+                numbers: Vec::new(),
+            });
+            return;
+        }
         if !self.hooks_support_memory() {
             return;
         }
