@@ -86,7 +86,7 @@ When several tabs request the same file during its read, they share the read and
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and restores that tab's File Views visibility when it was not already shown in an Agent area.
-Tools stays as it was, and a tab with no saved visibility inherits the Workspace's current value.
+Tools stays as it was, and a tab shown for the first time has File Views off.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
@@ -228,9 +228,9 @@ When the last view closes, File Views turns off and Tools stays as it was, with 
 
 Each Agent tab remembers its own View list, area layout, selected Views, active area and File Views visibility.
 Tools, column widths and document editing/saving remain shared by the Workspace.
-A tab with no saved presentation inherits the current list, layout, selection and visibility, with distinct display and browser-area identities.
+A tab shown for the first time starts with no Views and File Views off; it never copies another tab's list, so Views a tab did not open never fill the Workspace.
 Empty presentations remember visibility without consuming View areas or opening an empty column.
-An older schema-2 entry retains its current Views and reads its saved fronts and visibility on first use.
+An older schema-2 entry keeps its current Views for the tab that owns them and reads that tab's saved fronts and visibility on first use.
 
 Showing a tab that no Agent area showed a moment before restores its complete presentation in the frame that shows the tab.
 The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
@@ -258,7 +258,9 @@ An exclusively owned clean document closes with its tab; unsaved content remains
 An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
-The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout; a refused operation preserves existing content.
+The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout.
+An open that would add a 65th View first closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
+Only when nothing can close is the open refused, with the View notice, and existing content stays as it was.
 Web owner: none, the shell draws the existing snapshot projection.
 Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
 Regression owners are `runtime/tests/view_bookmarks.rs`, `web/e2e/{view-bookmarks,file-view-visibility}.spec.ts` and `desktop/e2e/browser.spec.ts`.
