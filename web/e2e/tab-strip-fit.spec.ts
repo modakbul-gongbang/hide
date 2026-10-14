@@ -39,7 +39,9 @@ type Strip = {
 
 async function strip(page: Page, column: "agent" | "view" = "agent"): Promise<Strip> {
   return page.locator(`[data-${column}-tab-bar] [role=tablist]`).evaluate((list) => {
-    const shown = (node: Element | null) => node !== null && getComputedStyle(node).display !== "none";
+    // A title can be inside a hidden density wrapper; measure rendered boxes,
+    // which include ancestor visibility, rather than only its own display.
+    const shown = (node: Element | null) => node !== null && node.getClientRects().length > 0;
     // The tabs' room is what the bar leaves beside its own controls: the zone
     // holding the strip and New tab, less New tab.
     const zone = list.parentElement!;

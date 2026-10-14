@@ -290,6 +290,7 @@ Its builder is `scripts/pen-screens-core-move.mjs`, the gallery scenes `core-mov
 2. Run `node scripts/gen-tokens.mjs` to regenerate `web/src/tokens.css` and `web/src/generated/accents.ts`.
 3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` variables and Foundations sheet.
 4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, `rgb()`/`hsl()` or `px` value anywhere in a source, including a CodeMirror theme object or another stylesheet, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
+   The generated `agent-tab-count-room` container variant compiles two `--size-control-sm` lengths into its condition, so Agent tab counts use the same numeric authority without a runtime `var()` in the query.
 5. A visual case the token system does not cover is a proposed addition, reviewed and approved before use, never settled with a one-off value.
 
 ## How to remove a token

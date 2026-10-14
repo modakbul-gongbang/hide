@@ -158,7 +158,11 @@ An unselected tab narrower than the title minimum draws its marks and a truncate
 Once every other tab is a mark, the selected tab gives up width from the title minimum, keeping its close control and a truncated title while it holds the icon identity plus two controls, and below that it becomes its marks with its close control; less than one control's width can then stay empty at the bar's end.
 The strip scrolls only when even that selected mark and the other marks overflow.
 The same width and tab count always draw the same strip whichever way the window was resized, a resize never paints an overflowing frame, and opening, closing or selecting a tab shares the bar again at once.
-A tab being renamed keeps the preferred width at every density, and each tab's tooltip and accessible name still give its agent, full title and state.
+A tab being renamed keeps the preferred width at every density, and each tab's tooltip and accessible name still give its agent, full title, state and agent pane count.
+Two or more agent panes in the same tab add a neutral pane icon and count beside the title; shell panes and an agent's internal subagents do not count.
+One agent pane shows no count beside the title.
+The count folds away while renaming, at compact and mark density, or when the title slot holds less than two small controls, leaving the title and close or shortcut control their room.
+The full count remains in the tooltip and accessible name at every density.
 Agent and View areas share the drag, divider and narrow-window controls described below.
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
