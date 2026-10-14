@@ -88,7 +88,7 @@ it("derives all seven supported phone starts and the existing default from the g
   expect(agentAdapter("future-agent")).toBeUndefined();
 });
 
-it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" GROK ", "grok"], [" PI ", "pi"], [" OMP ", "omp"], [" CURSOR ", "cursor"], [" OPENCODE ", "opencode"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical) => {
+it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex"], [" GROK ", "grok", "Grok"], [" PI ", "pi", "Pi"], [" OMP ", "omp", "omp"], [" CURSOR ", "cursor", "Cursor"], [" OPENCODE ", "opencode", "OpenCode"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical, product) => {
   const saved = useShellStore.getState();
   const checkout = { id: "checkout", workspace_id: "project", path: "/project/task", branch: "task", exists: true } as Checkout;
   const project = { id: "project", device_id: "local", path: "/project", label: "Project", checkouts: [checkout] } as Workspace;
@@ -111,7 +111,7 @@ it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" GROK ", "grok"], 
     await act(async () => root.render(<TooltipProvider><LinkSessions panel={panel} project={project} branchOf={() => "task"} onRetry={() => undefined} empty={null} actions={actions} /></TooltipProvider>));
     // The row draws no provider logo and names the product instead (agent-mark-quiet B7, B11).
     expect(container.querySelector("[data-agent-mark]")).toBeNull();
-    expect(container.querySelector("[data-link-agent]")?.textContent).toBe(agentAdapter(kind)?.label);
+    expect(container.querySelector("[data-link-agent]")?.textContent).toBe(product);
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();
     expect(button?.getAttribute("aria-disabled")).not.toBe("true");

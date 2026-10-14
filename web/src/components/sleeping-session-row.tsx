@@ -20,7 +20,7 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
   return (
     <li data-sleeping-session={session.sleep_id} className="flex min-w-0 items-center gap-xs rounded-sm py-xs pr-xs text-body" style={{ paddingLeft: inset }}>
       <Hint label={caption}>
-        <span className="flex min-h-(--size-sidebar-line) shrink-0 items-center text-muted-foreground">
+        <span className="flex min-h-(--size-sidebar-line) w-(--size-agent-mark) shrink-0 items-center justify-center text-muted-foreground">
           {session.checking || pending
             ? <Loader2Icon aria-hidden="true" className="size-(--size-status-mark) animate-spin" />
             : <MoonIcon aria-hidden="true" className="size-(--size-status-mark)" />}

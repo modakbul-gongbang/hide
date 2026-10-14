@@ -1131,7 +1131,7 @@ function graphParts(tokens) {
     ]);
   }
 
-  // A row (B6, B17, B22): the mark, provider, title and age on one line, a
+  // A row (B6, B17, B22): the status mark, title and age on one line, a
   // step in and a corner arrow when it is a delegation inside this checkout,
   // the tucked badge before the age, and only while the agent asks the
   // question as a second line in warning.
@@ -3306,11 +3306,11 @@ function buildSettings(tokens, root) {
 
 // The ⌘K palette (PRD cmdk-navigation) and the ⌘P file palette on the same
 // shell: the sidebar's Search row that opens ⌘K, the query row with its Esc
-// keycap, two-line rows with the agent's own mark and ↵ on the selected row,
+// keycap, two-line rows with the agent's status mark and ↵ on the selected row,
 // and for ⌘K a detail beside the list. Rows are authored here on local tokens, as the
 // Overview board authors its agent rows, since no library master draws a
-// palette row; the keycaps are System / Kbd refs. The marks are the provider
-// artwork the web shell bundles (web/src/assets), not a stand-in.
+// palette row; the keycaps are System / Kbd refs. An agent's row leads with its
+// status mark and draws no provider logo (PRD agent-mark-quiet D-09).
 function buildPalette(tokens) {
   const W = num(tokens, '--size-search-sheet-w');
   const SIDEBAR = num(tokens, '--size-sidebar-ideal');
@@ -4416,7 +4416,7 @@ function buildProjectsSidebar(tokens) {
         text(`psb-axis-checkout-title-${s}`, 'main', {size: '$--text-body', weight: '500'}),
         spacer(`psb-axis-checkout-spacer-${s}`), text(`psb-axis-checkout-age-${s}`, '8m', {size: '$--text-caption', fill: MUTED}),
       ]),
-      frame(`psb-axis-block-a-${s}`, 'Tab 1', {width: 224, layout: 'vertical'}, [axisHeader('a', '아주 긴 한국어 탭…'), axisRow('one', {title: '탭 경계·여백 정리', age: '1m', selected: true}), axisRow('two', {title: '왼쪽 pane 검토', age: '8m', provider: 'codex'})]),
+      frame(`psb-axis-block-a-${s}`, 'Tab 1', {width: 224, layout: 'vertical'}, [axisHeader('a', '아주 긴 한국어 탭…'), axisRow('one', {title: '탭 경계·여백 정리', age: '1m', selected: true}), axisRow('two', {title: '왼쪽 pane 검토', age: '8m'})]),
       axisRow('single', {title: '세션 기록 동기화', age: '2s'}, false),
       frame(`psb-axis-block-b-${s}`, 'Tab 3', {width: 224, layout: 'vertical'}, [axisHeader('b', '탭 3'), axisRow('three', {title: 'PR 질문 표시 개선', age: '6m'}), axisRow('four', {title: '탐색 개선', age: '11m', symbol: '○', color: MUTED})]),
     ]);
@@ -4539,7 +4539,7 @@ function buildMobile(tokens, root) {
       text(`${id}-c`, String(count), {size: '$--text-body', fill: MUTED, mono: true}),
     ]);
   }
-  function agentRow(id, {title, status, kind = 'claude', project, branch, machine = null, age, request = null, news = null, dim = false}) {
+  function agentRow(id, {title, status, project, branch, machine = null, age, request = null, news = null, dim = false}) {
     const attention = status === 'question' || status === 'approval' || status === 'error';
     const titleW = CONTENT_W - 16 - XS - SM - 36 - SM - 16;
     const line2 = request ?? news ?? null;
