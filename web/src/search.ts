@@ -431,7 +431,7 @@ export function numberQuery(query: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Whether the core links the agent of `entry` to pull request `number` (`request.pull_requests`: its session made it or its branch has it), a merged or closed one included, though the PR mark draws only the open ones it owns. */
+/** Whether the core links the agent of `entry` to pull request `number` (`request.pull_requests`: its session made it or its branch has it), every one it links, a merged one included, which is more than the PR mark draws. */
 function agentHasPr(entry: SearchEntry, number: number): boolean {
   return entry.kind === "agent" && (entry.agent?.request?.pull_requests ?? []).some((pr) => pr.number === number);
 }
