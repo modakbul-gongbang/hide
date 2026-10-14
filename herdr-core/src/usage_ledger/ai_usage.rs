@@ -16,6 +16,7 @@ use super::store::{AiPart, AiUnknown, valid_name};
 /// Attempts waiting for the worker. Past it the oldest is dropped and counted
 /// as an unknown call on its day, never discarded unseen.
 pub const QUEUE_LIMIT: usize = 256;
+const QUARTER_MS: u64 = 900_000;
 /// Distinct request feature ids outside the closed list kept for one
 /// diagnostic each before the worker's next drain.
 const UNMAPPED_LIMIT: usize = 16;
@@ -82,9 +83,11 @@ struct Attempt {
 #[derive(Default)]
 struct State {
     attempts: VecDeque<Attempt>,
-    /// Calls dropped from a full queue, by their day, so they still count as
-    /// unknown calls.
-    overflow: BTreeMap<(String, &'static str, Feature), u64>,
+    /// Calls dropped from a full queue, by the quarter hour they were made in
+    /// (every civil offset is a multiple of one), so they still count as
+    /// unknown calls once the worker dates them and the queue itself needs no
+    /// time zone lookup.
+    overflow: BTreeMap<(u64, &'static str, Feature), u64>,
     /// Calls whose day could not be named; reported, not recorded.
     lost: u64,
     unmapped: BTreeSet<String>,
@@ -141,9 +144,12 @@ impl AiUsageQueue {
             ..Batch::default()
         };
         let mut unknown = BTreeMap::<(String, &'static str, Feature), u64>::new();
-        for ((day, provider, feature), count) in state.overflow {
-            *unknown.entry((day, provider, feature)).or_default() += count;
+        for ((quarter, provider, feature), count) in state.overflow {
             batch.dropped += count;
+            match local_day(quarter * QUARTER_MS, zone) {
+                Ok(day) => *unknown.entry((day, provider, feature)).or_default() += count,
+                Err(_) => batch.lost += count,
+            }
         }
         for attempt in state.attempts {
             let Ok(day) = local_day(attempt.at_ms, zone) else {
@@ -215,15 +221,14 @@ impl AiUsageSink for AiUsageQueue {
         if state.attempts.len() >= QUEUE_LIMIT
             && let Some(oldest) = state.attempts.pop_front()
         {
-            match local_day(oldest.at_ms, &jiff::tz::TimeZone::system()) {
-                Ok(day) => {
-                    *state
-                        .overflow
-                        .entry((day, oldest.provider.as_str(), oldest.feature))
-                        .or_default() += 1;
-                }
-                Err(_) => state.lost += 1,
-            }
+            *state
+                .overflow
+                .entry((
+                    oldest.at_ms / QUARTER_MS,
+                    oldest.provider.as_str(),
+                    oldest.feature,
+                ))
+                .or_default() += 1;
         }
         state.attempts.push_back(Attempt {
             at_ms,

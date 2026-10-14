@@ -26,15 +26,17 @@ export function HideAiLine({ day, since }: { day: UsageDay; since: string | null
   const language = requireInterfaceLanguage(i18n.language);
   if (day.pending) return null;
   const reading = hideAiReading(day, since);
-  const counted = reading.state === "counted";
+  // A day of only calls that reported nothing has no amount to draw, only the count of calls.
+  const unreported = reading.state === "counted" && reading.amount.calls === 0;
+  const counted = reading.state === "counted" && !unreported;
   const tokens = counted ? compactTokens(reading.amount.new_tokens, language) : "";
   const share = counted ? hideAiShare(reading.basisPoints, language) : "";
   const bounded = counted && reading.unknown > 0;
   const label = counted ? t(bounded ? "usage.hideAi.lineLowerBound" : "usage.hideAi.lineLabel", { tokens, share }) : undefined;
-  return <div className="usage-hide-line" data-usage-hide-ai={reading.state} role="group" aria-label={label}>
+  return <div className="usage-hide-line" data-usage-hide-ai={unreported ? "unreported" : reading.state} role="group" aria-label={label}>
     <span className="inline-flex items-center gap-xs"><HideMark className="size-(--size-icon)" /><span>{t(counted ? "usage.hideAi.line" : "usage.hideAi.name")}</span></span>
     {counted
       ? <span className="usage-hide-numbers"><span data-usage-hide-tokens="true"><BoundedTokens text={tokens} bounded={bounded} /></span><span className="text-muted-foreground">{share}</span></span>
-      : <span className="text-muted-foreground">{t(reading.state === "before" ? "usage.hideAi.before" : "usage.hideAi.none")}</span>}
+      : <span className="text-muted-foreground">{t(unreported ? "usage.hideAi.unknownCalls" : reading.state === "before" ? "usage.hideAi.before" : "usage.hideAi.none")}</span>}
   </div>;
 }

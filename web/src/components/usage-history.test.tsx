@@ -168,6 +168,22 @@ it("lists Hide AI under an opened date of the full table, expands it into featur
     expect(features).toEqual(target.hide_ai!.features.map((feature) => feature.feature));
     expect(view.container.querySelector(`[data-usage-unknown-row="${target.date}"]`)).not.toBeNull();
     expect(view.container.querySelector("[data-usage-hide-bound]")).not.toBeNull();
+    // The period total is a lower bound too, and says so with the same mark.
+    expect(view.container.querySelector("tfoot")!.textContent).toContain("≥");
     expect(view.container.querySelector("[data-usage-hide-since]")).not.toBeNull();
   } finally { await view.unmount(); }
+});
+
+it("draws a day of only unreported calls as a count", async () => {
+  const node = scene("hide-unknown");
+  const range = node.history!.popover.range;
+  const target = range.days.find((day) => day.hide_ai)!;
+  target.hide_ai = { amount: { ...target.hide_ai!.amount, calls: 0, new_tokens: 0 }, share_basis_points: 0, features: [], unknown_calls: 2 };
+  const popover = await mount(node, "popover");
+  try {
+    await act(async () => popover.container.querySelector<HTMLButtonElement>(`[data-usage-day="${target.date}"]`)!.click());
+    const line = popover.container.querySelector('[data-usage-hide-ai]')!;
+    expect(line.getAttribute("data-usage-hide-ai")).toBe("unreported");
+    expect(line.textContent).not.toMatch(/≥|%/);
+  } finally { await popover.unmount(); }
 });

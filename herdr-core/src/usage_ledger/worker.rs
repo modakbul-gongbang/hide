@@ -203,7 +203,6 @@ struct Engine {
     ai_rows: Arc<Vec<AiRow>>,
     ai_limited: bool,
     ai_dirty: bool,
-    ai_failure: Option<&'static str>,
     failure: Option<&'static str>,
     pruned: Instant,
     pruning: bool,
@@ -242,8 +241,16 @@ impl Engine {
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
         let daily = Arc::new(store.daily()?);
-        let ai_rows = Arc::new(store.ai_rows()?);
-        let ai_limited = store.ai_limited()?;
+        // A Hide AI table that cannot be read must not stop the session
+        // ledger: it is named once and read again at the next write.
+        let (ai_rows, ai_limited, ai_unread) = match (store.ai_rows(), store.ai_limited()) {
+            (Ok(rows), Ok(limited)) => (rows, limited, false),
+            (Err(code), _) | (_, Err(code)) => {
+                diagnostic(code, None, 0);
+                (Vec::new(), false, true)
+            }
+        };
+        let ai_rows = Arc::new(ai_rows);
         let (prices, price_failure) = match store.prices() {
             Ok(prices) => (prices, None),
             Err(code) => {
@@ -262,8 +269,7 @@ impl Engine {
             ai_flushed: Instant::now(),
             ai_rows,
             ai_limited,
-            ai_dirty: false,
-            ai_failure: None,
+            ai_dirty: ai_unread,
             failure: None,
             pruned: Instant::now(),
             pruning: true,
@@ -335,6 +341,8 @@ impl Engine {
                     self.pruning = more;
                     self.pruned = Instant::now();
                     self.dirty = true;
+                    // Pruning also ages Hide AI rows out.
+                    self.ai_dirty = true;
                     self.prune_retry = None;
                 }
                 Err(code) => {
@@ -518,8 +526,8 @@ impl Engine {
         self.failure = Some(code);
     }
 
-    /// Writes what the routers told since the last write. A failed write is
-    /// one diagnostic per distinct failure, not a screen state: the operator
+    /// Writes what the routers told since the last write. A failed write is a
+    /// diagnostic with the calls it lost, not a screen state: the operator
     /// cannot act on it.
     fn flush_ai(&mut self, force: bool) {
         if !force && self.ai_flushed.elapsed() < AI_BATCH {
@@ -549,17 +557,17 @@ impl Engine {
         }
         match self.store.ai_record(&batch.parts, &batch.unknown) {
             Ok(recorded) => {
-                self.ai_failure = None;
                 self.ai_dirty = true;
                 if recorded.refused > 0 {
                     diagnostic("ai_usage_row_capacity", None, recorded.refused as u64);
                 }
             }
             Err(code) => {
-                if self.ai_failure != Some(code) {
-                    diagnostic(code, None, batch.parts.len() as u64);
-                }
-                self.ai_failure = Some(code);
+                // The batch is gone with the failed transaction, so every
+                // failure names how many calls it lost.
+                let lost =
+                    batch.parts.len() as u64 + batch.unknown.iter().map(|u| u.count).sum::<u64>();
+                diagnostic(code, None, lost);
             }
         }
     }

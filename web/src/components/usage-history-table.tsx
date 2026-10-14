@@ -59,33 +59,33 @@ export function UsageHistoryTable({ node }: { node: NodeUsage }) {
     <div className="usage-table-scroll" tabIndex={0} role="region" aria-label={t("usage.history.history")}>
       <table className="usage-table" data-usage-table="true"><thead><tr>{HEADINGS.map((key) => <th key={key} scope="col">{t(key)}</th>)}</tr></thead><tbody>
         {shown.map((day) => {
-          const expanded = folds[day.date] ?? day.today;
+          const expanded = folds[day.date] ?? (day.today || hideOnly);
           const hide = day.hide_ai;
-          const hideExpanded = hideFolds[day.date] ?? hideOnly;
+          const hideExpanded = hideFolds[day.date] ?? false;
           const rows = hideOnly ? [] : byAgent.flatMap((row) => { const detail = row.days.get(day.date); return detail?.amount.calls && (agent === "all" || agent === row.agent) ? [{ agent: row.agent, amount: detail.amount }] : []; });
           const dayBounded = withHide && (hide?.unknown_calls ?? 0) > 0;
           return <Fragment key={day.date}><tr data-usage-date-row={day.date}><th scope="row"><button type="button" className="usage-date-toggle" aria-expanded={expanded} aria-label={t("usage.history.expandDay", { date: usageDate(day.date, language, { year: "numeric", month: "short", day: "numeric" }) })} onClick={() => setFolds((before) => ({ ...Object.fromEntries(shown.filter((item) => item.date in before).map((item) => [item.date, before[item.date]!])), [day.date]: !expanded }))}>{expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}<span>{usageDate(day.date, language, { ...(period === "year" ? { year: "numeric" as const } : {}), month: "short", day: "numeric", weekday: "short" })}</span>{day.today ? <span className="text-micro text-muted-foreground">{t("usage.history.today")}</span> : null}</button></th>{cells(hideOnly ? hide!.amount : day.amount, dayBounded)}</tr>
             {expanded ? rows.map((row) => <tr key={row.agent} data-usage-agent-row={row.agent} className="usage-agent-row"><th scope="row"><span className="inline-flex items-center gap-xs"><AgentMark kind={row.agent} />{agentProductName(row.agent)}</span></th>{cells(row.amount)}</tr>) : null}
-            {expanded && withHide && hide ? <HideAiRows day={day} open={hideExpanded} onToggle={() => setHideFolds((before) => ({ ...before, [day.date]: !hideExpanded }))} cells={cells} /> : null}
+            {expanded && withHide && hide ? <HideAiRows day={day} open={hideExpanded} onToggle={() => setHideFolds((before) => ({ ...before, [day.date]: !hideExpanded }))} cells={cells} bare={hideOnly} /> : null}
           </Fragment>;
         })}
         {!shown.length ? <tr><td colSpan={8} className="usage-empty">{t(range?.reading ? "usage.history.pending" : "usage.history.noMatches")}</td></tr> : null}
-      </tbody>{shown.length ? <tfoot><tr><th scope="row">{t("usage.history.periodTotal")}</th>{cells(total)}</tr></tfoot> : null}</table>
+      </tbody>{shown.length ? <tfoot><tr><th scope="row">{t("usage.history.periodTotal")}</th>{cells(total, lowerBound)}</tr></tfoot> : null}</table>
     </div>
     <div className="flex flex-wrap items-start justify-between gap-sm text-micro text-muted-foreground"><div className="flex min-w-0 flex-col gap-xs"><span>{t("usage.history.apiEquivalent")}</span>{lowerBound ? <span data-usage-hide-bound="true">{t("usage.hideAi.lowerBound")}</span> : null}{withHide ? <span data-usage-hide-since="true">{range?.hide_ai_since ? t("usage.hideAi.since", { date: usageDate(range.hide_ai_since, language, { year: "numeric", month: "long", day: "numeric" }) }) : t("usage.hideAi.sinceNone")}</span> : null}</div><div className="flex items-center gap-sm"><Button variant="ghost" size="sm" disabled={current === 0} onClick={() => { setPage(current - 1); setFolds({}); setHideFolds({}); }}>{t("usage.history.previous")}</Button><span>{t("usage.history.page", { page: current + 1, pages })}</span><Button variant="ghost" size="sm" disabled={current === pages - 1} onClick={() => { setPage(current + 1); setFolds({}); setHideFolds({}); }}>{t("usage.history.next")}</Button></div></div>
   </section>;
 }
 
 /** Hide AI's row on a date, at the layer of the agents' rows, and under it one row per feature and a line for calls that reported nothing. */
-function HideAiRows({ day, open, onToggle, cells }: { day: UsageDay; open: boolean; onToggle: () => void; cells: (amount: UsageAmount, bounded?: boolean) => ReactNode }) {
+function HideAiRows({ day, open, onToggle, cells, bare }: { day: UsageDay; open: boolean; onToggle: () => void; cells: (amount: UsageAmount, bounded?: boolean) => ReactNode; bare: boolean }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   const hide = day.hide_ai!;
   const bounded = hide.unknown_calls > 0;
   const date = usageDate(day.date, language, { year: "numeric", month: "short", day: "numeric" });
   return <>
-    <tr data-usage-hide-row={day.date} className="usage-agent-row"><th scope="row"><button type="button" className="usage-date-toggle" aria-expanded={open} aria-label={t("usage.hideAi.expand", { date })} onClick={onToggle}>{open ? <ChevronDownIcon /> : <ChevronRightIcon />}<HideMark className="size-(--size-icon)" /><span>{t("usage.hideAi.name")}</span></button></th>{cells(hide.amount, bounded)}</tr>
-    {open ? hide.features.map((feature) => <tr key={feature.feature} data-usage-feature-row={feature.feature} className="usage-agent-row usage-feature-row"><th scope="row"><span className="inline-flex items-center gap-xs">{t(featureKey(feature.feature))}<span className="usage-calls">{t("usage.hideAi.calls", { count: feature.amount.calls })}</span>{feature.providers.map((provider) => <AgentMark key={provider} kind={provider} className="size-(--size-icon-sm)" />)}</span></th>{cells(feature.amount)}</tr>) : null}
-    {open && hide.unknown_calls > 0 ? <tr data-usage-unknown-row={day.date} className="usage-agent-row usage-feature-row"><th scope="row"><span className="inline-flex items-center gap-xs">{t("usage.hideAi.unknownCalls")}<span className="usage-calls">{t("usage.hideAi.calls", { count: hide.unknown_calls })}</span></span></th><td colSpan={7} className="usage-unknown-note">{t("usage.hideAi.unknownNote")}</td></tr> : null}
+    {bare ? null : <tr data-usage-hide-row={day.date} className="usage-agent-row"><th scope="row"><button type="button" className="usage-date-toggle" aria-expanded={open} aria-label={t("usage.hideAi.expand", { date })} onClick={onToggle}>{open ? <ChevronDownIcon /> : <ChevronRightIcon />}<HideMark className="size-(--size-icon)" /><span>{t("usage.hideAi.name")}</span></button></th>{cells(hide.amount, bounded)}</tr>}
+    {open || bare ? hide.features.map((feature) => <tr key={feature.feature} data-usage-feature-row={feature.feature} className="usage-agent-row usage-feature-row"><th scope="row"><span className="inline-flex items-center gap-xs">{t(featureKey(feature.feature))}<span className="usage-calls">{t("usage.hideAi.calls", { count: feature.amount.calls })}</span>{feature.providers.map((provider) => <AgentMark key={provider} kind={provider} className="size-(--size-icon-sm)" />)}</span></th>{cells(feature.amount)}</tr>) : null}
+    {(open || bare) && hide.unknown_calls > 0 ? <tr data-usage-unknown-row={day.date} className="usage-agent-row usage-feature-row"><th scope="row"><span className="inline-flex items-center gap-xs">{t("usage.hideAi.unknownCalls")}<span className="usage-calls">{t("usage.hideAi.calls", { count: hide.unknown_calls })}</span></span></th><td colSpan={7} className="usage-unknown-note">{t("usage.hideAi.unknownNote")}</td></tr> : null}
   </>;
 }

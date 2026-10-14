@@ -456,6 +456,28 @@ fn a_days_hide_ai_rows_add_up_and_a_feature_is_one_row_per_closed_group() {
 }
 
 #[test]
+fn an_agents_share_is_of_what_the_agents_used_not_of_hide_ai() {
+    let sessions = [row("claude", "2026-10-14", 600)];
+    let hide = [hide_row(
+        "2026-10-14",
+        "claude",
+        "claude-fixture",
+        "labels",
+        2,
+    )];
+    let view = project_with(&sessions, &hide, "2026-10-14");
+    let claude = view
+        .year
+        .shares
+        .iter()
+        .find(|share| share.contribution.agent == "claude")
+        .unwrap();
+    assert_eq!(claude.contribution.share_basis_points, 10_000);
+    let day = view.year.all.days.last().unwrap();
+    assert_eq!(day.agents[0].share_basis_points, 10_000);
+}
+
+#[test]
 fn unknown_calls_are_a_count_in_no_amount_and_make_the_day_a_lower_bound() {
     let hide = [
         hide_row("2026-10-14", "claude", "claude-fixture", "labels", 1),

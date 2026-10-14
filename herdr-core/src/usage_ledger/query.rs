@@ -407,13 +407,28 @@ fn surface(
     let start = sunday(start)?.max(shift(sunday(today)?, -(weeks - 1) * 7)?);
     let all = range(days, Some(hide), progress, today, start, None)?;
     let mut filtered = Vec::new();
-    let mut shares = Vec::new();
     for agent in Agent::supported().filter(|agent| *agent != Agent::Cursor) {
         let name = agent.as_str();
         let range = range(days, None, progress, today, start, Some(name))?;
+        filtered.push(AgentRange {
+            agent: name.into(),
+            range,
+        });
+    }
+    // An agent's share is of what the agents used: Hide AI sits beside them
+    // in the headline, so it is not in their denominator.
+    let mut sessions = 0u64;
+    for agent in &filtered {
+        sessions = sessions
+            .checked_add(agent.range.amount.new_tokens)
+            .ok_or("usage_total_overflow")?;
+    }
+    let mut shares = Vec::new();
+    for agent in &filtered {
+        let name = agent.agent.as_str();
         if let Some(sum) = lifetime.get(name) {
             shares.push(Share {
-                contribution: contribution(name, range.amount.new_tokens, all.amount.new_tokens),
+                contribution: contribution(name, agent.range.amount.new_tokens, sessions),
                 since: days
                     .iter()
                     .find(|(_, values)| values.contains_key(name))
@@ -422,10 +437,6 @@ fn surface(
                 providers: sum.providers.iter().cloned().collect(),
             });
         }
-        filtered.push(AgentRange {
-            agent: name.into(),
-            range,
-        });
     }
     shares.sort_by(|a, b| {
         b.contribution

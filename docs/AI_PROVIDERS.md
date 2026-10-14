@@ -411,10 +411,11 @@ Codex's tokens come from the last `tokenUsage.total` of the app-server turn and 
 Grok reports no usage the code can read, so its calls are unknown (D-06 of the `hide-ai-usage-split` PRD).
 
 The ledger worker owns the writes.
-A router thread only appends to a bounded in-memory queue (256 attempts) under its own mutex: no I/O, no runtime lock and no clock read beyond the attempt time.
-Past the bound the oldest attempt is dropped and counted as an unknown call on its day, with an `ai_usage_queue_full` diagnostic.
+A router thread only appends to a bounded in-memory queue (256 attempts) under its own mutex: no I/O, no runtime lock, no time zone lookup and no clock read beyond the attempt time.
+Past the bound the oldest attempt is dropped and counted by the quarter hour it was made in, and the worker dates it as an unknown call with an `ai_usage_queue_full` diagnostic.
 The worker drains the queue at most once a second and writes the batch in one transaction into `ai_daily(day, provider, model, feature)`, a table of the same `usage.sqlite3` that holds totals and an unknown count and nothing that names a request, prompt, subject or path.
 Feature ids outside the closed list (labels, memory, factory, issue) are counted as `other` and named once in an `ai_usage_feature_unmapped` diagnostic, so a new feature is counted from its first call.
+A write that fails loses its batch with the transaction, so each failed write names the number of calls it lost in a diagnostic; a Hide AI table that cannot be read at open is named once and does not stop the session ledger.
 A usage report that contradicts itself (an invalid model name, one-hour writes above all writes, reasoning above output) makes that attempt one unknown call with an `ai_usage_tokens_invalid` diagnostic.
 The table is capped at 40,000 rows; a combination that has no row yet is refused past the cap with `ai_usage_row_capacity`, an existing row still takes calls, and the earliest refused day is kept in a one-row `ai_state` table so every day since reads as incomplete until it ages out of retention.
 Rows age out with the daily retention horizon, 512 per maintenance turn.
@@ -422,7 +423,8 @@ Rows age out with the daily retention horizon, 512 per maintenance turn.
 
 Nothing is backfilled: a call made before this change left no record, so the table counts from its first row.
 The full history names that day, and an earlier day reads "Before counting" rather than "No records".
-The projection prepares Hide AI on the all-agents range only, adds it to the headline day amounts, bars, grass levels and totals, and computes every agent's contribution over session tokens alone.
+The projection prepares Hide AI on the all-agents range only, adds it to the headline day amounts, bars, grass levels and totals, and computes every agent's contribution, day and lifetime share, over the agents' session tokens alone.
+A day with only Hide AI calls is still a day of the calendar: it counts toward active days, streaks, the peak and the grass levels, as the headline does.
 Costs go through the same price table as a session call, by provider, and the popover shows tokens and a share but no money.
 Per call, Hide AI adds one queue append on a router thread; the worker's extra work is one batched write a second at most, and a publish only while a usage page is visible and the rows changed.
 Those costs are by construction, not measured: no CPU, memory or snapshot-size figure has been taken for this feature.
@@ -521,7 +523,7 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Hide AI's counting is partial by design.
-  An `InvalidOutput` that did spend tokens (for example a Claude result with no structured output, or `claude_api_4xx`) is not counted, because the error path carries no usage; an error frame's usage is not read either.
+  An `InvalidOutput` that did spend tokens (for example a result with no structured output or `error_max_structured_output_retries`, a Codex turn that completed with no JSON message) is not counted, because the error path carries no usage; an error frame's usage is not read either, and a `Cancelled` attempt is not told at all.
   Gemini CLI, Pi and Grok report no usage the code reads, so their calls are only counts of unknown calls.
   A call that ran several models is counted as one call per model entry, so the call count can exceed the attempts.
   Calls before this feature are not backfilled.

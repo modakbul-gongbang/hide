@@ -1743,7 +1743,7 @@ The table starts at the most recent thirty days, with seven-day and retained-yea
 The retained year is the existing core projection's bound; Full history does not claim to expose an unlimited lifetime ledger.
 Each recorded date has a summary row, followed by agent rows when expanded; today starts expanded.
 Under the agent rows an expanded date has a `Hide AI` row with the same columns, itself expandable into one row per feature (agent summaries, Memory, Factory, issues and worktrees, other) with its call count and the providers that served it, and a `Calls with no reported usage` row that has a count and no amount.
-The agent filter has a `Hide AI` choice that lists only the days Hide AI was counted on, with its rows already open; a date of only unknown calls is still a date.
+The agent filter has a `Hide AI` choice that lists only the days Hide AI was counted on, with the feature rows directly under each date (no second Hide AI row); a date of only unknown calls is still a date, and its popover line reads `Calls with no reported usage` instead of an amount.
 A footnote under the table says the amounts are lower bounds when any unknown call is in the period, and names the day Hide AI is counted from, since earlier days are not backfilled.
 Choosing one agent hides Hide AI, which belongs to the all-agents range only.
 Columns are Date / Agent, estimated cost, new tokens, input, output, cache write, cache read and all tokens, with period totals and an exact-number toggle.
