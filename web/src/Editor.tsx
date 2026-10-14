@@ -11,6 +11,7 @@ import { downloadFile } from "./fileBytes";
 import { relativeTo } from "./explorer";
 import { changesFor, editorTabFor, frontCheckout, localDeviceId, type EditorDocumentSnapshot, type EditorTabSnapshot, type ViewDisplaySnapshot } from "./snapshot";
 import { useShellStore } from "./store";
+import { TreeButton } from "./TreeButton";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
 import { useFileSource } from "./viewers/useFileBytes";
@@ -266,6 +267,11 @@ function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap
   );
 }
 
+/** A checkout-relative path as the path row reads it (PRD right-lane B9): its folders and name, `›` between them; a path outside the checkout stays whole. */
+function crumbs(path: string): string {
+  return path.startsWith("/") ? path : path.split("/").filter(Boolean).join(" › ");
+}
+
 function EditorHeader({
   display,
   tab,
@@ -286,10 +292,11 @@ function EditorHeader({
   const root = useShellStore((s) => frontCheckout(s.rest)?.path ?? null);
   const path = root ? relativeTo(display.path, root) : display.path;
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border px-md text-caption text-subtle-foreground" data-document-header="true">
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border pl-xs pr-md text-caption text-subtle-foreground" data-document-header="true">
+      <TreeButton actions={actions} />
       <Hint label={file ? display.path : display.committed ? t("documents.committedPath", { path: display.path }) : t("documents.uncommittedPath", { path: display.path })} reveals>
       <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" data-editor-path="true">
-        <bdi dir="ltr">{file ? path : display.committed ? t("documents.branchDiffPath", { path }) : t("documents.workingDiffPath", { path })}</bdi>
+        <bdi dir="ltr">{file ? crumbs(path) : display.committed ? t("documents.branchDiffPath", { path: crumbs(path) }) : t("documents.workingDiffPath", { path: crumbs(path) })}</bdi>
       </span>
       </Hint>
       {document?.dirty ? (

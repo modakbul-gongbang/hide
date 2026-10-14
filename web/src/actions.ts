@@ -90,7 +90,7 @@ import {
   type ViewMenuId,
   type ViewWorkspace,
 } from "./viewLayout";
-import { workspaceViewOf, type Column, type SideColumn, type Tool } from "./workspace";
+import { workspaceViewOf, type Tool } from "./workspace";
 
 /** The `device_id` an event carries: none for the core's own node, which the core takes as the default. */
 function deviceField(device: string, node: string): { device_id?: string } {
@@ -100,24 +100,22 @@ function deviceField(device: string, node: string): { device_id?: string } {
 export type Actions = ReturnType<typeof createActions>;
 
 /**
- * The column an event calls into sight in a narrow Workspace body (PRD
- * three-column-panel D-07): File Views turned on calls File Views, a tool, a
- * reveal or a linked folder calls Tools, and an agent or tab chosen calls
- * Agent Views. Read
- * here, where every operator event passes, so no path can forget it; it is
- * page state and never sent. An open, a History selection or a Recent Panels
- * display calls File Views through the core's call number instead
- * (`columnCalls.ts`), the one way a call from the CLI or another page arrives
- * too, so a call is never applied twice.
+ * What an event does to the front Workspace's unpinned lane (PRD right-lane
+ * B4, B15, B16): a tool, a reveal or a linked folder puts it up, and an
+ * agent or tab chosen from anywhere puts it away. Read here, where every
+ * operator event passes, so no path can forget it; it is page state and
+ * never sent. An open, a History selection or a Recent Panels display calls
+ * the lane through the core's call number instead (`laneCalls.ts`), the one
+ * way a call from the CLI or another page arrives too.
  */
-export function columnCalled(event: Parameters<DispatchFn>[0]): Column | null {
+export function laneCalled(event: Parameters<DispatchFn>[0]): "lane" | "agents" | null {
   const payload = event.payload;
   switch (event.kind) {
     case "workspace_view":
-      return payload.views === true ? "views" : payload.tools === true || payload.tool !== undefined || payload.reveal !== undefined ? "tools" : null;
+      return (typeof payload.tool === "string" || payload.reveal !== undefined) ? "lane" : null;
     case "reveal_path":
-      // A folder a terminal link names shows only in the Explorer.
-      return payload.is_directory ? "tools" : null;
+      // A folder a terminal link names shows in the files tool's tree.
+      return payload.is_directory ? "lane" : null;
     case "focus_pane":
     case "focus_tab":
       return "agents";
@@ -130,8 +128,9 @@ export function columnCalled(event: Parameters<DispatchFn>[0]): Column | null {
 
 export function createActions(send: DispatchFn) {
   const dispatch: DispatchFn = (event) => {
-    const column = columnCalled(event);
-    if (column) useUiStore.getState().callColumn(column);
+    const called = laneCalled(event);
+    if (called === "lane") useUiStore.getState().showLane();
+    else if (called === "agents") useUiStore.getState().putLaneAway();
     return send(event);
   };
   const rest = () => useShellStore.getState().rest;
@@ -382,45 +381,60 @@ export function createActions(send: DispatchFn) {
   };
 
   /**
-   * The front Workspace's columns and tool (S6 D-05; PRD three-column-panel
-   * D-05, D-08): one `workspace_view` event naming only what changes, each
-   * field the value it should end at. The core keeps them per Workspace, so
-   * another Workspace is never touched.
+   * The front Workspace's lane (PRD right-lane D-11, D-12): one
+   * `workspace_view` event naming only what changes, each field the value it
+   * should end at, so the same event sent twice lands where it did once. The
+   * core keeps the lane per Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { views?: boolean; tools?: boolean; tool?: Tool; views_width?: number; tools_width?: number; width_request_id?: string; reveal?: string }) => {
+  const setWorkspaceView = (patch: { tool?: Tool | null; pinned?: boolean; tree?: boolean; lane_width?: number; tree_width?: number; width_request_id?: string; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     return dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
-  /** Shows one tool in the Tools column (B10, B12), turning the column on; nothing is sent when it already holds it. */
+  /** Whether the lane is on screen now with this tool, as the Workspace screen draws it. */
+  const laneUpWith = (tool: Tool) => {
+    const drawn = ui().drawnLane;
+    return drawn.tool === tool && drawn.mode !== "closed" && drawn.mode !== "hidden";
+  };
+
+  /** Opens the lane on one tool (B2, B16): an unpinned lane comes up, and nothing is sent when it already holds the tool. */
   const showTool = (tool: Tool) => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
-    if (!view.tools || view.tool !== tool) return setWorkspaceView({ tool });
-    ui().callColumn("tools");
+    ui().showLane();
+    if (view.tool !== tool) setWorkspaceView({ tool });
   };
 
-  /**
-   * The toolbar icon, ⌘⇧B or ⌘E for one column (D-05, D-07): a column on
-   * screen turns off, except that in a narrow body, where it fills the one
-   * column because it was called, it only gives the body back to Agent
-   * Views and sends nothing, since a narrow body never changes what is
-   * stored (B27, B28); a column that is on but hidden by the body's width
-   * comes into sight and nothing is sent; a column that is off turns on.
-   */
-  const toggleColumn = (column: SideColumn) => {
-    const view = workspaceViewOf(rest());
-    if (!view) return diagnostic(`toggle ${column === "views" ? "File Views" : "Tools"}: no Workspace in front`);
-    const shown = ui().shownColumns;
-    if (shown[column]) {
-      if (shown.step === "narrow") return ui().callColumn("agents");
-      return setWorkspaceView({ [column]: false });
-    }
-    if (view[column]) return ui().callColumn(column);
-    setWorkspaceView({ [column]: true });
+  /** Closes the lane (B2, B7): the close button, or a tool's rail icon or chord while it shows. */
+  const closeLane = () => {
+    ui().putLaneAway();
+    setWorkspaceView({ tool: null });
   };
-  const toggleFileViews = () => toggleColumn("views");
-  const toggleTools = () => toggleColumn("tools");
+
+  /** A rail icon, ⌘⇧B or ⌘E (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
+  const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
+  const toggleFileViews = () => toggleTool("files");
+  const toggleTools = () => toggleTool("agent_sessions");
+
+  /**
+   * The tree button or ⌘⇧E (B9, B11): with the files tool on screen the tree
+   * turns on or off; otherwise the lane opens on the files tool with its tree.
+   */
+  const toggleFileTree = () => {
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("toggle file tree: no Workspace in front");
+    if (!laneUpWith("files")) {
+      ui().showLane();
+      return setWorkspaceView({ tool: "files", tree: true });
+    }
+    setWorkspaceView({ tree: !view.tree });
+  };
+
+  /** The pin (B5): pinned, the lane docks; unpinned, it stays up over Agent Views until it is put away. */
+  const setLanePinned = (pinned: boolean) => {
+    if (!pinned) ui().showLane();
+    setWorkspaceView({ pinned });
+  };
 
   /**
    * The folder chain to an opened file under the focused checkout, so the
@@ -784,7 +798,7 @@ export function createActions(send: DispatchFn) {
     bridge.openInEditor(path);
   };
 
-  /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
+  /** Shows the files tool's tree with a file's row unfolded and selected; nothing is opened (B16). */
   const revealInExplorer = (path: string) => {
     setWorkspaceView({ reveal: path });
     ui().setExplorerSelection(path);
@@ -1508,7 +1522,7 @@ export function createActions(send: DispatchFn) {
       this.memoryOpen(workspaceId);
       this.memoryExpand(workspaceId, number);
       this.openProjectById(deviceId, workspaceId);
-      setWorkspaceView({ tools: true, tool: "memory" });
+      showTool("memory");
     },
 
     openProjectSession(workspaceId: string, sessionId: string) {
@@ -1751,7 +1765,7 @@ export function createActions(send: DispatchFn) {
       const target = closeShortcutPolicy({
         owner,
         workspace: ui().screen?.kind === "workspace" ? checkout?.id ?? null : null,
-        displayId: ui().shownColumns.views ? area?.active ?? null : null,
+        displayId: ui().drawnLane.tool === "files" && ui().drawnLane.mode !== "closed" && ui().drawnLane.mode !== "hidden" ? area?.active ?? null : null,
         paneIds: tab?.panes.map((pane) => pane.id) ?? [],
       });
       if (target.kind === "view") return closeView(target.id);
@@ -2151,6 +2165,10 @@ export function createActions(send: DispatchFn) {
     showSidebarMode,
 
     toggleFileViews,
+    toggleTool,
+    toggleFileTree,
+    closeLane,
+    setLanePinned,
 
     toggleTools,
 
