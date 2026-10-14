@@ -119,6 +119,8 @@ function LaneMenu({ actions }: { actions: Actions }) {
   const expanded = useUiStore((s) => s.laneExpanded);
   const treeChord = useShellStore((s) => commandLabel("toggle_file_tree", s.rest?.ui_state));
   const up = laneUp(drawn.mode);
+  // The tree fills a files lane with no view, so there is nothing to turn off.
+  const treeAlone = up && drawn.tool === "files" && (view?.layout?.display_count ?? 0) === 0;
   return (
     <DropdownMenu>
       <Hint label={t("panes.lane.more")} side="left">
@@ -129,7 +131,7 @@ function LaneMenu({ actions }: { actions: Actions }) {
         </DropdownMenuTrigger>
       </Hint>
       <DropdownMenuContent align="end" side="left" aria-label={t("panes.lane.more")} data-lane-menu="true">
-        <DropdownMenuItem data-lane-menu-item="tree" onSelect={() => actions.toggleFileTree()}>
+        <DropdownMenuItem data-lane-menu-item="tree" disabled={treeAlone} onSelect={() => actions.toggleFileTree()}>
           {t("panes.lane.tree")}
           {treeChord ? <DropdownMenuShortcut>{treeChord}</DropdownMenuShortcut> : null}
         </DropdownMenuItem>
@@ -159,7 +161,9 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
   const { t } = useInterfaceTranslation();
   const expanded = frame.mode === "expanded";
   const scope = useScope(checkout);
-  const pinHint = !view.pinned ? t("panes.lane.pinHint") : frame.narrowPin ? t("panes.lane.pinNarrowHint", { hint: t("panes.lane.unpinHint") }) : t("panes.lane.unpinHint");
+  // Pinned in a window too narrow to dock, the tooltip reads as the approved
+  // board draws it (PRD right-lane B19, D-17).
+  const pinHint = !view.pinned ? t("panes.lane.pinHint") : frame.narrowPin ? t("panes.lane.pinNarrowHint") : t("panes.lane.unpinHint");
   const filesShown = tool === "files";
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>

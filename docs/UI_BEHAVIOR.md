@@ -66,7 +66,7 @@ A lane put away keeps its documents, tabs, scroll, previews and searches, and it
 Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
 Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip adds `too narrow, drawn over` to the unpin hint, and widening the window docks the lane again.
+A window that would leave Agent Views less than 480px beside a pinned lane opens the lane over them as if unpinned, though it stays through a terminal click; the pin stays filled and its tooltip says `Pin · too narrow, drawn over`, and widening the window docks the lane again.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
 
