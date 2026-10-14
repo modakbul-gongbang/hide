@@ -16,7 +16,6 @@ const words = {
   "sessionWork.now": ["Now", "지금", "今", "现在"],
   "sessionWork.collapse": ["Collapse", "접기", "閉じる", "收起"],
   "sessionWork.earlier": ["Earlier requests {{count}}", "이전 요청 {{count}}", "以前の依頼 {{count}}", "更早的请求 {{count}}"],
-  "sessionWork.missed": ["Missed work", "놓친 일", "残された仕事", "遗漏的工作"],
   "sessionWork.ended": ["Ended sessions", "끝난 세션", "終了したセッション", "已结束的会话"],
   "sessionWork.tasks": ["Assigned work", "시킨 일", "依頼した仕事", "分配的工作"],
   "sessionWork.requests": ["Requests", "요청", "依頼", "请求"],

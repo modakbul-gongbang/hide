@@ -100,7 +100,8 @@ function OutputRow({ output, sourceName, actions }: { output: WorkOutput; source
 /** The assigned work: a checklist with the words, the missed work and the newest unjudged request in their places. */
 function Work({ record, descendants = [], words, actions, head = false }: { record: RecordValue; descendants?: readonly RecordValue[]; words: boolean; actions: Actions; head?: boolean }) {
   const { t } = useInterfaceTranslation();
-  const list = useMemo(() => checklist(record, descendants), [record, descendants]);
+  // The record at the top lists every descendant's missed work, named, at its end; a child's own checklist leaves it there instead of drawing it twice.
+  const list = useMemo(() => checklist(head ? record : { ...record, missed: [] }, descendants), [head, record, descendants]);
   const received = record.requests.some((request) => request.author === "parent");
   const label = t(received ? "sessionWork.received" : "sessionWork.words");
   const nothing = !list.groups.length && !list.otherWords.length && !list.otherMissed.length && !list.now;
@@ -142,7 +143,7 @@ function TaskRow({ item, session, words, actions }: { item: ChecklistTask; sessi
     <div className="flex min-w-0 items-start gap-xs">
       <TaskMark state={state} />
       <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "font-medium")}>{task.name}</span>
-      {item.prs.map((output) => <button key={output.url} type="button" data-record-task-pr={output.number} className={cn(ROW, "shrink-0 px-xxs hover:bg-accent")} aria-label={`#${output.number} ${t(PR_LOOK[outputPrState(output.state)].word)} · ${output.title}`} title={output.title} onClick={() => actions.openRecordedOutput(output)}><PrMark state={outputPrState(output.state)} number={output.number} stale={output.stale} /></button>)}
+      {item.prs.map((output) => <button key={output.url} type="button" data-record-task-pr={output.number} className={cn(ROW, "shrink-0 px-xxs hover:bg-accent")} aria-label={[`#${output.number} ${t(PR_LOOK[outputPrState(output.state)].word)}`, output.title, staleHint(output, t("common.unavailable"))].filter(Boolean).join(" · ")} title={output.title} onClick={() => actions.openRecordedOutput(output)}><PrMark state={outputPrState(output.state)} number={output.number} stale={output.stale} /></button>)}
     </div>
     {words ? item.words.map((request) => <Bubble key={request.offset} request={request} />) : null}
     {item.missed.map((missed) => <MissedLine key={missed.id} missed={missed} session={session} owner={null} actions={actions} />)}

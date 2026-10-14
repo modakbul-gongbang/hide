@@ -135,3 +135,24 @@ it("with Hide AI off shows the PRs and the requests oldest first, the newest fiv
     expect(container.querySelectorAll("[data-record-request]")).toHaveLength(7);
   } finally { await unmount(); }
 });
+
+it("draws a descendant's missed item once, named, at the end of the top record, not again in the child's own checklist", async () => {
+  const withMissed = { ...BASE, children: [{ ...child, tasks: [task("ct", "Child task", AT, true)], missed: [missed("m-child", "Child found this", 99)] }] };
+  const { container, unmount } = await mount(withMissed);
+  try {
+    // Open the child's checklist: the item is still drawn only once.
+    await act(async () => container.querySelector<HTMLElement>("[data-record-child] > summary")!.click());
+    const items = container.querySelectorAll('[data-missed-work="m-child"]');
+    expect(items).toHaveLength(1);
+    expect(items[0]!.closest("[data-record-other]")?.textContent).toContain("Child found this · Child work");
+  } finally { await unmount(); }
+});
+
+it("gives a task's PR button the last read time while GitHub cannot be read", async () => {
+  const stale = { ...BASE, outputs: [{ ...output(1100, "review", "t2", SESSION), stale: true, last_read_at_unix_ms: AT }] };
+  const { container, unmount } = await mount(stale);
+  try {
+    const label = container.querySelector("[data-record-task-pr]")!.getAttribute("aria-label")!;
+    expect(label).toContain(new Date(AT).toLocaleString());
+  } finally { await unmount(); }
+});
