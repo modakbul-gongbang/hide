@@ -35,16 +35,13 @@ The save workers' pending flags bound the number of pending saves, not the byte 
 `Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).
 Before adding resident work, use the [tick/timer/watcher ledger and cost review](PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers).
 
-### Sidebar tab disclosure
+### Sidebar tab names
 
 `TabSnapshot.sidebar` serializes the existing `TabNaming` as a manual name and stable tab number, using the same automatic-number convention as the tabbar.
 The automatic task label remains the tabbar's own projection; the shell never guesses a sidebar name from that label.
-The core admits one `sidebar_tab_expanded` event against the connected device's current checkout/tab membership before saving `ui_state.sidebar_collapsed_tabs`.
-Its structured device, checkout and tab keys are idempotent, bounded by admitted live tabs, and pruned after accepted topology removes or reassigns a tab; disconnected or failed observations preserve the last live choices.
-Removing a device retires its keys, while unrelated UI-state updates cannot replace them.
-The shell derives groups and physical agent counts from the snapshot and keeps a root's complete subtree under that root's tab, even for cross-tab or cross-device children.
-Only disclosure writes state; typing and terminal echo add no event, I/O, timer or subprocess for this feature.
-Local and remote session reconciliation prune only saved choices for the device they just observed, and normal snapshot publication carries the resulting UI transition.
+The shell derives tab segments and physical agent counts from the snapshot and keeps a root's complete subtree under that root's tab, even for cross-tab or cross-device children.
+A tab has no disclosure state: the former `sidebar_collapsed_tabs` field and its `sidebar_tab_expanded` event are gone, and a state file that still carries the field loads without error and loses it on the next save.
+Nothing in this feature writes state; typing and terminal echo add no event, I/O, timer or subprocess for it.
 
 ## The core, the shell and Herdr
 

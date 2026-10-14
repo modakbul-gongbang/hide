@@ -250,15 +250,6 @@ pub(super) struct CheckoutAgentsTogglePayload {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SidebarTabExpandedPayload {
-    pub(super) device_id: String,
-    pub(super) checkout_id: String,
-    pub(super) tab_id: String,
-    pub(super) expanded: bool,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorkspacePayload {
     pub(super) workspace_id: String,
     /// The agents outside the project, spawned from its agents, that the
@@ -1328,7 +1319,6 @@ pub(super) enum Event {
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
     ProjectCheckoutsFold(ProjectCheckoutsFoldPayload),
     CheckoutAgentsToggle(CheckoutAgentsTogglePayload),
-    SidebarTabExpanded(SidebarTabExpandedPayload),
     WorkspacePinSet(WorkspacePinSetPayload),
     SetPrimaryCheckout(SetPrimaryCheckoutPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
@@ -1557,7 +1547,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "checkout_agents_toggle" => {
             decode!(CheckoutAgentsTogglePayload, CheckoutAgentsToggle)
         }
-        "sidebar_tab_expanded" => decode!(SidebarTabExpandedPayload, SidebarTabExpanded),
         "set_primary_checkout" => decode!(SetPrimaryCheckoutPayload, SetPrimaryCheckout),
         "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
@@ -2461,7 +2450,6 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
-            Event::SidebarTabExpanded(payload) => self.set_sidebar_tab_expanded(payload),
             Event::SessionFoldToggle(payload) => {
                 if !self.session_fold_keys().contains(&payload.key) {
                     self.set_error(
@@ -2711,8 +2699,6 @@ impl Runtime {
                 let registrations =
                     registrations - self.snapshot.ui_state.workspace_registrations.len();
                 let ui = &mut self.snapshot.ui_state;
-                ui.sidebar_collapsed_tabs
-                    .retain(|key| key.device_id != payload.device_id);
                 ui.device_expanded_paths.remove(&payload.device_id);
                 let tabs = self
                     .snapshot
@@ -3858,7 +3844,6 @@ impl Runtime {
                     resolved_sessions: current.resolved_sessions,
                     session_resolution_inputs: current.session_resolution_inputs,
                     session_collapsed_checkout_ids: current.session_collapsed_checkout_ids,
-                    sidebar_collapsed_tabs: current.sidebar_collapsed_tabs,
                     session_open_folds: current.session_open_folds,
                     // The secretary belongs to `factory_secretary_set`.
                     factory_secretary_pane: current.factory_secretary_pane,

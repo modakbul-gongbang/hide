@@ -1193,27 +1193,29 @@ Its chevron changes disclosure alone, and other checkouts keep their own expansi
 The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
 A later Herdr projection failure retains these accepted values under the existing focus policy.
 The last-commit age stays in place whatever the pointer does and while the menu is open.
-Opened folder projects use the same icon/title columns, neutral selected fill and unboxed tab blocks as opened checkouts.
+A plain folder row puts its folder glyph and name on the project row's columns, so every top-level row shares one left edge, and its second line follows the name.
+Opened folder projects use the same neutral selected fill and unboxed tab segments as opened checkouts, with the guide under the folder glyph.
 Their required secondary lines and metadata remain visible.
 An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
-Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
-A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
-Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
-A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--size-lineage-indent` (18px) further in and each lineage level retains that same step.
-Tab groups are separated by `--spacing-sm` (8px), without another card or border.
-At a 240px sidebar width, its 8px list inset puts header disclosures and singleton status marks on x18, and tab glyphs and grouped root status marks on x36.
-Headers and quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding; a header touches its own first row.
-Tab glyphs are 12px in a 16px lane; header and singleton titles start at x48, grouped titles at x66, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
-Focused sidebar agent and checkout rows and collapsed tab representatives use the neutral `--secondary` fill.
-A singleton root with descendants in other tabs keeps its lineage disclosure inside the reserved trailing slot; its status mark stays on the outer axis.
-The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
-Headers open their real tab with click, Enter or Space, while the separate chevron changes disclosure only, without focus, read-state or process effects.
-Groups start open, and core-owned `sidebar_collapsed_tabs` saves collapsed choices by device, checkout and tab identity across restart and reconnect.
-When two agents become one, the singleton is shown regardless of the retained choice; a second agent restores the same live tab's name and choice.
-Accepted tab removal retires its choice, failed or disconnected session reads retain it, and stale disclosure targets change nothing.
-A collapsed header represents a focused agent it hides, without unfolding; focus changes reveal the nearest visible row with minimal scrolling, and unchanged focus retains the operator's scroll.
-Arrow Up/Down and Home/End traverse visible header and agent controls, skipping collapsed roots; root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for headers or children.
+Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
+The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
+Groups stay separated by `--spacing-sm` (8px), without a card or border.
+Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
+Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
+Each group draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows; the gap between two guides is the tab boundary, and a single-agent tab is a short segment with no glyph.
+A tab with two or more recognized agent panes wears the tab glyph at the head of its guide, on the guide's column and its first row's line, and the guide continues below it; the head adds no row.
+Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
+Pointer or keyboard focus on the glyph shows its hint, the tab's manual name or localized `Tab N` from the core's stable number, and its agent count.
+The glyph is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
+A tab with two or more agents and a manual name also gets one quiet line at its head, a sidebar line and a hairline high: the tab glyph on the guide's column and the name in 11px subtle text starting on the status-mark column.
+The line opens the tab as the glyph does, and the existing tab Rename still sets or clears the name; automatic tabbar titles remain independent.
+An unnamed tab never draws `Tab N` text, and a single-agent tab draws no glyph and no line even when named.
+A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
+When two agents become one the segment keeps its guide and loses the glyph and line, and a second agent brings them back with the name the tab still has.
+At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, tab glyphs on the same center, root status marks starting at x46 and titles at x82; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and the head adds none.
+Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
+Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab glyphs or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
