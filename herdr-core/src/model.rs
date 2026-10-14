@@ -3643,6 +3643,10 @@ pub struct PrCardSnapshot {
     pub merge: Option<PrCardMerge>,
     /// `body`, `files` or `threads`, whichever the last read could not get.
     pub failed: Vec<&'static str>,
+    /// hide-ai's summary of the pull request at `head`; absent while it is
+    /// off, paused by the usage limit, failed or not made yet (B37).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     /// The Merge or branch update asked for from this card, and how it went.
     pub write: Option<PrWriteSnapshot>,
 }
@@ -4907,6 +4911,8 @@ pub struct BackgroundAiSnapshot {
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
+    /// The `PR 요약` switch: a pull request's card asks for a summary.
+    pub pr_summary: bool,
     /// One row per agent Hide AI knows, in the fixed order. An agent that is
     /// not on this Mac is still a row, because "not here" and "not signed in"
     /// are different answers.
@@ -4938,6 +4944,7 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
+            pr_summary: true,
             usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }

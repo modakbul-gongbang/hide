@@ -519,6 +519,60 @@ fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
     assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
 }
 
+/// B37, D-29: a summary is made once per head commit and shown with the
+/// card; a new head drops it; turning the switch off takes it away.
+#[test]
+fn a_summary_is_kept_for_its_head_and_dropped_with_the_head_or_the_switch() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let mut settings = hide_ai::AiSettings::default();
+    settings.chosen = true;
+    runtime.ai_settings = Some(settings);
+    let read = |head: &str| crate::github::card::CardRead {
+        head: Some(head.into()),
+        body: Some("Plan".into()),
+        files: Some(Vec::new()),
+        threads: Some(Vec::new()),
+        ..Default::default()
+    };
+    runtime.pr_card_slot("w", 2);
+    // No worker here: the ask fails, and the card simply has no summary.
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(card(&runtime, 2).summary, None);
+    assert!(runtime.pr_summaries_asked.is_empty());
+
+    runtime.ingest_pr_summary("w", 2, HEAD, Ok("Renames a field.".into()));
+    assert_eq!(
+        card(&runtime, 2).summary.as_deref(),
+        Some("Renames a field.")
+    );
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(
+        card(&runtime, 2).summary.as_deref(),
+        Some("Renames a field.")
+    );
+
+    let moved = "fedcba9876543210fedcba9876543210fedcba98";
+    runtime.ingest_pr_card("w", 2, Ok(read(moved)));
+    assert_eq!(
+        card(&runtime, 2).summary,
+        None,
+        "a new head is a new summary"
+    );
+
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert!(card(&runtime, 2).summary.is_some());
+    runtime.ai_settings.as_mut().unwrap().pr_summary = false;
+    assert!(runtime.drop_pr_summaries_if_inactive());
+    assert_eq!(card(&runtime, 2).summary, None);
+    runtime.ingest_pr_card("w", 2, Ok(read(HEAD)));
+    assert_eq!(card(&runtime, 2).summary, None, "off: not shown, not asked");
+}
+
 /// A merge needs a head commit name; anything else is refused before it can
 /// reach a command line.
 #[test]

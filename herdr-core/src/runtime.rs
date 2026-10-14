@@ -428,6 +428,9 @@ struct WaitingExplorerChange {
 
 /// How many Explorer changes wait behind the running one. A drag and the
 /// keys that follow it queue one or two; past this the newest is refused.
+/// Pull request summaries kept for their head commit (D-29).
+const PR_SUMMARY_CACHE_LIMIT: usize = 64;
+
 const EXPLORER_QUEUE_LIMIT: usize = 4;
 
 fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {
@@ -1560,6 +1563,11 @@ pub struct Runtime {
     /// Ids for the `issue_work` slots, so a late answer for a replaced
     /// request is recognised and dropped.
     next_issue_work_id: u64,
+    /// The summary hide-ai made of a pull request at a head commit, kept for
+    /// that head (D-29). In memory, capped at [`PR_SUMMARY_CACHE_LIMIT`].
+    pr_summaries: BTreeMap<(String, u32), (String, String)>,
+    /// Summaries being asked for now, so one head is asked once.
+    pr_summaries_asked: BTreeSet<(String, u32, String)>,
     /// The one running GitHub search and the one waiting behind it
     /// (`issues::GithubSearchWork`).
     github_search: issues::GithubSearchWork,
@@ -2142,6 +2150,8 @@ impl Runtime {
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
+            pr_summaries: BTreeMap::new(),
+            pr_summaries_asked: BTreeSet::new(),
             github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
