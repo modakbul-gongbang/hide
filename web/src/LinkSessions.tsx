@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, CornerLeftUpIcon, LoaderCircleIcon, MessageSquareIcon, PlayIcon, CircleHelpIcon, SquareTerminalIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { rowLine } from "./agentRow";
@@ -10,7 +10,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { deviceLabel, failureKey, foldLines, resumeProvider, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
 import { allAgents } from "./navigation";
-import { catalogWorkspaces, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
+import { catalogOf, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
 import { startAnswer, startRequestId } from "./startAnswer";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -45,10 +45,13 @@ export function LinkSessions({
   actions: Actions;
 }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const navigatorAgents = useShellStore((s) => s.rest?.navigator?.agents);
+  const agentScope = useShellStore((s) => s.rest?.navigator?.agent_scope);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const filling = useShellStore((s) => s.linkSummaries?.filling === true);
   const [unfolded, setUnfolded] = useState(false);
-  const agents = allAgents(rest?.status?.remote, rest?.navigator?.agents ?? [], rest?.navigator?.agent_scope, rest?.navigator?.devices).map((entry) => entry.agent);
+  const agents = useMemo(() => allAgents(remote, navigatorAgents ?? [], agentScope, devices).map((entry) => entry.agent), [remote, navigatorAgents, agentScope, devices]);
   const lines = sessionLines(panel.sessions, agents);
   const { shown, earlier } = foldLines(lines, unfolded);
   const finding = panel.loading || filling;
@@ -144,11 +147,12 @@ function useResume(): { resume: Resume; start: (send: (request: string) => void)
 
 function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actions }: { entry: SessionLine; last: boolean; project: Workspace; checkoutBranch: string | null; onOpenPr?: (pr: number) => void; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
-  const devices = rest?.navigator?.devices;
-  const node = localDeviceId(rest);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const node = useShellStore((s) => localDeviceId(s.rest));
   const { line, live } = entry;
-  const checkout = resumeCheckout(line, catalogWorkspaces(rest), checkoutBranch, node);
+  const checkout = resumeCheckout(line, catalogOf(workspaces, remote), checkoutBranch, node);
   const viewOff = viewBlock(line, devices, node);
   const resumeOff = resumeBlock(line, checkout, devices, node);
   const { resume, start } = useResume();
