@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::model::{
-    CheckoutSnapshot, PrFeedbackSnapshot, PrLinkSnapshot, PullRequestBadge, PullRequestSnapshot,
+    CheckoutSnapshot, PR_CARD_LIMIT, PrCardSnapshot, PrFeedbackSnapshot, PrLinkSnapshot,
+    PrWriteSnapshot, PullRequestBadge, PullRequestSnapshot,
 };
 
 /// How long a merged pull request with no worktree here stays on the tab (D-52).
@@ -193,6 +194,10 @@ impl Runtime {
                 }
             }
         }
+        self.read_pr_card(PrCardReadPayload {
+            workspace_id: payload.workspace_id,
+            pr_number: number,
+        });
         true
     }
 
@@ -708,5 +713,274 @@ impl Runtime {
                 true,
             ),
         }
+    }
+}
+
+impl Runtime {
+    /// The card of one pull request, made when it is new; the cards kept are
+    /// capped and the one asked for least recently goes first (B50).
+    pub(super) fn pr_card_slot(&mut self, workspace_id: &str, number: u32) -> &mut PrCardSnapshot {
+        let cards = &mut self.snapshot.pr_work.cards;
+        match cards
+            .iter()
+            .position(|card| card.workspace_id == workspace_id && card.number == number)
+        {
+            Some(index) => {
+                let card = cards.remove(index);
+                cards.push(card);
+            }
+            None => {
+                if cards.len() >= PR_CARD_LIMIT {
+                    cards.remove(0);
+                }
+                cards.push(PrCardSnapshot {
+                    workspace_id: workspace_id.to_owned(),
+                    number,
+                    ..PrCardSnapshot::default()
+                });
+            }
+        }
+        cards.last_mut().expect("a card was just pushed")
+    }
+
+    fn existing_pr_card(&mut self, workspace_id: &str, number: u32) -> Option<&mut PrCardSnapshot> {
+        self.snapshot
+            .pr_work
+            .cards
+            .iter_mut()
+            .find(|card| card.workspace_id == workspace_id && card.number == number)
+    }
+
+    /// `pr_card_read`: the parts of the card the list does not carry, read on
+    /// a worker. The last read's parts stay drawn while a new one runs; a
+    /// read already running is not started twice (D-06, B52).
+    pub(super) fn read_pr_card(&mut self, payload: PrCardReadPayload) -> bool {
+        let number = payload.pr_number;
+        let (machine, project) = match self.open_pull_request(&payload.workspace_id, number) {
+            Ok((machine, workspace, _)) => (machine, workspace),
+            Err(message) => {
+                self.set_error("pr_card_read.unknown_pull_request", message, false);
+                return true;
+            }
+        };
+        let place = match self.github_place(machine.as_deref(), &project.path) {
+            Ok(place) => place,
+            Err(message) => {
+                let card = self.pr_card_slot(&payload.workspace_id, number);
+                card.reading = false;
+                card.failed = vec!["body", "files", "threads"];
+                crate::diagnostic!(serde_json::json!({
+                    "component": "pull_requests", "kind": "pr_card.unplaced",
+                    "project": payload.workspace_id, "pr": number, "reason": message,
+                }));
+                return true;
+            }
+        };
+        let card = self.pr_card_slot(&payload.workspace_id, number);
+        if card.reading {
+            return false;
+        }
+        card.reading = true;
+        let workspace_id = payload.workspace_id;
+        let answered = workspace_id.clone();
+        let node = self.own_node();
+        if let Err(message) = self.spawn_issue_worker(
+            "pr-card",
+            move || crate::github::card::read(node.as_ref(), &place, number),
+            move |runtime, answer| runtime.ingest_pr_card(&answered, number, answer),
+        ) {
+            self.ingest_pr_card(&workspace_id, number, Err(message));
+        }
+        true
+    }
+
+    pub(crate) fn ingest_pr_card(
+        &mut self,
+        workspace_id: &str,
+        number: u32,
+        answer: Result<crate::github::card::CardRead, String>,
+    ) -> bool {
+        let Some(card) = self.existing_pr_card(workspace_id, number) else {
+            return false;
+        };
+        card.reading = false;
+        match answer {
+            Ok(read) => {
+                card.head = read.head.or_else(|| card.head.take());
+                if read.body.is_some() {
+                    card.body = read.body;
+                }
+                if read.files.is_some() {
+                    card.files = read.files;
+                    card.files_total = read.files_total;
+                }
+                if read.threads.is_some() {
+                    card.threads = read.threads;
+                }
+                if read.merge.is_some() {
+                    card.merge = read.merge;
+                }
+                card.failed = read.failed;
+            }
+            Err(message) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "pull_requests", "kind": "pr_card.failed",
+                    "project": workspace_id, "pr": number, "reason": message,
+                }));
+                card.failed = vec!["body", "files", "threads"];
+            }
+        }
+        true
+    }
+
+    /// `pr_merge`: Merge from the card. The only event that writes a merge,
+    /// and it is the operator's own (D-22). A second ask while one is
+    /// working is the same intent and is not sent again; asking again after
+    /// the pull request merged succeeds without a second write.
+    pub(super) fn merge_pull_request(&mut self, payload: PrMergePayload) -> bool {
+        let number = payload.pr_number;
+        let write = PrWriteSnapshot {
+            action: "merge",
+            head: payload.head.clone(),
+            method: payload.method,
+            phase: "working",
+            reason: None,
+        };
+        self.start_pr_write(
+            payload.workspace_id,
+            number,
+            write,
+            crate::github::card::Write::Merge {
+                number,
+                method: payload.method,
+                head: payload.head,
+            },
+        )
+    }
+
+    /// `pr_update_branch`: brings the branch up to its base (D-22).
+    pub(super) fn update_pull_request_branch(&mut self, payload: PrUpdateBranchPayload) -> bool {
+        let number = payload.pr_number;
+        let write = PrWriteSnapshot {
+            action: "update_branch",
+            head: payload.head.clone(),
+            method: None,
+            phase: "working",
+            reason: None,
+        };
+        self.start_pr_write(
+            payload.workspace_id,
+            number,
+            write,
+            crate::github::card::Write::UpdateBranch {
+                number,
+                head: payload.head,
+            },
+        )
+    }
+
+    fn start_pr_write(
+        &mut self,
+        workspace_id: String,
+        number: u32,
+        write: PrWriteSnapshot,
+        request: crate::github::card::Write,
+    ) -> bool {
+        let action = write.action;
+        let (machine, project) = match self.open_pull_request(&workspace_id, number) {
+            Ok((machine, workspace, _)) => (machine, workspace),
+            Err(message) => {
+                self.set_error(format!("pr_{action}.unknown_pull_request"), message, false);
+                return true;
+            }
+        };
+        let place = match self.github_place(machine.as_deref(), &project.path) {
+            Ok(place) => place,
+            Err(message) => {
+                self.set_error(format!("pr_{action}.unplaced"), message, false);
+                return true;
+            }
+        };
+        let card = self.pr_card_slot(&workspace_id, number);
+        if card.write.as_ref().is_some_and(|w| w.phase == "working") {
+            return false;
+        }
+        card.write = Some(write);
+        crate::diagnostic!(serde_json::json!({
+            "component": "pull_requests", "kind": "pr_write.requested",
+            "project": workspace_id, "pr": number, "action": action, "node": machine,
+        }));
+        let root = project.path;
+        let (answered, answered_machine) = (workspace_id.clone(), machine);
+        let node = self.own_node();
+        let spawned = self.spawn_issue_worker(
+            "pr-write",
+            move || crate::github::card::run_write(node.as_ref(), &place, &request),
+            {
+                let root = root.clone();
+                let machine = answered_machine.clone();
+                move |runtime, answer| {
+                    runtime.ingest_pr_write(&answered, number, machine.as_deref(), &root, answer)
+                }
+            },
+        );
+        if let Err(message) = spawned {
+            self.ingest_pr_write(
+                &workspace_id,
+                number,
+                answered_machine.as_deref(),
+                &root,
+                Err(crate::github::card::WriteFailure {
+                    reason: "failed",
+                    detail: message,
+                }),
+            );
+        }
+        true
+    }
+
+    pub(crate) fn ingest_pr_write(
+        &mut self,
+        workspace_id: &str,
+        number: u32,
+        machine: Option<&str>,
+        root: &str,
+        answer: Result<(), crate::github::card::WriteFailure>,
+    ) -> bool {
+        let Some(card) = self.existing_pr_card(workspace_id, number) else {
+            return false;
+        };
+        let Some(write) = card.write.as_mut().filter(|w| w.phase == "working") else {
+            return false;
+        };
+        let action = write.action;
+        let reread = match answer {
+            Ok(()) => {
+                write.phase = "done";
+                true
+            }
+            Err(failure) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "pull_requests", "kind": "pr_write.failed",
+                    "project": workspace_id, "pr": number, "action": action,
+                    "code": failure.reason, "detail": failure.detail,
+                }));
+                write.phase = "failed";
+                write.reason = Some(failure.reason);
+                // A moved head means the card shows an old PR: read it again.
+                failure.reason == "head_moved"
+            }
+        };
+        if reread {
+            match machine {
+                None => self.refresh_pull_requests(root),
+                Some(node) => self.reread_node_github(node, root),
+            }
+            self.read_pr_card(PrCardReadPayload {
+                workspace_id: workspace_id.to_owned(),
+                pr_number: number,
+            });
+        }
+        true
     }
 }

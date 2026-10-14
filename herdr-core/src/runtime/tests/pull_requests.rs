@@ -395,6 +395,148 @@ fn a_feedback_read_that_cannot_run_says_why_in_its_slot() {
     assert!(feedback.message.unwrap().contains("No worker"));
 }
 
+fn card(runtime: &Runtime, number: u32) -> crate::model::PrCardSnapshot {
+    runtime
+        .snapshot()
+        .pr_work
+        .cards
+        .iter()
+        .find(|card| card.number == number)
+        .cloned()
+        .unwrap()
+}
+
+const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// B52: a card read that cannot run names every part it could not get, and
+/// a later read that lacks one part keeps what the earlier read found.
+#[test]
+fn a_card_read_keeps_the_parts_an_earlier_read_found_when_one_part_fails() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_card_read",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2}),
+    )));
+    let failed = card(&runtime, 2);
+    assert!(!failed.reading, "no worker: the read ends at once");
+    assert_eq!(failed.failed, vec!["body", "files", "threads"]);
+
+    runtime.ingest_pr_card(
+        "w",
+        2,
+        Ok(crate::github::card::CardRead {
+            head: Some(HEAD.into()),
+            body: Some("Plan".into()),
+            files: Some(Vec::new()),
+            threads: Some(Vec::new()),
+            ..Default::default()
+        }),
+    );
+    runtime.ingest_pr_card(
+        "w",
+        2,
+        Ok(crate::github::card::CardRead {
+            head: Some(HEAD.into()),
+            failed: vec!["body"],
+            ..Default::default()
+        }),
+    );
+    let kept = card(&runtime, 2);
+    assert_eq!(kept.body.as_deref(), Some("Plan"));
+    assert_eq!(kept.failed, vec!["body"]);
+    assert_eq!(kept.head.as_deref(), Some(HEAD));
+}
+
+/// B50: only the newest few cards are kept.
+#[test]
+fn the_cards_kept_are_capped_and_the_least_recently_asked_goes_first() {
+    let pull_requests = (1..=10)
+        .map(|n| pull_request(n, &format!("b{n}"), PullRequestBadge::Open, None))
+        .collect();
+    let mut runtime = pr_runtime(pull_requests);
+    for number in 1..=10u32 {
+        runtime.dispatch_json(&event(
+            "pr_card_read",
+            serde_json::json!({"workspace_id": "w", "pr_number": number}),
+        ));
+    }
+    let kept: Vec<u32> = runtime
+        .snapshot()
+        .pr_work
+        .cards
+        .iter()
+        .map(|c| c.number)
+        .collect();
+    assert_eq!(kept, (3..=10).collect::<Vec<_>>());
+}
+
+/// D-22: a merge asked from a card goes out once; its answer lands on the
+/// card, and the same ask while it is working is not sent again.
+#[test]
+fn a_merge_is_one_write_and_its_failure_is_a_code_on_the_card() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    let ask = event(
+        "pr_merge",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": HEAD, "method": "squash"}),
+    );
+    assert!(runtime.dispatch_json(&ask));
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!(
+        (write.action, write.phase, write.reason),
+        ("merge", "failed", Some("failed"))
+    );
+    assert_eq!(write.head, HEAD);
+
+    // A write in flight is not started twice.
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    assert!(!runtime.dispatch_json(&ask));
+
+    runtime.ingest_pr_write(
+        "w",
+        2,
+        None,
+        "/repo",
+        Err(crate::github::card::WriteFailure {
+            reason: "head_moved",
+            detail: "Head branch was modified".into(),
+        }),
+    );
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!((write.phase, write.reason), ("failed", Some("head_moved")));
+
+    runtime.pr_card_slot("w", 2).write.as_mut().unwrap().phase = "working";
+    runtime.ingest_pr_write("w", 2, None, "/repo", Ok(()));
+    assert_eq!(card(&runtime, 2).write.unwrap().phase, "done");
+}
+
+/// A merge needs a head commit name; anything else is refused before it can
+/// reach a command line.
+#[test]
+fn a_merge_with_a_head_that_is_not_a_commit_is_refused_on_the_card() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        2,
+        "open-work",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    runtime.dispatch_json(&event(
+        "pr_update_branch",
+        serde_json::json!({"workspace_id": "w", "pr_number": 2, "head": "--force"}),
+    ));
+    let write = card(&runtime, 2).write.unwrap();
+    assert_eq!(write.phase, "failed");
+}
+
 /// The worktree `/repo/task` on `4-task` at `head`, as the worktree reader
 /// reports it.
 fn catalog_at(head: &str) -> crate::model::WorktreeCatalogSnapshot {

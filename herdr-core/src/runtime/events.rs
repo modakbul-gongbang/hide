@@ -967,6 +967,38 @@ pub(super) struct PrFeedbackReadPayload {
     pub(super) pr_number: u32,
 }
 
+/// `pr_card_read`: what the card shows beyond the list (D-06), asked when
+/// the card opens, when its pull request changed, and by a part's retry.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrCardReadPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+}
+
+/// `pr_merge`: Merge from the card (D-21, D-22), conditioned on the head
+/// commit the operator was shown. A repository with a merge queue takes no
+/// `method`; any other takes one of the methods the card offered.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrMergePayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) head: String,
+    #[serde(default)]
+    pub(super) method: Option<hide_node_link::gh::PrMergeMethod>,
+}
+
+/// `pr_update_branch`: brings a BEHIND pull request's branch up to its base,
+/// conditioned on the head commit the operator was shown (D-22).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrUpdateBranchPayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) head: String,
+}
+
 /// `pr_open`: a pull request's decision card (PRD work-tab-pr-lens D-02,
 /// D-03, D-28), opened in one event: the Workspace it opens in, the agent
 /// brought forward and the card tab, all chosen by the core. `checkout_id`
@@ -1455,6 +1487,9 @@ pub(super) enum Event {
     PrFeedbackRead(PrFeedbackReadPayload),
     PrDelegate(PrDelegatePayload),
     PrOpen(PrOpenPayload),
+    PrCardRead(PrCardReadPayload),
+    PrMerge(PrMergePayload),
+    PrUpdateBranch(PrUpdateBranchPayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1698,6 +1733,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pr_feedback_read" => decode!(PrFeedbackReadPayload, PrFeedbackRead),
         "pr_delegate" => decode!(PrDelegatePayload, PrDelegate),
         "pr_open" => decode!(PrOpenPayload, PrOpen),
+        "pr_card_read" => decode!(PrCardReadPayload, PrCardRead),
+        "pr_merge" => decode!(PrMergePayload, PrMerge),
+        "pr_update_branch" => decode!(PrUpdateBranchPayload, PrUpdateBranch),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -3655,6 +3693,9 @@ impl Runtime {
             Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
             Event::PrDelegate(payload) => self.delegate_pr(payload),
             Event::PrOpen(payload) => self.open_pull_request_card(payload),
+            Event::PrCardRead(payload) => self.read_pr_card(payload),
+            Event::PrMerge(payload) => self.merge_pull_request(payload),
+            Event::PrUpdateBranch(payload) => self.update_pull_request_branch(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),

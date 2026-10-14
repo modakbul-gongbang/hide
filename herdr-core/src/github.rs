@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+pub(crate) mod card;
+
 use crate::model::{
     GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, MergeState,
     PrFailedCheck, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, PullRequestWork,

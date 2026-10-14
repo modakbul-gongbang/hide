@@ -3613,6 +3613,83 @@ pub struct IssueUpdateSnapshot {
 pub struct PrWorkSnapshot {
     pub link: Option<PrLinkSnapshot>,
     pub feedback: Option<PrFeedbackSnapshot>,
+    /// The decision cards open now, one per pull request, newest last, at
+    /// most [`PR_CARD_LIMIT`] (PRD work-tab-pr-lens D-06).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<PrCardSnapshot>,
+}
+
+/// Cards kept at once; the least recently asked for is dropped.
+pub const PR_CARD_LIMIT: usize = 8;
+
+/// What a pull request's card reads beyond the list: its body, changed files,
+/// unresolved review threads and what a merge may be, per head commit. A part
+/// that could not be read is named in `failed` and drawn as
+/// `읽지 못함 · 다시 시도` (B52); the others stand.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardSnapshot {
+    pub workspace_id: String,
+    pub number: u32,
+    /// A read is in flight; the parts below are the last read's.
+    pub reading: bool,
+    /// The head commit the parts were read at, which a merge is conditioned on.
+    pub head: Option<String>,
+    pub body: Option<String>,
+    pub files: Option<Vec<PrCardFile>>,
+    /// How many files the pull request changes in all; more than `files`
+    /// holds when GitHub's page was full.
+    pub files_total: u32,
+    pub threads: Option<Vec<PrCardThread>>,
+    pub merge: Option<PrCardMerge>,
+    /// `body`, `files` or `threads`, whichever the last read could not get.
+    pub failed: Vec<&'static str>,
+    /// The Merge or branch update asked for from this card, and how it went.
+    pub write: Option<PrWriteSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Marked `linguist-generated` in the project's `.gitattributes`, or a
+    /// well-known lock file (D-27).
+    pub generated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrCardThread {
+    pub reviewer: Option<String>,
+    pub path: String,
+    pub line: Option<u32>,
+    pub text: String,
+}
+
+/// What the repository lets a merge be (D-21).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrCardMerge {
+    /// The methods the repository allows, in the order Merge offers them.
+    pub methods: Vec<hide_node_link::gh::PrMergeMethod>,
+    /// The base branch has a merge queue: the button adds to it.
+    pub queue: bool,
+    /// The signed-in account may write to the repository.
+    pub can_merge: bool,
+}
+
+/// One GitHub write asked for from a card (D-22, B31-B34).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrWriteSnapshot {
+    /// `merge` or `update_branch`.
+    pub action: &'static str,
+    /// The head commit the operator was shown.
+    pub head: String,
+    pub method: Option<hide_node_link::gh::PrMergeMethod>,
+    /// `working`, `done` or `failed`.
+    pub phase: &'static str,
+    /// Why it failed, as a code the card words with what to do:
+    /// `head_moved`, `denied`, `conflict`, `not_mergeable`, `unreachable`
+    /// or `failed`. The text GitHub gave goes to the diagnostic log.
+    pub reason: Option<&'static str>,
 }
 
 /// `pr_link_issue`'s progress: the issue made (a new one), the link Hide

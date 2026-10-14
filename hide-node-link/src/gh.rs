@@ -207,7 +207,7 @@ pub fn pr_card_query(repository: &str, number: u32) -> Option<String> {
     }
     let (owner, name) = repository.split_once('/')?;
     Some(format!(
-        "query=query HidePrCard {{ repository(owner:\"{owner}\",name:\"{name}\") {{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission defaultBranchRef {{ name }} mergeQueue {{ id }} pullRequest(number:{number}) {{ headRefOid baseRefName body files(first:{CARD_FILE_LIMIT}) {{ totalCount nodes {{ path additions deletions }} }} reviewThreads(first:{CARD_THREAD_LIMIT}) {{ nodes {{ isResolved path line comments(first:1) {{ nodes {{ author {{ login }} body }} }} }} }} }} }} }}"
+        "query=query HidePrCard {{ repository(owner:\"{owner}\",name:\"{name}\") {{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission defaultBranchRef {{ name }} mergeQueue {{ id }} attributes: object(expression:\"HEAD:.gitattributes\") {{ ... on Blob {{ text }} }} pullRequest(number:{number}) {{ headRefOid baseRefName body files(first:{CARD_FILE_LIMIT}) {{ totalCount nodes {{ path additions deletions }} }} reviewThreads(first:{CARD_THREAD_LIMIT}) {{ nodes {{ isResolved path line comments(first:1) {{ nodes {{ author {{ login }} body }} }} }} }} }} }} }}"
     ))
 }
 
