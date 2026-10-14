@@ -103,7 +103,7 @@ export function MemoryScene({ theme, state, width, language }: MemorySceneParams
     <TooltipProvider>
       <InterfaceLanguageBoundary />
       <div className="flex h-screen bg-background text-foreground" style={{ width }} data-gallery-scene="memory" data-memory-scene={state}>
-        <Lane view={{ ...VIEW, lane_width: width }} frame={{ ...FRAME, width, document: width }} sizes={SIZES} checkout={rest.navigator!.workspaces![0]!.checkouts[0] as Checkout} actions={actions} />
+        <Lane view={{ ...VIEW, lane_width: width }} tool="memory" frame={{ ...FRAME, width, document: width }} sizes={SIZES} checkout={rest.navigator!.workspaces![0]!.checkouts[0] as Checkout} actions={actions} />
       </div>
     </TooltipProvider>
   );

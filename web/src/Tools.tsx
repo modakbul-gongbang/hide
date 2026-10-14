@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { Button } from "./components/ui/button";
+import { cn } from "./lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
@@ -154,12 +155,11 @@ function LaneMenu({ actions }: { actions: Actions }) {
  * scroll and previews are as they were when it comes back (B2); its tree
  * column is drawn only while the files tool shows.
  */
-export function Lane({ view, frame, sizes, checkout, actions }: { view: WorkspaceView; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
+export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: WorkspaceView; tool: Tool; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const tool = view.tool ?? "files";
   const expanded = frame.mode === "expanded";
   const scope = useScope(checkout);
-  const pinHint = view.pinned ? (frame.narrowPin ? `${t("panes.lane.pinNarrowHint")}` : t("panes.lane.unpinHint")) : t("panes.lane.pinHint");
+  const pinHint = !view.pinned ? t("panes.lane.pinHint") : frame.narrowPin ? t("panes.lane.pinNarrowHint", { hint: t("panes.lane.unpinHint") }) : t("panes.lane.unpinHint");
   const filesShown = tool === "files";
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>
@@ -185,7 +185,7 @@ export function Lane({ view, frame, sizes, checkout, actions }: { view: Workspac
         </Hint>
       </div>
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        <div className={`flex min-h-0 min-w-0 flex-1 ${filesShown ? "" : "invisible absolute inset-0"}`} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
+        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "invisible absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
           <FilesTool view={view} frame={frame} sizes={sizes} shown={filesShown} actions={actions} />
         </div>
         {filesShown ? null : (
@@ -209,26 +209,23 @@ function FilesTool({ view, frame, sizes, shown, actions }: { view: WorkspaceView
   const [body, setBody] = useState<HTMLElement | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
   const treeChord = useShellStore((s) => commandLabel("toggle_file_tree", s.rest?.ui_state));
-  if (frame.treeOnly) {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-lane-tree="only">
-        {shown ? <ExplorerTree actions={actions} hint={t("panes.lane.treeOnlyHint")} footer={t("panes.lane.treeOnlyFooter")} /> : null}
-      </div>
-    );
-  }
+  const treeFooter = treeChord ? t("panes.lane.treeFooter", { chord: treeChord }) : t("panes.lane.treeFooterBare");
+  // One place for the tree whether it fills the lane or stands beside a
+  // document, so a pick from the tree alone keeps its filter and scroll.
+  const tree = frame.treeOnly || frame.tree !== null;
   return (
     <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1">
-      {frame.tree !== null ? (
-        <>
-          <div className="flex min-h-0 shrink-0 flex-col" style={{ width: frame.tree }} data-lane-tree="beside">
-            {shown ? <ExplorerTree actions={actions} hint={t("panes.lane.treeHint")} footer={t("panes.lane.treeFooter", { chord: treeChord ?? "" })} /> : null}
-          </div>
-          <LaneDivider kind="tree" label={t("panes.lane.resizeTree")} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} />
-        </>
+      {tree ? (
+        <div className={cn("flex min-h-0 flex-col", frame.treeOnly ? "min-w-0 flex-1" : "shrink-0")} style={frame.treeOnly ? undefined : { width: frame.tree ?? undefined }} data-lane-tree={frame.treeOnly ? "only" : "beside"}>
+          {shown ? <ExplorerTree actions={actions} hint={t(frame.treeOnly ? "panes.lane.treeOnlyHint" : "panes.lane.treeHint")} footer={frame.treeOnly ? t("panes.lane.treeOnlyFooter") : treeFooter} /> : null}
+        </div>
       ) : null}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card" role="region" aria-label={t("panes.lane.files")} data-view-area="true">
-        <ViewAreas actions={actions} />
-      </div>
+      {frame.tree !== null && !frame.treeOnly ? <LaneDivider kind="tree" label={t("panes.lane.resizeTree")} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} /> : null}
+      {frame.treeOnly ? null : (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card" role="region" aria-label={t("panes.lane.files")} data-view-area="true">
+          <ViewAreas actions={actions} />
+        </div>
+      )}
       {guide !== null ? <DividerGuide left={guide} /> : null}
     </div>
   );

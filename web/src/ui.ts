@@ -17,7 +17,6 @@ import { NO_CALLS_SEEN, type CallsSeen, type LaneMode, type Tool } from "./works
 
 export type { ViewFocusRequest } from "./viewLayout";
 
-/** The columns the Workspace screen draws now beside Agent Views, and how many the body holds. */
 /** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
 export type DrawnLane = { mode: LaneMode; tool: Tool | null };
 

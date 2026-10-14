@@ -16,6 +16,7 @@ import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
 import { useFileSource } from "./viewers/useFileBytes";
 import { commandLabel } from "./shortcutLabels";
+import { absolutePathRoot } from "./terminalLinks";
 
 // The document surface (PRD B3-B7; S7 B4, B5, A9, A10). The core owns the
 // documents and the displays that show them; this draws one display - its
@@ -269,7 +270,7 @@ function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap
 
 /** A checkout-relative path as the path row reads it (PRD right-lane B9): its folders and name, `›` between them; a path outside the checkout stays whole. */
 function crumbs(path: string): string {
-  return path.startsWith("/") ? path : path.split("/").filter(Boolean).join(" › ");
+  return absolutePathRoot(path) ? path : path.split("/").filter(Boolean).join(" › ");
 }
 
 function EditorHeader({

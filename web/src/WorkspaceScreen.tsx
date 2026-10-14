@@ -85,6 +85,8 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   useLayoutEffect(() => {
     useUiStore.getState().setDrawnLane({ mode: frame.mode, tool });
   }, [frame.mode, tool]);
+  // Off the Workspace screen nothing is drawn, so a chord there opens the lane.
+  useLayoutEffect(() => () => useUiStore.getState().setDrawnLane({ mode: "closed", tool: null }), []);
   // A closed lane is not expanded when it opens again.
   useLayoutEffect(() => {
     if (tool === null) useUiStore.getState().setLaneExpanded(false);
@@ -125,9 +127,30 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
       data-lane-shows={tool ?? "none"}
     >
       <LaneRow view={view} frame={frame} width={width} body={body} setBody={setBody} sizes={sizes} actions={actions} checkout={checkout} />
-      <ToolRail actions={actions} />
+      <div className="contents" onKeyDown={(event) => laneEscape(event, frame, view.pinned)}>
+        <ToolRail actions={actions} />
+      </div>
     </section>
   );
+}
+
+/**
+ * Escape in the lane or on its rail, once nothing inside answered (a menu, a
+ * filter, a document's find), returns an expanded lane, or puts an unpinned
+ * one away and gives the keyboard to the focused pane; Escape in a terminal
+ * stays the program's (B4, B8).
+ */
+function laneEscape(event: React.KeyboardEvent<HTMLElement>, frame: LaneFrame, pinned: boolean): void {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  const ui = useUiStore.getState();
+  if (frame.mode === "expanded") ui.setLaneExpanded(false);
+  else if (frame.mode === "overlay" && !pinned) {
+    ui.putLaneAway();
+    const paneId = useShellStore.getState().focusedPaneId;
+    if (paneId) focusTerminal(paneId);
+  } else return;
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 function tokenPx(name: string): number {
@@ -169,18 +192,7 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
     if (!(event.target instanceof Element) || !event.target.closest("[data-pane-view]")) return;
     if (frame.mode === "overlay" && unpinned) useUiStore.getState().putLaneAway();
   };
-  // Escape in the lane, once nothing inside it answered (a menu, a filter, a
-  // document's find), returns an expanded lane and puts an unpinned one
-  // away; Escape in a terminal stays the program's (B4, B8).
-  const escape = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
-    const ui = useUiStore.getState();
-    if (frame.mode === "expanded") ui.setLaneExpanded(false);
-    else if (frame.mode === "overlay" && unpinned) ui.putLaneAway();
-    else return;
-    event.preventDefault();
-    event.stopPropagation();
-  };
+  const escape = (event: React.KeyboardEvent<HTMLElement>) => laneEscape(event, frame, view.pinned);
   const placed = frame.mode === "expanded" ? "inset-0 z-20" : "inset-y-0 right-0 z-20";
   const raised = frame.mode === "overlay" || frame.mode === "expanded" ? "border-l border-border shadow-lg" : "";
   return (
@@ -206,7 +218,7 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
           data-lane-frame={frame.mode}
           data-lane-hidden={up ? undefined : "true"}
         >
-          <Lane view={view} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
+          <Lane view={view} tool={view.tool} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
         </div>
       ) : null}
       {guide !== null ? <DividerGuide left={guide} /> : null}

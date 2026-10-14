@@ -30,5 +30,8 @@ describe("laneCalled", () => {
 
   it("puts the lane away for an agent or tab chosen", () => {
     expect(laneCalled({ schema_version: 2, kind: "focus_pane", payload: { pane_id: "w1:p1" } } as never)).toBe("agents");
+    expect(laneCalled({ schema_version: 2, kind: "focus_tab", payload: { tab_id: "w1:t2" } } as never)).toBe("agents");
+    expect(laneCalled({ schema_version: 2, kind: "remote_control", payload: { action: "focus_tab", tab_id: "w1:t2" } } as never)).toBe("agents");
+    expect(laneCalled({ schema_version: 2, kind: "remote_control", payload: { action: "send_keys" } } as never)).toBeNull();
   });
 });
