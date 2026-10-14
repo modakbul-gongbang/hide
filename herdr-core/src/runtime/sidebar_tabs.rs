@@ -31,7 +31,7 @@ impl Runtime {
         });
         if !admitted {
             crate::diagnostic!(serde_json::json!({
-                "event": "sidebar_tab.unavailable", "device_id": payload.device_id,
+                "kind": "sidebar_tab.unavailable", "device_id": payload.device_id,
                 "checkout_id": payload.checkout_id, "tab_id": payload.tab_id,
             }));
             return false;

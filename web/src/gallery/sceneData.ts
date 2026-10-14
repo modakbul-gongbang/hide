@@ -381,6 +381,9 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       workspace(id, { checkouts: [checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: (30 + index) * 86400 }, now)] }, folds),
     ),
   ].map((row) => withPresence(row, folds, nowMs));
+  if (content === "long") for (const project of workspaces) for (const checkout of project.checkouts) for (const tab of checkout.tabs) {
+    if (tab.sidebar) tab.sidebar.manual_name = "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인";
+  }
   const sleeping: SleepingSession[] = Object.entries(SLEEPING_PROJECTS).map(([id, days]) => ({
     sleep_id: `sleep-${id}`,
     node_id: "local",

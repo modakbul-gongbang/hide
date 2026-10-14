@@ -129,3 +129,52 @@ fn sidebar_metadata_separates_manual_names_from_automatic_labels() {
         );
     }
 }
+
+#[test]
+fn remote_sidebar_disclosure_preserves_offline_identity_and_prunes_only_accepted_removal() {
+    use super::device_catalog::{connected_status, herdr_workspace, session};
+    let (mut runtime, local_checkout, directory) = strip_checkout("sidebar-remote");
+    let path = directory.to_string_lossy();
+    // A colliding tab string must still be owned by its complete device/checkout identity.
+    let tab = "remote:mini:tab:t1";
+    runtime.ingest_session(Ok(tab_order_payload(&path, &[tab], &[tab], tab)));
+    runtime.dispatch_json(&disclosure(
+        crate::node::TEST_NODE,
+        &local_checkout,
+        tab,
+        false,
+    ));
+    let local = runtime.snapshot.ui_state.sidebar_collapsed_tabs.clone();
+    let remote_report =
+        |tabs: &[(&str, &str)]| session(vec![herdr_workspace("mini", "w1", &path, tabs)]);
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status("mini"));
+    runtime.ingest_remote_session("mini", Ok(remote_report(&[("t1", &path), ("t2", &path)])));
+    let checkout = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces[0]
+        .checkouts[0]
+        .id
+        .clone();
+    let focus = runtime.snapshot.focused.clone();
+    assert!(runtime.dispatch_json(&disclosure("mini", &checkout, tab, false)));
+    let saved = runtime.snapshot.ui_state.sidebar_collapsed_tabs.clone();
+    assert_eq!(saved.len(), 2);
+    assert!(!runtime.dispatch_json(&disclosure("mini", &local_checkout, tab, true)));
+    runtime.ingest_remote_session("mini", Err(SessionFetchError::Stale("offline".into())));
+    assert!(!runtime.dispatch_json(&disclosure("mini", &checkout, tab, true)));
+    assert_eq!(runtime.snapshot.ui_state.sidebar_collapsed_tabs, saved);
+    runtime.ingest_remote_session("mini", Ok(remote_report(&[("t1", &path), ("t2", &path)])));
+    assert_eq!(runtime.snapshot.ui_state.sidebar_collapsed_tabs, saved);
+    assert!(runtime.dispatch_json(&disclosure("mini", &checkout, tab, true)));
+    assert!(runtime.dispatch_json(&disclosure("mini", &checkout, tab, false)));
+    runtime.ingest_remote_session("mini", Ok(remote_report(&[("t2", &path)])));
+    assert_eq!(runtime.snapshot.ui_state.sidebar_collapsed_tabs, local);
+    assert!(!runtime.dispatch_json(&disclosure("mini", &checkout, tab, false)));
+    assert_eq!(runtime.snapshot.focused, focus);
+}
