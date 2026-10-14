@@ -8,6 +8,7 @@ import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { frontTarget, relationRows, relationsOf, type Relations } from "./relations";
+import { FACTORY_OPEN } from "./factory/launch";
 import { factoryEntry, filterEntries, githubEntries, groupEntries, openUrlEntry, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, SESSIONS_GROUP, sessionEntries, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
 import { summariesEnabled } from "./hideAi";
 import { workKey, recordTitle } from "./sessionWork";
@@ -101,7 +102,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     return () => observer.disconnect();
   }, [box]);
 
-  const entries = useMemo(() => (rest ? [...searchEntries(rest, t), factoryEntry(t)] : []), [rest, t]);
+  const entries = useMemo(() => (rest ? [...searchEntries(rest, t), ...(FACTORY_OPEN ? [factoryEntry(t)] : [])] : []), [rest, t]);
   const related = useMemo<Relations | null>(() => (front.target ? relationsOf(rest, front.target, t, true) : null), [rest, front, t]);
   const trimmed = query.trim();
   useEffect(() => { actions.searchSessionWork(trimmed); }, [actions, trimmed, summaries]);

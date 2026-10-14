@@ -1,10 +1,11 @@
 import type { BoardRow } from "./projectBoard";
-import type { AgentRow, Checkout, SidebarTabKey, Tab } from "./snapshot";
+import type { AgentRow, Checkout, Tab } from "./snapshot";
 
-export type SidebarTabGroup = { tab: Tab | null; rows: BoardRow[]; count: number; header: boolean; expanded: boolean };
+/** One tab's segment of a checkout's agent list; `glyph` is set when its tab holds two or more recognized agents. */
+export type SidebarTabGroup = { tab: Tab | null; rows: BoardRow[]; count: number; glyph: boolean };
 
 /** Keep complete lineage subtrees with their root, ordered by the actual tabs. */
-export function sidebarTabGroups(checkout: Checkout, device: string, rows: readonly BoardRow[], agents: readonly AgentRow[], collapsed: readonly SidebarTabKey[]): SidebarTabGroup[] {
+export function sidebarTabGroups(checkout: Checkout, device: string, rows: readonly BoardRow[], agents: readonly AgentRow[]): SidebarTabGroup[] {
   const agentPanes = new Set(agents.filter((agent) => agent.device_id === undefined || agent.device_id === device).map((agent) => agent.pane_id));
   const paneTabs = new Map(checkout.tabs.flatMap((tab) => tab.panes.map((pane) => [pane.id, tab] as const)));
   const byTab = new Map<Tab | null, BoardRow[]>();
@@ -19,9 +20,8 @@ export function sidebarTabGroups(checkout: Checkout, device: string, rows: reado
     const members = byTab.get(tab);
     if (!members?.length) return [];
     const count = tab ? new Set(tab.panes.filter((pane) => agentPanes.has(pane.id)).map((pane) => pane.id)).size : 0;
-    const header = tab !== null && tab.id !== null && tab.sidebar !== undefined && count >= 2;
-    const expanded = !header || !collapsed.some((key) => key.device_id === device && key.checkout_id === checkout.id && key.tab_id === tab?.id);
-    return [{ tab, rows: members, count, header, expanded }];
+    const glyph = tab !== null && tab.id !== null && tab.sidebar !== undefined && count >= 2;
+    return [{ tab, rows: members, count, glyph }];
   });
 }
 

@@ -718,7 +718,7 @@ impl Runtime {
     }
 }
 
-const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
+use hide_node_link::worktrees::WORKTREES_TIMEOUT;
 
 /// What one read of a device's repositories answered.
 pub(super) struct WorktreesAnswer {
@@ -790,6 +790,7 @@ fn ask_repositories(
                 path: root.clone(),
                 bases: Default::default(),
                 base_override: None,
+                reuse_unchanged: false,
             },
             WORKTREES_TIMEOUT,
         ) {

@@ -35,16 +35,13 @@ The save workers' pending flags bound the number of pending saves, not the byte 
 `Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).
 Before adding resident work, use the [tick/timer/watcher ledger and cost review](PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers).
 
-### Sidebar tab disclosure
+### Sidebar tab names
 
 `TabSnapshot.sidebar` serializes the existing `TabNaming` as a manual name and stable tab number, using the same automatic-number convention as the tabbar.
 The automatic task label remains the tabbar's own projection; the shell never guesses a sidebar name from that label.
-The core admits one `sidebar_tab_expanded` event against the connected device's current checkout/tab membership before saving `ui_state.sidebar_collapsed_tabs`.
-Its structured device, checkout and tab keys are idempotent, bounded by admitted live tabs, and pruned after accepted topology removes or reassigns a tab; disconnected or failed observations preserve the last live choices.
-Removing a device retires its keys, while unrelated UI-state updates cannot replace them.
-The shell derives groups and physical agent counts from the snapshot and keeps a root's complete subtree under that root's tab, even for cross-tab or cross-device children.
-Only disclosure writes state; typing and terminal echo add no event, I/O, timer or subprocess for this feature.
-Local and remote session reconciliation prune only saved choices for the device they just observed, and normal snapshot publication carries the resulting UI transition.
+The shell derives tab segments and physical agent counts from the snapshot and keeps a root's complete subtree under that root's tab, even for cross-tab or cross-device children.
+A tab has no disclosure state: the former `sidebar_collapsed_tabs` field and its `sidebar_tab_expanded` event are gone, and a state file that still carries the field loads without error and loses it on the next save.
+Nothing in this feature writes state; typing and terminal echo add no event, I/O, timer or subprocess for it.
 
 ## The core, the shell and Herdr
 
@@ -848,8 +845,10 @@ Oldest entries beyond a retention cap are removed with a diagnostic, and the exi
 A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an overflow is a failed read, rather than a larger snapshot.
 The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
 A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
+A lineage edge or a file's cursor can name a session the ledger holds no row for: a spawn known before its file is read, a Pi or omp child its spawn names by its file where its reader names it by its own id, a session retention removed while its file's cursor stays.
+Such a session has no record of its own: a tree lists only the children the ledger records, and its label context carries its parent's name and no work, never a failed write (`a_session_the_ledger_never_recorded_fails_no_write_and_stops_no_context`).
 
-START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v9`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
+START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v10`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
 An unassigned session has no goal chapter; an accepted goal creates its first chapter without inventing a title for a greeting.
 Roots count operator requests; a delegated record counts its initial prompt and canonical work requests from its named parent, never reports or other letters.
 Late lineage retracts invalid judgments, restores the last valid END and recomputes output attribution in the same transaction.
@@ -1814,7 +1813,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
 - **One analysis at a time.** `LabelAnalyzer` takes jobs in arrival order through one `hide-ai` router built from the operator's current provider and model choice, which it re-reads from the runtime before each analysis, so a change in Settings applies from the next analysis and the one running finishes on the choice it started with.
   Each worker hands in at most one job, so arrival order is a round robin between servers.
   Shutdown cancels the running request, which ends its provider child, and joins the thread.
-  The prompts and schemas are `context_label.v9` (`context_label.rs`), one pair per boundary, and each asks only what its boundary can know.
+  The prompts and schemas are `context_label.v10` (`context_label.rs`), one pair per boundary, and each asks only what its boundary can know.
   The turn's start answers `goal` (8 to 30 characters, what the session is to have made, or null until work is assigned), `goal_changed` and `line` (at most 40 characters, the turn's work), and its end is `working` by construction, never the model's word, because how the turn will end is not known yet.
   A null goal leaves the existing title priority in place; it cannot clear an accepted goal, and an answered greeting with no required next action has an empty line and a stopped end of `done`.
   The turn's end answers the same three, its line the turn's result, what the operator is to answer or what the turn waits for, and `end`: `question`, `blocked`, `waiting`, `unfinished` or `done`, which split a stopped turn by whose move is next (the operator's; the operator's again, on a cause the line can state in one sentence that stopped the turn; something else's, such as a background test, build, CI run or another agent the turn started or handed work to, never a pull request, even when the turn only reported progress; nobody's on unfinished work; nobody's on finished work) and are taken in that order when more than one fits; a question with no line is read as done, a block with no line as unfinished, and a turn is `done` only when it reported its work finished.
@@ -2154,7 +2153,7 @@ Each schema-2 Workspace also stores defaulted private tab presentation state: `v
 `view_visibility` preserves tab visibility and the legacy `view_bookmarks` map remains a read-only transition path for older schema-2 fronts.
 The shell receives the existing projected layout and visibility; none of these ownership fields adds a wire field.
 `track_view_bookmarks` compares borrowed shown/active tab ids during the existing Workspace sync, cloning only changed observations and swapping on a newly shown tab or an explicit pending-result choice.
-A first visit inherits the current presentation with freshly minted display, split and area identities; browser pages are independent, while documents keep their shared buffers.
+A first visit starts an empty presentation whose one area takes a freshly minted identity, so no tab holds Views it did not open; a background caller of the projected owner works on a copy of its own presentation with freshly minted identities, browser pages independent and documents keeping their shared buffers.
 Tools and widths stay checkout-wide, and ordinary focus among already shown Agent areas does not swap the panel.
 
 Workspace control records the caller's actual tab and native session before an asynchronous read, validates them again at commit, and refuses stale identity without another-tab fallback.
@@ -2162,6 +2161,8 @@ Under one owner lock, `parked_caller` temporarily projects the caller and suppre
 Revealing selects the actual caller tab; pane-less checkout callers and GUI events act on the operator presentation.
 Reconcile, preview retirement, close guards, restart hydration and browser inventory inspect all live presentations, so hidden content neither appears in the operator's strip nor loses its shared buffer or browser authority.
 Admission counts the checkout's aggregate 64 displays and six occupied areas, including a temporarily reserved operator layout; an empty presentation owns no View area.
+An open that would pass the display cap first closes the display focused longest ago (`make_view_room`), searching the projected presentation behind its area fronts and every parked one, never a document that holds work or a file still being read back; a display that was its document's last closes that document as `close_file_tab_now` does, and each close is one `view_layout.oldest_closed` diagnostic.
+Room is made before a caller's presentation is parked, since the transaction's rollback restores every other presentation, so inside the transaction admission only refuses.
 Each layout retains depth three, and authoritative Agent topology keeps the existing 64-tab admission and prunes closed records.
 The same admission check covers a caller on an inbound node; an unanswered session or unresolved catalog grouping preserves saved state, while an empty checkout in a fully answered catalog prunes its final tab's resources.
 Pruning retires clean documents with no remaining presentation references and retains unsaved buffers without inserting them into another tab's strip.
@@ -2195,7 +2196,7 @@ Area, display and split ids (`a<n>`, `d<n>`, `s<n>`) are minted by the core from
 The same invariants hold on load and after every change: an area has at most one preview display, its `active` names one of its displays or is null when it has none, an empty area exists only as the root, `active_area` names an existing area, and the caps hold.
 Loading repairs a file that breaks them in one pass over the tree per rule and reports what it changed as counts in one diagnostic, and a file whose ids or focus stamps come near the end of their numbers, which only a crafted file can, is renumbered, keeping what each area shows and which view was focused last, so minting never overflows.
 The caps are core constants, published in the snapshot as `layout.limits`: 6 areas (`MAX_VIEW_AREAS`), 3 split nodes on the path from the root to any area (`MAX_SPLIT_DEPTH`) and 64 displays per Workspace (`MAX_VIEW_DISPLAYS`, S6's `MAX_VIEW_TABS`).
-A split that would pass the areas or the depth is refused with `view_layout.limit` and its reason, an open that would add a 65th display is refused with `view_layout.display_limit`, and nothing changes; an open of a document that is already displayed is a focus and is never refused, and a file that carries more than the caps is trimmed on load with a diagnostic, never on an operator's action.
+A split that would pass the areas or the depth is refused with `view_layout.limit` and its reason, an open that would add a 65th display when no display can close (see above) is refused with `view_layout.display_limit`, a browser open included, and nothing changes; an open of a document that is already displayed is a focus and is never refused, and a file that carries more than the caps is trimmed on load with a diagnostic, never on an operator's action.
 The display cap holds on every path: a preview open beside a preview whose document holds work (which stays and makes the open an addition), Reopen Closed, a file the Explorer creates and a revealed file are refused before anything is read or made, a read that lands after the views filled is refused as it lands (a Reopen Closed then keeps its item), and the tree's own operations refuse a 65th display, so nothing can pass it.
 A schema 1 file (S6) migrates once: its tabs become the displays of one area `a1` in their saved order, its active tab becomes that area's active display, its preview flags are kept, and the next save writes schema 2.
 Any other version, a file that does not parse and a migration that fails all take the S6 path: the file is renamed aside as `<name>.unreadable-<ms>`, the defaults load with a `workspace_views.unreadable` diagnostic, so nothing is resumed and the page starts on Main, and when the rename fails the store is frozen so nothing is written over the original; saves are atomic and run on a worker, coalesced, never under the runtime mutex.

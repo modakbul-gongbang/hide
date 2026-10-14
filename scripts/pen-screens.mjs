@@ -387,7 +387,7 @@ function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
   return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
-function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, rootFoldRight = false, inset = 0, width = 268}) {
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, statusAxis = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
     'ath-row-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
@@ -409,7 +409,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     'ath-row-device': device ? {enabled: true} : {enabled: false},
     'ath-row-device-t': {content: device ? `${device}${offline ? ' · 연결 안 됨' : ''}` : ''},
     ...(statusAxis ? {
-      'ath-row-lane': {layoutPosition: 'absolute', x: rootFoldRight && depth === 0 ? width - 20 : inset + 18 * (depth - 1), y: 0, width: 12, enabled: Boolean(chevron)},
+      'ath-row-lane': {layoutPosition: 'absolute', x: depth === 0 ? width - 20 : inset + 18 * (depth - 1), y: 0, width: 12, enabled: Boolean(chevron)},
       'ath-row-body': {padding: [4, 24, 4, 0]},
       'ath-row-provider': {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
     } : {}),
@@ -3710,7 +3710,8 @@ function buildProjectsSidebar(tokens) {
   const width = num(tokens, '--size-sidebar-ideal');
   const xs = num(tokens, '--spacing-xs');
   const sm = num(tokens, '--spacing-sm');
-  const row = width - 2 * sm;
+  // The list's inner width; the 240px cutout redraws the same rows at its own (`atRow`).
+  let row = width - 2 * sm;
   const indent = num(tokens, '--size-lineage-indent');
   const glyphColumn = 2 * xs + num(tokens, '--size-agent-mark');
   const nameColumn = glyphColumn + num(tokens, '--size-checkout-icon') + xs;
@@ -3778,7 +3779,7 @@ function buildProjectsSidebar(tokens) {
     const slash = name.indexOf('/');
     const [prefix, rest] = project || slash <= 0 ? ['', name] : [name.slice(0, slash + 1), name.slice(slash + 1)];
     // Line one starts with the master's mark slot and a gap before the glyph.
-    const leading = glyphColumn - markSlot - sm;
+    const leading = (project ? sm : glyphColumn) - markSlot - sm;
     const inner = row - xs - leading;
     return themedXref(id, 'DLP27', name, {
       width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-project-row' : '--size-checkout-row'),
@@ -3818,28 +3819,47 @@ function buildProjectsSidebar(tokens) {
   // An opened checkout's tree row: the chevron lane sits in the checkout glyph's
   // column, so the marks start under the checkout name, one indent per level.
   const TREE_STATUS = {working: ['●', '$--agent-working'], waiting: ['○', '$--agent-working'], asking: ['?', '$--warning'], approval: ['!', '$--warning'], done: ['✓', '$--success'], seen: ['○', '$--muted-foreground']};
-  function tree(id, {status, grouped = false, ...options}) {
+  // A tree row is the 20px line and its 4px padding, and a child on another
+  // device adds that device's chip line; the segment's guide is as tall as its rows.
+  const treeHeights = new Map();
+  function tree(id, {status, ...options}) {
     const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
-    const agent = screenTreeRow(id, {symbol, color, inset: xs, width: row - (grouped ? indent : 0), statusAxis: true, rootFoldRight: !grouped, ...options});
-    return grouped ? frame(`${id}-placement`, 'Grouped root inset', {width: row, layout: 'horizontal', padding: [0, 0, 0, indent]}, [agent]) : agent;
+    const node = screenTreeRow(id, {symbol, color, inset: nameColumn, width: row, statusAxis: true, ...options});
+    treeHeights.set(node, num(tokens, '--size-sidebar-line') + 2 * xs + (options.device ? 16 : 0));
+    return node;
   }
 
-  function tabGroupHeader(id, name, count, expanded = true) {
-    return frame(id, 'Tab agent group', {width: row, height: num(tokens, '--size-sidebar-line') + 2 * xs, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xs', padding: [xs, 24, xs, xs]}, [
-      icon(`${id}-fold`, expanded ? 'chevron-down' : 'chevron-right', {size: num(tokens, '--size-agent-mark'), fill: '$--muted-foreground'}),
-      frame(`${id}-icon`, 'Tab identity', {width: 16, height: 16, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-glyph`, 'panels-top-left', {size: 12, fill: '$--muted-foreground'})]),
-      text(`${id}-title`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
-      text(`${id}-count`, String(count), {size: '$--text-caption', fill: '$--muted-foreground'}),
-    ]);
+  // A tab is a segment of its checkout's agent list, not a level: a 1px guide
+  // centered under the checkout's kind glyph spans the segment's rows, and the
+  // gap between two guides is the tab boundary. A tab of two or more agents wears
+  // the tab glyph at the head of its guide, on the first row's line; a manual name
+  // adds one quiet 22px line carrying that glyph and the name, starting on the
+  // status-mark column (sidebar.tsx's TabSegmentHead).
+  function segment(id, {name = null, glyph = false, rows}) {
+    const line = num(tokens, '--size-sidebar-line');
+    const tabLine = line + num(tokens, '--spacing-xxs');
+    const glyphSize = num(tokens, '--size-icon-sm');
+    const kind = num(tokens, '--size-checkout-icon');
+    const air = num(tokens, '--spacing-xxs');
+    const named = glyph && name !== null;
+    const glyphX = glyphColumn + (kind - glyphSize) / 2;
+    const guideX = glyphColumn + (kind - 1) / 2;
+    const guideTop = !glyph ? xs : named ? tabLine / 2 + glyphSize / 2 + air : xs + line / 2 + glyphSize / 2 + air;
+    const head = named
+      ? [frame(`${id}-line`, 'Tab line', {width: row, height: tabLine, layout: 'horizontal', alignItems: 'center', gap: nameColumn - glyphX - glyphSize, padding: [0, xs, 0, glyphX]}, [
+        icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}),
+        text(`${id}-name`, name, {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
+      ])]
+      : glyph ? [{...icon(`${id}-glyph`, 'panels-top-left', {size: glyphSize, fill: '$--subtle-foreground'}), layoutPosition: 'absolute', x: glyphX, y: xs + (line - glyphSize) / 2}] : [];
+    const total = (named ? tabLine : 0) + rows.reduce((sum, node) => sum + treeHeights.get(node), 0);
+    const guide = frame(`${id}-guide`, 'Tab guide', {layoutPosition: 'absolute', x: guideX, y: guideTop, width: 1, height: total - guideTop - xs, fill: '$--lineage-rail'}, []);
+    return frame(id, 'Tab segment', {width: row, layout: 'vertical'}, [...head, ...rows, guide]);
   }
 
-  // An opened checkout and its unboxed tab blocks.
+  // An opened checkout and its unboxed tab segments, 8px apart.
   function group(id, rows) {
-    const [checkout, ...agents] = rows;
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [
-      checkout,
-      frame(`${id}-tab`, 'Contiguous tab header and lineage', {width: row, layout: 'vertical'}, agents),
-    ]);
+    const [checkout, ...segments] = rows;
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', gap: '$--spacing-sm'}, [checkout, ...segments]);
   }
 
   function fold(id, label, level) {
@@ -4031,16 +4051,17 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          tabGroupHeader(`psb-tab-main-${s}`, '탭 1', 14),
-          tree(`psb-t0-${s}`, {grouped: true, title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
-          tree(`psb-t1-${s}`, {grouped: true, title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
-          tree(`psb-t2-${s}`, {grouped: true, title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
-          tree(`psb-t3-${s}`, {grouped: true, title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
-          tree(`psb-t4-${s}`, {grouped: true, title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
-          tree(`psb-t5-${s}`, {grouped: true, title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
-          tree(`psb-t6-${s}`, {grouped: true, title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
-          tree(`psb-t7-${s}`, {grouped: true, title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
-          tree(`psb-t8-${s}`, {grouped: true, title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
+          segment(`psb-seg-main-${s}`, {glyph: true, rows: [
+            tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
+            tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
+            tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
+            tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+            tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
+            tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
+            tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
+            tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+          ]}),
+          segment(`psb-seg-solo-${s}`, {rows: [tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'})]}),
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
@@ -4304,30 +4325,29 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
+  // The approved 240px cutout: the production rows at the narrowest width, a named
+  // tab (its line), a one-agent tab and an unnamed tab of two (its glyph).
+  function atRow(inner, draw) {
+    const saved = row;
+    row = inner;
+    try { return draw(); } finally { row = saved; }
+  }
   function statusAxis(s) {
-    const axisHeader = (key, title) => frame(`psb-axis-${key}-${s}`, 'Tab agent group', {width: 224, height: 28, layout: 'horizontal', alignItems: 'center', gap: 4, padding: [0, 24, 0, 4]}, [
-      icon(`psb-axis-${key}-fold-${s}`, 'chevron-down', {size: 12, fill: MUTED}),
-      frame(`psb-axis-${key}-icon-${s}`, 'Tab identity', {width: 16, height: 16, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [icon(`psb-axis-${key}-glyph-${s}`, 'panels-top-left', {size: 12, fill: MUTED})]),
-      text(`psb-axis-${key}-title-${s}`, title, {size: '$--text-caption', fill: SUBTLE, width: 'fill_container'}),
-      text(`psb-axis-${key}-count-${s}`, '2', {size: '$--text-caption', fill: MUTED}),
-    ]);
-    const axisRow = (key, options, grouped = true) => frame(`psb-axis-${key}-wrap-${s}`, 'Agent placement', {width: 224, layout: 'horizontal', padding: [0, 0, 0, grouped ? 18 : 0]}, [
-      screenSidebarAgentRow(`psb-axis-${key}-${s}`, {width: grouped ? 206 : 224, inset: 4, selectedFill: '$--secondary', ...options}),
-    ]);
-    return frame(`psb-axis-${s}`, 'Approved status axis · 240 px', {width: 240, height: 268, layout: 'vertical', gap: 8, padding: 8, fill: '$--sidebar', clip: true}, [
-      frame(`psb-axis-checkout-${s}`, 'Checkout identity', {width: 224, height: 28, layout: 'horizontal', gap: 4, alignItems: 'center', padding: [0, 24, 0, 4]}, [
-        frame(`psb-axis-checkout-fold-${s}`, 'Disclosure slot', {width: 12, height: 16}, []),
-        icon(`psb-axis-checkout-glyph-${s}`, 'house', {size: 16, fill: MUTED}),
-        text(`psb-axis-checkout-title-${s}`, 'main', {size: '$--text-body', weight: '500'}),
-        spacer(`psb-axis-checkout-spacer-${s}`), text(`psb-axis-checkout-age-${s}`, '8m', {size: '$--text-caption', fill: MUTED}),
-      ]),
-      frame(`psb-axis-block-a-${s}`, 'Tab 1', {width: 224, layout: 'vertical'}, [axisHeader('a', '아주 긴 한국어 탭…'), axisRow('one', {title: '탭 경계·여백 정리', age: '1m', selected: true}), axisRow('two', {title: '왼쪽 pane 검토', age: '8m', provider: 'codex'})]),
-      axisRow('single', {title: '세션 기록 동기화', age: '2s', provider: 'codex'}, false),
-      frame(`psb-axis-block-b-${s}`, 'Tab 3', {width: 224, layout: 'vertical'}, [axisHeader('b', '탭 3'), axisRow('three', {title: 'PR 질문 표시 개선', age: '6m', provider: 'codex'}), axisRow('four', {title: '탐색 개선', age: '11m', symbol: '○', color: MUTED})]),
-    ]);
+    return atRow(240 - 2 * sm, () => frame(`psb-axis-${s}`, 'Approved tab segments · 240 px', {width: 240, layout: 'vertical', gap: '$--spacing-sm', padding: sm, fill: '$--sidebar', clip: true}, [
+      checkoutRow(`psb-axis-checkout-${s}`, {name: 'main', kind: 'primary', age: '8m', marks: {working: 4, idle: 1}, expanded: true}),
+      segment(`psb-axis-a-${s}`, {glyph: true, name: '아주 긴 한국어 탭 이름과 작업…', rows: [
+        tree(`psb-axis-one-${s}`, {title: '탭 경계·여백 정리', status: 'working', age: '1m', selected: true}),
+        tree(`psb-axis-two-${s}`, {title: '왼쪽 pane 검토', status: 'working', provider: 'codex', age: '8m'}),
+      ]}),
+      segment(`psb-axis-single-${s}`, {rows: [tree(`psb-axis-three-${s}`, {title: '세션 기록 동기화', status: 'working', provider: 'codex', age: '2s'})]}),
+      segment(`psb-axis-b-${s}`, {glyph: true, rows: [
+        tree(`psb-axis-four-${s}`, {title: 'PR 질문 표시 개선', status: 'working', provider: 'codex', age: '6m'}),
+        tree(`psb-axis-five-${s}`, {title: '탐색 개선', status: 'seen', age: '11m'}),
+      ]}),
+    ]));
   }
   const approvedBuild = suffix => [...build(suffix), statusAxis(suffix)];
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, under the window’s top row that names it after the traffic lights (PRD sidebar-titlebar-refresh D-15): the Search row, the Overview row, bounded Needs You and Done groups and default-open project checkouts, with no Home row (D-06). Pinned leads with the pin and Projects ends in Add project; both headers stick to the list’s top with a hairline (D-05). A project’s name is 600 while an agent there works and 400 otherwise, a project whose agents all sleep is folded behind a moon cell with its age, projects with no agents fold behind No agents N (D-01 to D-03), and under the pointer + and ⋯ stand over the badge (D-04). The footer adds Help before the gear (D-11, D-12), and checkout and folder menus carry Open in VS Code before the reveal (D-13). A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. Every root stands on one status axis right of the checkout glyph whatever tab holds it: a hairline guide under that glyph spans each tab’s rows with a gap between tabs, a tab of two or more agents wears the tab glyph at the head of its guide, and a manual name adds one quiet line. A plain folder’s glyph and name stand on the project row’s columns. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', approvedBuild, approvedBuild);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -4867,12 +4887,13 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Settings', build: () => buildSettings(tokens, root)},
     {name: 'Screen / Usage', build: () => {
       const build = suffix => [themedXref(`screen-usage-popover-${suffix}`, 'usage-popover-light', 'Usage popover'),
+        themedXref(`screen-usage-week-${suffix}`, 'usage-history-popover-week-light', 'Seven-day chart'),
         frame(`screen-usage-overview-${suffix}`, 'Overview Usage', {width: 1160, layout: 'vertical', padding: '$--spacing-lg', gap: '$--spacing-lg', fill: '$--background'}, [
           text(`screen-usage-title-${suffix}`, 'Overview · Agents   Tasks   Projects   Usage', {size: '$--text-subhead', weight: '600'}),
           themedXref(`screen-usage-year-${suffix}`, 'usage-history-year-light', 'Date and agent records'),
           text(`screen-usage-limits-${suffix}`, '› 계정 사용 한도', {size: '$--text-caption', fill: '$--muted-foreground'}),
         ])];
-      return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: compact cost-first summary, 30-day contribution grid and date/agent records. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
+      return screenSheet('screen-usage', 'Screen / Usage', 'web/src/components/usage.tsx: compact cost-first summary, 7-day bars / 30-day contribution grid switch and date/agent records. Values are invented examples; Settings / Usage owns the shared chip choices.', build, build);
     }},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},

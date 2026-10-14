@@ -600,8 +600,6 @@ export type Tab = {
   panes: PaneRow[];
 };
 
-export type SidebarTabKey = { device_id: string; checkout_id: string; tab_id: string };
-
 export type StripTab = {
   id: string;
   kind: "herdr" | "file" | "diff" | "session";
@@ -1805,7 +1803,6 @@ export type SnapshotRest = {
     /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
     expanded_checkout_ids?: string[];
     session_collapsed_checkout_ids?: string[];
-    sidebar_collapsed_tabs?: SidebarTabKey[];
     /** Agents whose children the sidebar tree opened; absence is folded. */
     expanded_agent_pane_ids?: string[];
     /** Agents whose children Sessions opened, kept apart from the sidebar's. */

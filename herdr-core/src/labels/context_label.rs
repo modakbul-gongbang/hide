@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v9";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v10";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -94,8 +94,11 @@ static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
         "<work-author>true</work-author>일 때만 이번 사람 요청을 작업으로 판정하세요. 운영자나 위임한 부모의 요청이며 다른 에이전트의 편지는 제외됩니다. ",
         "구체적인 결과물을 새로 시켰으면 new와 80자 이내 작업명, <open-tasks>의 기존 일을 이어가면 continue와 실제 ID 최대 2개, 질문·설명·진행 확인은 none입니다. ",
         "work-author가 false이면 task는 none입니다. 같은 일의 검증·버그 수정·머지·설치는 기존 작업을 이어갑니다. ",
-        "missed에는 이번 마지막 assistant 답에서 직접 남았다고 보고한 일(leftover), 본 작업과 별도로 발견했다고 보고한 문제(problem), 이슈나 후속 작업으로 남기자고 제안했으나 아직 처리하지 않은 일(follow_up)만 넣으세요. ",
-        "각 항목은 {\"kind\":\"leftover|problem|follow_up\",\"text\":\"80자 이내의 한 줄\"}이고 한 턴 최대 3개입니다. 원하면/필요하면 가능하다는 선택적 제안은 놓친 일이 아닙니다. ",
+        "missed에는 이 세션을 닫으면 아무도 맡지 않게 되는, 맡긴 일 밖의 일만 넣으세요. ",
+        "problem은 맡긴 일과 상관없는 곳에서 발견했다고 보고한 고장이고, follow_up은 맡긴 일과 다른 결과물(다른 기능·수정·문서)을 만드는 별도 작업이나 이슈로 하자고 제안했지만 아직 아무도 맡지 않은 일입니다. ",
+        "에이전트가 후속 과제·남은 일·제한이라고 불러도, 맡긴 일의 결과를 실제 앱·다른 환경·출시 전에 다시 측정·확인·검증하는 일, 맡긴 일 자체의 남은 부분, 머지·설치·배포·앱 교체는 작업 판정과 PR·CI가 이미 맡으므로 missed가 아닙니다. ",
+        "#번호나 링크로 이미 이슈·PR에 기록된 일도 missed가 아닙니다. ",
+        "각 항목은 {\"kind\":\"problem|follow_up\",\"text\":\"80자 이내의 한 줄\"}이고 한 턴 최대 3개입니다. 원하면/필요하면 가능하다는 선택적 제안은 놓친 일이 아닙니다. ",
         "<open-missed>의 항목을 이번 턴에서 실제 처리했다고 보고했으면 resolved에 {\"id\":\"실제 ID\",\"issue_number\":null 또는 번호}로 넣고, 아직 처리하지 않은 항목을 반복해서 missed에 넣지 마세요. ",
         "output_task_id는 이번 턴에 이어간 작업이 둘일 때 결과물이 귀속될 한 실제 작업 ID이고, 근거 없으면 null입니다. ",
         "end는 마지막 답 전체에서 정하고, open-tasks와 open-missed는 work의 ID 판정에만 쓰세요. ",
@@ -142,7 +145,7 @@ static END_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
                         {"type":"object","additionalProperties":false,"required":["kind","ids"],"properties":{"kind":{"const":"continue"},"ids":{"type":"array","minItems":1,"maxItems":2,"uniqueItems":true,"items":{"type":"string"}}}},
                         {"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"none"}}}
                     ]},
-                    "missed":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["kind","text"],"properties":{"kind":{"type":"string","enum":["leftover","problem","follow_up"]},"text":{"type":"string","minLength":1,"maxLength":80}}}},
+                    "missed":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["kind","text"],"properties":{"kind":{"type":"string","enum":["problem","follow_up"]},"text":{"type":"string","minLength":1,"maxLength":80}}}},
                     "resolved":{"type":"array","maxItems":200,"items":{"type":"object","additionalProperties":false,"required":["id","issue_number"],"properties":{"id":{"type":"string"},"issue_number":{"type":["integer","null"],"minimum":1}}}},
                     "output_task_id":{"type":["string","null"]}
                 }

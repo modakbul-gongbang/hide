@@ -264,11 +264,15 @@ pub enum Call {
     /// The worktrees of the repository that holds `path`
     /// (`hide_host::worktrees::read`), measured against `bases` or the
     /// operator's `base_override`. `null` for a folder that is not a
-    /// repository.
+    /// repository. With `reuse_unchanged`, a worktree whose HEAD, index and
+    /// base refs did not move since the node last measured it keeps that
+    /// measurement; without it every worktree is measured again.
     Worktrees {
         path: String,
         bases: std::collections::BTreeMap<String, String>,
         base_override: Option<String>,
+        #[serde(default)]
+        reuse_unchanged: bool,
     },
     /// Whether `branch` may be created in the repository at `path`
     /// (`hide_host::worktrees::check_new_branch`); nothing is created.

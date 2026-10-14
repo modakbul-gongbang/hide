@@ -67,6 +67,7 @@ import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
+import { FACTORY_OPEN } from "./factory/launch";
 import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
@@ -2036,10 +2037,6 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "checkout_agents_toggle", payload: { checkout_id: checkoutId } });
     },
 
-    setSidebarTabExpanded(deviceId: string, checkoutId: string, tabId: string, expanded: boolean) {
-      dispatch({ schema_version: 2, kind: "sidebar_tab_expanded", payload: { device_id: deviceId, checkout_id: checkoutId, tab_id: tabId, expanded } });
-    },
-
     toggleLeftSidebar() {
       const state = rest()?.ui_state;
       if (state) setLeftSidebarVisible(!state.left_sidebar_visible);
@@ -2113,6 +2110,8 @@ export function createActions(send: DispatchFn) {
      * or where `place` says; it is a page, so an Overview layer closes.
      */
     openFactory(place?: Partial<FactoryPlace>) {
+      // Until the Factory opens nothing reaches its screen (`factory/launch.ts`).
+      if (!FACTORY_OPEN) return;
       const state = ui();
       // Behind Settings or a dialog the Factory waits, as the Overview does. A
       // panel's Escape layer does not hold it: the palette has closed itself

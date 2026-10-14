@@ -146,6 +146,17 @@ pub fn locked_removal_reason(name: &str, reason: &str) -> String {
 /// The most repositories one Git watch follows: the worktree reader's cap.
 pub const GIT_WATCH_LIMIT: usize = 64;
 
+/// How long a core waits for one repository's worktrees (`Call::Worktrees`).
+pub const WORKTREES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long a node measures one repository's worktrees. It is short of
+/// [`WORKTREES_TIMEOUT`], so the answer arrives while its core still waits:
+/// a read the core gave up on kept measuring on the node beside the read
+/// the core asked for next.
+pub const WORKTREES_READ_TIME: std::time::Duration = std::time::Duration::from_secs(45);
+
+const _: () = assert!(WORKTREES_READ_TIME.as_secs() + 10 <= WORKTREES_TIMEOUT.as_secs());
+
 /// What a Git watch reports while it runs (`Call::GitWatch`), at least once a
 /// second so its caller can end it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

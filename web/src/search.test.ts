@@ -1,7 +1,7 @@
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CHILD, RICH } from "./gallery/cmdkSceneData";
+import { CHILD, PR_260, RICH, requestWith } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries as drawSearchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
@@ -265,6 +265,22 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
     expect(ranked.slice(0, 2)).toEqual(["issue:github:acme/hide#273", "pr:w1:273"]);
     // A bare number holds only rows whose text holds the digits.
     expect(filterEntries(searchEntries(RICH, t), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
+  });
+
+  it("lists after the pull request the agents the core links to it, and not the ones it does not", () => {
+    // The child works on pull request 275 in its checkout; nothing in its name, place or state holds the digits.
+    const sections = (rest: typeof RICH, query: string) => groupEntries(filterEntries(searchEntries(rest, t), query)).map((section) => [section.group.id, section.entries.map((entry) => entry.id)]);
+    expect(sections(RICH, "#275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
+    expect(sections(RICH, "275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
+    // A merged pull request the agent no longer owns is still its link, though its PR mark no longer draws it.
+    const tied = structuredClone(RICH) as typeof RICH;
+    const settled = requestWith("idle", [PR_260]);
+    settled.pull_requests = settled.pull_requests.map((pull) => ({ ...pull, badge: "merged", live: false, duty: false, settled_at_unix_ms: 1 }));
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: settled } : row));
+    expect(sections(tied, "260").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:260"]], ["agents", ["agent:p-dag"]]]);
+    // An issue's number is not a pull request's: the issue row alone.
+    expect(sections(RICH, "273")[0]).toEqual(["issues", ["issue:github:acme/hide#273"]]);
+    expect(filterEntries(searchEntries(RICH, t), "273").map((entry) => entry.id)).not.toContain(`agent:${CHILD.pane_id}`);
   });
 
   it("reads #273 and 273 as numbers and nothing else", () => {

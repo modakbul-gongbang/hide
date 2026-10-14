@@ -830,6 +830,69 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
 }
 
+/// A commit in one worktree measures that worktree again and keeps what the
+/// others answered, since their HEAD, index and base did not move; a
+/// refresh measures every worktree. Every worktree used to be measured
+/// again on any change in the repository, and with 33 worktrees, each agent
+/// committing in its own, a read of about 50 s ran back to back.
+#[test]
+fn a_commit_in_one_worktree_measures_that_worktree_alone_until_a_refresh() {
+    let repo = Repository::new();
+    repo.linked("changed");
+    repo.linked("quiet");
+    let sentinel = Repository::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
+    let mut request = WorktreeRequest {
+        projects: [&repo, &sentinel]
+            .into_iter()
+            .map(|repo| WorktreeProjectRequest {
+                root_path: repo.0.clone(),
+                bases: BTreeMap::new(),
+                base_override: None,
+                generation: 0,
+            })
+            .collect(),
+        generation: 0,
+        removals: 0,
+    };
+    let catalog = next_answer(&mut reader, &request, "the first read").catalog;
+    settle_setup_writes(&sentinel, &mut reader, &request);
+    // Status runs in the path git lists, which is the canonical one.
+    let listed = |branch: &str| {
+        PathBuf::from(
+            &catalog.projects[0]
+                .worktrees
+                .iter()
+                .find(|row| row.branch.as_deref() == Some(branch))
+                .unwrap()
+                .path,
+        )
+    };
+    let paths = [listed("main"), listed("changed"), listed("quiet")];
+    let statuses = || paths.each_ref().map(|path| git_call_count(path, "status"));
+    let before = statuses();
+    git(&paths[1], &["commit", "--allow-empty", "-m", "moved"]).unwrap();
+    let moved = next_answer_reading(&mut reader, &request, &paths[1], "the commit");
+    let after = statuses();
+    assert_eq!(
+        [0, 1, 2].map(|index| after[index] - before[index]),
+        [0, 1, 0],
+        "main, the worktree that moved, the quiet one"
+    );
+    assert_eq!(
+        moved.catalog.projects[0].worktrees.len(),
+        3,
+        "the worktrees not measured again keep their rows"
+    );
+    request.generation += 1;
+    next_answer_reading(&mut reader, &request, &paths[2], "the refresh");
+    let refreshed = statuses();
+    assert_eq!(
+        [0, 1, 2].map(|index| refreshed[index] - after[index]),
+        [1, 1, 1]
+    );
+}
+
 /// Git's own ref writes wake the reader without an Overview refresh event.
 /// A pull's many writes settle as one catalog read for the affected project.
 #[test]

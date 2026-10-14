@@ -1703,9 +1703,12 @@ fn parse_codex_line(item: &Value) -> LineResult {
         }
         _ => return LineResult::Ignore,
     }
+    // Codex writes the instructions it adds to a turn as `developer`
+    // messages; a conversation names that role `system` on every
+    // provider, which is the closed set a page crosses the node link with.
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => "user",
-        Some("developer") => "developer",
+        Some("developer") => "system",
         Some("assistant") => "assistant",
         _ => return LineResult::Ignore,
     };
@@ -1727,7 +1730,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
             text,
         ));
     }
-    if role == "developer" {
+    if role == "system" {
         return LineResult::Event(
             ConversationEvent::new(role, EventKind::Injected, timestamp, text)
                 .with_provider_injected(true),
@@ -2163,7 +2166,7 @@ mod tests {
         .to_string();
         let parsed = parse_codex_events(&line);
         assert_eq!(parsed.events.len(), 1);
-        assert_eq!(parsed.events[0].role, "developer");
+        assert_eq!(parsed.events[0].role, "system");
         assert_eq!(parsed.events[0].kind, EventKind::Injected);
         assert!(parsed.events[0].is_provider_injected());
     }

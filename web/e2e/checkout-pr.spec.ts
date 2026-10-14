@@ -19,7 +19,6 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, rest, rowGeometry, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
-import { openAllProjectsPage } from "./overview-entry";
 import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
@@ -132,6 +131,19 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(primary.locator("[data-checkout-pr-glyph]")).toHaveCount(0);
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
 
+    // B4: on All projects, where a first run starts, no Workspace is in front, so the glyph opens
+    // the default browser, which a browser tab shows as a new page; nothing opens in hide.
+    await expect(page.locator("[data-overview-page]")).toBeVisible();
+    const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
+    const popup = page.context().waitForEvent("page");
+    await glyph.click();
+    const opened = await popup;
+    expect(opened.url()).toBe(url);
+    await opened.close();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    expect(sent.get("focus_checkout") ?? 0).toBe(focusBeforeExternal);
+    expect(sent.get("browser_open") ?? 0).toBe(0);
+
     // B5, B6, B7: the row's card, after the tooltip's delay: the badge in the
     // review decision, the number, Open PR, the title, and every row with a
     // value; the row itself and the row after it do not move under it.
@@ -162,19 +174,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await page.keyboard.press("Escape");
     await expect(card).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await openAllProjectsPage(page);
-    const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
-
-    // B4: on All projects no Workspace is in front, so the glyph opens the
-    // default browser, which a browser tab shows as a new page; nothing opens in hide.
-    const popup = page.context().waitForEvent("page");
-    await glyph.click();
-    const opened = await popup;
-    expect(opened.url()).toBe(url);
-    await opened.close();
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
-    expect(sent.get("focus_checkout") ?? 0).toBe(focusBeforeExternal);
-    expect(sent.get("browser_open") ?? 0).toBe(0);
 
     // B1: with the worktree's Workspace in front, the glyph opens the pull
     // request as a browser display of that Workspace, and the row neither
@@ -265,18 +264,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(plain.locator('[data-checkout-card-row="review"]')).toHaveCount(0);
     await rest(page);
     await expect(plain).toHaveCount(0);
-
-    // Escape leaves the shared Overview page and closes the hovered row's card.
-    await openAllProjectsPage(page);
-    await page.getByRole("tab", { name: "repo", exact: true }).click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    await feature.locator("[data-checkout]").hover();
-    await expect(card).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(card).toHaveCount(0);
-    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    await rest(page);
 
     await chooseTheme(page, "light");
     await feature.locator("[data-checkout]").hover();
