@@ -812,8 +812,15 @@ It answers through hided's own core without a renderer, scoped by default to the
 ### Session work records
 
 The link store's version 2 adds the session work ledger, keyed by device, agent kind and native session id.
+Version 3 retains one immutable nullable original project and repository for each retained session, including descendants.
+An observed connection can identify only a session that started after that connection was known; first discoveries of older history and records migrated from versions 1 or 2 keep unknown repository identity.
+The writer resets its connection observation window on restart, and an accepted repository edit advances that project's window even when changes return to the same repository before the worker observes them.
+These rows share the store's size cap, device conversion and Copied history pruning; no later catalog lookup fills an unknown original repository or rewrites a known one.
 `links/ledger.rs` owns its values and bounds, `links/ledger_store.rs` its transactions, `runtime/session_work.rs` its events, and `web/src/SessionRecord.tsx` its read surface.
 Only `hide-links` writes it; record reads and session search are latest-only mailbox requests, with separate delta revisions and generation fences.
+Missed-work previews capture the common Project repository resolver with their owning device and checkout.
+An unknown original repository or a confirmed connection to another repository refuses creation; connection edits cancel the captured preview or create and reject its late answer while retaining the worker's ownership until it ends.
+Every external create remains pinned to the original reserved repository, and a retry reconciles that durable attempt before another effect.
 The helper's version 32 supplies canonical request senders and letter kinds from every supported native reader; an older helper keeps its existing raw requests and PR facts until updated.
 
 The record retains requests of at most 500 characters, goal chapters, assigned tasks, END judgments, created outputs and missed work.

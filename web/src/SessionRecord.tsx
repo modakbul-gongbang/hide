@@ -7,7 +7,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { orderedOutputs, recordTitle, recordTree, taskState, workKey } from "./sessionWork";
+import { issueDraftFailureKey, orderedOutputs, recordTitle, recordTree, taskState, workKey } from "./sessionWork";
 import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOutput, WorkSession, WorkTask } from "./snapshot";
 import { statusText } from "./agentStatus";
 import { useShellStore } from "./store";
@@ -82,7 +82,7 @@ export function MissedRow({ missed, record, actions }: { missed: MissedWork; rec
     <p className="flex items-start gap-xs"><FlagIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-warning" /><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]" title={missed.text}>{missed.text}</span></p>
     <button type="button" className={cn(ROW, "mt-xxs block w-full truncate text-micro text-muted-foreground")} title={record.title} onClick={() => actions.openSessionRecord(record.session)}>{record.title} · {t(`sessionWork.kind.${missed.kind}`)}</button>
     {missed.status === "open" ? <div className="mt-xs flex gap-xs"><Hint label={!connected ? t("devices.rail.notConnected") : t("sessionWork.issue")}><span><Button size="sm" variant="outline" disabled={!connected || busy} data-missed-issue={missed.id} onClick={() => actions.draftMissedIssue(record.session, missed.id)}>{t(drafting ? "sessionWork.drafting" : "sessionWork.issue")}</Button></span></Hint><Button size="sm" variant="ghost" disabled={busy} onClick={() => actions.setMissedStatus(record.session, missed.id, "dismissed")}>{t("sessionWork.dismiss")}</Button>{drafting ? <Button size="sm" variant="ghost" onClick={() => actions.cancelMissedIssueDraft()}>{t("common.cancel")}</Button> : null}</div> : missed.status === "issue" && missed.issue_number && missed.issue_repository ? <Button size="sm" variant="link" onClick={() => actions.openRecordedIssue(record.session, missed.issue_repository!, missed.issue_number!)}>#{missed.issue_number}</Button> : <div className="mt-xs flex items-center gap-xs text-micro text-muted-foreground"><span>{t(missed.status === "resolved" ? "sessionWork.resolved" : "sessionWork.dismissed")}</span><Button size="sm" variant="ghost" onClick={() => actions.setMissedStatus(record.session, missed.id, "open")}>{t(missed.status === "resolved" ? "sessionWork.reopen" : "sessionWork.undo")}</Button></div>}
-    {ownDraft?.phase === "failed" ? <p role="status" className="mt-xxs text-micro text-destructive">{t("sessionWork.issue_draft_unavailable")}</p> : null}
+    {ownDraft?.phase === "failed" ? <p role="status" className="mt-xxs text-micro text-destructive">{t(issueDraftFailureKey(ownDraft.message))}</p> : null}
   </li>;
 }
 

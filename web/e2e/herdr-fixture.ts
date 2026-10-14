@@ -289,6 +289,8 @@ export type FixtureLabel = {
   end?: "question" | "blocked" | "done" | "waiting" | "unfinished";
   work?: { task: {kind:"new";name:string} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
   at?: number;
+  /** Native cwd witness, when repository provenance is part of the journey. */
+  cwd?: string;
   /** Addresses printed by a real native tool-result record in this turn. */
   toolOutputs?: string[];
 };
@@ -335,7 +337,7 @@ export function labelMarker(label: FixtureLabel): string {
 
 export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
   const records = [
-    { type: "user", sessionId, timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
+    { type: "user", sessionId, ...(label.cwd ? { cwd: label.cwd } : {}), timestamp: label.at ? new Date(label.at).toISOString() : "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
     ...fixtureToolResults(sessionId, label),
     { type: "assistant", sessionId, timestamp: label.at ? new Date(label.at+1000).toISOString() : "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];

@@ -869,6 +869,9 @@ New issue makes the issue in the page's project's source, and its `어디에` li
 
 `이슈로` on a missed-work item opens this same editable New issue form with a title and body drafted from that item's original request, answer and repository templates.
 The note says it will create an issue without starting an agent, and the repository stays fixed to the originating session's device and project.
+The session's recorded original repository is retained through later Connections changes.
+A record whose original repository is unknown explains that it cannot create an issue; a connection to another repository asks the operator to restore the original connection and retry.
+Old records are not assigned today's repository merely because their checkout path still exists.
 Only `이슈 만들기` creates it; Cancel leaves the item unchanged, and a failed create keeps the entered form with Retry.
 An unavailable provider, login or usage allowance leaves the missed text as title and an empty body with the reason.
 When GitHub cannot be read, Retry checks the preview's connection while the same form stays open with the operator's edits; a successful check enables the separate Create action.

@@ -1698,6 +1698,7 @@ mod tests {
             root: "/work/app".into(),
             repository: Some("acme/app".into()),
             repository_id: None,
+            connection_epoch: 0,
             worktrees: vec![WorktreeFact {
                 path: "/work/app".into(),
                 branch: Some("main".into()),

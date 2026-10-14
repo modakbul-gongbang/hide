@@ -347,6 +347,25 @@ impl Runtime {
         let base_changed =
             before.and_then(|record| record.base_branch.as_ref()) != after.base_branch.as_ref();
         if repository_changed {
+            let live = self
+                .link_projects()
+                .into_iter()
+                .map(|project| project.key)
+                .collect::<std::collections::BTreeSet<_>>();
+            self.links_work
+                .connection_epochs
+                .retain(|id, _| live.contains(id));
+            let id = hide_project::project_id(&after.device_id, Path::new(&after.root));
+            let epoch = self
+                .links_work
+                .connection_epochs
+                .get(&id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1)
+                .max(unix_milliseconds());
+            self.links_work.connection_epochs.insert(id, epoch);
+            self.invalidate_session_issue_repository(&after.device_id, &after.root);
             // The one search slot spans repository targets. Keep its running
             // worker bounded, but refuse its old answer and queued old intent.
             self.github_search.pending = None;

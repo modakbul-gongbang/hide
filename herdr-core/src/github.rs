@@ -1897,8 +1897,6 @@ impl GhFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Where {
     Checkout(PathBuf),
-    /// A wire path interpreted only by the node that owns it.
-    DeviceCheckout(String),
     DeviceRepository {
         checkout: String,
         repository: String,
@@ -1909,7 +1907,6 @@ pub(crate) enum Where {
 fn gh_at(node: &dyn NodeLink, place: &Where, arguments: &[&str]) -> Result<String, GhFailure> {
     match place {
         Where::Checkout(root) => gh(node, Some(root), arguments),
-        Where::DeviceCheckout(root) => run_gh_call_at(node, Some(root), None, arguments),
         Where::DeviceRepository {
             checkout,
             repository,

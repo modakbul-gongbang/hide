@@ -1123,7 +1123,10 @@ impl Runtime {
             }
             let node = on_node.then_some(workspace.device_id.as_str());
             let repository = match self.github_place(node, &workspace.path) {
-                Ok(crate::github::Where::Repository(repository)) => Some(repository),
+                Ok(
+                    crate::github::Where::Repository(repository)
+                    | crate::github::Where::DeviceRepository { repository, .. },
+                ) => Some(repository),
                 Ok(crate::github::Where::Checkout(_)) => workspace.home_issues.repository.clone(),
                 Err(_) => None,
             }

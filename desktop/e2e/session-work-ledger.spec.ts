@@ -3,7 +3,7 @@
 import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "../../web/e2e/herdr-fixture";
-import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture } from "../../web/e2e/session-work-fixture";
+import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "../../web/e2e/session-work-fixture";
 import { chord } from "../../web/e2e/chords";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
@@ -22,6 +22,7 @@ test("@platform session work records, drafts, ended work and search render in bo
     app = opened.app;
     const page = opened.page;
     await fitWindow(app, { width: 1440, height: 1000 });
+    await workRepositoryReady(run.env.HIDE_STATE_DIR!);
     await enterWorkspace(page, "fixture");
     await page.locator('[data-column-toggle="tools"]').click();
     await page.locator('[data-tool-tab="agent_sessions"]').click();
