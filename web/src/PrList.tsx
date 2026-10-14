@@ -172,7 +172,7 @@ function PrRow({ entry, actions, showProject, now, folded }: { entry: PrEntry; a
             <span className="pointer-events-auto min-w-0 flex-1 cursor-pointer truncate text-caption font-medium text-foreground" onClick={(event) => (holdsCommandKey(event) ? github() : open())} data-pr-title={pr.number}>{pr.title}</span>
           </Hint>
           {showProject ? <span className="max-w-[40%] shrink truncate rounded-xs bg-secondary px-xs text-micro text-muted-foreground" data-pr-project-name={project.id}>{entry.device ? `${entry.device} · ${project.label}` : project.label}</span> : null}
-          {author ? <span className="max-w-[30%] shrink-0 truncate text-micro text-muted-foreground" data-pr-author={author}>{t("work.row.author", { name: author })}</span> : null}
+          {author ? <span className="max-w-[30%] shrink-0 truncate text-micro text-muted-foreground group-focus-within/pr-row:invisible group-hover/pr-row:invisible group-has-data-[state=open]/pr-row:invisible" data-pr-author={author}>{t("work.row.author", { name: author })}</span> : null}
           <AgentMarks entry={entry} actions={actions} />
           <span className="relative flex shrink-0 items-center justify-end">
             <Elapsed since={pr.updated_at_unix_ms} className={cn("shrink-0 text-micro text-muted-foreground", "group-focus-within/pr-row:invisible group-hover/pr-row:invisible group-has-data-[state=open]/pr-row:invisible")} data-pr-age={pr.number} />

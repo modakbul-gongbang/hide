@@ -15,6 +15,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
+import { chord } from "./chords";
 import { chooseTheme, countSent, screenshot, showProjectRow, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
@@ -289,6 +290,27 @@ test("the Work tab's PRs lens groups by whose move it is and the card merges and
     const updates = writes(gh.state).filter((args) => args[0] === "api");
     expect(updates).toHaveLength(2);
     expect(updates[1]).toEqual(["api", "--method", "PUT", "repos/acme/repo/pulls/32/update-branch", "-f", `expected_head_sha=${shown.slice(0, 39)}e`]);
+
+    // The list and the card read without sideways scrolling or an unreadable
+    // line in each language and both themes (B48).
+    await work.locator('[data-pr-row="33"]').click();
+    const review = page.locator('[data-pr-card="33"]');
+    await expect(review).toBeVisible({ timeout: 30_000 });
+    const overflow = (target: typeof work) => target.evaluate((node) => node.scrollWidth - node.clientWidth);
+    for (const [language, theme] of [["ko", "light"], ["ja", "dark"], ["zh-CN", "light"], ["en", "dark"]] as const) {
+      await page.keyboard.press(chord("settings"));
+      await page.locator('[data-settings-tab="general"]').click();
+      await page.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await page.locator(`[data-theme-option="${theme}"]`).click();
+      await page.keyboard.press("Escape");
+      await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+      await expect(work.locator('[data-prs-view="board"]')).toBeVisible();
+      await expect.poll(() => overflow(work.locator('[data-prs-view="board"]'))).toBeLessThanOrEqual(0);
+      await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
+      await screenshot(page, `work-prs-${language}-${theme}`);
+    }
   } finally {
     daemon?.stop();
     herdr.stop();

@@ -561,8 +561,10 @@ fn a_summary_is_kept_for_its_head_and_dropped_with_the_head_or_the_switch() {
         PullRequestBadge::Open,
         None,
     )]);
-    let mut settings = hide_ai::AiSettings::default();
-    settings.chosen = true;
+    let settings = hide_ai::AiSettings {
+        chosen: true,
+        ..Default::default()
+    };
     runtime.ai_settings = Some(settings);
     let read = |head: &str| crate::github::card::CardRead {
         head: Some(head.into()),
