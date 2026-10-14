@@ -473,6 +473,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     const plain = await browser.newPage();
     await plain.goto(status.url);
     await enterWorkspace(plain, "fixture");
+    await showTool(plain, "files"); // another client's lane starts put away (PRD right-lane B22)
     await tab(plain, "Page A").click();
     // Page C, opened beside Page A, shows the same notice in its own area.
     await expect(plain.locator(`[data-browser-display="${a}"] [data-area-empty="browser-host"]`)).toContainText("Pages open in the hide desktop app.");
