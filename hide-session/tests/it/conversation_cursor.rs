@@ -603,3 +603,30 @@ fn a_command_at_the_end_of_the_file_waits_for_its_reply() {
     );
     assert!(reader.read(Agent::Claude, &path).unwrap().events.is_empty());
 }
+
+#[test]
+fn a_command_far_from_its_reply_never_stalls_the_reader() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    let lines: Vec<&str> = CLAUDE_COMMANDS.split_inclusive('\n').collect();
+    // The `/model` command, more than one poll window of records that are not
+    // conversation, then its reply.
+    let padding = format!(
+        "{{\"type\":\"progress\",\"data\":\"{}\"}}\n",
+        "x".repeat(100 * 1024)
+    );
+    let mut contents = lines[..4].concat();
+    contents.push_str(&padding.repeat(12));
+    contents.push_str(lines[4]);
+    fs::write(&path, contents).unwrap();
+    let mut reader = ConversationCursor::new();
+    let mut polls = 0;
+    loop {
+        polls += 1;
+        assert!(polls <= 5, "the reader made no progress");
+        reader.read(Agent::Claude, &path).unwrap();
+        if !reader.has_more() {
+            break;
+        }
+    }
+}

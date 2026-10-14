@@ -156,3 +156,13 @@ it("gives a task's PR button the last read time while GitHub cannot be read", as
     expect(label).toContain(new Date(AT).toLocaleString());
   } finally { await unmount(); }
 });
+
+it("says so when the only requests were not tasks and the words button is off, and gives a task-less child no count", async () => {
+  const noTasks = { ...BASE, tasks: [], missed: [], outputs: [], requests: [request(1, "Just a question", [])], children: [child] };
+  const { container, unmount } = await mount(noTasks);
+  try {
+    expect(text(container.querySelector("[data-record-work]"))).toContain("No recorded requests yet");
+    await act(async () => container.querySelector<HTMLElement>("[data-record-child] > summary")!.click());
+    expect(text(container.querySelector("[data-record-child]"))).not.toContain("0/0");
+  } finally { await unmount(); }
+});

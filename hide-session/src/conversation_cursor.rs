@@ -377,6 +377,7 @@ impl ConversationCursor {
         };
         let mut found = crate::links::LinkAccumulator::default();
         let mut consumed = 0;
+        let window_start = start_offset.saturating_sub(self.cursor.pending.len() as u64);
         for fragment in appended.split_inclusive(|byte| *byte == b'\n') {
             consumed += fragment.len();
             let line_start = offset.saturating_sub(pending.len() as u64 + discarded_bytes);
@@ -450,7 +451,10 @@ impl ConversationCursor {
                 &String::from_utf8_lossy(&pending),
                 line_start,
                 &mut found,
-                Some(&appended[consumed..]),
+                // A command that opens a full window cannot wait for a reply
+                // beyond it: holding would stall the reader, so it is decided
+                // on what the window shows, as a whole-file reader does.
+                (!has_more || line_start > window_start).then(|| &appended[consumed..]),
             );
             if line.held_command {
                 // A command whose reply is not written yet: read it again

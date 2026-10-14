@@ -739,7 +739,7 @@ It is folded by default, newest first, and a session that works again keeps its 
 With summaries Off, the same record shows native/manual title, native status, outputs, children and every saved raw request oldest first, the last five open and the earlier ones behind `이전 요청 N`.
 It hides verdicts, chapters, tasks, END labels, missed items and their actions; turning summaries on restores old judgments and leaves the Off-period requests unjudged.
 This record does not change the phone surface or the live Sessions grouping rules.
-Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, and the isolated session-work-ledger browser and desktop flows.
+Regression owners: `links::store::ledger::tests`, `labels::tests`, `runtime::tests::session_work`, `web/src/sessionWork.test.ts`, `web/src/SessionRecord.test.tsx`, the command-record tests in `hide-session/tests/it/conversation_cursor.rs`, and the isolated session-work-ledger browser and desktop flows.
 
 ### Delegated escalation
 

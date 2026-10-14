@@ -98,15 +98,16 @@ function OutputRow({ output, sourceName, actions }: { output: WorkOutput; source
 }
 
 /** The assigned work: a checklist with the words, the missed work and the newest unjudged request in their places. */
-function Work({ record, descendants = [], words, actions, head = false }: { record: RecordValue; descendants?: readonly RecordValue[]; words: boolean; actions: Actions; head?: boolean }) {
+const NO_RECORDS: readonly RecordValue[] = [];
+function Work({ record, descendants = NO_RECORDS, words, actions, head = false }: { record: RecordValue; descendants?: readonly RecordValue[]; words: boolean; actions: Actions; head?: boolean }) {
   const { t } = useInterfaceTranslation();
   // The record at the top lists every descendant's missed work, named, at its end; a child's own checklist leaves it there instead of drawing it twice.
   const list = useMemo(() => checklist(head ? record : { ...record, missed: [] }, descendants), [head, record, descendants]);
   const received = record.requests.some((request) => request.author === "parent");
   const label = t(received ? "sessionWork.received" : "sessionWork.words");
-  const nothing = !list.groups.length && !list.otherWords.length && !list.otherMissed.length && !list.now;
+  const nothing = !list.groups.length && !(words && list.otherWords.length) && !list.otherMissed.length && !list.now;
   return <section className={head ? "mt-md" : "mt-xs"} data-record-work="true">
-    {head ? <SectionHead aside={<WordsButton label={label} />}>{t("sessionWork.tasks")} {list.total ? <Count>{list.done}/{list.total}</Count> : null}</SectionHead> : null}
+    {head ? <SectionHead aside={<WordsButton label={label} />}>{t("sessionWork.tasks")} {list.total ? <Count>{list.done}/{list.total}</Count> : null}</SectionHead> : list.total ? <div className="flex items-center gap-xs px-xs pt-xs"><span className="font-medium text-subtle-foreground">{t("sessionWork.tasks")}</span><Count>{list.done}/{list.total}</Count></div> : null}
     {nothing ? <p className="text-micro text-muted-foreground">{t("sessionWork.empty")}</p> : null}
     {list.groups.map((group) => <div key={group.id ?? "outside"}>
       {group.goal ? <GoalLine goal={group.goal} at={group.at} /> : null}
@@ -262,5 +263,5 @@ function RequestRow({ request }: { request: WorkRequest }) {
 function Children({ record, summaries, words, actions, depth = 1 }: { record: RecordValue; summaries: boolean; words: boolean; actions: Actions; depth?: number }) {
   const { t } = useInterfaceTranslation();
   const [visible, setVisible] = useState(5);
-  return <div className={cn("min-w-0", depth <= SESSION_INDENT_LEVELS && "border-l border-lineage-rail pl-sm")}>{record.children.slice(0, visible).map((child) => <details key={workKey(child.session)} data-record-child={child.session.session_id}><summary className={cn(ROW, "flex min-h-(--size-control-sm) cursor-pointer items-center gap-xs py-xs")}><ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" /><span className="min-w-0 flex-1 truncate" title={`${recordTitle(child, summaries)}\n${agentProductName(child.session.agent)}`}>{recordTitle(child, summaries)}<span className="sr-only">, {agentProductName(child.session.agent)}</span></span><span className="shrink-0 text-micro text-muted-foreground">{child.state ? statusText(t, child.state as AgentStatusCode) : null}</span></summary>{summaries ? <><div className="flex items-center gap-xs px-xs pt-xs"><span className="font-medium text-subtle-foreground">{t("sessionWork.tasks")}</span><Count>{child.tasks.filter((task) => task.done).length}/{child.tasks.length}</Count></div><Work record={child} words={words} actions={actions} /></> : <Requests record={child} />}{child.children.length ? <Children record={child} summaries={summaries} words={words} actions={actions} depth={depth + 1} /> : null}</details>)}{record.children.length > visible ? <Button size="sm" variant="ghost" onClick={() => setVisible((count) => count + 5)}>{t("sessionWork.moreChildren", { count: record.children.length - visible })}</Button> : null}</div>;
+  return <div className={cn("min-w-0", depth <= SESSION_INDENT_LEVELS && "border-l border-lineage-rail pl-sm")}>{record.children.slice(0, visible).map((child) => <details key={workKey(child.session)} data-record-child={child.session.session_id}><summary className={cn(ROW, "flex min-h-(--size-control-sm) cursor-pointer items-center gap-xs py-xs")}><ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" /><span className="min-w-0 flex-1 truncate" title={`${recordTitle(child, summaries)}\n${agentProductName(child.session.agent)}`}>{recordTitle(child, summaries)}<span className="sr-only">, {agentProductName(child.session.agent)}</span></span><span className="shrink-0 text-micro text-muted-foreground">{child.state ? statusText(t, child.state as AgentStatusCode) : null}</span></summary>{summaries ? <Work record={child} words={words} actions={actions} /> : <Requests record={child} />}{child.children.length ? <Children record={child} summaries={summaries} words={words} actions={actions} depth={depth + 1} /> : null}</details>)}{record.children.length > visible ? <Button size="sm" variant="ghost" onClick={() => setVisible((count) => count + 5)}>{t("sessionWork.moreChildren", { count: record.children.length - visible })}</Button> : null}</div>;
 }
