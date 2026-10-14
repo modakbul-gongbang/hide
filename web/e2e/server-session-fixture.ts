@@ -35,6 +35,7 @@ export async function startServer(cwd: string, host = "127.0.0.1", requestedPort
   });
   return { child, port };
 }
+/** The project's Sessions, on the Overview's layer over the Workspace, which covers the sidebar until it closes. */
 export async function openSessions(page: Page, projectName = "fixture"): Promise<void> {
   await openOverviewOn(page, projectName);
   await page.locator('[data-lens-tile-button="sessions"]').click();
