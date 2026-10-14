@@ -630,3 +630,41 @@ fn a_command_far_from_its_reply_never_stalls_the_reader() {
         }
     }
 }
+
+#[test]
+fn a_command_whose_reply_is_past_the_window_edge_is_still_answered_by_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    let lines: Vec<&str> = CLAUDE_COMMANDS.split_inclusive('\n').collect();
+    // The `/model` command ends a few bytes short of the poll window's edge, so
+    // its reply starts the next window.
+    let line_of = |size: usize| {
+        format!(
+            "{{\"type\":\"progress\",\"data\":\"{}\"}}\n",
+            "x".repeat(size)
+        )
+    };
+    let head = lines[..3].concat();
+    let edge = hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize - 16;
+    let mut contents = head.clone();
+    let mut room = edge - head.len() - lines[3].len();
+    while room > 150 * 1024 {
+        contents.push_str(&line_of(100 * 1024));
+        room -= line_of(100 * 1024).len();
+    }
+    contents.push_str(&line_of(room - line_of(0).len()));
+    contents.push_str(lines[3]);
+    assert_eq!(contents.len(), edge);
+    contents.push_str(lines[4]);
+    contents.push_str(lines[11]);
+    fs::write(&path, contents).unwrap();
+    let mut reader = ConversationCursor::new();
+    let mut events = Vec::new();
+    for _ in 0..5 {
+        events.extend(reader.read(Agent::Claude, &path).unwrap().events);
+        if !reader.has_more() {
+            break;
+        }
+    }
+    assert_eq!(humans(&events), ["설치하고 재측정해줘", "마지막 요청"]);
+}

@@ -446,16 +446,20 @@ impl ConversationCursor {
                     continue;
                 }
             }
-            let line = parse_events_followed(
+            let text = String::from_utf8_lossy(&pending);
+            let mut line = parse_events_followed(
                 agent,
-                &String::from_utf8_lossy(&pending),
+                &text,
                 line_start,
                 &mut found,
+                Some(&appended[consumed..]),
+            );
+            if line.held_command && has_more && line_start <= window_start {
                 // A command that opens a full window cannot wait for a reply
                 // beyond it: holding would stall the reader, so it is decided
                 // on what the window shows, as a whole-file reader does.
-                (!has_more || line_start > window_start).then(|| &appended[consumed..]),
-            );
+                line = parse_events_followed(agent, &text, line_start, &mut found, None);
+            }
             if line.held_command {
                 // A command whose reply is not written yet: read it again
                 // with the poll that holds the reply, so neither is lost.
