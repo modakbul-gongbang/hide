@@ -167,7 +167,17 @@ function Bubble({ request, quiet = false }: { request: WorkRequest; quiet?: bool
   useLayoutEffect(() => {
     const node = text.current;
     if (!node) return;
-    const measure = () => { if (!open) setClipped(node.scrollHeight > node.clientHeight + 1); };
+    // A clamped box reports its clamped height as its scroll height, so the whole text's height is read with the clamp lifted.
+    const measure = () => {
+      if (open) return;
+      const clamped = node.getBoundingClientRect().height;
+      node.style.setProperty("-webkit-line-clamp", "unset");
+      node.style.setProperty("display", "block");
+      const whole = node.getBoundingClientRect().height;
+      node.style.removeProperty("-webkit-line-clamp");
+      node.style.removeProperty("display");
+      setClipped(whole > clamped + 1);
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
@@ -175,12 +185,14 @@ function Bubble({ request, quiet = false }: { request: WorkRequest; quiet?: bool
     return () => observer.disconnect();
   }, [open, request.text]);
   const body = <><span ref={text} className={cn("block whitespace-normal [overflow-wrap:anywhere]", !open && "line-clamp-2", quiet ? "text-subtle-foreground" : "text-foreground")}>{request.text}</span>{open ? <span className="block text-micro text-muted-foreground">{t("sessionWork.collapse")}</span> : null}</>;
+  // One element throughout, so the text node the measure reads never remounts; it answers to a press only while there is more to show.
   const interactive = clipped || open;
+  const toggle = () => setOpen(!open);
   return <div className={cn("flex min-w-0 items-start gap-xs pt-xxs", LANE)} data-record-words-bubble={request.offset}>
     {request.author === "operator" ? <UserIcon aria-hidden="true" className="mt-xs size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : <span aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />}
-    {interactive
-      ? <button type="button" aria-expanded={open} className={cn(ROW, "min-w-0 flex-1 rounded-sm bg-secondary px-sm py-xs")} onClick={() => setOpen(!open)}>{body}</button>
-      : <div className="min-w-0 flex-1 rounded-sm bg-secondary px-sm py-xs">{body}</div>}
+    <div role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined} aria-expanded={interactive ? open : undefined}
+      className={cn("min-w-0 flex-1 rounded-sm bg-secondary px-sm py-xs text-left outline-none", interactive && "cursor-pointer focus-visible:ring-1 focus-visible:ring-ring")}
+      onClick={interactive ? toggle : undefined} onKeyDown={interactive ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } } : undefined}>{body}</div>
   </div>;
 }
 
