@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { openAllProjectsPage } from "./overview-entry";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 import { chord, held } from "./chords";
 
@@ -13,14 +12,20 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     daemon = await startHided(herdr, "overview-modal");
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    const sidebar = page.locator("[data-sidebar-overview]");
+    const modal = page.getByRole("dialog", { name: "Overview", exact: true });
+    // With no Workspace in front, where a first run starts, the Overview row keeps All projects a page, not the layer.
+    await expect(page.locator("[data-overview-page]")).toBeVisible({ timeout: 20_000 });
+    await sidebar.click();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    await expect(modal).toHaveCount(0);
+    await screenshot(page, "overview-page-dark");
     await enterWorkspace(page, "fixture");
     const pane = page.locator('[data-pane-view][data-focused="true"]').first();
     const input = pane.locator(".xterm-helper-textarea");
     await input.focus();
     const paneId = await pane.getAttribute("data-pane-view");
     const geometry = await pane.boundingBox();
-    const sidebar = page.locator("[data-sidebar-overview]");
-    const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await page.keyboard.press(chord("overview"));
     await expect(modal).toBeVisible();
     // On a 1920 × 1080 window the modal stops at its cap, 1440 × 960.
@@ -102,14 +107,6 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(modal).toHaveCount(0);
     await expect.poll(() => page.locator('nav[data-sidebar]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    // From another page the Overview row opens All projects as a page, not the layer.
-    await openAllProjectsPage(page);
-    await sidebar.click();
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
-    await expect(modal).toHaveCount(0);
-    await screenshot(page, "overview-page-dark");
-    await page.keyboard.press(chord("overview"));
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await page.setViewportSize({ width: 720, height: 640 });
     await page.locator("[data-open-overview]").click();
     // Below the cap it takes the window less a 40 px inset on every side.

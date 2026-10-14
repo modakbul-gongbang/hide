@@ -15,7 +15,8 @@ import { toPage } from "../../desktop/src/main/wirePath";
 import { altScreenProgram, bytesReceived } from "./alt-screen-program";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { openAllProjectsPage } from "./overview-entry";
+import { openAllProjects } from "./overview-entry";
+import { FACTORY_OPEN } from "../src/factory/launch";
 import { countSent, screenshot, showProjectRow } from "./wire";
 import { chord, mod, SYSTEM } from "./chords";
 
@@ -175,12 +176,12 @@ test("switching checkouts is one focus_checkout, and a plain folder's Overview o
 
     // A plain folder's sidebar row opens its checkout, so its Overview is
     // reached from All projects (S6 B1). It opens on its Agents graph, on
-    // its agents' boxes, and the sidebar row enters the Workspace again.
+    // its agents' boxes, and Escape returns to the Workspace under it.
     await firstRow.click();
-    await openAllProjectsPage(page);
+    await openAllProjects(page);
     await page.getByRole("tab", { name: "fixture", exact: true }).click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
-    await firstRow.click();
+    await page.keyboard.press("Escape");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
   } finally {
@@ -569,10 +570,10 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
     // The complete command set includes the three direct Overview/sidebar commands
-    // and Open Factory (software-factory-ui B2).
+    // and, once the Factory opens (src/factory/launch.ts), Open Factory (software-factory-ui B2).
     // The two numbered families each fold into one row and have no browser chord;
     // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
-    await expect(page.locator("[data-shortcut]")).toHaveCount(44);
+    await expect(page.locator("[data-shortcut]")).toHaveCount(FACTORY_OPEN ? 44 : 43);
     for (const title of ["Overview", "Focus sidebar", "Agents overview"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
     // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
     // Assert the exact moved commands, including the unchanged platform exceptions.

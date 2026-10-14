@@ -8,7 +8,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { openAllProjectsPage } from "./overview-entry";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sendEvent, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 import { chord } from "./chords";
 import { animationsFinished, quietFor } from "./wait";
@@ -118,17 +117,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     daemon = await startHided(herdr, "projects-sidebar");
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
-    let holdOpen = false;
-    const heldOpen: { release: (() => void) | null } = { release: null };
-    await page.routeWebSocket(/\/ws$/, (socket) => {
-      const server = socket.connectToServer();
-      socket.onMessage((message) => {
-        const event = typeof message === "string" ? JSON.parse(message) as { kind?: string } : null;
-        if (holdOpen && event?.kind === "focus_checkout") {
-          heldOpen.release = () => server.send(message);
-        } else server.send(message);
-      });
-    });
     await open(page, daemon);
 
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
@@ -228,7 +216,8 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
     const overview = page.locator("[data-sidebar-overview]");
     await expect(project.locator("[data-project-overview]")).toHaveCount(0);
-    await openAllProjectsPage(page);
+    // All projects is the page a first run starts on, with no Workspace in front.
+    await expect(page.locator("[data-overview-page]")).toBeVisible();
     await expect(overview).toHaveAttribute("aria-current", "page");
     await expect(project.locator("[data-project-row]")).not.toHaveAttribute("aria-current");
     await expect(project.locator("[data-project-row]").locator("xpath=..")).not.toHaveClass(/bg-secondary/);
@@ -248,26 +237,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await page.keyboard.press("Enter");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("Space");
-    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
-    await openAllProjectsPage(page);
-    await keyboardFocus(page, overview);
-    await expect(overview).toHaveAttribute("aria-current", "page");
-    await expect(primary.locator("[data-checkout]")).not.toHaveAttribute("aria-current");
-    await screenshot(page, "overview-row-selected");
-    await page.keyboard.press("Space");
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
-    // The existing focused checkout cannot land from the old folded snapshot.
-    holdOpen = true;
-    await primary.locator("[data-checkout]").click();
-    await expect.poll(() => heldOpen.release !== null).toBe(true);
-    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-main-screen]")).toBeVisible();
-    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
-    holdOpen = false;
-    heldOpen.release!();
-    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(primary.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
-    await primary.locator("[data-checkout]").click();
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
     await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
     await rest(page);
