@@ -837,7 +837,7 @@ A record tree has a 2,000-node, 32-depth and 2,000-request/output budget; an ove
 The update queue and label context cache each hold 512 entries, worker calls have 16 pending slots, and the context reader handles at most 16 misses per pass outside the runtime lock.
 A cold label context requests a worker read and postpones END until authority and open work are known; it never substitutes a root author for unknown lineage.
 
-START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v9`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
+START keeps its existing goal lock and nullable-goal behavior; both boundaries use `context_label.v10`, and END adds new/continued/no work, new missed items, resolutions and one output task choice in the existing call.
 An unassigned session has no goal chapter; an accepted goal creates its first chapter without inventing a title for a greeting.
 Roots count operator requests; a delegated record counts its initial prompt and canonical work requests from its named parent, never reports or other letters.
 Late lineage retracts invalid judgments, restores the last valid END and recomputes output attribution in the same transaction.
@@ -1802,7 +1802,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
 - **One analysis at a time.** `LabelAnalyzer` takes jobs in arrival order through one `hide-ai` router built from the operator's current provider and model choice, which it re-reads from the runtime before each analysis, so a change in Settings applies from the next analysis and the one running finishes on the choice it started with.
   Each worker hands in at most one job, so arrival order is a round robin between servers.
   Shutdown cancels the running request, which ends its provider child, and joins the thread.
-  The prompts and schemas are `context_label.v9` (`context_label.rs`), one pair per boundary, and each asks only what its boundary can know.
+  The prompts and schemas are `context_label.v10` (`context_label.rs`), one pair per boundary, and each asks only what its boundary can know.
   The turn's start answers `goal` (8 to 30 characters, what the session is to have made, or null until work is assigned), `goal_changed` and `line` (at most 40 characters, the turn's work), and its end is `working` by construction, never the model's word, because how the turn will end is not known yet.
   A null goal leaves the existing title priority in place; it cannot clear an accepted goal, and an answered greeting with no required next action has an empty line and a stopped end of `done`.
   The turn's end answers the same three, its line the turn's result, what the operator is to answer or what the turn waits for, and `end`: `question`, `blocked`, `waiting`, `unfinished` or `done`, which split a stopped turn by whose move is next (the operator's; the operator's again, on a cause the line can state in one sentence that stopped the turn; something else's, such as a background test, build, CI run or another agent the turn started or handed work to, never a pull request, even when the turn only reported progress; nobody's on unfinished work; nobody's on finished work) and are taken in that order when more than one fits; a question with no line is read as done, a block with no line as unfinished, and a turn is `done` only when it reported its work finished.

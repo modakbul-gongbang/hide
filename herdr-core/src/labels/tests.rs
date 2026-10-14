@@ -1266,6 +1266,21 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
     );
 }
 
+/// Missed work is only what nobody holds once the session closes: a problem
+/// found outside the assigned task or a proposed follow-up. The task's own
+/// remainder is the verdict's, the pull request's and CI's to show.
+#[test]
+fn turn_end_asks_only_for_work_outside_the_assigned_task() {
+    use super::analysis::AnalysisPhase;
+    use super::context_label::request;
+    let end = request(AnalysisPhase::TurnEnd, "pane", "r1".to_owned(), "context");
+    assert_eq!(
+        end.output_schema["properties"]["work"]["properties"]["missed"]["items"]["properties"]["kind"]
+            ["enum"],
+        json!(["problem", "follow_up"])
+    );
+}
+
 /// Audited legacy reader facts with a missing optional label RPC.
 struct OlderHelper;
 
