@@ -665,6 +665,7 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
                 .herdr_bin_path
                 .clone()
                 .ok_or("the node role needs this machine's Herdr binary")?,
+            worktree_facts: Some(hide_kit::layout::worktree_facts(&env.state_dir)),
         },
         node_daemon::ServerParts {
             token: Arc::new(token.clone()),

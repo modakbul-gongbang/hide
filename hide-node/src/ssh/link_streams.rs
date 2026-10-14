@@ -678,6 +678,7 @@ mod tests {
                     heartbeat: false,
                     checkout_callers: false,
                     opened_roots: None,
+                    worktree_facts: None,
                     browser,
                     factory: false,
                 },

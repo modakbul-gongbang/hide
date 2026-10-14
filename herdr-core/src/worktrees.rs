@@ -692,11 +692,17 @@ fn read_observed(
             }
             // Only an explicit read (a refresh, an Overview opening) asks
             // every worktree again; a Git change or a new base is read from
-            // the worktrees whose inputs moved.
-            let reuse_unchanged = cached.is_some_and(|(cached_generation, cached, _)| {
-                cached_generation == generation
-                    && cached.request.generation == observation.request.generation
-            });
+            // the worktrees whose inputs moved. So is a project's first read
+            // when nothing has asked an explicit one since the core started
+            // (both generations start at 0): its node kept what it measured
+            // across the restart, and reuses only what did not move.
+            let reuse_unchanged = match cached {
+                Some((cached_generation, cached, _)) => {
+                    cached_generation == generation
+                        && cached.request.generation == observation.request.generation
+                }
+                None => *generation == 0 && observation.request.generation == 0,
+            };
             let project = read(node, &observation.request, reuse_unchanged);
             cache.insert(
                 root.clone(),
@@ -1199,6 +1205,48 @@ mod tests {
                 generation: 0,
             })
             .collect()
+    }
+
+    /// A project's first read since the core started reuses what its node
+    /// kept across the restart; once a refresh or an Overview opening asked
+    /// an explicit read, a first read measures every worktree.
+    #[test]
+    fn a_first_read_since_start_reuses_and_one_after_an_explicit_ask_does_not() {
+        struct Recording(std::sync::Mutex<Vec<bool>>);
+        impl crate::node_access::NodeLink for Recording {
+            fn call(
+                &self,
+                call: Call,
+                _timeout: Duration,
+            ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError>
+            {
+                if let Call::Worktrees {
+                    reuse_unchanged, ..
+                } = call
+                {
+                    self.0.lock().unwrap().push(reuse_unchanged);
+                }
+                Ok(serde_json::Value::Null.into())
+            }
+        }
+        let asked = |generation: u64, project_generation: u64| {
+            let node = Recording(std::sync::Mutex::default());
+            let mut request = projects(&["/a"]).remove(0);
+            request.generation = project_generation;
+            let observation = ProjectObservation {
+                request,
+                git_generation: 0,
+            };
+            read_observed(
+                &node,
+                &std::sync::Mutex::default(),
+                &(generation, 0, vec![observation]),
+            );
+            node.0.into_inner().unwrap()
+        };
+        assert_eq!(asked(0, 0), [true], "nothing explicit was asked");
+        assert_eq!(asked(1, 0), [false], "a refresh");
+        assert_eq!(asked(0, 1), [false], "an Overview opening");
     }
 
     fn watching() -> GitWatchReport {

@@ -748,6 +748,13 @@ fn owner_loop(
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
     );
+    // What the node measured of each repository's worktrees outlives the
+    // daemon, in the core's state folder.
+    own_node = own_node.keeping_worktree_facts_in(hide_kit::layout::worktree_facts(
+        std::path::Path::new(&options.app_state_path)
+            .parent()
+            .unwrap_or(std::path::Path::new(".")),
+    ));
     // The install kit's parts ship beside this binary in the app bundle; a
     // daemon anywhere else installs nothing (PRD device-parity D-19).
     if let Some(kit_dir) = std::env::current_exe()

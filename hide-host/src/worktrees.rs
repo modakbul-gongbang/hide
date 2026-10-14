@@ -382,27 +382,71 @@ fn worktree_name(listed: &ListedWorktree) -> String {
 /// node that measured them, with the inputs each measurement was taken
 /// from. It holds the repositories of the last [`GIT_WATCH_LIMIT`] reads,
 /// the most the core watches; a repository it let go of is measured whole on
-/// its next read.
+/// its next read, unless its file still holds it.
+///
+/// A memo with a folder ([`Measured::kept_in`]) also keeps each repository's
+/// measurements there, one file a repository, written whole when they
+/// change and read for a repository the memo has not held since it started,
+/// so a restarted node measures again only the worktrees whose inputs moved.
+/// The folder keeps the files of the last [`GIT_WATCH_LIMIT`] repositories
+/// written.
 #[derive(Debug, Default)]
-pub struct Measured(Mutex<BTreeMap<PathBuf, (Instant, Kept)>>);
+pub struct Measured {
+    repositories: Mutex<BTreeMap<PathBuf, (Instant, Kept)>>,
+    folder: Option<PathBuf>,
+}
 
 type Kept = BTreeMap<PathBuf, (Inputs, WorktreeFacts)>;
 
+/// The shape of a repository's file; a file of another version, or one that
+/// does not read, is taken as nothing kept.
+const KEPT_FILE_VERSION: u32 = 1;
+/// The largest repository file read back: some thousands of worktrees' facts.
+const KEPT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// One repository's file: the root it was written for, and each kept
+/// worktree with the inputs its facts were measured from.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeptFile {
+    version: u32,
+    root: PathBuf,
+    worktrees: Vec<(PathBuf, Inputs, WorktreeFacts)>,
+}
+
 impl Measured {
+    /// A memo that also keeps its measurements in `folder`
+    /// (`hide_kit::layout::worktree_facts`).
+    pub fn kept_in(folder: PathBuf) -> Self {
+        Self {
+            repositories: Mutex::default(),
+            folder: Some(folder),
+        }
+    }
+
     fn earlier(&self, root: &Path) -> Kept {
-        self.0
+        if let Some((_, kept)) = self
+            .repositories
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(root)
-            .map(|(_, kept)| kept.clone())
+        {
+            return kept.clone();
+        }
+        self.folder
+            .as_deref()
+            .map(|folder| read_kept(folder, root))
             .unwrap_or_default()
     }
 
     fn keep(&self, root: &Path, kept: Kept) {
         let mut repositories = self
-            .0
+            .repositories
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let changed = repositories
+            .get(root)
+            .is_none_or(|(_, earlier)| *earlier != kept);
+        let written = (changed && self.folder.is_some()).then(|| kept.clone());
         repositories.insert(root.to_path_buf(), (Instant::now(), kept));
         while repositories.len() > GIT_WATCH_LIMIT {
             let Some(oldest) = repositories
@@ -414,6 +458,155 @@ impl Measured {
             };
             repositories.remove(&oldest);
         }
+        drop(repositories);
+        if let (Some(folder), Some(kept)) = (self.folder.as_deref(), written) {
+            write_kept(folder, root, kept);
+        }
+    }
+}
+
+/// The file in `folder` that keeps `root`'s measurements.
+fn kept_file(folder: &Path, root: &Path) -> PathBuf {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(root.as_os_str().as_encoded_bytes());
+    let name: String = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    folder.join(format!("{name}.json"))
+}
+
+/// One record of the memo's file for `root` on the node's error stream.
+fn kept_record(kind: &str, root: &Path, reason: &str) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "component": "worktrees",
+            "kind": kind,
+            "root": root,
+            "reason": reason,
+        })
+    );
+}
+
+/// What `root`'s file keeps: nothing when there is none, and nothing with
+/// one record when it cannot be used.
+fn read_kept(folder: &Path, root: &Path) -> Kept {
+    use std::io::Read as _;
+    let path = kept_file(folder, root);
+    let file = match hide_platform::fs::open_regular(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Kept::new(),
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            return Kept::new();
+        }
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(KEPT_FILE_BYTES + 1).read_to_end(&mut bytes) {
+        kept_record("worktrees.facts_unread", root, &error.to_string());
+        return Kept::new();
+    }
+    if bytes.len() as u64 > KEPT_FILE_BYTES {
+        kept_record(
+            "worktrees.facts_unread",
+            root,
+            "the file is past its size bound",
+        );
+        return Kept::new();
+    }
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u32,
+    }
+    match serde_json::from_slice::<Version>(&bytes) {
+        Ok(Version { version }) if version == KEPT_FILE_VERSION => {}
+        Ok(Version { version }) => {
+            kept_record(
+                "worktrees.facts_unread",
+                root,
+                &format!("version {version}, not {KEPT_FILE_VERSION}"),
+            );
+            return Kept::new();
+        }
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            return Kept::new();
+        }
+    }
+    match serde_json::from_slice::<KeptFile>(&bytes) {
+        Ok(file) if file.root == root => file
+            .worktrees
+            .into_iter()
+            .map(|(path, inputs, facts)| (path, (inputs, facts)))
+            .collect(),
+        Ok(_) => {
+            kept_record(
+                "worktrees.facts_unread",
+                root,
+                "the file names another root",
+            );
+            Kept::new()
+        }
+        Err(error) => {
+            kept_record("worktrees.facts_unread", root, &error.to_string());
+            Kept::new()
+        }
+    }
+}
+
+/// Replaces `root`'s file with `kept`, then lets go of the files of the
+/// repositories written longest ago past [`GIT_WATCH_LIMIT`].
+fn write_kept(folder: &Path, root: &Path, kept: Kept) {
+    let file = KeptFile {
+        version: KEPT_FILE_VERSION,
+        root: root.to_path_buf(),
+        worktrees: kept
+            .into_iter()
+            .map(|(path, (inputs, facts))| (path, inputs, facts))
+            .collect(),
+    };
+    let written = serde_json::to_vec(&file)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| {
+            hide_platform::fs::private::create_dir_all(folder)
+                .and_then(|()| {
+                    hide_platform::fs::atomic::write_file(
+                        &kept_file(folder, root),
+                        &bytes,
+                        hide_platform::fs::Access::Private,
+                    )
+                })
+                .map_err(|error| error.to_string())
+        });
+    if let Err(reason) = written {
+        kept_record("worktrees.facts_unsaved", root, &reason);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    let mut files: Vec<(SystemTime, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.len() == 37 && name.ends_with(".json"))
+        })
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .collect();
+    if files.len() <= GIT_WATCH_LIMIT {
+        return;
+    }
+    files.sort();
+    let written = kept_file(folder, root);
+    for (_, path) in files
+        .iter()
+        .filter(|(_, path)| *path != written)
+        .take(files.len() - GIT_WATCH_LIMIT)
+    {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -422,7 +615,7 @@ impl Measured {
 /// index, its base, its branch's upstream, and the commits the base, the
 /// base's remote-tracking copy and the upstream name. An edit that moves
 /// none of these is read when the caller asks for every worktree again.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Inputs {
     listed: ListedWorktree,
     index: Option<(u64, SystemTime)>,
@@ -518,7 +711,7 @@ impl Refs {
 }
 
 /// One record of `git worktree list --porcelain`, before any counting.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ListedWorktree {
     pub path: PathBuf,
     pub branch: Option<String>,
@@ -2525,5 +2718,85 @@ mod measure_tests {
         assert_eq!(next["moved"].unavailable_reason, None);
         assert_eq!(next["moved"].ahead, 1);
         assert_eq!(next["quiet"], first["quiet"]);
+    }
+
+    fn ample() -> (Instant, Duration) {
+        (
+            Instant::now() + Duration::from_secs(120),
+            WORKTREE_MEASURE_TIME,
+        )
+    }
+
+    fn spent() -> (Instant, Duration) {
+        (Instant::now(), WORKTREE_MEASURE_TIME)
+    }
+
+    /// A node that started again reads what it measured before from its
+    /// folder: a worktree whose inputs did not move answers its last
+    /// measurement with no time to measure it, and one that moved is not
+    /// answered from it. Without the folder the same read has nothing.
+    #[test]
+    fn a_restarted_node_reuses_from_its_folder_only_what_did_not_move() {
+        let fixture = Fixture::new(&["moved", "quiet"]);
+        let folder = fixture.folder.path().join("worktree-facts");
+        let first = fixture.measure(&Measured::kept_in(folder.clone()), false, ample());
+        run(
+            &fixture.linked("moved"),
+            &["commit", "-q", "--allow-empty", "-m", "moved"],
+        );
+
+        let restarted = fixture.measure(&Measured::kept_in(folder), true, spent());
+        assert_eq!(restarted["quiet"], first["quiet"]);
+        assert_eq!(restarted["main"], first["main"]);
+        assert!(
+            restarted["moved"]
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("Worktree moved was not measured")),
+            "{:?}",
+            restarted["moved"]
+        );
+        let forgotten = fixture.measure(&Measured::default(), true, spent());
+        assert!(forgotten["quiet"].unavailable_reason.is_some());
+    }
+
+    /// A file of another version, or one that does not read, keeps nothing
+    /// and fails no read; the next read with time writes it again.
+    #[test]
+    fn a_file_of_another_version_or_that_does_not_read_keeps_nothing() {
+        let fixture = Fixture::new(&["quiet"]);
+        let folder = fixture.folder.path().join("worktree-facts");
+        fixture.measure(&Measured::kept_in(folder.clone()), false, ample());
+        let file = kept_file(&folder, &fixture.root);
+        let kept: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        let mut older = kept.clone();
+        older["version"] = serde_json::json!(KEPT_FILE_VERSION + 1);
+        for broken in [older.to_string(), "{\"version\":".to_owned()] {
+            std::fs::write(&file, broken).unwrap();
+            let read = fixture.measure(&Measured::kept_in(folder.clone()), true, spent());
+            assert!(
+                read["quiet"].unavailable_reason.is_some(),
+                "nothing was kept"
+            );
+        }
+        fixture.measure(&Measured::kept_in(folder.clone()), true, ample());
+        let read = fixture.measure(&Measured::kept_in(folder), true, spent());
+        assert_eq!(read["quiet"].unavailable_reason, None);
+    }
+
+    /// The folder holds the files of the last [`GIT_WATCH_LIMIT`]
+    /// repositories written, the one just written always among them.
+    #[test]
+    fn the_folder_keeps_the_files_of_the_last_repositories_written() {
+        let folder = tempfile::tempdir().unwrap();
+        let measured = Measured::kept_in(folder.path().to_path_buf());
+        for n in 0..=GIT_WATCH_LIMIT {
+            measured.keep(&PathBuf::from(format!("/repository-{n}")), Kept::new());
+        }
+        let files = std::fs::read_dir(folder.path()).unwrap().count();
+        assert_eq!(files, GIT_WATCH_LIMIT);
+        let last = PathBuf::from(format!("/repository-{GIT_WATCH_LIMIT}"));
+        assert!(kept_file(folder.path(), &last).is_file());
     }
 }
