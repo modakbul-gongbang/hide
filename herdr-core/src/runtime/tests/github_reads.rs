@@ -292,6 +292,42 @@ fn failures_in_a_row_wait_longer_up_to_five_minutes_and_a_success_starts_the_cou
     assert_eq!(wait, 30, "the count started over after the success");
 }
 
+/// A read whose pull requests came back and whose issues did not backs off
+/// like any failed read: before, it counted as a success and was asked again
+/// every minute for as long as the issues failed. Its pull requests were
+/// read, so one a session prints is still read for at once.
+#[test]
+fn a_read_whose_issues_failed_backs_off_and_still_reads_a_printed_pull_request() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let mut now = Instant::now();
+    runtime.reread_stale_github(now);
+    let issues_failed = || {
+        let mut read = read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10);
+        read.issues_read = false;
+        read.status.stale = true;
+        read.status.unavailable_reason = Some("gh api graphql: no answer".into());
+        GithubSnapshot {
+            projects: vec![read],
+        }
+    };
+    let mut waits = Vec::new();
+    for _ in 0..3 {
+        runtime.ingest_github_answer(issues_failed(), true);
+        now += Duration::from_secs(1);
+        let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
+        waits.push(wait);
+        now += Duration::from_secs(wait);
+    }
+    assert_eq!(waits, vec![30, 60, 120]);
+
+    runtime.ingest_github_answer(issues_failed(), true);
+    runtime.reread_stale_github(now);
+    let before = generation_of(&runtime, "/tmp/a");
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2)], (now, NOW_MS));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), before + 1);
+}
+
 #[test]
 fn a_neighbours_retry_does_not_restart_a_healthy_projects_wait() {
     let mut runtime = runtime();

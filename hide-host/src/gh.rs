@@ -155,7 +155,7 @@ fn run_gh_for(
         .map_err(|_| GhFailure::network("gh stderr reader failed".to_owned()))?
         .map_err(|error| GhFailure::network(format!("gh stderr: {error}")))?;
     let status = status?;
-    if !status.success() {
+    if !status.success() && !answered_with_errors(arguments, &stdout) {
         let reason = String::from_utf8_lossy(&stderr).trim().to_owned();
         return Err(classify_failure(
             if reason.is_empty() {
@@ -168,6 +168,19 @@ fn run_gh_for(
     }
     String::from_utf8(stdout)
         .map_err(|error| GhFailure::network(format!("gh output was not UTF-8: {error}")))
+}
+
+/// Whether a `gh api graphql` that exited non-zero printed GitHub's answer:
+/// `gh` exits 1 whenever the answer carries `errors`, though GitHub answered
+/// the rest. A repository or issue one alias names that does not resolve is
+/// `null` in `data` with a `NOT_FOUND` error beside it (gh 2.76, 2026-10-14),
+/// so the answer is the command's output and the core reads its `errors`
+/// alias by alias. An answer with no `data` (bad credentials, a refused
+/// query) stays a failure.
+fn answered_with_errors(arguments: &[&str], stdout: &[u8]) -> bool {
+    arguments.starts_with(&["api", "graphql"])
+        && serde_json::from_slice::<serde_json::Value>(stdout)
+            .is_ok_and(|answer| answer.get("data").is_some_and(serde_json::Value::is_object))
 }
 
 // Every case drives a fake `gh` shell script.
@@ -305,6 +318,43 @@ esac"#,
             assert_eq!(failure.category, expected);
             assert_eq!(failure.reason, stderr);
         }
+    }
+
+    /// `gh api graphql` exits 1 when one alias does not resolve, with the
+    /// others answered on stdout (gh 2.76): that answer reaches the core.
+    #[test]
+    fn a_graphql_answer_with_an_unresolved_alias_is_output_and_one_without_data_fails() {
+        const PARTIAL: &str = r#"{"data":{"r0":{"issue":{"number":7}},"r1":null},"errors":[{"type":"NOT_FOUND","path":["r1"],"message":"Could not resolve to a Repository with the name acme/gone."}]}"#;
+        let query = "query=query HideLinkedIssues {}";
+        let fixture = GhFixture::new(&format!(
+            r#"
+case "$1 $2" in
+  "api graphql") printf '%s' '{PARTIAL}'; printf 'gh: Could not resolve' >&2; exit 1;;
+  "pr list") printf '{{"data":{{}}}}'; printf 'HTTP 502' >&2; exit 1;;
+esac"#
+        ));
+        let answer = run_gh(
+            &fixture.binary,
+            None,
+            &["api", "graphql", "-f", query],
+            FIXTURE_DEADLINE,
+        )
+        .expect("the answered aliases are output");
+        assert_eq!(answer, PARTIAL);
+        // Only a GraphQL answer is taken from a failed command.
+        let failure = run_gh(&fixture.binary, None, &PR_LIST, FIXTURE_DEADLINE).unwrap_err();
+        assert_eq!(failure.reason, "HTTP 502");
+        let fixture = GhFixture::new(
+            r#"printf '{"message":"Bad credentials"}'; printf 'gh: Bad credentials (HTTP 401)' >&2; exit 1"#,
+        );
+        let failure = run_gh(
+            &fixture.binary,
+            None,
+            &["api", "graphql", "-f", query],
+            FIXTURE_DEADLINE,
+        )
+        .unwrap_err();
+        assert_eq!(failure.reason, "gh: Bad credentials (HTTP 401)");
     }
 
     #[test]

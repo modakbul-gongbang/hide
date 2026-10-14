@@ -1667,9 +1667,8 @@ pub struct Runtime {
     /// off one read while it is recent and none after.
     github_sighted: HashMap<(String, u64), projects::Sighted>,
     /// Projects an answer arrived for since the clock last looked, each with
-    /// whether that read failed to get its pull requests; the next wake starts
-    /// their wait.
-    github_answered: HashMap<String, bool>,
+    /// how that read ended; the next wake starts their wait.
+    github_answered: HashMap<String, crate::model::GithubReadOutcome>,
     /// The generation each project was last answered for: the reader returns
     /// its cached entry for every project in a request, and only a moved
     /// generation is a read.

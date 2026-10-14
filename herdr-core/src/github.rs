@@ -1379,28 +1379,40 @@ fn issue_query(
     Ok(query)
 }
 
+/// Each linked issue GitHub answered. A link whose repository or issue does
+/// not resolve (gone, renamed away, private to this login, or never real) is
+/// `null` beside a `NOT_FOUND` error while the others are answered, so it is
+/// left out and the rest are kept: one such link once failed the project's
+/// whole issue read. Any other error fails the read.
 fn parse_linked_issues(output: &str) -> Result<Vec<crate::issues::IssueSnapshot>, GhFailure> {
     let answer: serde_json::Value =
         serde_json::from_str(output).map_err(|error| GhFailure::network(error.to_string()))?;
-    if answer.get("errors").is_some() {
-        return Err(GhFailure::network(
-            "GitHub could not resolve the linked issues".into(),
-        ));
+    if let Some(errors) = answer.get("errors") {
+        let not_found = |error: &serde_json::Value| {
+            error.get("type").and_then(serde_json::Value::as_str) == Some("NOT_FOUND")
+        };
+        if !errors
+            .as_array()
+            .is_some_and(|errors| errors.iter().all(not_found))
+        {
+            return Err(GhFailure::network(
+                "GitHub could not resolve the linked issues".into(),
+            ));
+        }
     }
     let data = answer
         .get("data")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| GhFailure::network("GitHub linked issue response has no data".into()))?;
     let mut issues = Vec::new();
+    let mut unavailable = 0_usize;
     for repository in data.values() {
         let Some(mut issue) = repository
             .get("issue")
             .filter(|issue| !issue.is_null())
             .cloned()
         else {
-            crate::diagnostic!(
-                serde_json::json!({"component":"github","kind":"linked_issue.unavailable"})
-            );
+            unavailable += 1;
             continue;
         };
         // GraphQL nests a connection's items under `nodes`; `gh issue list`
@@ -1413,6 +1425,11 @@ fn parse_linked_issues(output: &str) -> Result<Vec<crate::issues::IssueSnapshot>
             issue[connection] = items;
         }
         issues.push(issue);
+    }
+    if unavailable > 0 {
+        crate::diagnostic!(
+            serde_json::json!({"component":"github","kind":"linked_issue.unavailable","count":unavailable})
+        );
     }
     crate::issues::parse_issues(&serde_json::Value::Array(issues).to_string())
         .map_err(GhFailure::network)
@@ -2036,6 +2053,25 @@ mod tests {
                 "an issue with no label carries none on the wire"
             );
         }
+    }
+
+    /// What `gh api graphql` printed on 2026-10-14 (gh 2.76) for one issue
+    /// that resolves, a repository that does not and an issue that does not:
+    /// the unresolved aliases are `null` beside `NOT_FOUND` errors.
+    #[test]
+    fn a_linked_issue_that_does_not_resolve_leaves_the_others_read() {
+        let partial = r#"{"data":{"r0":{"issue":{"number":12,"title":"Kept","url":"https://github.com/acme/app/issues/12","state":"OPEN","updatedAt":null}},"r1":null,"r2":{"issue":null}},"errors":[{"type":"NOT_FOUND","path":["r1"],"locations":[{"line":1,"column":118}],"message":"Could not resolve to a Repository with the name 'acme/override'."},{"type":"NOT_FOUND","path":["r2","issue"],"locations":[{"line":1,"column":255}],"message":"Could not resolve to an Issue with the number of 999999."}]}"#;
+        let issues = parse_linked_issues(partial).expect("the resolved link is read");
+        assert_eq!(
+            issues
+                .iter()
+                .map(|issue| issue.reference.token())
+                .collect::<Vec<_>>(),
+            ["acme/app#12"]
+        );
+        // Any other error is no answer for the links it names.
+        let refused = r#"{"data":{"r0":null},"errors":[{"type":"FORBIDDEN","path":["r0"],"message":"Resource not accessible"}]}"#;
+        assert!(parse_linked_issues(refused).is_err());
     }
 
     #[test]

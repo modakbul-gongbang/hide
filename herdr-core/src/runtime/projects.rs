@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::GithubReadOutcome;
 
 const MINIMUM_PURPOSE_HERDR_VERSION: (u64, u64, u64) = (0, 9, 1);
 
@@ -14,17 +15,19 @@ const GITHUB_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(3
 /// outlasts it would be overtaken by its own next ask and never land.
 ///
 /// `failures` is how many reads in a row ended without the project's pull
-/// requests (the answer's `pull_requests_read` was false), so a read that
-/// failed is asked again sooner than one that worked and a success starts the
-/// count over.
+/// requests or its issues (`GithubReadOutcome`), so a read that failed is
+/// asked again sooner than one that worked and a success starts the count
+/// over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum GithubClock {
     /// A read is asked for and has not answered.
     Waiting { failures: u32 },
-    /// The read answered at this instant.
+    /// The read answered at this instant; `pull_requests_read` is whether
+    /// it held the pull requests, which a sighted address is read against.
     Answered {
         at: std::time::Instant,
         failures: u32,
+        pull_requests_read: bool,
     },
 }
 
@@ -1106,15 +1109,22 @@ impl Runtime {
         }
         for path in paths {
             let before = self.github_clock.get(&path).copied();
-            if let Some(failed) = self.github_answered.remove(&path) {
-                let failures = if failed {
-                    before.map_or(0, GithubClock::failures).saturating_add(1)
-                } else {
-                    0
+            if let Some(outcome) = self.github_answered.remove(&path) {
+                let failures = match outcome {
+                    GithubReadOutcome::Read => 0,
+                    GithubReadOutcome::IssuesFailed | GithubReadOutcome::Failed => {
+                        before.map_or(0, GithubClock::failures).saturating_add(1)
+                    }
                 };
-                self.github_clock
-                    .insert(path.clone(), GithubClock::Answered { at: now, failures });
-                if self.sighted_owed_after_answer(&path, failed) {
+                self.github_clock.insert(
+                    path.clone(),
+                    GithubClock::Answered {
+                        at: now,
+                        failures,
+                        pull_requests_read: outcome.pull_requests_read(),
+                    },
+                );
+                if self.sighted_owed_after_answer(&path, !outcome.pull_requests_read()) {
                     self.ask_github_again(&path);
                 }
                 continue;
@@ -1124,7 +1134,7 @@ impl Runtime {
                     self.github_clock
                         .insert(path, GithubClock::Waiting { failures: 0 });
                 }
-                Some(GithubClock::Answered { at, failures })
+                Some(GithubClock::Answered { at, failures, .. })
                     if now.duration_since(at) >= github_wait(failures) =>
                 {
                     if failures > 0 {
@@ -1304,12 +1314,15 @@ impl Runtime {
             || self.github_answered.contains_key(path);
         match self.github_clock.get(path) {
             _ if outstanding => SightedRead::AfterAnswer,
-            Some(GithubClock::Answered { failures: 0, .. })
-                if self.github_settled.contains(path) =>
-            {
-                SightedRead::Now
-            }
-            Some(GithubClock::Answered { failures, .. }) if *failures > 0 => SightedRead::Never,
+            Some(GithubClock::Answered {
+                pull_requests_read: true,
+                ..
+            }) if self.github_settled.contains(path) => SightedRead::Now,
+            // A read whose pull requests failed is left to its own retry.
+            Some(GithubClock::Answered {
+                pull_requests_read: false,
+                ..
+            }) => SightedRead::Never,
             _ => SightedRead::AfterAnswer,
         }
     }
@@ -1387,9 +1400,10 @@ impl Runtime {
             let path = project.root.to_string_lossy().into_owned();
             // The read's own provenance, taken before a failed one is filled
             // in from the previous answer below.
-            let failed = github
-                .project(&path)
-                .is_some_and(|read| !read.pull_requests_read);
+            let outcome = github.project(&path).map_or(
+                GithubReadOutcome::Read,
+                crate::model::GithubProjectSnapshot::read_outcome,
+            );
             // The reader hands back its cached entry for every project in the
             // request, so only a project whose generation moved since the
             // last answer was actually read; counting the others would
@@ -1400,7 +1414,7 @@ impl Runtime {
                 .insert(path.clone(), project.generation)
                 != Some(project.generation)
             {
-                self.github_answered.insert(path.clone(), failed);
+                self.github_answered.insert(path.clone(), outcome);
             }
             newly_settled |= self.github_settled.insert(path);
         }
@@ -2962,11 +2976,12 @@ impl Runtime {
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {
-                // A read that failed is asked again sooner, as this machine's
-                // first retry is.
+                // A read whose pull requests failed is asked again sooner, as
+                // this machine's first retry is; failed issues alone keep the
+                // full wait, since this clock does not climb.
                 let failed = answered
                     .and_then(|github| github.project(&root))
-                    .is_some_and(|read| !read.pull_requests_read);
+                    .is_some_and(|read| read.read_outcome() == GithubReadOutcome::Failed);
                 let wait = if failed {
                     GITHUB_RETRY_FIRST
                 } else {
