@@ -30,7 +30,7 @@ describe("the palette's detail pane in the operator's language", () => {
     expect(detail.action).toBe("PR ビューで開く");
   });
 
-  it("names the pull requests the core ties to an agent, and has no line for an agent with none", () => {
+  it("names the pull requests the core links to an agent, and has no line for an agent with none", () => {
     const { t } = initializeInterfaceI18n("ko");
     const tied = structuredClone(RICH) as typeof RICH;
     tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: requestWith("review", [PR_275, PR_260]) } : row));

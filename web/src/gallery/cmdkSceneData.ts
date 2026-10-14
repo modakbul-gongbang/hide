@@ -33,7 +33,6 @@ export const OTHER = agent("p-dag", "그래프 다이어그램 DAG 시각화");
 const pane = (id: string) => ({ id, herdr_label: null, terminal_title: null, cwd: "/repo", status_code: "unknown", requires_close_confirmation: false, requires_close_status_check: false, identity_label: null });
 const tab = (checkout: string, panes: string[]) => ({ id: `t-${checkout}`, workspace_id: "w1", checkout_id: checkout, label: "Tab", empty: false, delegated: false, panes: panes.map(pane) });
 
-
 export const RICH = {
   navigator: {
     agent_scope: scopes.overall,

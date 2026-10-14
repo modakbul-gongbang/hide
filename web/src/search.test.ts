@@ -267,13 +267,16 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
     expect(filterEntries(searchEntries(RICH, t), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
   });
 
-  it("lists after the pull request the agents the core ties to it, and not the ones it does not", () => {
+  it("lists after the pull request the agents the core links to it, and not the ones it does not", () => {
     // The child works on pull request 275 in its checkout; nothing in its name, place or state holds the digits.
     const sections = (rest: typeof RICH, query: string) => groupEntries(filterEntries(searchEntries(rest, t), query)).map((section) => [section.group.id, section.entries.map((entry) => entry.id)]);
     expect(sections(RICH, "#275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
     expect(sections(RICH, "275").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:275"]], ["agents", [`agent:${CHILD.pane_id}`]]]);
+    // A merged pull request the agent no longer owns is still its link, though its PR mark no longer draws it.
     const tied = structuredClone(RICH) as typeof RICH;
-    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: requestWith("review", [PR_260]) } : row));
+    const settled = requestWith("idle", [PR_260]);
+    settled.pull_requests = settled.pull_requests.map((pull) => ({ ...pull, badge: "merged", live: false, duty: false, settled_at_unix_ms: 1 }));
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: settled } : row));
     expect(sections(tied, "260").slice(0, 2)).toEqual([["pull-requests", ["pr:w1:260"]], ["agents", ["agent:p-dag"]]]);
     // An issue's number is not a pull request's: the issue row alone.
     expect(sections(RICH, "273")[0]).toEqual(["issues", ["issue:github:acme/hide#273"]]);

@@ -431,7 +431,7 @@ export function numberQuery(query: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Whether the core ties the agent of `entry` to pull request `number`: its session made it or its branch has it, as the agent's PR mark draws. */
+/** Whether the core links the agent of `entry` to pull request `number` (`request.pull_requests`: its session made it or its branch has it), a merged or closed one included, though the PR mark draws only the open ones it owns. */
 function agentHasPr(entry: SearchEntry, number: number): boolean {
   return entry.kind === "agent" && (entry.agent?.request?.pull_requests ?? []).some((pr) => pr.number === number);
 }
@@ -452,8 +452,8 @@ function paneIdMatches(entries: SearchEntry[], query: string): SearchEntry[] {
  * a name with a colon (`fix: bug`) is held by no id, and without a colon no id
  * matches, so a name or a number never finds a pane by its id. A number (`273`, or with a hash) puts the
  * issues and then the pull requests numbered exactly that ahead of every title
- * match, each as its own row (PRD B12), then the agents the core ties to a pull
- * request of that number; the other rows must hold the digits.
+ * match, each as its own row (PRD B12), then the agents the core links to a
+ * pull request of that number; the other rows must hold the digits.
  */
 export function filterEntries(entries: SearchEntry[], query: string, limit = 80): SearchEntry[] {
   const trimmed = query.trim();
