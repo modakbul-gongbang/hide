@@ -3,7 +3,7 @@
 // case, why Merge cannot be pressed, and where a changed file opens.
 
 import { describe, expect, it } from "vitest";
-import { bodyOutline, bodyPreview, fileOpen, mergeWhy, primaryAction, splitFiles } from "./prCardModel";
+import { bodyOutline, bodyPreview, confirmHolds, fileOpen, mergeWhy, primaryAction, splitFiles } from "./prCardModel";
 import type { PrCard, PullRequest } from "./snapshot";
 
 const pr = (over: Omit<Partial<PullRequest>, "work"> & { work?: Record<string, unknown> }): PullRequest =>
@@ -50,8 +50,28 @@ describe("mergeWhy", () => {
     expect(mergeWhy(pr({}), card({}), true)?.key).toBe("agent");
     expect(mergeWhy(pr({ work: { merge_state: "dirty" } }), card({}), false)).toMatchObject({ key: "conflict", base: "main" });
     expect(mergeWhy(pr({ work: { merge_state: "blocked", pending_checks: 2 } }), card({}), false)).toMatchObject({ key: "ci", count: 2 });
+    expect(mergeWhy(pr({ checks: "failed", work: { merge_state: "blocked", failed_checks: [{ name: "verify", url: null }] } }), card({}), false)).toMatchObject({ key: "failed", count: 1 });
+    expect(mergeWhy(pr({ review: "changes_requested", work: { merge_state: "blocked" } }), card({}), false)?.key).toBe("changes");
     expect(mergeWhy(pr({ work: { merge_state: "blocked" } }), card({}), false)?.key).toBe("reviewer");
     expect(mergeWhy(pr({ work: { merge_state: "unknown" } }), card({}), false)?.key).toBe("unknown");
+  });
+});
+
+describe("confirmHolds", () => {
+  const merge = { action: "merge", head: "a".repeat(40), method: "squash", queue: false } as const;
+  const same = { head: "a".repeat(40), queue: false, method: "squash", mergeBlocked: false } as const;
+
+  it("holds while the card shows what the confirmation named", () => {
+    expect(confirmHolds(merge, same)).toBe(true);
+    expect(confirmHolds({ ...merge, action: "update", method: null }, { ...same, method: "merge", mergeBlocked: true })).toBe(true);
+  });
+
+  it("closes when the head, the queue, the method or Merge's permission moved", () => {
+    expect(confirmHolds(merge, { ...same, head: "b".repeat(40) })).toBe(false);
+    expect(confirmHolds(merge, { ...same, queue: true })).toBe(false);
+    expect(confirmHolds(merge, { ...same, method: "rebase" })).toBe(false);
+    expect(confirmHolds(merge, { ...same, mergeBlocked: true })).toBe(false);
+    expect(confirmHolds({ ...merge, action: "update", method: null }, { ...same, head: null })).toBe(false);
   });
 });
 

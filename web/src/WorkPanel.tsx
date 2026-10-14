@@ -1,5 +1,5 @@
 import { TriangleAlertIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { Hint } from "./components/ui/tooltip";
@@ -13,6 +13,7 @@ import { sessionsModel } from "./sessionPanel";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { workspaceViewOf, type WorkLens } from "./workspace";
+import { useRequestViewDemand } from "./requestViewDemand";
 
 // The Work tool (PRD work-tab-pr-lens B1-B5, B41-B43): one panel holding the
 // project's Sessions and its PRs behind one switch and one scope chip. It does
@@ -46,16 +47,7 @@ export function WorkPanel({ actions }: { actions: Actions }) {
   const hidden = recordOpen && lens === "sessions";
   const live = useShellStore((state) => state.connection === "live");
   // PRs shares the one visible-board demand Sessions reports (AgentSessions does it for its own lens).
-  useEffect(() => {
-    if (!live || lens !== "prs") return;
-    const report = () => actions.observeRequestView(document.visibilityState === "visible");
-    report();
-    document.addEventListener("visibilitychange", report);
-    return () => {
-      document.removeEventListener("visibilitychange", report);
-      actions.observeRequestView(false);
-    };
-  }, [actions, live, lens]);
+  useRequestViewDemand(actions, live && lens === "prs");
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-work-panel={lens}>
       {hidden ? null : (
@@ -73,7 +65,7 @@ export function WorkPanel({ actions }: { actions: Actions }) {
         </header>
       )}
       {lens === "prs" ? (
-        <PrList model={prs} actions={actions} onlyCheckout={only !== null} showProject={project === null} onAllCheckouts={() => actions.setWorkScope(false)} now={now} />
+        <PrList model={prs} actions={actions} onlyCheckout={only !== null} showProject={project === null} onAllCheckouts={() => actions.setWorkScope(false)} />
       ) : (
         <AgentSessions actions={actions} onlyCheckout={only} />
       )}

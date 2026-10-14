@@ -64,7 +64,7 @@ export function primaryAction(kind: PrReason["kind"]): PrimaryAction {
 }
 
 /** Why Merge cannot be pressed now, as the key of the reason word and its values; null when it can (B30). */
-export type MergeWhy = { key: "ci" | "agent" | "conflict" | "reviewer" | "blocked" | "draft" | "permission" | "unknown" | "unread"; count: number; base: string };
+export type MergeWhy = { key: "ci" | "failed" | "changes" | "agent" | "conflict" | "reviewer" | "blocked" | "draft" | "permission" | "unknown" | "unread"; count: number; base: string };
 
 export function mergeWhy(pr: PullRequest, card: PrCard | null, working: boolean): MergeWhy | null {
   const work = pr.work;
@@ -83,6 +83,8 @@ export function mergeWhy(pr: PullRequest, card: PrCard | null, working: boolean)
       return { key: "blocked", count: 0, base: "" };
     case "blocked":
       if ((work.pending_checks ?? 0) > 0) return { key: "ci", count: work.pending_checks, base: "" };
+      if (pr.checks === "failed") return { key: "failed", count: Math.max(work.failed_checks?.length ?? 0, 1), base: "" };
+      if (pr.review === "changes_requested") return { key: "changes", count: 0, base: "" };
       return { key: "reviewer", count: 0, base: "" };
     case "draft":
       return { key: "draft", count: 0, base: "" };
@@ -117,4 +119,19 @@ export function fileOpen(input: { pr: Pick<PullRequest, "url" | "head_branch">; 
 export function splitFiles(files: PrCard["files"]): { shown: NonNullable<PrCard["files"]>; generated: number } {
   const all = files ?? [];
   return { shown: all.filter((file) => !file.generated), generated: all.filter((file) => file.generated).length };
+}
+
+/** What a confirmation named when it opened (D-22). */
+export type Confirmed = { action: "merge" | "update"; head: string; method: PrMergeMethod | null; queue: boolean };
+
+/**
+ * Whether a confirmation still holds: the card shows the same head, the same
+ * queue and, for a merge, the same method, and Merge is still allowed. Else
+ * it closes and nothing is sent, so a click on Yes never writes what the
+ * operator was not shown.
+ */
+export function confirmHolds(confirm: Confirmed, now: { head: string | null; queue: boolean; method: PrMergeMethod | null; mergeBlocked: boolean }): boolean {
+  if (confirm.head !== now.head || confirm.queue !== now.queue) return false;
+  if (confirm.action === "update") return true;
+  return !now.mergeBlocked && (now.queue || confirm.method === now.method);
 }

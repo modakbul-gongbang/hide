@@ -775,7 +775,7 @@ impl Runtime {
 
     /// `pr_card_read` from the operator (Look again): a failed write's notice
     /// is the card of a pull request they have now looked at again, so it is
-    /// dismissed, and the card is read.
+    /// dismissed, and the list and the card are read.
     pub(super) fn look_again_pr_card(&mut self, payload: PrCardReadPayload) -> bool {
         let dismissed = self
             .existing_pr_card(&payload.workspace_id, payload.pr_number)
@@ -789,6 +789,17 @@ impl Runtime {
                 }
                 failed
             });
+        // The operator looking again after a refusal wants the list read too:
+        // the refusal may be the list lagging the card (D-22).
+        if dismissed
+            && let Ok((machine, workspace, _)) =
+                self.listed_pull_request(&payload.workspace_id, payload.pr_number)
+        {
+            match machine.as_deref() {
+                None => self.refresh_pull_requests(&workspace.path),
+                Some(node) => self.reread_node_github(node, &workspace.path),
+            }
+        }
         self.read_pr_card(payload) || dismissed
     }
 

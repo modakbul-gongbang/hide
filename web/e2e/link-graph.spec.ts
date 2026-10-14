@@ -276,6 +276,8 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     await expect(overview).toHaveCount(0);
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
+    // The card's own parts settle first: a failed part draws a line that moves the row under the pointer.
+    await expect(panel.locator('[data-pr-card-part-state="pending"]')).toHaveCount(0, { timeout: 60_000 });
     await expect(resume).toBeEnabled();
     await archived.hover();
     await resume.click();

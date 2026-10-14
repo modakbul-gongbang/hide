@@ -736,7 +736,7 @@ export type Workspace = {
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
   /**
-   * The project's pull requests for the Overview's PRs tab, one per branch:
+   * The project's pull requests for the Work tool's PRs lens, one per branch:
    * every open one, and a merged one while its worktree is recorded here or
    * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
    * project's only; absent while it has none.

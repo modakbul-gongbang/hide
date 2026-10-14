@@ -24,7 +24,7 @@ test("@platform session work records, drafts, ended work and search render in bo
     await fitWindow(app, { width: 1440, height: 1000 });
     await enterWorkspace(page, "fixture");
     await page.locator('[data-column-toggle="tools"]').click();
-    await page.locator('[data-tool-tab="agent_sessions"]').click();
+    await page.locator('[data-tool-tab="work"]').click();
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);

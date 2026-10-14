@@ -35,7 +35,7 @@ function own(handler: (event: MouseEvent) => void) {
   };
 }
 
-export function PrList({ model, actions, onlyCheckout, showProject, onAllCheckouts, now }: {
+export function PrList({ model, actions, onlyCheckout, showProject, onAllCheckouts }: {
   model: PrListModel;
   actions: Actions;
   /** The scope chip narrows to one checkout. */
@@ -43,7 +43,6 @@ export function PrList({ model, actions, onlyCheckout, showProject, onAllCheckou
   /** Home gathers several projects: each row names its own. */
   showProject: boolean;
   onAllCheckouts: () => void;
-  now: number;
 }) {
   const { t } = useInterfaceTranslation();
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
@@ -84,13 +83,13 @@ export function PrList({ model, actions, onlyCheckout, showProject, onAllCheckou
         </div>
       ) : null}
       {model.groups.map((view) => (
-        <Group key={view.group} view={view} opened={opened} onToggle={toggle} actions={actions} showProject={showProject} now={now} />
+        <Group key={view.group} view={view} opened={opened} onToggle={toggle} actions={actions} showProject={showProject} />
       ))}
     </div>
   );
 }
 
-function Group({ view, opened, onToggle, actions, showProject, now }: { view: PrGroupView; opened: ReadonlySet<string>; onToggle: (key: string) => void; actions: Actions; showProject: boolean; now: number }) {
+function Group({ view, opened, onToggle, actions, showProject }: { view: PrGroupView; opened: ReadonlySet<string>; onToggle: (key: string) => void; actions: Actions; showProject: boolean }) {
   const { t } = useInterfaceTranslation();
   const count = view.entries.length + view.team.length + view.old.length;
   // Everything after Blocked starts folded (B7); a click turns it the other way.
@@ -107,9 +106,9 @@ function Group({ view, opened, onToggle, actions, showProject, now }: { view: Pr
       </button>
       {expanded ? (
         <ul className="flex min-w-0 flex-col" role="list">
-          {view.entries.map((entry) => <PrRow key={entry.key} entry={entry} actions={actions} showProject={showProject} now={now} />)}
-          <Fold view={view} kind="team" entries={view.team} opened={opened} onToggle={onToggle} actions={actions} showProject={showProject} now={now} />
-          <Fold view={view} kind="old" entries={view.old} opened={opened} onToggle={onToggle} actions={actions} showProject={showProject} now={now} />
+          {view.entries.map((entry) => <PrRow key={entry.key} entry={entry} actions={actions} showProject={showProject} />)}
+          <Fold view={view} kind="team" entries={view.team} opened={opened} onToggle={onToggle} actions={actions} showProject={showProject} />
+          <Fold view={view} kind="old" entries={view.old} opened={opened} onToggle={onToggle} actions={actions} showProject={showProject} />
         </ul>
       ) : null}
     </section>
@@ -117,7 +116,7 @@ function Group({ view, opened, onToggle, actions, showProject, now }: { view: Pr
 }
 
 /** A folded line inside a group: team review requests, or pull requests nothing moved on (B15, B16). */
-function Fold({ view, kind, entries, opened, onToggle, actions, showProject, now }: { view: PrGroupView; kind: "team" | "old"; entries: PrEntry[]; opened: ReadonlySet<string>; onToggle: (key: string) => void; actions: Actions; showProject: boolean; now: number }) {
+function Fold({ view, kind, entries, opened, onToggle, actions, showProject }: { view: PrGroupView; kind: "team" | "old"; entries: PrEntry[]; opened: ReadonlySet<string>; onToggle: (key: string) => void; actions: Actions; showProject: boolean }) {
   const { t } = useInterfaceTranslation();
   if (entries.length === 0) return null;
   const key = `${view.group}:${kind}`;
@@ -131,7 +130,7 @@ function Fold({ view, kind, entries, opened, onToggle, actions, showProject, now
           <span className="min-w-0 truncate">{t(`work.fold.${kind}`, { count: entries.length })}</span>
         </button>
       </li>
-      {expanded ? entries.map((entry) => <PrRow key={entry.key} entry={entry} actions={actions} showProject={showProject} now={now} folded={kind} />) : null}
+      {expanded ? entries.map((entry) => <PrRow key={entry.key} entry={entry} actions={actions} showProject={showProject} folded={kind} />) : null}
     </>
   );
 }
@@ -142,7 +141,7 @@ function Fold({ view, kind, entries, opened, onToggle, actions, showProject, now
  * one button that opens the card (⌘-click and ⌘↵: GitHub); every part above
  * it is its own destination.
  */
-function PrRow({ entry, actions, showProject, now, folded }: { entry: PrEntry; actions: Actions; showProject: boolean; now: number; folded?: "team" | "old" }) {
+function PrRow({ entry, actions, showProject, folded }: { entry: PrEntry; actions: Actions; showProject: boolean; folded?: "team" | "old" }) {
   const { t, i18n } = useInterfaceTranslation();
   const devices = useShellStore((state) => state.rest?.navigator?.devices);
   const { pr, project, row, reason } = entry;
@@ -176,7 +175,7 @@ function PrRow({ entry, actions, showProject, now, folded }: { entry: PrEntry; a
           <AgentMarks entry={entry} actions={actions} />
           <span className="relative flex shrink-0 items-center justify-end">
             <Elapsed since={pr.updated_at_unix_ms} className={cn("shrink-0 text-micro text-muted-foreground", "group-focus-within/pr-row:invisible group-hover/pr-row:invisible group-has-data-[state=open]/pr-row:invisible")} data-pr-age={pr.number} />
-            <RowActions entry={entry} actions={actions} linking={linking} onLinking={setLinking} now={now} />
+            <RowActions entry={entry} actions={actions} linking={linking} onLinking={setLinking} />
           </span>
         </div>
         <div className="pointer-events-none relative flex min-w-0 pl-[calc(var(--size-pr-icon)+var(--spacing-xs))]">
@@ -218,12 +217,11 @@ function AgentMarks({ entry, actions }: { entry: PrEntry; actions: Actions }) {
 /**
  * The buttons that stand in the time slot under the pointer or the keyboard:
  * `▷ Assign` on a blocked row, `Clean up` on a merged one whose worktree is
- * still here, else GitHub and `⋯` with Link issue, New issue, Copy branch name
- * and GitHub (B19).
+ * still here, else GitHub, each with `⋯` for Link issue, New issue, Copy
+ * branch name and Assign (B19).
  */
-function RowActions({ entry, actions, linking, onLinking, now }: { entry: PrEntry; actions: Actions; linking: boolean; onLinking: (open: boolean) => void; now: number }) {
+function RowActions({ entry, actions, linking, onLinking }: { entry: PrEntry; actions: Actions; linking: boolean; onLinking: (open: boolean) => void }) {
   const { t } = useInterfaceTranslation();
-  void now;
   const { pr, project, row } = entry;
   const reveal = "invisible absolute inset-y-0 right-0 flex items-center gap-xxs group-focus-within/pr-row:visible group-hover/pr-row:visible has-data-[state=open]:visible";
   const pointer = "pointer-events-auto";
@@ -235,6 +233,25 @@ function RowActions({ entry, actions, linking, onLinking, now }: { entry: PrEntr
   const linkable = !merged && row.issue === null && (!local || (worktree && !folderGone));
   const delegate = () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number });
   const cleanup = merged && worktree ? () => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: project.id, checkoutId: checkout!.id }) : null;
+  const rowMenu = (
+    <IssuePicker number={pr.number} project={project} open={linking} onOpenChange={onLinking}>
+      <span className="inline-flex">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label={t("prList.actions")} onClick={(event) => event.stopPropagation()} data-pr-menu={pr.number}>
+              <EllipsisIcon aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            {row.group !== "merged" ? <DropdownMenuItem onSelect={delegate} data-pr-menu-delegate="true">{t("prList.delegate")}</DropdownMenuItem> : null}
+            {linkable ? <DropdownMenuItem onSelect={() => onLinking(true)} data-pr-menu-link="true">{t("prList.linkIssue")}</DropdownMenuItem> : null}
+            {linkable ? <DropdownMenuItem onSelect={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_new_issue", workspaceId: project.id, prNumber: pr.number })} data-pr-menu-new-issue="true">{t("prList.newIssue")}</DropdownMenuItem> : null}
+            <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(pr.head_branch ?? "")} data-pr-menu-copy="true">{t("prList.copyBranch")}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
+    </IssuePicker>
+  );
   if (row.group === "blocked") {
     return (
       <span className={cn(reveal, pointer)} data-pr-actions="delegate">
@@ -244,6 +261,7 @@ function RowActions({ entry, actions, linking, onLinking, now }: { entry: PrEntr
             {t("prList.delegate")}
           </Button>
         </Hint>
+        {rowMenu}
       </span>
     );
   }
@@ -253,6 +271,7 @@ function RowActions({ entry, actions, linking, onLinking, now }: { entry: PrEntr
         <Hint label={t("prList.cleanHint")}>
           <Button variant="ghost" size="sm" onClick={own(cleanup)} data-pr-cleanup={folderGone ? "record" : "worktree"}>{t("work.row.cleanup")}</Button>
         </Hint>
+        {rowMenu}
       </span>
     );
   }
@@ -263,23 +282,7 @@ function RowActions({ entry, actions, linking, onLinking, now }: { entry: PrEntr
           <ExternalLinkIcon aria-hidden="true" />
         </Button>
       </Hint>
-      <IssuePicker number={pr.number} project={project} open={linking} onOpenChange={onLinking}>
-        <span className="inline-flex">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={t("prList.actions")} onClick={(event) => event.stopPropagation()} data-pr-menu={pr.number}>
-                <EllipsisIcon aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-              {row.group !== "merged" ? <DropdownMenuItem onSelect={delegate} data-pr-menu-delegate="true">{t("prList.delegate")}</DropdownMenuItem> : null}
-              {linkable ? <DropdownMenuItem onSelect={() => onLinking(true)} data-pr-menu-link="true">{t("prList.linkIssue")}</DropdownMenuItem> : null}
-              {linkable ? <DropdownMenuItem onSelect={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_new_issue", workspaceId: project.id, prNumber: pr.number })} data-pr-menu-new-issue="true">{t("prList.newIssue")}</DropdownMenuItem> : null}
-              <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(pr.head_branch ?? "")} data-pr-menu-copy="true">{t("prList.copyBranch")}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </span>
-      </IssuePicker>
+      {rowMenu}
     </span>
   );
 }

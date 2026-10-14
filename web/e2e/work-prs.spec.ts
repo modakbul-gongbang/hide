@@ -73,6 +73,7 @@ function fakeGh(root: string): { bin: string; state: string } {
     merges[pr.number] = pr.merge;
   }
   fs.writeFileSync(path.join(state, "heads.json"), JSON.stringify(heads));
+  fs.writeFileSync(path.join(state, "first-heads.json"), JSON.stringify(heads));
   fs.writeFileSync(path.join(state, "merges.json"), JSON.stringify(merges));
   const pulls = PULLS.map((pr) => ({
     number: pr.number,
@@ -116,7 +117,9 @@ if (a === "pr" && b === "list") {
   const heads = read("heads.json");
   const merges = read("merges.json");
   if (args.includes("number,statusCheckRollup")) { out(checks); process.exit(0); }
-  out(pulls.map((pr) => ({ ...pr, headRefOid: heads[pr.number], mergeStateStatus: merges[pr.number] })));
+  const first = read("first-heads.json");
+  // A list read after a push says so in the title, which is how a spec sees the list was read again.
+  out(pulls.map((pr) => ({ ...pr, title: heads[pr.number] === first[pr.number] ? pr.title : pr.title + " (moved)", headRefOid: heads[pr.number], mergeStateStatus: merges[pr.number] })));
   process.exit(0);
 }
 if (a === "issue" && b === "list") { out([]); process.exit(0); }
@@ -150,7 +153,7 @@ if (a === "api" && b === "graphql") {
   const match = /pullRequest\\(number:(\\d+)\\)/.exec(query);
   if (query.includes("HidePrCard") && match) {
     const number = match[1];
-    const heads = read("heads.json");
+    const heads = fs.existsSync(file("card-heads.json")) ? read("card-heads.json") : read("heads.json");
     out({ data: { repository: {
       mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: false, viewerPermission: "ADMIN",
       defaultBranchRef: { name: "main" }, mergeQueue: null, attributes: { text: "dist/** linguist-generated\\n" },
@@ -179,6 +182,13 @@ function writes(state: string): string[][] {
 
 function head(state: string, number: number): string {
   return (JSON.parse(fs.readFileSync(path.join(state, "heads.json"), "utf8")) as Record<string, string>)[number]!;
+}
+
+/** The card's own read answers another head than the list's, as a push between the two reads does. */
+function skewCardHead(state: string, number: number, to: string): void {
+  const heads = JSON.parse(fs.readFileSync(path.join(state, "heads.json"), "utf8")) as Record<string, string>;
+  heads[number] = to;
+  fs.writeFileSync(path.join(state, "card-heads.json"), JSON.stringify(heads));
 }
 
 function moveHead(state: string, number: number, to: string): void {
@@ -298,8 +308,11 @@ test("a branch update on a pull request that moved is refused, looked at again, 
     await behind.locator('[data-pr-card-confirm-yes="update"]').click();
     await expect(behind.locator('[data-pr-card-write="failed"]')).toHaveAttribute("data-pr-card-write-reason", "head_moved", { timeout: 30_000 });
     await screenshot(page, "work-pr-card-moved-light");
+    // Look again reads the list and the card; the update goes out once both
+    // show the new head, on the head the card showed (B33).
     await behind.locator("[data-pr-card-look-again]").click();
-    await expect(behind.locator('[data-pr-card-write="failed"]')).toHaveCount(0, { timeout: 30_000 });
+    await expect(behind.locator("[data-pr-card-title]")).toContainText("(moved)", { timeout: 30_000 });
+    await expect(behind).toHaveAttribute("data-pr-card-head", `${shown.slice(0, 39)}e`, { timeout: 30_000 });
     await behind.locator("[data-pr-card-update]").click();
     await behind.locator('[data-pr-card-confirm-yes="update"]').click();
     await expect(behind.locator('[data-pr-card-write="done"]')).toBeVisible({ timeout: 30_000 });
@@ -329,5 +342,30 @@ test("the list and the card read without sideways scrolling in each language and
       await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
       await screenshot(page, `work-prs-${language}-${theme}`);
     }
+  });
+});
+
+test("a merged pull request opens its card and draws its parts, with no Merge", async ({ page }) => {
+  await openWork(page, async ({ work }) => {
+    await work.locator('[data-pr-group="merged"] [data-pr-focus="group"]').click();
+    await work.locator('[data-pr-row="37"]').click();
+    const card = page.locator('[data-pr-card="37"]');
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card.locator("[data-pr-card-files]")).toBeVisible({ timeout: 30_000 });
+    await expect(card.locator("[data-pr-card-preview]")).toBeVisible();
+    await expect(card.locator("[data-pr-card-merge]")).toHaveCount(0);
+  });
+});
+
+test("a card read at another head than the list's cannot merge: the write is refused before gh is asked", async ({ page }) => {
+  await openWork(page, async ({ gh, work }) => {
+    skewCardHead(gh.state, 31, head(gh.state, 31).slice(0, 39) + "a");
+    await work.locator('[data-pr-row="31"]').click();
+    const card = page.locator('[data-pr-card="31"]');
+    await expect(card.locator("[data-pr-card-files]")).toBeVisible({ timeout: 30_000 });
+    await card.locator("[data-pr-card-merge]").click();
+    await card.locator('[data-pr-card-confirm-yes="merge"]').click();
+    await expect(card.locator('[data-pr-card-write="failed"]')).toHaveAttribute("data-pr-card-write-reason", "head_moved", { timeout: 30_000 });
+    expect(writes(gh.state)).toEqual([]);
   });
 });

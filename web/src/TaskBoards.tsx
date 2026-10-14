@@ -84,7 +84,7 @@ import { holdsCommandKey } from "./host";
 // hover shows its buttons in the id line's reserved slot, a half-second rest
 // on a part opens that part's card, and each part has one destination: the
 // card and its title the issue's panel, an agent row that agent's pane, the
-// checkout chip its Workspace, the PR chip its row on the PRs tab, and ⌘-click
+// checkout chip its Workspace, the PR chip its PR card, and ⌘-click
 // GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
@@ -337,7 +337,7 @@ function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWo
 
 /**
  * `N PRs without an issue`: its popover names them and says where it goes; its
- * click opens the PRs tab, where each has an issue cell to link (PRD
+ * click opens the Work tool's PRs lens, where each row links to an issue (PRD
  * overview-lenses-prs B21; on the Overview of every project, the first one's
  * Project).
  */

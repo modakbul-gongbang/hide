@@ -16,7 +16,7 @@ import { cn } from "./lib/utils";
 import { LinkSessions } from "./LinkSessions";
 import { renderMarkdown } from "./mobile/markdown";
 import { boardProjects } from "./navigation";
-import { bodyOutline, bodyPreview, defaultMethod, fileOpen, mergeWhy, primaryAction, splitFiles, type PrimaryAction } from "./prCardModel";
+import { bodyOutline, bodyPreview, confirmHolds, defaultMethod, fileOpen, mergeWhy, primaryAction, splitFiles, type Confirmed, type PrimaryAction } from "./prCardModel";
 import { PrLinks } from "./PrLinks";
 import { GROUP_TONE, ReasonLine } from "./prReason";
 import { checksWord, reviewWord } from "./prMark";
@@ -27,6 +27,7 @@ import type { LensHandlers } from "./OverviewLenses";
 import { lensHandlers } from "./OverviewLenses";
 import { staleness } from "./prMark";
 import { useUiStore } from "./ui";
+import { useRequestViewDemand } from "./requestViewDemand";
 
 // A pull request's decision card (PRD work-tab-pr-lens D-02, D-06, D-21, D-22,
 // B20-B34, B37, B52): the body of a `PR #N` tab in File Views. The head, the
@@ -66,16 +67,7 @@ export function PrCardView({ workspace, number, actions }: { workspace: { device
     if (live && projectId && reads) actions.readPrCard(projectId, number);
   }, [actions, live, projectId, reads, number, updatedAt, checks]);
   // Share the visible-board demand so pending checks are read again every minute (B44).
-  useEffect(() => {
-    if (!live) return;
-    const report = () => actions.observeRequestView(document.visibilityState === "visible");
-    report();
-    document.addEventListener("visibilitychange", report);
-    return () => {
-      document.removeEventListener("visibilitychange", report);
-      actions.observeRequestView(false);
-    };
-  }, [actions, live]);
+  useRequestViewDemand(actions, live);
   // The link record: the sessions that made or worked on it and what it is linked to.
   useEffect(() => {
     if (!projectId) return;
@@ -86,7 +78,7 @@ export function PrCardView({ workspace, number, actions }: { workspace: { device
   if (!project) return <p className="p-lg text-caption text-muted-foreground" data-pr-card-missing={number}>{t("work.card.unlisted", { number })}</p>;
   const panel: LinkPanel | null = record && record.workspace_id === project.id && record.target.kind === "pr" && record.target.number === number ? record : null;
   return (
-    <article aria-label={t("work.card.aria", { number })} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background text-foreground" data-pr-card={number} data-pr-card-project={project.id}>
+    <article aria-label={t("work.card.aria", { number })} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-background text-foreground" data-pr-card={number} data-pr-card-project={project.id} data-pr-card-head={card?.head ?? undefined}>
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-lg p-lg">
         {pr ? <Head project={project} pr={pr} entry={entry} card={card} actions={actions} /> : <p className="text-caption text-muted-foreground" data-pr-card-unlisted={number}>{t("work.card.unlisted", { number })}</p>}
         {pr && entry ? <ReasonBox entry={entry} card={card} /> : null}
@@ -105,7 +97,6 @@ export function PrCardView({ workspace, number, actions }: { workspace: { device
 
 function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((state) => state.rest);
   const checkoutId = entry?.row.checkout_ids[0] ?? entry?.row.checkout_id ?? null;
   const checkout = checkoutId ? project.checkouts.find((row) => row.id === checkoutId && row.exists) ?? null : null;
   const checks = checksWord(pr.checks);
@@ -116,7 +107,6 @@ function Head({ project, pr, entry, card, actions }: { project: Workspace; pr: P
   const removed = files?.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
   const github = () => actions.openPullRequest(pr.url, project.device_id, true);
   const stale = staleness(project.checkouts.find((row) => row.github)?.github);
-  void rest;
   return (
     <header className="flex flex-col gap-xs" data-pr-card-head="true">
       <div className="flex min-w-0 items-center gap-xs text-caption">
@@ -195,14 +185,14 @@ function ReasonBox({ entry, card }: { entry: PrEntry; card: PrCard | null }) {
 /** What blocks it (B25): a conflict, each failed check with its log, each unresolved thread. Nothing blocked, no section. */
 function Blocked({ pr, entry, card, actions }: { pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((state) => state);
-  void rest;
   const open = pr.state !== "merged" && pr.state !== "closed";
   const conflict = open && pr.work?.merge_state === "dirty";
   const failed = open ? pr.work?.failed_checks ?? [] : [];
   const threads = card?.threads ?? [];
   const device = entry?.project.device_id ?? "";
-  if (!conflict && failed.length === 0 && threads.length === 0) return null;
+  // A thread read that failed says so with a retry, never "nothing blocked" (B39, B52).
+  const threadsFailed = card?.failed.includes("threads") === true && !card.reading;
+  if (!conflict && failed.length === 0 && threads.length === 0 && !threadsFailed) return null;
   return (
     <section className="flex flex-col gap-xs" aria-label={t("work.card.blocked")} data-pr-card-blocked="true">
       <h3 className="text-caption text-muted-foreground">{t("work.card.blocked")}</h3>
@@ -213,6 +203,7 @@ function Blocked({ pr, entry, card, actions }: { pr: PullRequest; entry: PrEntry
           {check.url ? <button type="button" className="shrink-0 rounded-xs text-muted-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openPullRequest(check.url!, device, true)}>{t("work.card.checkLog")}</button> : null}
         </p>
       ))}
+      {threadsFailed ? <PartState part="threads" card={card} actions={actions} projectId={entry?.project.id ?? ""} number={pr.number} /> : null}
       {threads.length > 0 ? <h4 className="text-micro text-muted-foreground">{t("work.card.threads")}</h4> : null}
       {threads.map((thread, index) => {
         const place = thread.line == null ? thread.path : `${thread.path}:${thread.line}`;
@@ -352,7 +343,11 @@ function Sessions({ project, pr, entry, panel, handlers, actions, number }: { pr
 
 // --- buttons ----------------------------------------------------------------------------
 
-type Confirm = "merge" | "update" | null;
+type Confirm = Confirmed | null;
+
+function confirmText(confirm: Confirmed, queue: boolean, t: (key: string, values?: Record<string, unknown>) => string, values: { number: number; base: string; method: string; head: string }): string {
+  return t(confirm.action === "merge" ? (queue ? "work.card.confirm.queue" : "work.card.confirm.merge") : "work.card.confirm.update", values);
+}
 
 /** The button row (D-21, B30-B36): the primary button of the case, then the rest. */
 function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr: PullRequest; entry: PrEntry | null; card: PrCard | null; actions: Actions }) {
@@ -373,13 +368,17 @@ function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr
   const writing = write?.phase === "working";
   const head = card?.head ?? null;
   const github = (path = "") => actions.openPullRequest(`${pr.url}${path}`, project.device_id, true);
+  const confirming = confirm !== null && confirmHolds(confirm, { head, queue, method, mergeBlocked: why !== null }) ? confirm : null;
+  useEffect(() => {
+    if (confirm !== null && confirming === null) setConfirm(null);
+  }, [confirm, confirming]);
   if (!open) return null;
   const base = pr.base_branch ?? "";
   const methodLabel = method ? t(`work.card.method.${method}`) : "";
   const canAsk = head !== null && !writing;
   const MergeButton = (
     <span className="flex min-w-0 items-center gap-xs" data-pr-card-merge-slot="true">
-      <Button variant={primary === "merge" ? "default" : "secondary"} size="sm" disabled={why !== null || queued || !canAsk} onClick={() => setConfirm("merge")} data-pr-card-merge={queue ? "queue" : "merge"}>
+      <Button variant={primary === "merge" ? "default" : "secondary"} size="sm" disabled={why !== null || queued || !canAsk} onClick={() => head !== null && setConfirm({ action: "merge", head, method, queue })} data-pr-card-merge={queue ? "queue" : "merge"}>
         {queue ? t("work.card.mergeQueue") : t("work.card.merge")}
       </Button>
       {!queue && (card?.merge?.methods.length ?? 0) > 1 ? (
@@ -391,27 +390,27 @@ function Buttons({ project, pr, entry, card, actions }: { project: Workspace; pr
     </span>
   );
   const UpdateButton = (
-    <Button variant={primary === "update" ? "default" : "secondary"} size="sm" disabled={!canAsk || write?.phase === "working"} onClick={() => setConfirm("update")} data-pr-card-update="true">{t("work.card.updateBranch")}</Button>
+    <Button variant={primary === "update" ? "default" : "secondary"} size="sm" disabled={!canAsk || write?.phase === "working"} onClick={() => head !== null && setConfirm({ action: "update", head, method: null, queue })} data-pr-card-update="true">{t("work.card.updateBranch")}</Button>
   );
   const askPane = agent ? () => actions.openAgent(agent.pane_id) : null;
   return (
     <section className="flex flex-col gap-sm border-t border-border pt-md" data-pr-card-buttons={primary}>
-      {confirm !== null && head !== null ? (
-        <div role="alertdialog" aria-label={t(confirm === "merge" ? (queue ? "work.card.confirm.queue" : "work.card.confirm.merge") : "work.card.confirm.update", { number: pr.number, base, method: methodLabel })} className="flex flex-col gap-sm rounded-md border border-border bg-card p-md" data-pr-card-confirm={confirm}>
-          <p className="text-caption">{t(confirm === "merge" ? (queue ? "work.card.confirm.queue" : "work.card.confirm.merge") : "work.card.confirm.update", { number: pr.number, base, method: methodLabel })}</p>
+      {confirming !== null ? (
+        <div role="alertdialog" aria-label={confirmText(confirming, queue, t, { number: pr.number, base, method: methodLabel, head: confirming.head.slice(0, 7) })} className="flex flex-col gap-sm rounded-md border border-border bg-card p-md" data-pr-card-confirm={confirming.action}>
+          <p className="text-caption">{confirmText(confirming, queue, t, { number: pr.number, base, method: methodLabel, head: confirming.head.slice(0, 7) })}</p>
           <span className="flex gap-xs">
-            <Button size="sm" autoFocus onClick={() => {
-              if (confirm === "merge") actions.mergePullRequest(project.id, pr.number, head, queue ? null : method);
-              else actions.updatePullRequestBranch(project.id, pr.number, head);
+            <Button size="sm" onClick={() => {
+              if (confirming.action === "merge") actions.mergePullRequest(project.id, pr.number, confirming.head, confirming.queue ? null : confirming.method);
+              else actions.updatePullRequestBranch(project.id, pr.number, confirming.head);
               setConfirm(null);
-            }} data-pr-card-confirm-yes={confirm}>{t(confirm === "merge" ? (queue ? "work.card.confirm.doQueue" : "work.card.confirm.doMerge") : "work.card.confirm.doUpdate", { number: pr.number })}</Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button>
+            }} data-pr-card-confirm-yes={confirming.action}>{t(confirming.action === "merge" ? (queue ? "work.card.confirm.doQueue" : "work.card.confirm.doMerge") : "work.card.confirm.doUpdate", { number: pr.number })}</Button>
+            <Button size="sm" variant="ghost" autoFocus onClick={() => setConfirm(null)}>{t("common.cancel")}</Button>
           </span>
         </div>
       ) : null}
       <div className="flex min-w-0 flex-wrap items-center gap-sm">
         {primary === "update" || pr.work?.merge_state === "behind" ? UpdateButton : null}
-        {primary === "review" ? <><Button size="sm" onClick={() => github("/files")} data-pr-card-review-github="true">{t("work.card.reviewGithub")}</Button><Button size="sm" variant="secondary" onClick={() => review(project, pr, actions)} data-pr-card-review-agent="true">{t("work.card.reviewAgent")}</Button></> : null}
+        {primary === "review" ? <><Button size="sm" onClick={() => github("/files")} data-pr-card-review-github="true">{t("work.card.reviewGithub")}</Button><Button size="sm" variant="secondary" onClick={() => review(project, pr)} data-pr-card-review-agent="true">{t("work.card.reviewAgent")}</Button></> : null}
         {primary === "assign" ? <Button size="sm" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number })} data-pr-card-assign="true">{t("work.card.assign")}</Button> : null}
         {primary === "answer" && askPane ? <Button size="sm" onClick={askPane} data-pr-card-answer="true">{t("work.card.answer")}</Button> : null}
         {primary === "view_pane" && askPane ? <Button size="sm" onClick={askPane} data-pr-card-view-pane="true">{t("work.card.viewPane")}</Button> : null}
@@ -440,7 +439,6 @@ function WriteLine({ write, base, card, actions, projectId, number }: { write: P
 }
 
 /** `Have an agent review` (B35): the Start dialog's agent opens on the branch with the review instruction. */
-function review(project: Workspace, pr: PullRequest, actions: Actions) {
-  void actions;
+function review(project: Workspace, pr: PullRequest) {
   useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number, intent: "review" });
 }

@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon, GitBranchIcon } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { forkLabel, markTone } from "./agentRow";
@@ -27,6 +27,7 @@ import { useUiStore } from "./ui";
 import { MissedRow, SessionRecord } from "./SessionRecord";
 import { endedWork, sessionOfAgent, workKey } from "./sessionWork";
 import { summariesEnabled } from "./hideAi";
+import { useRequestViewDemand } from "./requestViewDemand";
 
 const GROUP_LABEL: Record<SessionGroup, MessageKey> = {
   needs_you: "agents.group.needs_you", working: "agents.group.working", done: "agents.group.done",
@@ -52,16 +53,7 @@ export function AgentSessions({ actions, onlyCheckout = null }: { actions: Actio
   const model = useMemo(() => sessionsModel(rest, agents, onlyCheckout), [rest, agents, onlyCheckout]);
   const target = useUiStore((state) => state.sessionWorkTarget);
   // Share the existing visible-board demand. No new polling clock or reader.
-  useEffect(() => {
-    if (!live) return;
-    const report = () => actions.observeRequestView(document.visibilityState === "visible");
-    report();
-    document.addEventListener("visibilitychange", report);
-    return () => {
-      document.removeEventListener("visibilitychange", report);
-      actions.observeRequestView(false);
-    };
-  }, [actions, live]);
+  useRequestViewDemand(actions, live);
   // Keep the list mounted while a record is open: Back retains its folds,
   // selection and exact scroll position (B2).
   return <><div className={target ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}><SessionsContent model={model} actions={actions} folds={folds} focusedPane={inWorkspace ? focusedPane : null} onlyCheckout={onlyCheckout} /></div>{target ? <SessionRecord actions={actions} target={target} /> : null}</>;

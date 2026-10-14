@@ -44,7 +44,7 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
       await page.keyboard.press("Escape");
       await expect(treeButton).toBeFocused();
       await page.getByRole("button", { name: "Tools", exact: true }).click();
-      await page.locator('[data-tool-tab="agent_sessions"]').click();
+      await page.locator('[data-tool-tab="work"]').click();
       // The raised child asks through its root's row (agent-hierarchy-screens B1, B2).
       await expect(page.locator(`[data-session-group="needs_you"] [data-session-row="${parent}"]`)).toContainText("Approve");
       await expect(page.locator(`[data-session-row="${child}"]`)).toHaveCount(0);

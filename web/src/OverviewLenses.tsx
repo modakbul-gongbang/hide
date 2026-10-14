@@ -204,7 +204,7 @@ export function IssueChip({ project, task, handlers, now }: { project: Workspace
 }
 
 /**
- * A checkout's pull request as its PR mark, on a lens or an issue card; it opens the pull request's row on the PRs tab, ⌘-click the pull
+ * A checkout's pull request as its PR mark, on a lens or an issue card; it opens the pull request's card, ⌘-click the pull
  * request on GitHub, and its half-second card is the checkout's PR card
  * (B17, B24; overview-lenses-issues B8, B9; overview-lenses-prs B21).
  */
@@ -254,7 +254,7 @@ export type PopoverContext = { checkout: string; tab: string | null; peers: read
 
 /**
  * Everything an agent last said, after a half-second rest on `children`
- * (D-50): on its line, or on its mark in a PRs tab row (overview-lenses-prs
+ * (D-50): on its line, or on its mark in a PRs lens row (overview-lenses-prs
  * B7). `fallback` is what is said when the agent has no message.
  */
 export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, context, children }: { agent: AgentRow; place: string; fallback: string; tone: string; onOpen: () => void; context?: PopoverContext; children: ReactNode }) {
