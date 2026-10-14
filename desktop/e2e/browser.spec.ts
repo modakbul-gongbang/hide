@@ -583,12 +583,23 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   const focusedLocator = page.locator('[data-pane-view][data-focused="true"]');
   await expect(focusedLocator).toHaveAttribute("data-pane-view", /./);
   const focused = await focusedLocator.getAttribute("data-pane-view");
-  const hidden = await openFromCli(`${origin}/b.html`, ["--wait"]);
-  expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
-  expect(await cliFromPane(["view", "status", hidden.view_id as string])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
-  await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
-  const revealed = await openFromCli(`${origin}/b.html`, ["--reveal", "--wait"]);
-  expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  // An agent in a tab the operator is not looking at opens the page, so it
+  // stays hidden; from the front tab the open would call the lane (PRD
+  // right-lane B17).
+  const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Background", "--no-focus"]) as {
+    result: { tab: { tab_id: string }; root_pane: { pane_id: string } };
+  };
+  const agent = created.result.root_pane.pane_id;
+  try {
+    const hidden = await cliFromPane(["browser", "open", `${origin}/b.html`, "--wait"], agent);
+    expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+    expect(await cliFromPane(["view", "status", hidden.view_id as string], agent)).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
+    await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
+    const revealed = await cliFromPane(["browser", "open", `${origin}/b.html`, "--reveal", "--wait"], agent);
+    expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  } finally {
+    herdr.run(["tab", "close", created.result.tab.tab_id]);
+  }
 });
 
 test("browser: a login in one Workspace is available in another", async () => {
