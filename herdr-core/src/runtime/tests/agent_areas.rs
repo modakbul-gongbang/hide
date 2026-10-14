@@ -689,6 +689,7 @@ fn replacement_unknown_claim_survives_refusal_and_dismissal() {
     operation.replacement_effect_started = true;
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
+            safety: None,
             failed_terminals: Vec::new(),
             retain_for_reopen: true,
             key: request.key.clone(),

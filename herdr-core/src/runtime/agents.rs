@@ -785,12 +785,39 @@ impl Runtime {
                     .flatten()
             })
             .collect();
+        let scope_pane_ids = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .filter(|tab| match &action {
+                RemoteControlAction::CloseTab { tab_id } => {
+                    tab.id
+                        .as_deref()
+                        .and_then(|id| remote_tab_source_id(&target_id, id))
+                        == Some(tab_id.as_str())
+                }
+                _ => false,
+            })
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| remote_pane_source_id(&target_id, &pane.id).map(str::to_owned))
+            .collect();
         if let Err(message) = live::spawn_remote_control_checked(
             context,
             request_id,
             action,
             connection_generation,
             failed_terminals,
+            scope_pane_ids,
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(
+                    remote_operation_key
+                        .as_ref()
+                        .and_then(|key| self.remote_operations.get(key))
+                        .and_then(|operation| operation.deadline_at_unix_ms)
+                        .unwrap_or_else(unix_milliseconds)
+                        .saturating_sub(unix_milliseconds()),
+                ),
         ) {
             if let Some((operation_target, operation_request)) = remote_operation_key.as_ref() {
                 self.fail_remote_operation(operation_target, operation_request, message.clone());

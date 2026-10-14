@@ -391,6 +391,8 @@ Its pane body says the terminal could not be restored, names its folder and offe
 Visiting this pane preserves a saved conversation and its title without waking it, and neither Wake nor attach Retry is offered as terminal recovery.
 A missing folder alone never establishes restoration failure.
 An explicit close rereads the failed terminal's incarnation and failure before sending the close, and keeps the pane until Herdr confirms removal.
+A whole-tab close also requires the same pane membership and quiet nonfailed peers; a working, blocked or unknown peer or descendant cancels that authorization.
+The fresh read and close share the admitted deadline, so a slow status read cannot send a close after its permission expires.
 Other active or unknown panes and descendants keep their close guards.
 A failed terminal has no recoverable live layout, so a close containing one does not enter the ordinary undo stack.
 Closing the last failed terminal preserves the project registration without trying to start a replacement in the failed folder.

@@ -640,7 +640,7 @@ fn spawn(
             )
             .map_err(|error| format!("{error}"))?;
             let existing = crate::wire::listed_worktree_path(listed, branch)?;
-            let (checkout, pane) = if let Some(existing) = existing {
+            let (checkout, pane, seed_tab) = if let Some(existing) = existing {
                 if path.as_ref().is_some_and(|path| path != &existing) {
                     return Err("checkout_path_conflict".into());
                 }
@@ -692,6 +692,7 @@ fn spawn(
                         })
                         .map(|pane| (pane.pane_id.clone(), false))
                 });
+                let mut seed_tab = None;
                 let pane = match existing_pane {
                     Some((pane, launched)) => {
                         shell = ShellStart::of_tab(launched, launch.as_ref());
@@ -712,10 +713,14 @@ fn spawn(
                         )
                         .map_err(|error| format!("{error:?}"))?;
                         shell = ShellStart::of_tab(tab.launched, launch.as_ref());
+                        seed_tab = tab.initial_label.map(|label| super::naming::SeedTab {
+                            id: tab.tab_id,
+                            label,
+                        });
                         tab.pane_id
                     }
                 };
-                (existing, pane)
+                (existing, pane, seed_tab)
             } else {
                 let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
                 params["label"] = json!(format!("hide:{}", reserved.id));
@@ -734,6 +739,7 @@ fn spawn(
                 let tab = crate::live::replace_tab(
                     connector.as_ref(),
                     crate::live::OwnedTab {
+                        initial_label: Some(created.tab_label),
                         workspace_id: created.workspace_id,
                         tab_id: created.tab_id,
                         pane_id: created.pane_id,
@@ -749,7 +755,11 @@ fn spawn(
                     launch.as_ref().map(|launch| launch.command.as_slice()),
                 );
                 shell = ShellStart::of_tab(tab.launched, launch.as_ref());
-                (created.path, tab.pane_id)
+                let seed_tab = tab.initial_label.map(|label| super::naming::SeedTab {
+                    id: tab.tab_id,
+                    label,
+                });
+                (created.path, tab.pane_id, seed_tab)
             };
             // The terminal is recorded with the pane, so a later attempt can
             // tell this pane from one Herdr gives the same id afterwards.
@@ -759,6 +769,7 @@ fn spawn(
                 authority,
                 actor,
                 Mutation::Advance {
+                    seed_tab,
                     id: reserved.id.clone(),
                     path: Some(checkout),
                     pane: Some(pane),
@@ -1288,6 +1299,7 @@ mod tests {
                     &mut self.ledger,
                     &self.actor,
                     &Mutation::Advance {
+                        seed_tab: None,
                         id: reserved["id"].as_str().unwrap().into(),
                         path: Some("/fixture.worktrees/801".into()),
                         pane: Some(pane.into()),
@@ -1539,6 +1551,7 @@ mod tests {
                 &mut state,
                 &actor,
                 &Mutation::Advance {
+                    seed_tab: None,
                     id: spawn.clone(),
                     path: Some("/fixture/topic".into()),
                     pane: Some("recipient".into()),

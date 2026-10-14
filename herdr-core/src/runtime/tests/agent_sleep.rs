@@ -790,6 +790,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         assert!(effects.is_empty());
         assert!(!runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
+                safety: None,
                 failed_terminals: Vec::new(),
                 retain_for_reopen: false,
                 allow_replacement_create: false,
@@ -1309,6 +1310,64 @@ fn visiting_a_failed_terminal_preserves_sleep_without_starting_an_agent() {
         serde_json::json!({"pane_id": SLEEPER})
     )));
     assert_eq!(row(&runtime)["sleep"]["state"], "sleeping");
+}
+
+/// B6: a close refusal or lost connection cannot erase the saved failed row.
+#[test]
+fn failed_terminal_close_errors_keep_the_sleeping_row_and_failure() {
+    for (error, phase) in [
+        (
+            hide_herdr_client::ApiError::Remote {
+                code: "refused".into(),
+                message: "close refused".into(),
+            },
+            "refused",
+        ),
+        (
+            hide_herdr_client::ApiError::Transport("acknowledgement timed out".into()),
+            "unknown",
+        ),
+        (
+            hide_herdr_client::ApiError::NotRunning("device disconnected".into()),
+            "unknown",
+        ),
+    ] {
+        let (mut runtime, _) = asleep();
+        let identity = row(&runtime)["identity_label"].clone();
+        let mut failed = session(None);
+        failed
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == SLEEPER)
+            .unwrap()
+            .failed_terminal_id = Some("failed-terminal".into());
+        runtime.ingest_session(Ok(failed));
+        let mut request = close_capture_request("failed-sleep");
+        request.target = live::CloseCaptureTarget::Pane {
+            pane_id: SLEEPER.into(),
+        };
+        request.context.tab_id = "w-order:t2".into();
+        request.context.pane_ids_before_close = vec![SLEEPER.into()];
+        request.connection_generation = runtime.live_generation;
+        request.failed_terminals = vec![(SLEEPER.into(), "failed-terminal".into())];
+        runtime.ensure_pending_close_from_request(&request);
+        let effect = runtime.prepare_captured_close_effect(&request.key).unwrap();
+        runtime.ingest_close_effect_result(&effect, Err(error));
+        assert_eq!(row(&runtime)["identity_label"], identity);
+        assert_eq!(row(&runtime)["sleep"]["state"], "sleeping");
+        assert_eq!(pane(&runtime)["failed_terminal_id"], "failed-terminal");
+        if phase == "unknown" {
+            assert_eq!(runtime.snapshot().recent_closed.pending[0].phase, phase);
+        } else {
+            assert!(runtime.snapshot().recent_closed.pending.is_empty());
+        }
+        assert_eq!(
+            runtime.snapshot().recent_closed.notices[0]
+                .pane_id
+                .as_deref(),
+            Some(SLEEPER)
+        );
+    }
 }
 
 /// B14: a failed wake says why in plain words and offers Retry and Start

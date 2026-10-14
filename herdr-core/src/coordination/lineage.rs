@@ -46,6 +46,9 @@ struct Completion {
 
 pub(crate) struct Writer {
     sender: Option<mpsc::SyncSender<Batch>>,
+    queued: Arc<AtomicBool>,
+    #[cfg(test)]
+    plans: usize,
     worker: Option<JoinHandle<()>>,
     device: String,
     // Only signatures still missing from the latest snapshot are retained.
@@ -76,10 +79,13 @@ impl Writer {
         let (done, completed) = mpsc::sync_channel(super::AGENT_LIMIT * 2);
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
+        let queued = Arc::new(AtomicBool::new(false));
+        let worker_queued = queued.clone();
         let worker = thread::Builder::new()
             .name("hide-lineage".into())
             .spawn(move || {
                 while let Ok(batch) = receiver.recv() {
+                    worker_queued.store(false, Ordering::Release);
                     for patch in batch.patches {
                         if stop.load(Ordering::Acquire) || runtime.upgrade().is_none() {
                             return;
@@ -119,6 +125,9 @@ impl Writer {
             .map_err(|_| "lineage_unavailable")?;
         Ok(Self {
             sender: Some(sender),
+            queued,
+            #[cfg(test)]
+            plans: 0,
             worker: Some(worker),
             device,
             in_flight: HashMap::new(),
@@ -147,6 +156,12 @@ impl Writer {
         changed: bool,
         snapshot_started_at: Instant,
     ) {
+        // A queued batch already owns the only pending slot. Remember that
+        // current inputs need observing, but build no plan until it is taken.
+        if self.queued.load(Ordering::Acquire) {
+            self.pending_retry = true;
+            return;
+        }
         let names_version = (ledger.spawns.len(), ledger.spawn_placement_revision);
         let names_changed = self.observed_names != Some(names_version);
         let mut failed = false;
@@ -174,6 +189,10 @@ impl Writer {
         }
         self.pending_retry = false;
         self.observed_registrations = Some(placements(ledger));
+        #[cfg(test)]
+        {
+            self.plans += 1;
+        }
         let patches = plan(ledger, &self.device, agents);
         let current = patches.iter().map(signature).collect::<HashSet<_>>();
         self.in_flight
@@ -220,6 +239,7 @@ impl Writer {
         let Some(generation) = self.generation.checked_add(1) else {
             return;
         };
+        self.queued.store(true, Ordering::Release);
         if self.sender.as_ref().is_some_and(|sender| {
             sender
                 .try_send(Batch {
@@ -603,15 +623,31 @@ mod tests {
                 .all(Value::is_null)
         );
     }
+    struct TestBatches {
+        receiver: mpsc::Receiver<Batch>,
+        queued: Arc<AtomicBool>,
+    }
+    impl TestBatches {
+        fn try_recv(&self) -> Result<Batch, mpsc::TryRecvError> {
+            let batch = self.receiver.try_recv()?;
+            self.queued.store(false, Ordering::Release);
+            Ok(batch)
+        }
+    }
     type WriterFixture = (
         Writer,
-        mpsc::Receiver<Batch>,
+        TestBatches,
         mpsc::SyncSender<Completion>,
         Arc<Ledger>,
         Vec<ProjectedAgent>,
     );
     fn writer_fixture() -> WriterFixture {
-        let (sender, batches) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let queued = Arc::new(AtomicBool::new(false));
+        let batches = TestBatches {
+            receiver,
+            queued: queued.clone(),
+        };
         let (done, completed) = mpsc::sync_channel(super::super::AGENT_LIMIT * 2);
         let parent = record("agent-1", "w1:p1", "parent", None);
         let child = record("agent-2", "w2:p1", "child", Some(&parent.id));
@@ -624,6 +660,8 @@ mod tests {
         (
             Writer {
                 sender: Some(sender),
+                queued,
+                plans: 0,
                 worker: None,
                 device: crate::node::TEST_NODE.into(),
                 in_flight: HashMap::new(),
@@ -755,6 +793,14 @@ mod tests {
         let now = Instant::now();
         for count in [32, 32, 6] {
             writer.observe(&ledger, &agents, false, now);
+            let plans = writer.plans;
+            for _ in 0..100 {
+                writer.observe(&Arc::new((*ledger).clone()), &agents, false, now);
+            }
+            assert_eq!(
+                writer.plans, plans,
+                "a saturated queue must not rebuild any plan"
+            );
             assert_eq!(batches.try_recv().unwrap().names.len(), count);
         }
         writer.observe(&Arc::new((*ledger).clone()), &agents, false, now);

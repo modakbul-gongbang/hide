@@ -23,6 +23,73 @@ use super::*;
 
 const QUESTION: &str = "Update the framework now? [Y/n]";
 
+/// B8: the seed tab must remain discoverable when shell integration is absent.
+#[test]
+#[ignore = "needs the pinned Herdr: HIDE_E2E_HERDR_BIN"]
+fn a_new_worktrees_seed_tab_is_named_from_creation_proof_without_shell_replacement() {
+    let herdr = PrivateHerdr::new(None);
+    let repo = herdr.home.join("repository");
+    std::fs::create_dir_all(&repo).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let created = herdr.request(
+        "worktree.create",
+        json!({
+            "cwd": repo, "path": herdr.home.join("task"), "branch":"task",
+            "label":"hide:spawn-fixture", "focus":false, "trust_repository":true,
+        }),
+    );
+    assert_eq!(created["workspace"]["label"], "hide:spawn-fixture");
+    // Pinned Herdr calls the seed "1", not the workspace's marker.
+    let record: crate::coordination::SpawnRecord = serde_json::from_value(json!({
+        "id":"spawn-fixture", "parent":"agent-1", "intent":"seed", "name":"Seed task",
+        "kind":"claude", "repo":repo, "branch":"task", "requested_path":null, "args":[],
+        "path":created["worktree"]["path"], "pane":created["root_pane"]["pane_id"],
+        "terminal":created["root_pane"]["terminal_id"], "child":null,
+        "seed_tab":{"id":created["tab"]["tab_id"], "label":created["tab"]["label"]},
+    }))
+    .unwrap();
+    let work = crate::coordination::naming::Work::of(&record).unwrap();
+    let names = crate::coordination::naming::run(&herdr.connector(), &work);
+    assert_eq!(
+        names.workspace,
+        crate::coordination::naming::Outcome::Applied
+    );
+    assert_eq!(names.tab, crate::coordination::naming::Outcome::Applied);
+    let observed = wire::snapshot_response(herdr.request("session.snapshot", json!({}))).unwrap();
+    assert_eq!(
+        observed
+            .tabs
+            .iter()
+            .find(|tab| tab.tab_id == created["tab"]["tab_id"])
+            .unwrap()
+            .label,
+        "Seed task"
+    );
+}
+
 /// The pane's node: it writes the integration for `shell` as the product's
 /// node does.
 struct Node {
@@ -234,6 +301,7 @@ impl PrivateHerdr {
         let tab = crate::live::replace_tab(
             &self.connector(),
             crate::live::OwnedTab {
+                initial_label: None,
                 workspace_id: workspace_id.clone(),
                 tab_id: tab_id.clone(),
                 pane_id,

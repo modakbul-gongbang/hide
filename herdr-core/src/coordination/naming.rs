@@ -36,6 +36,14 @@ impl Names {
     }
 }
 
+/// The first tab's label as returned by a successful workspace creation.
+/// Old receipts cannot manufacture this proof from a current default label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedTab {
+    pub id: String,
+    pub label: String,
+}
+
 /// Only the immutable durable placement is carried to the external worker.
 #[derive(Clone, Debug)]
 pub(crate) struct Work {
@@ -46,6 +54,7 @@ pub(crate) struct Work {
     tab_name: String,
     branch: String,
     names: Names,
+    seed_tab: Option<SeedTab>,
 }
 impl Work {
     pub(crate) fn of(record: &SpawnRecord) -> Option<Self> {
@@ -61,6 +70,7 @@ impl Work {
             tab_name: record.name.clone(),
             branch: record.branch.clone(),
             names,
+            seed_tab: record.seed_tab.clone(),
         })
     }
 }
@@ -134,14 +144,19 @@ fn target(state: &ProjectionState, work: &Work, workspace: bool) -> Option<(Stri
         let [tab] = tabs.as_slice() else {
             return None;
         };
-        if tab.label != marker {
+        if tab.label != marker
+            && !work
+                .seed_tab
+                .as_ref()
+                .is_some_and(|seed| seed.id == tab.tab_id && seed.label == tab.label)
+        {
             return Some((
                 tab.tab_id.clone(),
                 work.tab_name.clone(),
                 tab.label == work.tab_name,
             ));
         }
-        if state.tabs.iter().filter(|tab| tab.label == marker).count() != 1 {
+        if tab.label == marker && state.tabs.iter().filter(|tab| tab.label == marker).count() != 1 {
             return None;
         }
         Some((tab.tab_id.clone(), work.tab_name.clone(), false))
@@ -165,10 +180,14 @@ fn rename(connector: &dyn ApiConnector, work: &Work, workspace: bool) -> Result<
             .iter()
             .any(|item| item.workspace_id == id && item.label == marker)
     } else {
-        state
-            .tabs
-            .iter()
-            .any(|item| item.tab_id == id && item.label == marker)
+        state.tabs.iter().any(|item| {
+            item.tab_id == id
+                && (item.label == marker
+                    || work
+                        .seed_tab
+                        .as_ref()
+                        .is_some_and(|seed| seed.id == item.tab_id && seed.label == item.label))
+        })
     };
     if !still_marked {
         return Ok(Outcome::Preserved);
@@ -250,6 +269,7 @@ mod tests {
             tab_name: "검토 작업".into(),
             branch: "task-branch".into(),
             names: Names::default(),
+            seed_tab: None,
         }
     }
     fn state() -> Value {
@@ -315,6 +335,56 @@ mod tests {
             calls,
             "finished targets perform no IO"
         );
+        // The process can die after rename ACK and before its checkpoint.
+        // The next connection observes the names and records completion
+        // without repeating either mutation.
+        work.names = Names::default();
+        work.names = run(&herdr.connector(), &work);
+        assert_eq!(
+            work.names,
+            Names {
+                workspace: Outcome::Applied,
+                tab: Outcome::Applied
+            }
+        );
+        assert_eq!(
+            &herdr.methods()[calls..],
+            &["session.snapshot", "session.snapshot"]
+        );
+    }
+
+    #[test]
+    fn seed_tab_proof_names_only_the_unchanged_created_tab() {
+        for (label, tab_id, terminal, allowed) in [
+            ("1", "w1:t1", "original", true),
+            ("User title", "w1:t1", "original", false),
+            ("1", "w1:other", "original", false),
+            ("1", "w1:t1", "replacement", false),
+        ] {
+            let mut state = state();
+            state["snapshot"]["tabs"][0]["label"] = json!(label);
+            state["snapshot"]["panes"][0]["terminal_id"] = json!(terminal);
+            let herdr = FakeHerdr::start("seed-label", move |method, _| match method {
+                "session.snapshot" => state.clone(),
+                "tab.rename" => json!({"type":"ok"}),
+                other => panic!("unexpected {other}"),
+            });
+            let mut work = work();
+            work.names.workspace = Outcome::Applied;
+            work.seed_tab = Some(SeedTab {
+                id: tab_id.into(),
+                label: "1".into(),
+            });
+            assert_eq!(
+                run(&herdr.connector(), &work).tab,
+                if allowed {
+                    Outcome::Applied
+                } else {
+                    Outcome::Preserved
+                }
+            );
+            assert_eq!(herdr.methods().contains(&"tab.rename".into()), allowed);
+        }
     }
 
     /// B10: exact marker text is not authority without the saved terminal,

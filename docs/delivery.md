@@ -328,6 +328,8 @@ The created tab then takes the registered task name; a created workspace takes t
 The receipt reports separate workspace and tab naming outcomes (`pending`, `applied`, `preserved`, `failed`); a failed rename does not undo the child or its watch.
 The existing lineage worker retries unfinished names once per connection, in bounded batches, without a separate poller.
 Repair requires the receipt's device, checkout, pane and terminal to match the current unique target and its exact recovery marker.
+A newly created workspace's first tab may carry Herdr's generated label when shell replacement is unavailable.
+Its creation response's exact tab id and label are saved with the first durable placement, so that unchanged label can be named too; an older receipt cannot infer this proof from a current default label.
 User labels and targets with insufficient proof are preserved, and successful targets are not renamed again.
 Herdr's rename API has no compare-and-set, so a user rename between the final read and write remains a race.
 Completed intent replay returns the durable receipt without contacting Herdr, including while a device is offline.

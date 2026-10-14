@@ -38,6 +38,10 @@ test("failed terminals remain legible and keyboard reachable in a narrow native 
       await page.locator("[data-interface-language]").click();
       await page.locator('[data-language-option="ko"]').click();
       await page.locator(`[data-theme-option="${theme}"]`).click();
+      const fontSize = page.locator('[data-font-size] [role="slider"]');
+      await fontSize.focus();
+      await page.keyboard.press("End");
+      await expect(fontSize).toHaveAttribute("aria-valuenow", "17");
       await page.keyboard.press("Escape");
       await expect(page.locator("html")).toHaveAttribute("lang", "ko");
       await expect(failed).toContainText("터미널");

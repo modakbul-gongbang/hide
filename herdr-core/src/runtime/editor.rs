@@ -1692,6 +1692,17 @@ impl Runtime {
             },
         ));
         let effect = live::CloseEffectRequest {
+            safety: (!request.failed_terminals.is_empty()).then(|| live::CloseSafety {
+                pane_ids: operation.scope_pane_ids.clone(),
+                deadline: std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        operation
+                            .deadline_at_unix_ms
+                            .unwrap_or_default()
+                            .saturating_sub(unix_milliseconds())
+                            .min(CLOSE_STAGE_TIMEOUT_MS),
+                    ),
+            }),
             failed_terminals: request.failed_terminals.clone(),
             retain_for_reopen: request.retain_for_reopen,
             allow_replacement_create: operation.allow_replacement_create,

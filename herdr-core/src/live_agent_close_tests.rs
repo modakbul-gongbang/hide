@@ -1,6 +1,167 @@
 use super::*;
 use crate::fake_herdr::FakeHerdr;
 
+/// B5: authorization never follows a failed pane into another tab or covers
+/// a new/now-active peer in the tab the user selected.
+#[test]
+fn failed_tab_close_rechecks_membership_and_live_peers() {
+    for (failed_tab, peer_status, extra, allowed) in [
+        ("w1:t1", "idle", false, true),
+        ("w1:t2", "idle", false, false),
+        ("w1:t1", "working", false, false),
+        ("w1:t1", "unknown", false, false),
+        ("w1:t1", "blocked", false, false),
+        ("w1:t1", "idle", true, false),
+    ] {
+        let herdr = FakeHerdr::start("failed-tab-scope", move |method, _| match method {
+            "session.snapshot" => {
+                let mut value = snapshot(false);
+                let mut panes = vec![
+                    json!({"pane_id":"w1:p1","terminal_id":"failed","workspace_id":"w1","tab_id":failed_tab,"focused":false,"agent_status":"unknown","revision":1,"restore_error":"ENOENT"}),
+                    json!({"pane_id":"w1:p2","terminal_id":"live","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":peer_status,"revision":1}),
+                ];
+                if extra {
+                    panes.push(json!({"pane_id":"w1:p3","terminal_id":"new","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":"idle","revision":1}));
+                }
+                value["snapshot"]["panes"] = json!(panes);
+                value
+            }
+            "tab.close" => json!({"type":"ok"}),
+            other => panic!("unexpected {other}"),
+        });
+        let result = run_close_effect(
+            &herdr.connector(),
+            &CloseEffectRequest {
+                safety: Some(CloseSafety {
+                    pane_ids: vec!["w1:p1".into(), "w1:p2".into()],
+                    deadline: Instant::now() + Duration::from_secs(5),
+                }),
+                failed_terminals: vec![("w1:p1".into(), "failed".into())],
+                retain_for_reopen: false,
+                allow_replacement_create: false,
+                replacement: None,
+                key: "scope".into(),
+                connection_generation: 1,
+                target: CloseCaptureTarget::Tab {
+                    tab_id: "w1:t1".into(),
+                },
+            },
+        );
+        assert_eq!(result.is_ok(), allowed);
+        assert_eq!(herdr.methods().contains(&"tab.close".into()), allowed);
+    }
+}
+
+#[test]
+fn failed_pane_close_preserves_a_new_working_descendant_in_another_tab() {
+    let herdr = FakeHerdr::start("failed-descendant", |method, _| match method {
+        "session.snapshot" => {
+            let mut value = snapshot(false);
+            let parent = json!({"pane_id":"w1:p1","terminal_id":"original","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent":"claude","agent_status":"unknown","revision":1,"restore_error":"ENOENT",
+                "agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"parent"}});
+            let child = json!({"pane_id":"w1:p2","terminal_id":"child","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent":"claude","agent_status":"working","revision":1,
+                "agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"child"},
+                "tokens":{"parent_pane":"w1:p1","child_session":wire::session_digest("child"),"parent_session":wire::session_digest("parent")}});
+            value["snapshot"]["panes"] = json!([parent.clone(), child.clone()]);
+            value["snapshot"]["agents"] = json!([parent, child]);
+            value
+        }
+        other => panic!("protected descendant must prevent {other}"),
+    });
+    let result = run_close_effect(
+        &herdr.connector(),
+        &CloseEffectRequest {
+            safety: Some(CloseSafety {
+                pane_ids: vec!["w1:p1".into()],
+                deadline: Instant::now() + Duration::from_secs(5),
+            }),
+            failed_terminals: vec![("w1:p1".into(), "original".into())],
+            retain_for_reopen: false,
+            allow_replacement_create: false,
+            replacement: None,
+            key: "descendant".into(),
+            connection_generation: 1,
+            target: CloseCaptureTarget::Pane {
+                pane_id: "w1:p1".into(),
+            },
+        },
+    );
+    assert_eq!(result.unwrap_err().code(), Some("close_target_changed"));
+    assert_eq!(herdr.methods(), ["session.snapshot"]);
+}
+
+/// B6: time spent obtaining permission cannot become extra mutation time.
+#[test]
+fn an_expired_failed_close_sends_no_snapshot_or_mutation() {
+    let herdr = FakeHerdr::start("expired-close", |method, _| {
+        panic!("expired close sent {method}")
+    });
+    let result = run_close_effect(
+        &herdr.connector(),
+        &CloseEffectRequest {
+            safety: Some(CloseSafety {
+                pane_ids: vec!["w1:p1".into()],
+                deadline: Instant::now(),
+            }),
+            failed_terminals: vec![("w1:p1".into(), "failed".into())],
+            retain_for_reopen: false,
+            allow_replacement_create: false,
+            replacement: None,
+            key: "expired".into(),
+            connection_generation: 1,
+            target: CloseCaptureTarget::Pane {
+                pane_id: "w1:p1".into(),
+            },
+        },
+    );
+    assert_eq!(result.unwrap_err().code(), Some("close_deadline_expired"));
+    assert!(herdr.methods().is_empty());
+}
+
+/// The snapshot answers successfully, but its read used up the admission.
+#[test]
+fn failed_close_cannot_mutate_after_its_fresh_read_consumes_the_deadline() {
+    let herdr = FakeHerdr::start("slow-fresh-close", |method, _| match method {
+        "session.snapshot" => {
+            let mut value = snapshot(false);
+            value["snapshot"]["panes"] = json!([{
+                "pane_id":"w1:p1","terminal_id":"original","workspace_id":"w1","tab_id":"w1:t1",
+                "focused":false,"agent_status":"unknown","revision":1,"restore_error":"ENOENT"
+            }]);
+            value
+        }
+        other => panic!("the expired close sent {other}"),
+    });
+    let start = Instant::now();
+    let reads = std::cell::Cell::new(0);
+    let clock = || {
+        let read = reads.get();
+        reads.set(read + 1);
+        start + Duration::from_secs(if read == 0 { 0 } else { 6 })
+    };
+    let result = run_close_effect_with_clock(
+        &herdr.connector(),
+        &CloseEffectRequest {
+            safety: Some(CloseSafety {
+                pane_ids: vec!["w1:p1".into()],
+                deadline: start + Duration::from_secs(5),
+            }),
+            failed_terminals: vec![("w1:p1".into(), "original".into())],
+            retain_for_reopen: false,
+            allow_replacement_create: false,
+            replacement: None,
+            key: "slow".into(),
+            connection_generation: 1,
+            target: CloseCaptureTarget::Pane {
+                pane_id: "w1:p1".into(),
+            },
+        },
+        &clock,
+    );
+    assert_eq!(result.unwrap_err().code(), Some("close_deadline_expired"));
+    assert_eq!(herdr.methods(), ["session.snapshot"]);
+}
+
 /// Coexistence B4-B6: a fresh restoration failure can close, but the same
 /// pane id with a replacement terminal or a recovered terminal cannot use it.
 #[test]
@@ -28,6 +189,7 @@ fn failed_terminal_close_checks_incarnation_and_retains_refusals() {
         let result = run_close_effect(
             &herdr.connector(),
             &CloseEffectRequest {
+                safety: None,
                 failed_terminals: vec![("w1:p1".into(), "original".into())],
                 retain_for_reopen: false,
                 allow_replacement_create: false,
@@ -124,6 +286,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
         "w1:t2"
     );
     let close = CloseEffectRequest {
+        safety: None,
         failed_terminals: Vec::new(),
         retain_for_reopen: true,
         allow_replacement_create: true,
