@@ -244,7 +244,13 @@ fn usage_rewritten_file_rescans_and_large_batches_resume_without_loss() {
     let mut rewritten_events = rewritten.events;
     if rewritten.has_more {
         rewritten_events.extend(
-            usage_drain(home.path(), Agent::Claude, &path, Some(rewritten.checkpoint)).0,
+            usage_drain(
+                home.path(),
+                Agent::Claude,
+                &path,
+                Some(rewritten.checkpoint),
+            )
+            .0,
         );
     }
     assert_eq!(rewritten_events.len(), 2);
@@ -545,8 +551,16 @@ fn usage_codex_legacy_fork_is_reported_and_synthetic_totals_never_count() {
         let step = usage::read(home.path(), Agent::Codex, &path, saved).unwrap();
         assert!(step.read_bytes <= 1024 * 1024);
         assert!(step.events.is_empty());
-        assert!(step.skipped.keys().all(|key| key == "fork_boundary_missing"));
-        missing_boundary += step.skipped.get("fork_boundary_missing").copied().unwrap_or(0);
+        assert!(
+            step.skipped
+                .keys()
+                .all(|key| key == "fork_boundary_missing")
+        );
+        missing_boundary += step
+            .skipped
+            .get("fork_boundary_missing")
+            .copied()
+            .unwrap_or(0);
         if !step.has_more {
             break;
         }
