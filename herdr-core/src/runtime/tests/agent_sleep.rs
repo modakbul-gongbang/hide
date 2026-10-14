@@ -790,6 +790,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         assert!(effects.is_empty());
         assert!(!runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
+                failed_terminals: Vec::new(),
                 retain_for_reopen: false,
                 allow_replacement_create: false,
                 replacement: None,
@@ -1283,6 +1284,31 @@ fn visiting_the_tab_wakes_the_agent_once() {
         "agent_wake",
         serde_json::json!({"pane_id": SLEEPER})
     )));
+}
+
+/// Coexistence B3: a saved conversation remains asleep and named when its
+/// terminal failed cold restoration, even if stale agent metadata changed.
+#[test]
+fn visiting_a_failed_terminal_preserves_sleep_without_starting_an_agent() {
+    let (mut runtime, checkout_id) = asleep();
+    let identity = row(&runtime)["identity_label"].clone();
+    let mut failed = session(Some(99));
+    failed
+        .panes
+        .iter_mut()
+        .find(|pane| pane.pane_id == SLEEPER)
+        .unwrap()
+        .failed_terminal_id = Some("failed-terminal".into());
+    runtime.ingest_session(Ok(failed));
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(row(&runtime)["sleep"]["state"], "sleeping");
+    assert_eq!(row(&runtime)["identity_label"], identity);
+    assert_eq!(pane(&runtime)["failed_terminal_id"], "failed-terminal");
+    assert!(!runtime.dispatch_json(&event(
+        "agent_wake",
+        serde_json::json!({"pane_id": SLEEPER})
+    )));
+    assert_eq!(row(&runtime)["sleep"]["state"], "sleeping");
 }
 
 /// B14: a failed wake says why in plain words and offers Retry and Start

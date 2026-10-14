@@ -1185,6 +1185,7 @@ pub(crate) mod tests {
         let panes = ["sender", "recipient"]
             .into_iter()
             .map(|id| crate::model::PaneSnapshot {
+                failed_terminal_id: None,
                 id: id.into(),
                 herdr_label: None,
                 terminal_title: None,

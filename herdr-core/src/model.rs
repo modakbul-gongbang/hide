@@ -1857,6 +1857,9 @@ pub struct TabSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    /// Herdr could not restore this terminal. Never inferred from its cwd or agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_terminal_id: Option<String>,
     pub id: String,
     /// The three names a pane can be shown by, in the order the header prefers
     /// them. The core ships the ingredients rather than a chosen title so the

@@ -385,7 +385,15 @@ When there is no core band, the core-ranked lead child's existing line, or its t
 With no live children there is no tree button or child row, and no empty separator.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
-The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
+The core publishes at most one band: connection, terminal restoration failure or sleep first, own demand next, the lead raised descendant next, then task state.
+Herdr's explicit restoration failure is a terminal fact, independent of an agent's activity or its saved sleep record.
+Its pane body says the terminal could not be restored, names its folder and offers Close pane; raw details remain in diagnostics.
+Visiting this pane preserves a saved conversation and its title without waking it, and neither Wake nor attach Retry is offered as terminal recovery.
+A missing folder alone never establishes restoration failure.
+An explicit close rereads the failed terminal's incarnation and failure before sending the close, and keeps the pane until Herdr confirms removal.
+Other active or unknown panes and descendants keep their close guards.
+A failed terminal has no recoverable live layout, so a close containing one does not enter the ordinary undo stack.
+Closing the last failed terminal preserves the project registration without trying to start a replacement in the failed folder.
 An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the compact raised request count, the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, and Open.
 The request text gets three shares of the flexible space, and the asking agent and an unreceived-letter explanation get one each, so they do not consume the whole reason at narrow widths or enlarged text.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected.

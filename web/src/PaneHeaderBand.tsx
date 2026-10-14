@@ -24,7 +24,7 @@ import { lineText } from "./agentRow";
 import { paneChildren, type PaneChildren } from "./paneChildren";
 
 const LABELS: Record<string, MessageKey> = {
-  sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed",
+  sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed", restore_failed: "panes.restore.failed",
   disconnected: "panes.transport.disconnected", closing: "panes.transport.closing", starting: "panes.transport.starting",
   unavailable: "panes.transport.remoteUnavailable", terminated: "panes.transport.remoteEnded", exit: "agentSessions.exitCode",
   controlled_elsewhere: "panes.transport.scrollElsewhere", device_offline: "panes.transport.disconnected",
@@ -112,7 +112,7 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", ask ? "border-l-2 border-warning bg-secondary text-foreground" : TONES[band.tone])} data-pane-header-band={band.kind}>
     {children ? <PaneTreeButton paneId={paneId} children={children} agents={agents} actions={actions} compact={ask} connection={childConnection} /> : null}
     {ask ? <AskBand paneId={paneId} band={band} navigation={navigation} unreachable={unreachable} failed={progress?.phase === "failed"} actions={actions} hasTree={children !== null} /> : <>
-      <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
+      <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className={band.kind === "restore_failed" ? "min-w-0 truncate" : "shrink-0"}>{label}</span>
       <Hint label={reason ?? label!}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
       {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
       <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />

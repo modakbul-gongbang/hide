@@ -1030,6 +1030,7 @@ pub enum CloseCaptureTarget {
 
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
+    pub failed_terminals: Vec<(String, String)>,
     /// A sleep close must never acquire the independent ordinary undo route.
     pub retain_for_reopen: bool,
     pub key: String,
@@ -1048,6 +1049,7 @@ pub struct CloseCaptureOutcome {
 
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub failed_terminals: Vec<(String, String)>,
     pub retain_for_reopen: bool,
     pub allow_replacement_create: bool,
     pub replacement: Option<ClosedContext>,
@@ -1140,6 +1142,22 @@ fn capture_close_item(
     connector: &dyn ApiConnector,
     request: &CloseCaptureRequest,
 ) -> Result<CloseCaptureOutcome, String> {
+    // A terminal Herdr could not recreate has no live layout to export.
+    // Keep the close intent, but do not promise an undo that cannot restore it.
+    let targets = match &request.target {
+        CloseCaptureTarget::Pane { pane_id } => vec![pane_id.as_str()],
+        CloseCaptureTarget::Tab { .. } => request
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect(),
+    };
+    if targets
+        .iter()
+        .any(|id| request.failed_terminals.iter().any(|(pane, _)| pane == id))
+    {
+        return Ok(CloseCaptureOutcome { item: None });
+    }
     let layout_value = reopen_request(
         connector,
         &format!("herdr-core:{}:export", request.key),
@@ -1284,6 +1302,7 @@ fn run_close_effect(
     connector: &dyn ApiConnector,
     request: &CloseEffectRequest,
 ) -> Result<(), ApiError> {
+    check_failed_terminals(connector, &request.failed_terminals)?;
     let (method, params) = match &request.target {
         CloseCaptureTarget::Pane { pane_id } => (
             "pane.close",
@@ -1302,6 +1321,39 @@ fn run_close_effect(
         Duration::from_secs(5),
     )
     .map(|_| ())
+}
+
+/// One fresh read per close, on its existing worker, with no runtime lock held.
+/// Refuse the old authorization if any failed terminal was replaced or recovered.
+fn check_failed_terminals(
+    connector: &dyn ApiConnector,
+    expected: &[(String, String)],
+) -> Result<(), ApiError> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let value = request_with_connector(
+        connector,
+        "session.snapshot",
+        wire::empty_params(),
+        Duration::from_secs(5),
+    )?;
+    let snapshot = wire::snapshot_response(value)
+        .map_err(|error| ApiError::Malformed(error.message().to_owned()))?;
+    if expected.iter().all(|(id, terminal)| {
+        snapshot.panes.iter().any(|pane| {
+            &pane.pane_id == id && &pane.terminal_id == terminal && pane.restore_error.is_some()
+        })
+    }) {
+        Ok(())
+    } else {
+        Err(ApiError::Remote {
+            code: "close_target_changed".into(),
+            message:
+                "The terminal changed before closing. Check its current state and close it again."
+                    .into(),
+        })
+    }
 }
 
 /// A read-only fresh session check for a close whose transport result was
@@ -3214,6 +3266,22 @@ pub fn spawn_remote_control(
     action: RemoteControlAction,
     connection_generation: u64,
 ) -> Result<(), String> {
+    spawn_remote_control_checked(
+        context,
+        request_id,
+        action,
+        connection_generation,
+        Vec::new(),
+    )
+}
+
+pub(crate) fn spawn_remote_control_checked(
+    context: RemoteControlContext,
+    request_id: String,
+    action: RemoteControlAction,
+    connection_generation: u64,
+    failed_terminals: Vec<(String, String)>,
+) -> Result<(), String> {
     let target_id = context.target_id.clone();
     let worker_name = match &action {
         RemoteControlAction::Pane(PaneControlAction::Focus { .. }) => {
@@ -3261,7 +3329,9 @@ pub fn spawn_remote_control(
         .name(worker_name)
         .spawn(move || {
             let started = Instant::now();
-            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let result = check_failed_terminals(context.api_connector.as_ref(), &failed_terminals)
+                .map_err(|error| ControlFailure::Definite(error.to_string()))
+                .and_then(|()| execute_remote_control(context.api_connector.as_ref(), &action));
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;

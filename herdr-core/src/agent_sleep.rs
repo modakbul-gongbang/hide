@@ -389,6 +389,13 @@ impl AgentSleepStore {
             if record.phase == SleepPhase::Ending {
                 return true;
             }
+            if payload
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == session_pane_id && pane.failed_terminal_id.is_some())
+            {
+                return true;
+            }
             // Only an entry that names a provider and carries another state
             // sequence is a new agent. The ended agent can stay listed a
             // moment with its old sequence, and a pane whose metadata a

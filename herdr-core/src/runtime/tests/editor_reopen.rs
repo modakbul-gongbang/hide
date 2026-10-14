@@ -1625,6 +1625,7 @@ fn rejected_close_removes_only_its_reserved_item() {
 
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
+            failed_terminals: Vec::new(),
             retain_for_reopen: true,
             allow_replacement_create: true,
             replacement: None,
@@ -1660,6 +1661,7 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
         runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));
         runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
+                failed_terminals: Vec::new(),
                 retain_for_reopen: true,
                 allow_replacement_create: true,
                 replacement: None,

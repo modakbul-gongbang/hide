@@ -1217,6 +1217,12 @@ impl Runtime {
         ordered
             .into_iter()
             .map(|(_, _, prediction)| prediction)
+            .filter(|prediction| match prediction {
+                super::pane_prediction::Prediction::Close { pane } => {
+                    self.failed_terminal_id(pane).is_none()
+                }
+                _ => true,
+            })
             .collect()
     }
 

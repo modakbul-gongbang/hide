@@ -303,6 +303,8 @@ macro_rules! record_conversions {
         impl From<$wire::PaneInfo> for ProjectedPane {
             fn from(v: $wire::PaneInfo) -> Self {
                 Self {
+                    terminal_id: v.terminal_id,
+                    restore_error: v.restore_error,
                     pane_id: v.pane_id,
                     foreground_process: None,
                     agent_status: v.agent_status.to_string(),

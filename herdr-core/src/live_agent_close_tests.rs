@@ -1,6 +1,52 @@
 use super::*;
 use crate::fake_herdr::FakeHerdr;
 
+/// Coexistence B4-B6: a fresh restoration failure can close, but the same
+/// pane id with a replacement terminal or a recovered terminal cannot use it.
+#[test]
+fn failed_terminal_close_checks_incarnation_and_retains_refusals() {
+    for (terminal, failed, refuses, expected) in [
+        ("original", true, false, true),
+        ("replacement", true, false, false),
+        ("original", false, false, false),
+        ("original", true, true, false),
+    ] {
+        let herdr = FakeHerdr::start_with_errors("restore-close", move |method, _| match method {
+            "session.snapshot" => {
+                let mut value = snapshot(false);
+                value["snapshot"]["panes"] = json!([{
+                    "pane_id":"w1:p1", "terminal_id":terminal, "workspace_id":"w1", "tab_id":"w1:t1",
+                    "focused":false, "agent_status":"idle", "revision":1,
+                    "restore_error": if failed { Some("ENOENT") } else { None },
+                }]);
+                Ok(value)
+            }
+            "pane.close" if refuses => Err(("fixture_refusal".into(), "close refused".into())),
+            "pane.close" => Ok(json!({"type":"ok"})),
+            other => panic!("unexpected request {other}"),
+        });
+        let result = run_close_effect(
+            &herdr.connector(),
+            &CloseEffectRequest {
+                failed_terminals: vec![("w1:p1".into(), "original".into())],
+                retain_for_reopen: false,
+                allow_replacement_create: false,
+                replacement: None,
+                key: "restore-close".into(),
+                connection_generation: 1,
+                target: CloseCaptureTarget::Pane {
+                    pane_id: "w1:p1".into(),
+                },
+            },
+        );
+        assert_eq!(result.is_ok(), expected);
+        assert_eq!(
+            herdr.methods().contains(&"pane.close".to_owned()),
+            terminal == "original" && failed
+        );
+    }
+}
+
 fn context() -> ClosedContext {
     ClosedContext {
         workspace_id: "w1".into(),
@@ -78,6 +124,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
         "w1:t2"
     );
     let close = CloseEffectRequest {
+        failed_terminals: Vec::new(),
         retain_for_reopen: true,
         allow_replacement_create: true,
         key: "intent".into(),
