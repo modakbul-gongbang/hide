@@ -878,6 +878,8 @@ Cursor grants none, and protocol 24's frozen reader facts remain unchanged.
 
 The usage worker owns one writer and reads only its supplied own-node link, alternating agents so a large history cannot starve another.
 Each turn performs one bounded read and transaction, then rests for 20 ms; native JSONL parsing itself yields at 10 ms and never exceeds one MiB including its checkpoint witnesses.
+OpenCode's usage read sizes each row from its record header (`octet_length`) before loading it, so a message or part past the 64 KiB row bound is skipped as `record_capacity` and the cursor moves past it; measuring with `length(CAST(data AS BLOB))` loaded the value, and one row past SQLite's 1 MiB value limit failed every read and held the cursor on it.
+A failed listing or read is logged as `usage_list_failed` or `usage_read_failed` with the node's `reason` (its refusal code, such as `usage_read_Database`, or how the link failed), and the agent is listed again 30 seconds later.
 Two replaceable visibility flags control its work: without a window it rests; candidate discovery runs every 30 seconds, or 3 while usage is open, and changed reports publish every 30 or 5 seconds respectively.
 Its owner signals the condition variable and joins it on shutdown, including startup failure and an idle wait.
 Complete uncapped listings retire deleted file checkpoints without deleting their totals or recent dedup authority.

@@ -345,9 +345,11 @@ impl Database {
             }
         }
         let size: usize = connection
-            .query_row("SELECT length(CAST(value AS BLOB)) FROM meta WHERE key='0' AND typeof(value)='text'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT octet_length(value) FROM meta WHERE key='0' AND typeof(value)='text'",
+                [],
+                |row| row.get(0),
+            )
             .map_err(|_| invalid("cursor_metadata_unavailable"))?;
         if size > META_BYTES * 2 {
             return Err(capacity("cursor_metadata_bytes", META_BYTES));
