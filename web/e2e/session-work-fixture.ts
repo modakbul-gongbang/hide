@@ -85,5 +85,5 @@ export function seedFirstWork(herdr: HerdrFixture, at: number) {
 
 export function nextWork(at: number): FixtureLabel {
   return { task: NEXT_GOAL, at, end: "unfinished", toolOutputs: ["https://github.com/acme/repo/pull/32"],
-    work: { task: { kind: "new", name: "이슈와 검색 검증" }, missed: [{ kind: "leftover", text: "실제 저장소에서 이슈 생성 결과를 확인해야 합니다" }], resolved: [], output_task_id: null } };
+    work: { task: { kind: "new", name: "이슈와 검색 검증" }, missed: [{ kind: "problem", text: "다른 저장소의 이슈 템플릿이 비어 있어 따로 고쳐야 합니다" }], resolved: [], output_task_id: null } };
 }

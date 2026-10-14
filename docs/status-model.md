@@ -640,7 +640,7 @@ The Herdr workspace label is never a name: it is whatever the workspace was call
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v9`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v10`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 A session with no goal and no assigned work answers `goal: null`; greetings, identity questions and capability questions create no task and no placeholder title.
 The row uses the existing title priority above, and the next analysis after real work is requested sets its first goal.
 A goal already set cannot become null and changes only on an operator turn with `goal_changed: true`; goals stored by earlier builds are preserved because the record cannot distinguish an invented goal from an actual assignment.
@@ -721,6 +721,9 @@ An assigned task is Done only after its last END is Done and all assigned PRs ar
 Descendant results can hold the parent's assigned task open, but do not duplicate the child's chapters or requests in the parent's own work.
 Children show three visual indentation levels, five siblings initially and a More action for the rest.
 
+A missed item is work nobody holds once the session closes: a problem the agent reported finding outside its assigned task, or a separate task or issue with a different result that it proposed and nobody has taken.
+Measuring, checking or verifying the assigned task's result, even when the agent calls it a follow-up, the task's own remainder, merge, install and app replacement steps stay with the task verdict, the pull request and CI, and are not missed work; neither is anything already recorded in an issue or pull request by number or link.
+Records written before `context_label.v10` may still hold such an item with the `leftover` kind.
 Missed items are durable Open, Resolved, Issue or Dismissed records.
 Dismiss can be undone, a resolved item reopened, and every closed status sits under `닫힘 N` until expanded.
 The Sessions top group includes open missed work as soon as a session is resolved, or once it leaves the list under the existing 24-hour rule, within the project's Copied history window (90 days by default).
