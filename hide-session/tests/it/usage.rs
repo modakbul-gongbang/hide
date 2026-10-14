@@ -348,12 +348,36 @@ fn usage_oversized_record_advances_in_bounded_steps_and_reports_its_loss() {
     let first = usage::read(home.path(), Agent::Claude, &path, None).unwrap();
     assert!(first.read_bytes <= 1024 * 1024);
     assert_eq!(first.skipped.get("record_capacity"), Some(&1));
+    assert_eq!(first.skipped.len(), 1);
+    assert!(first.events.is_empty());
+    assert!(first.has_more);
     let second = usage::read(home.path(), Agent::Claude, &path, Some(first.checkpoint)).unwrap();
     assert!(second.read_bytes <= 1024 * 1024);
-    let third = usage::read(home.path(), Agent::Claude, &path, Some(second.checkpoint)).unwrap();
-    assert_eq!(third.events.len(), 1);
-    assert!(third.skipped.is_empty());
-    assert!(!third.has_more);
+    assert!(second.events.is_empty());
+    assert!(second.skipped.is_empty());
+    assert!(second.has_more);
+    // Accounting follows the checkpoint to EOF: the 10ms page may yield
+    // after the discarded suffix, before it consumes the valid event.
+    let (events, checkpoint) =
+        usage_drain(home.path(), Agent::Claude, &path, Some(second.checkpoint));
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, "session-a");
+    assert_eq!(events[0].model, "claude-fixture");
+    assert_eq!(
+        (
+            events[0].tokens.input,
+            events[0].tokens.output,
+            events[0].tokens.cache_read,
+            events[0].tokens.cache_write,
+            events[0].tokens.cache_write_1h,
+        ),
+        (10, 5, 100, 20, 4)
+    );
+    assert_eq!(serde_json::to_value(&checkpoint).unwrap()["finished"], true);
+    let eof = usage::read(home.path(), Agent::Claude, &path, Some(checkpoint)).unwrap();
+    assert!(eof.events.is_empty());
+    assert!(eof.skipped.is_empty());
+    assert!(!eof.has_more);
 }
 
 #[test]
