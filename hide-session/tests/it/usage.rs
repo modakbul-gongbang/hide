@@ -241,8 +241,14 @@ fn usage_rewritten_file_rescans_and_large_batches_resume_without_loss() {
     fs::write(&path, CLAUDE.replace("request-a", "request-b") + CLAUDE).unwrap();
     let rewritten = usage::read(home.path(), Agent::Claude, &path, Some(first.checkpoint)).unwrap();
     assert!(rewritten.rescanned);
-    assert_eq!(rewritten.events.len(), 2);
-    assert_ne!(rewritten.events[0].key, first.events[0].key);
+    let mut rewritten_events = rewritten.events;
+    if rewritten.has_more {
+        rewritten_events.extend(
+            usage_drain(home.path(), Agent::Claude, &path, Some(rewritten.checkpoint)).0,
+        );
+    }
+    assert_eq!(rewritten_events.len(), 2);
+    assert_ne!(rewritten_events[0].key, first.events[0].key);
 
     fs::write(&path, CLAUDE.repeat(12_000)).unwrap();
     assert_eq!(
@@ -531,9 +537,23 @@ fn usage_codex_legacy_fork_is_reported_and_synthetic_totals_never_count() {
     let model = serde_json::json!({"type":"turn_context","payload":{"model":"model-a"}});
     let mut meta = serde_json::json!({"type":"session_meta","payload":{"id":"child","forked_from_id":"parent"}});
     fs::write(&path, format!("{meta}\n{model}\n{count}\n")).unwrap();
-    let step = usage::read(home.path(), Agent::Codex, &path, None).unwrap();
-    assert!(step.events.is_empty());
-    assert_eq!(step.skipped.get("fork_boundary_missing"), Some(&1));
+    // This fixture expects a reported loss, so inspect every bounded page
+    // rather than using usage_drain, which requires no skipped records.
+    let mut saved = None;
+    let mut missing_boundary = 0;
+    for page in 0..100 {
+        let step = usage::read(home.path(), Agent::Codex, &path, saved).unwrap();
+        assert!(step.read_bytes <= 1024 * 1024);
+        assert!(step.events.is_empty());
+        assert!(step.skipped.keys().all(|key| key == "fork_boundary_missing"));
+        missing_boundary += step.skipped.get("fork_boundary_missing").copied().unwrap_or(0);
+        if !step.has_more {
+            break;
+        }
+        saved = Some(step.checkpoint);
+        assert!(page < 99, "bounded fixture did not finish");
+    }
+    assert_eq!(missing_boundary, 1);
     meta["payload"]["forked_from_ordinal_exclusive"] = 42.into();
     let mut inherited = count.clone();
     inherited["ordinal"] = 41.into();
@@ -544,10 +564,9 @@ fn usage_codex_legacy_fork_is_reported_and_synthetic_totals_never_count() {
         format!("{meta}\n{model}\n{inherited}\n{count}\n{synthetic}\n"),
     )
     .unwrap();
-    let step = usage::read(home.path(), Agent::Codex, &path, None).unwrap();
-    assert!(step.skipped.is_empty());
-    assert_eq!(step.events.len(), 1);
-    assert_eq!(step.events[0].tokens.input, 100);
+    let (events, _) = usage_drain(home.path(), Agent::Codex, &path, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].tokens.input, 100);
 }
 
 fn opencode_fixture(home: &std::path::Path) -> (std::path::PathBuf, rusqlite::Connection) {
