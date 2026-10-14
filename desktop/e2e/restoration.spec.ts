@@ -3,11 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
+import { toPage } from "../src/main/wirePath";
 import { fitWindow, isolate, launchShell, test } from "./fixture";
 
 // B16: native presentation of a real failed cold restore in both themes,
 // with a long Korean cwd and a narrow window. OS keyboard input is not claimed.
-test("failed terminals remain legible and keyboard reachable in a narrow native window", async () => {
+// @platform: Herdr's native folder becomes a wire path before the page renders it.
+test("failed terminals remain legible and keyboard reachable in a narrow native window", { tag: "@platform" }, async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "restoration");
   let app: ElectronApplication | null = null;
@@ -29,7 +31,7 @@ test("failed terminals remain legible and keyboard reachable in a narrow native 
     await page.locator(`[data-tab="${made.result.tab.tab_id}"]`).click();
     const failed = page.locator("[data-pane-restore-failed]");
     await expect(failed).toHaveCount(1);
-    await expect(failed).toContainText(folder);
+    await expect(failed).toContainText(toPage(folder));
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
     if (evidence) fs.writeFileSync(path.join(evidence, "native-restoration-identity.json"), JSON.stringify({ ...identity, daemonPid: run.daemonPid(), state: run.env.HIDE_STATE_DIR, socket: herdr.socket }));
     for (const theme of ["dark", "light"]) {

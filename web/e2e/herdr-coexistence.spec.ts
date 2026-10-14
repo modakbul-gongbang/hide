@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
@@ -61,7 +62,7 @@ test("a missing-folder cold restore shows failure without an agent and closes on
     await enterWorkspace(page);
     const failed = page.locator("[data-pane-restore-failed]");
     await expect(failed).toHaveCount(2);
-    await expect(failed.first()).toContainText(folder);
+    await expect(failed.first()).toContainText(toPage(folder));
     await expect(page.locator("[data-agent-wake]")).toHaveCount(0);
     await screenshot(page, "coexistence-restoration-failed");
     const pane = await failed.first().getAttribute("data-pane-restore-failed");
