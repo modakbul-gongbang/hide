@@ -619,16 +619,6 @@ impl Runtime {
             });
         }
         entry.view_next_id = entry.next_view_identity();
-        // A view opened into the files tool while it held no view, where the
-        // tree filled the lane, opens beside the tree, which stays on (PRD
-        // right-lane B12).
-        if changed
-            && entry.shows_files()
-            && before.display_count() == 0
-            && entry.layout.display_count() > 0
-        {
-            entry.tree = true;
-        }
         if changed {
             store.generation += 1;
             self.persist_workspace_views();

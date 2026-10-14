@@ -827,6 +827,50 @@ fn first_background_view_leaves_the_closed_lane_closed() {
     );
 }
 
+/// PRD right-lane B17: from the front tab, `hide file open` and `hide view
+/// select` call the lane as a click does, and a file opened while the tree
+/// showed alone opens beside it.
+#[test]
+fn a_front_tab_open_calls_the_lane_and_keeps_a_lone_tree() {
+    let (mut runtime, checkout, directory) = setup("front-open");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    view_event(&mut runtime, serde_json::json!({"tool": null}));
+    let calls = runtime.snapshot.workspace_view.as_ref().unwrap().lane_calls;
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        Action::Select {
+            view_id: a,
+            reveal: false,
+            expected_browser_area: None,
+        },
+        "front-select",
+    );
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
+    assert!(view.lane_called > calls, "a put-away lane comes forward");
+
+    // A tab shown for the first time has no view, so the tree fills it.
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tree);
+    control_file(
+        &mut runtime,
+        "w-order:t2:p",
+        &directory,
+        "b.md",
+        false,
+        "beside-tree",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["b.md"]);
+    assert!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tree,
+        "the tree stays beside the opened file"
+    );
+}
+
 #[test]
 fn reveal_selects_the_actual_caller_and_checkout_calls_use_the_operator() {
     let (mut runtime, checkout, directory) = setup("caller-reveal");

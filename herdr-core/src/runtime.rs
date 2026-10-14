@@ -2467,7 +2467,16 @@ impl Runtime {
         let intent = self
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
-            .flatten();
+            .flatten()
+            // Decided before the event runs, so a file read that lands later
+            // keeps the tree the same as one already open (B12).
+            .map(|intent| {
+                if matches!(event, Event::FileOpen(_)) && self.front_shows_tree_alone() {
+                    AreaIntent::BesideTree
+                } else {
+                    intent
+                }
+            });
         // A keystroke in a document is as frequent as terminal input and
         // moves no area either: its first edit keeps its own displays open,
         // and the next snapshot read's sync publishes that.

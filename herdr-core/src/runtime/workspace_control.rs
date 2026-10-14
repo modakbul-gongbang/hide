@@ -1,6 +1,6 @@
 //! Pane-scoped queries and actions against the live Herdr projection.
 
-use super::{AreaIntent, Runtime};
+use super::Runtime;
 use crate::view_layout::DisplayKind;
 use crate::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, BrowserRouteSource,
@@ -143,7 +143,6 @@ impl Runtime {
                 },
             });
         }
-        self.apply_area_intent_to(key, AreaIntent::Files);
     }
 
     pub fn browser_route_source(
@@ -403,6 +402,14 @@ impl Runtime {
             // A pane of a tab the operator is not looking at keeps the
             // operator's fronts and only bookmarks its own tab (D-05).
             let parked = self.parked_caller(&key, pane_id, &action)?;
+            // An open the operator is looking at calls the lane as a click
+            // does: from the front tab of the front Workspace, or revealed
+            // (PRD right-lane B17). Read before the open adds its view.
+            let lane_intent = lane_call(&action)
+                .filter(|reveal| {
+                    *reveal || parked.is_none() && self.front_workspace_key().as_ref() == Some(&key)
+                })
+                .map(|_| self.control_open_intent(&key));
             let projected_action = parked
                 .as_ref()
                 .map_or_else(|| action.clone(), |parked| parked.action(action.clone()));
@@ -423,6 +430,9 @@ impl Runtime {
             match &applied {
                 Ok(done) => {
                     self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
+                    if let Some(intent) = lane_intent {
+                        self.apply_area_intent_to(&key, intent);
+                    }
                 }
                 Err(_) => self.put_back_parked(&key, parked),
             }
@@ -1019,5 +1029,23 @@ fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
     Refusal {
         reason: error.kind(),
         next_action: "Run hide view list, choose an available View or area, and retry",
+    }
+}
+
+/// Whether an action opens or selects a view the operator asked for, and
+/// with `--reveal`. A browser page's own target, bound to its area, calls
+/// the lane only when revealed: the page is where it already was.
+fn lane_call(action: &Action) -> Option<bool> {
+    match action {
+        Action::OpenFile { reveal, .. } | Action::OpenDiff { reveal, .. } => Some(*reveal),
+        Action::OpenBrowser {
+            reveal, area_id, ..
+        } => (area_id.is_none() || *reveal).then_some(*reveal),
+        Action::Select {
+            reveal,
+            expected_browser_area,
+            ..
+        } => (expected_browser_area.is_none() || *reveal).then_some(*reveal),
+        Action::Split { .. } | Action::Move { .. } | Action::Close { .. } => None,
     }
 }

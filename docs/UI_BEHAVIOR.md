@@ -139,7 +139,9 @@ An unavailable or retired keyboard target never falls through to closing a diffe
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
-An explicit local `--reveal` brings that Workspace and the opened View forward and opens the lane on Files; without it, the lane stays as it is and the Files icon's badge counts the new view.
+An explicit local `--reveal` brings that Workspace and the opened View forward and opens the lane on Files.
+Without it, an open or `hide view select` from the pane of the front Workspace's active tab opens the lane on Files as a click does, the tree staying on when it showed alone; from a background tab or another Workspace the lane stays as it is and the Files icon's badge counts the new view.
+A browser page's own new target, bound to its area, does not open the lane.
 A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, updates its own presentation and preserves the operator's lane and presentation (see File Views per Agent tab).
 Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front in the lane, opened as any open opens it, and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
 `hide view split`, `move` and `close` apply to the caller's presentation, including while it is hidden.

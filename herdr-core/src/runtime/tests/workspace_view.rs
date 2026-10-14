@@ -595,6 +595,29 @@ fn the_files_lane_opens_with_no_view_and_stays_on_when_the_last_view_closes() {
     assert!(runtime.snapshot.ui_state.right_panel_visible);
 }
 
+/// PRD right-lane B12, B16: only a file opened while the files tool shows the
+/// tree alone keeps the tree; opened from a closed lane or another tool, the
+/// files tool opens with the tree as it was, the file read before or not.
+#[test]
+fn a_file_opened_from_a_closed_lane_or_another_tool_leaves_the_tree_off() {
+    let (runtime, checkout_id, directory) = strip_checkout("tree-stays-off");
+    let mut runtime = with_new_views(runtime, "tree-stays-off");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(
+        lane(&runtime),
+        (Some(Tool::Files), false, false),
+        "from a closed lane"
+    );
+    close_only_display(&mut runtime);
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(
+        lane(&runtime),
+        (Some(Tool::Files), false, false),
+        "from another tool, the file read before"
+    );
+}
+
 /// PRD right-lane B16, D-13: a reveal opens the files tool with its tree,
 /// opens nothing and is a call; a terminal link's file opens the files tool
 /// and leaves the tree as it was; a linked folder opens the files tool with
