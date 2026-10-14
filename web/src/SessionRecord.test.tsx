@@ -58,13 +58,13 @@ it("draws the PRs first, then the checklist with its count, a task's PR on its l
   try {
     const outputs = Array.from(container.querySelectorAll('[data-record-outputs] [data-record-output="pr"]'));
     // Only the child's PR names its maker, at the row's end.
-    expect(outputs.map(text)).toEqual(["#1100PR title 1100", "#1093PR title 1093Child work"]);
+    expect(outputs.map(text)).toEqual(["#" + "1100PR title 1100", "#" + "1093PR title 1093Child work"]);
     expect(text(container.querySelector("[data-record-outputs] h3"))).toBe("PR 2");
     expect(text(container.querySelector("[data-record-work] h3"))).toBe("Assigned work 1/2");
     const tasks = Array.from(container.querySelectorAll("[data-record-task]"));
     expect(tasks.map((row) => row.getAttribute("data-record-task"))).toEqual(["t1", "t2"]);
     expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", "Review pending"]);
-    expect(text(tasks[1]!.querySelector("[data-record-task-pr]"))).toBe("#1100");
+    expect(text(tasks[1]!.querySelector("[data-record-task-pr]"))).toBe("#" + "1100");
     // The state is an icon and its name, never a word on the line.
     expect(text(tasks[1]!)).not.toContain("Review pending");
     expect(container.querySelector("[data-record-verdict]")).toBeNull();

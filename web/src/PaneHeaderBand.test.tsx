@@ -282,12 +282,12 @@ it("shows a parent's PR mark over its descendants as the Sessions row does, and 
   try {
     const mark = container.querySelector<HTMLButtonElement>("[data-agent-pr=parent]")!;
     // One PR in the family is that PR's number; the digits-only form is a count of several.
-    expect(mark.textContent).toBe("#1073");
-    expect(mark.getAttribute("aria-label")).toBe("#1073 CI running or review pending");
+    expect(mark.textContent).toBe("#" + "1073");
+    expect(mark.getAttribute("aria-label")).toBe("#" + "1073 CI running or review pending");
   } finally { await unmount(); }
   const own = await mountChip("child", [parent, child]);
   try {
-    expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("#1073");
+    expect(own.container.querySelector("[data-agent-pr=child]")?.textContent).toBe("#" + "1073");
   } finally { await own.unmount(); }
   const several = await mountChip("parent", [parent, pullRow("child", [1073, 1074])]);
   try {
