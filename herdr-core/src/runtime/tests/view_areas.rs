@@ -2587,3 +2587,196 @@ fn a_reveal_calls_the_file_views_of_its_own_checkout() {
         "the Workspace in front before is not called"
     );
 }
+
+/// The Workspace in front as a `view_layout` or `file_open` names it.
+fn front_view(runtime: &mut Runtime) -> serde_json::Value {
+    runtime.sync_workspace_view();
+    let view = runtime
+        .snapshot
+        .workspace_view
+        .as_ref()
+        .expect("a front Workspace");
+    serde_json::json!({"device_id": view.device_id, "path": view.path})
+}
+
+/// A terminal link's `file_open` for a file of the second checkout, shown
+/// in the Workspace `view`.
+fn open_linked(runtime: &mut Runtime, path: &Path, other_checkout: &str, view: serde_json::Value) {
+    runtime.dispatch_json(&explorer_event(
+        "file_open",
+        serde_json::json!({
+            "path": path.to_string_lossy(),
+            "workspace_id": "workspace:other",
+            "checkout_id": other_checkout,
+            "view": view,
+        }),
+    ));
+}
+
+fn focus_checkout(runtime: &mut Runtime, workspace_id: &str, checkout_id: &str) {
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": workspace_id, "checkout_id": checkout_id}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+/// A terminal link to a file of another registered checkout opens it in the
+/// View areas in front as an ordinary tab, and no checkout comes forward:
+/// the Explorer keeps its selection, the file stays its own checkout's
+/// document, and that checkout's View adds no display of it. Its own View
+/// can show it too, and closing the view in front keeps the document there.
+/// A link that names a Workspace not in front opens nothing.
+#[test]
+fn a_file_of_another_checkout_opens_in_the_views_in_front_and_moves_no_checkout() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("view-link-elsewhere");
+    let (other, other_checkout) = second_checkout(&mut runtime, &directory);
+    let mut runtime = with_new_views(runtime, "view-link-elsewhere");
+    files(&other, &["shot.md"]);
+    let shot = other.join("shot.md");
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    let selected = runtime.snapshot.ui_state.selected_path.clone();
+    let front = front_view(&mut runtime);
+
+    open_linked(&mut runtime, &shot, &other_checkout, front.clone());
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(checkout_id.as_str()),
+        "no checkout comes forward"
+    );
+    assert_eq!(front_view(&mut runtime), front);
+    assert_eq!(labels(&mut runtime), vec![vec!["notes.md", "shot.md"]]);
+    assert_eq!(active_label(&runtime).as_deref(), Some("shot.md"));
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    assert_eq!(runtime.snapshot.ui_state.selected_path, selected);
+    let tab = runtime
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .find(|tab| tab.label == "shot.md")
+        .unwrap();
+    assert_eq!(
+        (
+            tab.workspace_id.as_str(),
+            tab.checkout_id.as_str(),
+            tab.preview
+        ),
+        ("workspace:other", other_checkout.as_str(), false),
+        "an ordinary tab of the file's own checkout"
+    );
+    let shot_tab = tab.id.clone();
+
+    focus_checkout(&mut runtime, "workspace:other", &other_checkout);
+    let elsewhere = front_view(&mut runtime);
+    assert!(
+        labels(&mut runtime).concat().is_empty(),
+        "the file's own checkout adds no view of it"
+    );
+    runtime.dispatch_json(&explorer_event(
+        "file_open",
+        serde_json::json!({
+            "path": shot.to_string_lossy(),
+            "workspace_id": "workspace:other",
+            "checkout_id": other_checkout,
+        }),
+    ));
+    assert_eq!(labels(&mut runtime), vec![vec!["shot.md"]]);
+    focus_checkout(&mut runtime, "workspace:order", &checkout_id);
+    let shown_here = display(&mut runtime, 0, "shot.md");
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "close", "display_id": shown_here}),
+    ));
+    assert_eq!(labels(&mut runtime), vec![vec!["notes.md"]]);
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == shot_tab),
+        "its own checkout's view still shows the document"
+    );
+
+    let before = tree(&mut runtime);
+    open_linked(&mut runtime, &shot, &other_checkout, elsewhere);
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("file.invalid_context")
+    );
+    assert_eq!(tree(&mut runtime), before);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(checkout_id.as_str())
+    );
+}
+
+/// A view a terminal link opened for another checkout's file comes back
+/// after a restart, read from that checkout, and that checkout's View still
+/// adds no display of it.
+#[test]
+fn a_linked_file_of_another_checkout_comes_back_after_a_restart() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("view-link-restart");
+    let (other, other_checkout) = second_checkout(&mut runtime, &directory);
+    let (_views, state) = views_path("view-link-restart");
+    let mut runtime = with_views(runtime, &state);
+    // The checkout folders outlive the runtime: the test restarts on them.
+    let _checkouts = hold_dirs(&mut runtime);
+    files(&other, &["shot.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    let front = front_view(&mut runtime);
+    open_linked(&mut runtime, &other.join("shot.md"), &other_checkout, front);
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    drop(runtime);
+
+    let (mut restarted, _) = tab_order_runtime(&directory.to_string_lossy());
+    assert_eq!(
+        second_checkout(&mut restarted, &directory).1,
+        other_checkout
+    );
+    let mut restarted = with_views(restarted, &state);
+    let states: Vec<_> = areas(&tree(&mut restarted))
+        .into_iter()
+        .flat_map(|(_, _, displays)| displays)
+        .map(|display| (display.label, display.state))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("notes.md".to_owned(), ViewDisplayState::Open),
+            ("shot.md".to_owned(), ViewDisplayState::Open),
+        ]
+    );
+    let tab = restarted
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .find(|tab| tab.label == "shot.md")
+        .unwrap();
+    assert_eq!(
+        tab.checkout_id, other_checkout,
+        "read from its own checkout"
+    );
+    focus_checkout(&mut restarted, "workspace:other", &other_checkout);
+    assert!(labels(&mut restarted).concat().is_empty());
+}

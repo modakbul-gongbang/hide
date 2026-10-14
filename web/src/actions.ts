@@ -2336,10 +2336,12 @@ export function createActions(send: DispatchFn) {
      * A path a terminal link names on this Mac (docs/ARCHITECTURE.md, A
      * clicked path is one event). Inside a registered checkout it is one
      * event naming the checkout whose physical root holds it longest:
-     * `browser_open` for HTML, `reveal_path` for another file, Open source or
-     * a folder. The checkout comes forward with the chosen view; outside
-     * every checkout, or on ⌘ (Ctrl off macOS), the desktop host hands it to
-     * the operating system.
+     * `browser_open` for HTML, `file_open` or `reveal_path` for another file
+     * or Open source, `reveal_path` for a folder. A file of another checkout
+     * opens in the Workspace in front and moves no checkout; a file of the
+     * checkout in front, or a folder, is revealed with its checkout forward.
+     * Outside every checkout, or on ⌘ (Ctrl off macOS), the desktop host
+     * hands it to the operating system.
      */
     openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean, mode: "auto" | "source" = "auto") {
       const bridge = hostBridge();
@@ -2352,15 +2354,29 @@ export function createActions(send: DispatchFn) {
           return;
         }
         const { path, deviceId } = owner;
+        // The core keeps a Workspace in front while the page shows All
+        // projects or an Overview; a file opened there would land out of sight.
+        const front = ui().screen?.kind === "workspace" ? frontViewWorkspace() : null;
+        const here = found.kind === "file" && front?.device_id === deviceId && front.path !== owner.checkout.path ? front : null;
         if (found.kind === "file" && isHtmlFile(path) && mode === "auto") {
           dispatch({
             schema_version: 2,
             kind: "browser_open",
-            payload: { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true },
+            payload: here
+              ? { url: fileUrl(path), workspace: here }
+              : { url: fileUrl(path), workspace: { device_id: deviceId, path: owner.checkout.path }, reveal: true },
           });
           return;
         }
         if (found.kind === "file" && line !== null) requestLine([path, found.real], line, column);
+        if (here) {
+          dispatch({
+            schema_version: 2,
+            kind: "file_open",
+            payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, preview: false, view: here },
+          });
+          return;
+        }
         dispatch({
           schema_version: 2,
           kind: "reveal_path",
