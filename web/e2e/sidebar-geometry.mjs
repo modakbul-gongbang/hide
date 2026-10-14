@@ -7,7 +7,6 @@
 
 /** Every row the sidebar lists draw, by a stable key. */
 const ROWS = [
-  ["tab", "[data-sidebar-tab-row]", "data-sidebar-tab-row"],
   ["agent", "li[data-pane]", "data-pane"],
   ["checkout", "[data-checkout-menu]", "data-checkout-menu"],
   ["project", "[data-project-menu]", "data-project-menu"],
@@ -18,7 +17,6 @@ const ROWS = [
 
 /** What ends or fills one line of a row: names, chips, badges, times and the fold slot. */
 const PARTS = [
-  "[data-sidebar-tab-title]",
   "[data-agent-title]",
   "[data-branch-chip]",
   "[data-device-chip]",
@@ -68,7 +66,7 @@ export async function rowBoxes(page) {
 export async function rowTargets(page) {
   return page.evaluate((rows) => {
     const targets = [];
-    const controls = ["[data-agent-open]", "[data-sidebar-tab]", "[data-checkout]", "[data-project-row]"];
+    const controls = ["[data-agent-open]", "[data-checkout]", "[data-project-row]"];
     for (const [kind, selector, attribute] of rows) {
       for (const row of document.querySelectorAll(`nav[data-sidebar] ${selector}`)) {
         if (row.getClientRects().length === 0) continue;
@@ -93,7 +91,7 @@ export async function rowTargets(page) {
 export async function agentColumns(page) {
   return page.evaluate(() => {
     const lists = [];
-    for (const list of document.querySelectorAll("nav[data-sidebar] [data-checkout-agents-open] > [data-sidebar-tab-group]")) {
+    for (const list of document.querySelectorAll("nav[data-sidebar] [data-checkout-agents-open]")) {
       const rows = [];
       for (const row of list.querySelectorAll("li[data-pane]")) {
         if (row.getClientRects().length === 0) continue;
@@ -102,7 +100,7 @@ export async function agentColumns(page) {
         if (!mark || !title) continue;
         rows.push({ pane: row.getAttribute("data-pane"), depth: Number(row.getAttribute("data-depth") ?? "0"), mark: Math.round(mark.x * 10) / 10, title: Math.round(title.x * 10) / 10 });
       }
-      lists.push({ list: list.closest("[data-checkout-agents-open]")?.getAttribute("data-checkout-agents-open") + ":" + list.getAttribute("data-sidebar-tab-group"), rows });
+      lists.push({ list: list.getAttribute("data-checkout-agents-open") ?? "agents", rows });
     }
     return lists;
   });

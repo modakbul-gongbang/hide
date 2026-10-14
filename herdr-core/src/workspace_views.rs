@@ -334,9 +334,29 @@ impl WorkspaceView {
             .max(self.view_next_id)
     }
 
-    /// Inheriting a presentation never aliases a native page or its area
-    /// authority. The allocator spans every presentation in this checkout.
-    pub(crate) fn inherited_presentation(&self, tab: &str) -> Presentation {
+    /// A tab seen for the first time starts with no Views and File Views
+    /// off: its own opens fill it, never a copy of another tab's list. Its
+    /// one empty area takes an identity from the allocator that spans every
+    /// presentation in this checkout.
+    pub(crate) fn fresh_presentation(&self) -> Presentation {
+        let mut layout = Layout::default();
+        let mut next = self.next_view_identity();
+        let in_use = layout.active_area.clone();
+        if let Some(active) = remint(&mut layout.root, &mut next, &in_use) {
+            layout.active_area = active;
+        }
+        layout.next_id = next;
+        Presentation {
+            layout,
+            views: false,
+            pending_result: false,
+        }
+    }
+
+    /// The projected owner's own Views, copied for a background caller of
+    /// that tab while another tab has the keyboard. The copy never aliases a
+    /// native page or its area authority.
+    pub(crate) fn owner_copy(&self, tab: &str) -> Presentation {
         let mut layout = self.layout.clone();
         let mut next = self.next_view_identity();
         let in_use = layout.active_area.clone();
@@ -404,19 +424,7 @@ impl WorkspaceView {
                 if owners >= 64 {
                     return Err(crate::view_layout::LayoutError::DisplayLimit);
                 }
-                if self.layouts().map(Layout::display_count).sum::<usize>()
-                    + self.layout.display_count()
-                    > crate::view_layout::MAX_VIEW_DISPLAYS
-                {
-                    return Err(crate::view_layout::LayoutError::DisplayLimit);
-                }
-                if self.layouts().map(Self::occupied_areas).sum::<usize>()
-                    + Self::occupied_areas(&self.layout)
-                    > crate::view_layout::MAX_VIEW_AREAS
-                {
-                    return Err(crate::view_layout::LayoutError::AreaLimit);
-                }
-                self.inherited_presentation(tab)
+                self.fresh_presentation()
             }
         };
         let prior = self

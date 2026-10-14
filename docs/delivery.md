@@ -39,9 +39,9 @@ A `request` or `block` letter waits for its answer until one of four things ends
 When the last two end it, the letter keeps its `state`, `waiting_answer` turns `false`, `finished_at_unix_ms` is set, and `answer_wait_ended` says why: `party_ended` or `deadline`; it is `null` on every other letter.
 The sender reads it in the answer of `hide request show` (and in every other answer that carries the letter); `hide inbox` lists the same letters as before and does not announce a wait that ended.
 A letter that ended its wait without an answer no longer counts against the open-letter limit, and the recipient can still reply to it by the same rules.
-It is still a retained letter: it leaves the 5000-letter total only after the 30-day cleanup counted from the time its wait ended.
+It is still a retained letter: it leaves the ledger one day after its wait ended, or earlier when the 5000-letter total is full and it is the finished letter that finished first (see [Persistence, clocks and limits](#persistence-clocks-and-limits)).
 Acknowledgement is the recipient's receipt for every agent kind: only the recipient's own pane and native session can acknowledge (`hide request ack` from a pane-bound caller is the only path, with no operator or helper path), so it records `hook_confirmed: true` and ends a matching report watch; a reply separately closes the original request's answer wait.
-Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
+Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery, for one day after the letter finished or until a full ledger drops it first; a send with the same intent after that creates a new letter.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
 The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
@@ -213,6 +213,10 @@ An uncertain replacement disables further delivery effects until a validated res
 The canonical platform boundary currently refuses Windows directory-chain establishment with `Unsupported`; that is an open cross-OS requirement, and delivery does not become ready through a legacy no-op.
 A corrupt, oversized or unsafe existing ledger is preserved, and commands return `ledger_unavailable` with a diagnostic instead of starting an empty ledger.
 Capacity errors retain existing letters and watches.
+Finished letters never refuse a new one: the one-day cleanup is the normal way a finished letter leaves, and a full total is the backstop, so a mailbox that finishes more than 5000 letters in a day keeps its newest finished letters and loses the oldest ahead of the day.
+The store runs the cleanup on its own once a second when a finished letter is over a day old, including its first pass after start, so a ledger that was full of older finished letters shrinks without a new letter.
+A dropped letter leaves no reference that must resolve: a reply's `reply_to` and an agent's escalation read the ledger as it is and treat a missing original as absent, as they already do after the one-day cleanup; the machine clocks follow only letters awaiting intake, which are open; and the same intent sent again after the drop is a new letter.
+Every `capacity` refusal of a letter writes one `letter.capacity_refused` diagnostic with `cap` (`body`, `open`, or `total` when all 5000 are open), both panes, the body size, the letter count and the open count, never the body.
 
 | Resource or clock | Bound |
 | --- | --- |
@@ -223,8 +227,8 @@ Capacity errors retain existing letters and watches.
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` for a letter the recipient took in |
-| Intent retention and finished-letter cleanup | 30 days; open letters remain |
-| Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply |
+| Intent retention and finished-letter cleanup | One day from the finish; open letters remain; a full 5000-letter total drops sooner (next row) |
+| Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply; at 5000 a new letter drops the finished letter that finished first (ties: the earlier sent), never an open one, and is refused with `capacity` only when none is finished |
 | Watches | 32 |
 | Letter body / ledger file | 16 KiB / 16 MiB |
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |

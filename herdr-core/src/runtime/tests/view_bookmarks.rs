@@ -1,6 +1,6 @@
 use super::workspace_view::{layout as view_event, with_new_views};
 use super::*;
-use crate::view_layout::Layout as ViewLayout;
+use crate::view_layout::{Layout as ViewLayout, MAX_VIEW_DISPLAYS};
 use crate::workspace_control::{Action, Query, checkout_caller_id};
 
 // The core projects one tab-owned presentation; documents stay shared.
@@ -101,17 +101,17 @@ fn delegated_local_caller_can_manage_background_views() {
 fn rejected_background_open_preserves_documents_columns_and_save_generation() {
     let (mut runtime, checkout, directory) = setup("background-refusal");
     open(&mut runtime, &checkout, &directory, "a.md");
+    // Nothing can close to make room: A's document holds a draft, B's front
+    // is on screen and the rest are files still being read back.
+    runtime.dispatch_json(&explorer_event(
+        "file_draft",
+        serde_json::json!({"contents_utf8": "unsaved text\n"}),
+    ));
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
     open(&mut runtime, &checkout, &directory, "b.md");
-    for n in 0..61 {
-        control(
-            &mut runtime,
-            "w-order:t2:p",
-            open_page(&format!("https://example.test/{n}"), false),
-            &format!("fill-{n}"),
-        );
-    }
+    fill_unread(&mut runtime, &directory, 62);
     runtime.sync_workspace_view();
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
     let before = runtime.workspace_views.as_ref().unwrap().views.clone();
     let frame = runtime.snapshot.workspace_view.clone();
     let editor = serde_json::to_value(&runtime.snapshot.editor).unwrap();
@@ -347,6 +347,53 @@ fn key(directory: &Path) -> (String, String) {
     )
 }
 
+/// Every view the Workspace holds, in every tab's presentation.
+fn held(runtime: &Runtime, directory: &Path) -> usize {
+    runtime
+        .all_view_layouts(&key(directory))
+        .map(ViewLayout::display_count)
+        .sum()
+}
+
+/// What a hidden tab's presentation holds.
+fn hidden_strip(runtime: &Runtime, directory: &Path, tab: &str) -> Vec<String> {
+    runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views
+        .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+        .unwrap()
+        .view_presentations[tab]
+        .layout
+        .displays()
+        .map(|display| name_of(display.url.as_deref().unwrap_or(&display.path)))
+        .collect()
+}
+
+/// `count` views of files still being read back, behind the projected
+/// presentation's front, as a restored Workspace holds them.
+fn fill_unread(runtime: &mut Runtime, directory: &Path, count: usize) {
+    let entry = runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy());
+    entry.layout.next_id = entry.next_view_identity();
+    let area = entry.layout.active_area.clone();
+    for index in 0..count {
+        let path = directory.join(format!("unread-{index}.md"));
+        let shown = entry.layout.new_display(
+            &path.to_string_lossy(),
+            crate::view_layout::DisplayKind::File,
+            None,
+            false,
+        );
+        entry.layout.append(&area, shown).unwrap();
+    }
+}
+
 fn layout<'a>(runtime: &'a Runtime, directory: &Path) -> &'a ViewLayout {
     runtime
         .view_layout_of(&key(directory))
@@ -568,15 +615,27 @@ fn each_tab_keeps_its_own_list_visibility_and_shared_dirty_buffer() {
     ));
     let a = display_id(&runtime, &directory, "a.md");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    assert_eq!(
-        fronts(&runtime, &directory),
-        ["a.md"],
-        "B2 inherits content"
+    assert!(
+        strip(&runtime, &directory).is_empty(),
+        "B2 starts with no Views"
     );
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
+    open(&mut runtime, &checkout, &directory, "a.md");
     assert_ne!(
         display_id(&runtime, &directory, "a.md"),
         a,
         "private display identity"
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.label == "a.md" && tab.dirty)
+            .count(),
+        1,
+        "one shared dirty buffer"
     );
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
@@ -671,6 +730,13 @@ fn hidden_same_url_has_its_own_identity_load_and_retained_scope() {
     );
     runtime.sync_workspace_view();
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    control(
+        &mut runtime,
+        "w-order:t2:p",
+        open_page(url, false),
+        "operator-browser",
+    );
+    runtime.sync_workspace_view();
     let before = runtime.snapshot.workspace_view.clone();
     let browser_b = layout(&runtime, &directory)
         .displays()
@@ -765,7 +831,10 @@ fn reveal_selects_the_actual_caller_and_checkout_calls_use_the_operator() {
     assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
     herdr_focuses(&mut runtime, &directory, TABS[0]);
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
-    assert_eq!(strip(&runtime, &directory), ["a.md"]);
+    assert!(
+        strip(&runtime, &directory).is_empty(),
+        "B never opened a.md"
+    );
     let caller = checkout_caller_id("fixture", &directory.to_string_lossy());
     control(
         &mut runtime,
@@ -810,6 +879,7 @@ fn hidden_references_protect_dirty_document_when_bs_copy_closes() {
     ));
     let a = display_id(&runtime, &directory, "a.md");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "a.md");
     let b = display_id(&runtime, &directory, "a.md");
     control(
         &mut runtime,
@@ -920,6 +990,7 @@ fn presentation_restart_keeps_background_results_and_visibility() {
     let (mut runtime, checkout, directory) = setup("presentation-restart");
     open(&mut runtime, &checkout, &directory, "a.md");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "a.md");
     view_event(&mut runtime, serde_json::json!({"views": false}));
     control_file(
         &mut runtime,
@@ -956,6 +1027,7 @@ fn authoritative_close_prunes_only_the_closed_tabs_resources() {
     runtime.sync_workspace_view();
     let a = display_id(&runtime, &directory, "https://example.test/a");
     focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "a.md");
     open(&mut runtime, &checkout, &directory, "b.md");
     let b = columns(&runtime);
     runtime.ingest_session(Ok(tab_order_payload(
@@ -1041,7 +1113,7 @@ fn closing_a_hidden_owner_does_not_adopt_its_documents_into_b() {
 }
 
 #[test]
-fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
+fn repeated_hidden_select_is_a_noop_and_a_full_workspace_closes_its_oldest_view() {
     let (mut runtime, checkout, directory) = setup("presentation-budget");
     open(&mut runtime, &checkout, &directory, "a.md");
     let a = display_id(&runtime, &directory, "a.md");
@@ -1064,30 +1136,101 @@ fn repeated_hidden_select_is_a_noop_and_cap_refusal_keeps_b() {
     );
     let before = runtime.snapshot.workspace_view.clone();
     let caller = "w-order:t1:p";
-    for index in 0..61 {
+    for index in 0..62 {
         let action = open_page(&format!("https://example.test/{index}"), false);
         control(&mut runtime, caller, action, &format!("fill-{index}"));
     }
     runtime.sync_workspace_view();
-    let context = runtime
-        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
-        .unwrap()
-        .context;
-    let stored = runtime.workspace_views.as_ref().unwrap().views.clone();
-    let refused = runtime
-        .workspace_control_action(
-            crate::node::TEST_NODE,
-            caller,
-            &context,
-            &format!("{}-over-cap", unix_milliseconds()),
-            open_page("https://example.test/too-many", false),
-            Ok(None),
-        )
-        .unwrap_err();
-    assert_eq!(refused.reason, "view_layout.display_limit");
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    control(
+        &mut runtime,
+        caller,
+        open_page("https://example.test/too-many", false),
+        "over-cap",
+    );
     runtime.sync_workspace_view();
-    assert_eq!(runtime.snapshot.workspace_view, before);
-    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, stored);
+    assert_eq!(
+        runtime.snapshot.workspace_view, before,
+        "B's own Views stay"
+    );
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    let hidden = hidden_strip(&runtime, &directory, TABS[0]);
+    assert!(
+        !hidden.iter().any(|name| name == "a.md"),
+        "the view looked at longest ago closed"
+    );
+    assert!(
+        hidden
+            .iter()
+            .any(|name| name == "https://example.test/too-many")
+    );
+    assert!(
+        !runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.label == "a.md"),
+        "its document closed with its last view"
+    );
+}
+
+/// The reported case: hidden tabs fill the Workspace, and a link the
+/// operator clicks still opens beside the agent, in place of the view looked
+/// at longest ago.
+#[test]
+fn a_link_opened_in_a_full_workspace_closes_the_oldest_hidden_view() {
+    let (mut runtime, checkout, directory) = setup("link-at-cap");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    for index in 0..62 {
+        control(
+            &mut runtime,
+            "w-order:t1:p",
+            open_page(&format!("https://example.test/{index}"), false),
+            &format!("fill-{index}"),
+        );
+    }
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    open(&mut runtime, &checkout, &directory, "b.md");
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    let url = "https://example.test/clicked";
+    runtime.dispatch_json(&explorer_event(
+        "browser_open",
+        serde_json::json!({
+            "url": url,
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(fronts(&runtime, &directory), [url]);
+    assert_eq!(strip(&runtime, &directory), ["b.md", url]);
+    assert_eq!(held(&runtime, &directory), MAX_VIEW_DISPLAYS);
+    assert!(
+        !hidden_strip(&runtime, &directory, TABS[0])
+            .iter()
+            .any(|name| name == "a.md")
+    );
+}
+
+/// At the cap with nothing that may close, the operator's open is refused
+/// with the View layout's reason, which the shell shows.
+#[test]
+fn a_link_opened_with_nothing_to_close_is_refused_with_the_view_reason() {
+    let (mut runtime, checkout, directory) = setup("link-refused");
+    open(&mut runtime, &checkout, &directory, "a.md");
+    fill_unread(&mut runtime, &directory, 63);
+    runtime.sync_workspace_view();
+    let before = runtime.workspace_views.as_ref().unwrap().views.clone();
+    runtime.dispatch_json(&explorer_event(
+        "browser_open",
+        serde_json::json!({
+            "url": "https://example.test/refused",
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+        }),
+    ));
+    let refused = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(refused.kind, "view_layout.display_limit");
+    assert_eq!(runtime.workspace_views.as_ref().unwrap().views, before);
 }
 
 #[test]
@@ -1218,14 +1361,13 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
     let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
     session.workspaces[0].checkouts[0].active_tab_id = Some("remote-tab-2".to_owned());
     runtime.sync_workspace_view();
-    assert_ne!(front(&runtime), Some(ids[1].clone()));
-    assert!(
+    assert_eq!(
         runtime
             .view_layout_of(&(device.to_owned(), "/srv/remote".to_owned()))
             .unwrap()
-            .displays()
-            .any(|display| display.path.ends_with("y.md")
-                && Some(&display.id) == front(&runtime).as_ref())
+            .display_count(),
+        0,
+        "another tab starts with no Views"
     );
     assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
     let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
