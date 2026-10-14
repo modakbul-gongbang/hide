@@ -339,6 +339,9 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             }
         );
         let letters_before = ledger.letters.len();
+        // A full ledger makes room for the warning by dropping its oldest
+        // finished letter, so the letters are put back as a whole.
+        let full_before = (letters_before >= super::LETTER_LIMIT).then(|| ledger.letters.clone());
         let sequence_before = ledger.next_id;
         let outcome = (|| {
             let letter = super::mailbox::send(
@@ -368,6 +371,9 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             let watch = &mut ledger.watches[index];
             watch.first_warning_at_unix_ms.get_or_insert(now);
             watch.warning_count = count;
+            if full_before.is_some() {
+                return ledger.bytes().map(|bytes| bytes.len());
+            }
             let letter_growth = if ledger.letters.len() > letters_before {
                 encoded_len(ledger.letters.last().ok_or("ledger_unavailable")?)?
                     + usize::from(letters_before > 0)
@@ -392,7 +398,10 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             }
             Err(code) => {
                 ledger.watches[index] = before;
-                ledger.letters.truncate(letters_before);
+                match full_before {
+                    Some(letters) => ledger.letters = letters,
+                    None => ledger.letters.truncate(letters_before),
+                }
                 ledger.next_id = sequence_before;
                 result.rejections.push((reading.id.clone(), code));
             }
@@ -792,7 +801,7 @@ mod tests {
 
     #[test]
     fn warning_capacity_preserves_other_target_exit_and_activity_reset() {
-        for cap in ["open", "retained", "file"] {
+        for cap in ["open", "file"] {
             for reverse in [false, true] {
                 let mut ledger = Ledger::default();
                 let parent = actor("parent");
@@ -807,11 +816,9 @@ mod tests {
                 ledger.watches[1].first_warning_at_unix_ms = Some(10);
                 let now = 1 + INACTIVITY_MS;
                 match cap {
-                    "open" | "retained" => {
-                        let count = if cap == "open" { 1024 } else { 5000 };
-                        for _ in 0..count {
-                            let letter =
-                                closed_letter(&mut ledger, "retained".into(), cap == "open", now);
+                    "open" => {
+                        for _ in 0..1024 {
+                            let letter = closed_letter(&mut ledger, "retained".into(), true, now);
                             ledger.letters.push(letter);
                         }
                     }
@@ -857,6 +864,59 @@ mod tests {
                 ledger.bytes().unwrap();
             }
         }
+    }
+
+    /// A watch due for its first warning on a ledger already at the total
+    /// cap, with the target's own reading.
+    fn due_watch_at_the_total_cap(now: u64) -> (Ledger, Reading) {
+        let mut ledger = Ledger::default();
+        let due = start(&mut ledger, &actor("parent"), &actor("inactive"), 1).unwrap();
+        ledger.watches[0].last_status = "idle".into();
+        ledger.watches[0].last_state_change_seq = Some(1);
+        for _ in 0..super::super::LETTER_LIMIT {
+            let letter = closed_letter(&mut ledger, "x".into(), false, now);
+            ledger.letters.push(letter);
+        }
+        (ledger, reading(&due.id, 1))
+    }
+
+    #[test]
+    fn a_warning_at_the_total_cap_drops_the_oldest_finished_letter() {
+        let now = 1 + INACTIVITY_MS;
+        let (mut ledger, due) = due_watch_at_the_total_cap(now);
+        ledger.letters[3].finished_at_unix_ms = Some(now - 1);
+        let oldest = ledger.letters[3].id.clone();
+        let outcome = tick(&mut ledger, &[due], now).unwrap();
+        assert!(outcome.rejections.is_empty());
+        assert_eq!(ledger.letters.len(), super::super::LETTER_LIMIT);
+        assert!(ledger.letters.iter().all(|letter| letter.id != oldest));
+        assert!(ledger.letters.last().unwrap().watch_warning.is_some());
+        ledger.bytes().unwrap();
+    }
+
+    #[test]
+    fn a_warning_the_file_cap_refuses_at_the_total_cap_puts_the_dropped_letter_back() {
+        let now = 1 + INACTIVITY_MS;
+        let (mut ledger, due) = due_watch_at_the_total_cap(now);
+        let limit = 16 * 1024 * 1024 - 1;
+        let mut room = limit - ledger.bytes().unwrap().len();
+        for letter in ledger.letters.iter_mut().skip(1) {
+            let add = room.min(16 * 1024 - letter.body.len());
+            letter.body.push_str(&"x".repeat(add));
+            room -= add;
+        }
+        assert_eq!(room, 0);
+        assert_eq!(ledger.bytes().unwrap().len(), limit);
+        let original_letters = ledger.letters.clone();
+        let original_sequence = ledger.next_id;
+        let outcome = tick(&mut ledger, std::slice::from_ref(&due), now).unwrap();
+        assert!(
+            outcome
+                .rejections
+                .contains(&(due.id.clone(), "capacity".into()))
+        );
+        assert_eq!(ledger.letters, original_letters);
+        assert_eq!(ledger.next_id, original_sequence);
     }
 
     #[test]
