@@ -37,7 +37,9 @@ test("sidebar tab disclosure restores through singleton, agent return and daemon
     await expect(header(page, herdr.tab)).toHaveCount(0);
     await expect(tree(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(1);
     await screenshot(page, "sidebar-tab-singleton");
-    const split = herdr.run(["pane", "split", herdr.panes[0], "--direction", "right", "--cwd", `${herdr.root}/fixture`, "--no-focus"]) as { result: { pane: { pane_id: string } } };
+    const split = herdr.run(["pane", "split", herdr.panes[0], "--direction", "right", "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { pane: { pane_id: string } } };
+    const replacement = herdr.run(["api", "snapshot"]) as { result: { snapshot: { panes: { pane_id: string; terminal_id: string; agent_status: string }[] } } };
+    console.info("sidebar returned pane", JSON.stringify({ closed: herdr.panes[1], replacement: split.result.pane.pane_id, occupants: replacement.result.snapshot.panes.map(({ pane_id, terminal_id, agent_status }) => ({ pane_id, terminal_id, agent_status })) }));
     herdr.run(["agent", "start", "returned", "--kind", "claude", "--pane", split.result.pane.pane_id]);
     await expect(header(page, herdr.tab)).toHaveAttribute("aria-expanded", "false");
     await expect(header(page, herdr.tab)).toHaveAccessibleName("아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인, 2 agents");
@@ -62,12 +64,12 @@ test("2-1-2 sidebar groups align titles and navigate only visible rows", async (
   let daemon: Awaited<ReturnType<typeof startHided>> | undefined;
   try {
     herdr.run(["tab", "rename", herdr.tab, "작업 묶음 A"]);
-    const created = ["single", "작업 묶음 B"].map((name) => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", name, "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } });
+    const created = ["single", "작업 묶음 B"].map((name) => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, "--label", name, "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } });
     const single = created[0]!.result;
     const paired = created[1]!.result;
     herdr.run(["agent", "start", "single", "--kind", "claude", "--pane", single.root_pane.pane_id]);
     herdr.run(["agent", "start", "paired", "--kind", "claude", "--pane", paired.root_pane.pane_id]);
-    const split = herdr.run(["pane", "split", paired.root_pane.pane_id, "--direction", "right", "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as { result: { pane: { pane_id: string } } };
+    const split = herdr.run(["pane", "split", paired.root_pane.pane_id, "--direction", "right", "--cwd", path.join(herdr.root, "fixture"), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { pane: { pane_id: string } } };
     herdr.run(["agent", "start", "paired-two", "--kind", "claude", "--pane", split.result.pane.pane_id]);
     daemon = await startHided(herdr, "sidebar-tab-boundary");
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
@@ -79,13 +81,25 @@ test("2-1-2 sidebar groups align titles and navigate only visible rows", async (
     const groupedTitle = tree(page, herdr.tab).locator("[data-agent-title]").first();
     const singleTitle = tree(page, single.tab.tab_id).locator("[data-agent-title]");
     const position = async (row: ReturnType<Page["locator"]>) => (await row.boundingBox())!;
-    expect((await position(groupedTitle)).x - (await position(title)).x).toBe(24);
+    await page.evaluate(() => document.fonts.ready);
+    expect((await position(groupedTitle)).x - (await position(title)).x).toBe(18);
     expect((await position(singleTitle)).x).toBe((await position(title)).x);
+    const row = tree(page, herdr.tab).locator("[data-pane]").first();
+    const sidebarBounds = await position(page.locator("nav[data-sidebar] > .sidebar-header-container"));
+    const status = await position(row.locator("[data-agent-status-mark]"));
+    const icon = await position(tree(page, herdr.tab).locator("[data-sidebar-tab-icon]"));
+    const elapsed = await position(row.locator("[data-agent-elapsed]"));
+    const count = await position(tree(page, herdr.tab).locator("[data-sidebar-tab-count]"));
+    expect(status.x + status.width / 2).toBe(icon.x + icon.width / 2);
+    expect((await position(title)).x - sidebarBounds.x).toBe(48);
+    expect((await position(row)).height).toBe(28);
+    expect(count.x + count.width - sidebarBounds.x).toBe(sidebarBounds.width - 32);
+    expect(elapsed.x + elapsed.width).toBe(count.x + count.width);
     const first = await position(tree(page, herdr.tab));
     const middle = await position(tree(page, single.tab.tab_id));
     const last = await position(tree(page, paired.tab.tab_id));
-    expect(middle.y - first.y - first.height).toBe(12);
-    expect(last.y - middle.y - middle.height).toBe(12);
+    expect(middle.y - first.y - first.height).toBe(8);
+    expect(last.y - middle.y - middle.height).toBe(8);
     await rest(page);
     await screenshot(page, "sidebar-tab-boundary-expanded");
     await fold(page, herdr.tab).click();
@@ -130,7 +144,7 @@ test("2-1-2 sidebar groups align titles and navigate only visible rows", async (
 test("long manual tab names keep their tooltip and controls at 240 and 292 in both themes", async ({ page }) => {
   const herdr = await startHerdr();
   const daemon = await startHided(herdr, "sidebar-tab-narrow");
-  const name = "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인";
+  const name = "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인 · Sidebar tab groups and disclosure restoration";
   try {
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
@@ -151,6 +165,8 @@ test("long manual tab names keep their tooltip and controls at 240 and 292 in bo
           await expect(tree(page, herdr.tab).locator("[data-agent-open]")).toHaveCount(expanded ? 2 : 0);
           expect(await tree(page, herdr.tab).evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
           const label = tree(page, herdr.tab).locator("[data-sidebar-tab-title]");
+          await page.evaluate(() => document.fonts.ready);
+          console.info("long tab geometry", JSON.stringify(await label.evaluate((node) => ({ font: getComputedStyle(node).font, fonts: document.fonts.status, width: node.clientWidth, content: node.scrollWidth }))));
           expect(await label.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
           await header(page, herdr.tab).hover();
           await expect(page.getByRole("tooltip")).toHaveText(`${name}, 2 agents`);

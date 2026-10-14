@@ -1,0 +1,453 @@
+{
+  "overview_needs_you": 0,
+  "work": {},
+  "has_working": true,
+  "relations": {},
+  "listed": [
+    {
+      "pane_id": "a1",
+      "device_id": "local",
+      "device_label": null,
+      "remote": false,
+      "index": 0
+    },
+    {
+      "pane_id": "a2",
+      "device_id": "local",
+      "device_label": null,
+      "remote": false,
+      "index": 1
+    },
+    {
+      "pane_id": "a3",
+      "device_id": "local",
+      "device_label": null,
+      "remote": false,
+      "index": 2
+    },
+    {
+      "pane_id": "q1",
+      "device_id": "local",
+      "device_label": null,
+      "remote": false,
+      "index": 3
+    },
+    {
+      "pane_id": "e1",
+      "device_id": "local",
+      "device_label": null,
+      "remote": false,
+      "index": 4
+    }
+  ],
+  "places": {
+    "a1": {
+      "project_id": "hide",
+      "checkout_id": "hide:main",
+      "kind": "checkout"
+    },
+    "a2": {
+      "project_id": "hide",
+      "checkout_id": "hide:main",
+      "kind": "checkout"
+    },
+    "a3": {
+      "project_id": "hide",
+      "checkout_id": "hide:main",
+      "kind": "checkout"
+    },
+    "q1": {
+      "project_id": "hide",
+      "checkout_id": "hide:main",
+      "kind": "checkout"
+    },
+    "e1": {
+      "project_id": "hide",
+      "checkout_id": "hide:main",
+      "kind": "checkout"
+    }
+  },
+  "places_live": true,
+  "graph": {
+    "attention": 4,
+    "recency": "",
+    "checkouts": {},
+    "variants": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "tucked": [
+      {}
+    ],
+    "cross": {}
+  },
+  "closes": {},
+  "raised": [],
+  "owners": {},
+  "badge_total": 5,
+  "prs": {
+    "counts": {
+      "turn": 0,
+      "fixing": 0,
+      "blocked": 0,
+      "review": 0,
+      "draft": 0,
+      "look": 0
+    },
+    "rows": [],
+    "groups": [],
+    "open": 0
+  },
+  "rows": [
+    {
+      "pane_id": "a1",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "a2",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "a3",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "q1",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "e1",
+      "occurrence": 0
+    }
+  ],
+  "group_rows": [],
+  "descendants": {},
+  "children": {},
+  "folded": {},
+  "tree": {
+    "rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "visible_rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "shown": [
+      "a1",
+      "a2",
+      "a3",
+      "q1",
+      "e1"
+    ],
+    "more": 0,
+    "needs_you": false,
+    "turn_kind": null
+  },
+  "global_tree": {
+    "rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "visible_rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "shown": [
+      "a1",
+      "a2",
+      "a3",
+      "q1",
+      "e1"
+    ],
+    "more": 0,
+    "needs_you": false,
+    "turn_kind": null
+  },
+  "total": 5,
+  "overview_total": 5,
+  "roots": [
+    {
+      "pane_id": "a1",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "a2",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "a3",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "q1",
+      "occurrence": 0
+    },
+    {
+      "pane_id": "e1",
+      "occurrence": 0
+    }
+  ],
+  "groups": {
+    "needs_you": 0,
+    "done": 0,
+    "working": 4,
+    "seen": 1
+  },
+  "marks": {
+    "error": 0,
+    "approval": 0,
+    "question": 0,
+    "working": 4,
+    "stopped": 0,
+    "done": 0,
+    "idle": 1
+  },
+  "sections": [],
+  "members": [
+    {
+      "pane_id": "a1",
+      "project_id": "hide",
+      "checkout_id": "hide:main"
+    },
+    {
+      "pane_id": "a2",
+      "project_id": "hide",
+      "checkout_id": "hide:main"
+    },
+    {
+      "pane_id": "a3",
+      "project_id": "hide",
+      "checkout_id": "hide:main"
+    },
+    {
+      "pane_id": "q1",
+      "project_id": "hide",
+      "checkout_id": "hide:main"
+    },
+    {
+      "pane_id": "e1",
+      "project_id": "hide",
+      "checkout_id": "hide:main"
+    }
+  ],
+  "buckets": {
+    "turn": 0,
+    "working": 0,
+    "delegating": 0,
+    "resting": 0
+  },
+  "turns": {
+    "question": 0,
+    "approval": 0,
+    "error": 0,
+    "done": 0
+  },
+  "requests": {
+    "rows": [],
+    "groups": [],
+    "counts": {
+      "answer": 0,
+      "fix": 0,
+      "review": 0,
+      "stopped": 0,
+      "result": 0,
+      "working": 0,
+      "waiting": 0,
+      "idle": 0
+    },
+    "todo": 0,
+    "answer": 0
+  },
+  "sidebar_tree": {
+    "rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "visible_rows": [
+      {
+        "pane_id": "a1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a2",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "a3",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "q1",
+        "occurrence": 0,
+        "depth": 0
+      },
+      {
+        "pane_id": "e1",
+        "occurrence": 0,
+        "depth": 0
+      }
+    ],
+    "shown": [
+      "a1",
+      "a2",
+      "a3",
+      "q1",
+      "e1"
+    ],
+    "more": 0,
+    "needs_you": false,
+    "turn_kind": null
+  },
+  "sessions": {
+    "groups": [
+      {
+        "group": "working",
+        "members": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "group": "seen",
+        "members": [
+          4
+        ]
+      }
+    ]
+  }
+}

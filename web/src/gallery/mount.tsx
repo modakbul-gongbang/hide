@@ -74,11 +74,11 @@ export function mountGallery(root: Root) {
       root.render(<StrictMode><NodeProjectScene {...nodeProjectSceneParams(params)} /></StrictMode>);
       return;
     }
-    if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);
+    if (scene !== "projects-sidebar" && scene !== "sidebar-status-axis") throw new Error(`Unknown gallery scene ${scene}`);
     document.title = "hide · Projects sidebar scene";
     root.render(
       <StrictMode>
-        <SidebarScene {...sceneParams(params)} />
+        <SidebarScene {...sceneParams(params)} axis={scene === "sidebar-status-axis"} />
       </StrictMode>,
     );
     return;

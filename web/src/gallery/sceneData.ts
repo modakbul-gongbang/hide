@@ -1,3 +1,5 @@
+import statusAxisScope from "./sidebarStatusAxisScope.json";
+import type { AgentScope } from "../agentScope";
 import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // The Projects sidebar's gallery scene (PRD design-review-workflow D-04,
 // B3, B4): a synthetic snapshot the real sidebar renders, with the content
@@ -420,6 +422,22 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     ...(world ? { status: { remote: world.remote } } : {}),
   };
   return { rest: galleryScopes(rest, `${content}:${devices}`, folds.expandedAgents), agents };
+}
+
+/** The approved 2-1-2 cutout, rendered by the production Sidebar with invented facts. */
+export function sidebarStatusAxisScene(content: SceneContent, folds: SceneFolds, nowMs: number): { rest: SnapshotRest; agents: AgentRow[] } {
+  const base = sidebarScene(content, folds, nowMs);
+  const labels = ["탭 경계·여백 정리", "왼쪽 pane 검토", "세션 기록 동기화", "PR 질문 표시 개선", "탐색 개선"];
+  const ages = ["1m", "8m", "2s", "6m", "11m"];
+  const ids = ["a1", "a2", "a3", "q1", "e1"];
+  const agents = ids.map((id, index) => agent({ pane_id: id, identity_label: content === "long" ? `${labels[index]} · 여러 프로젝트의 한국어 작업 기록과 진행 상황을 확인합니다` : labels[index], agent_kind: index > 0 && index < 4 ? "codex" : "claude", group: index === 4 ? "seen" : "working", symbol: index === 4 ? "○" : "●", status_code: index === 4 ? "idle" : "working", elapsed: ages[index]!, state: galleryAgentState(index === 4 ? "h2" : "e1", null, nowMs) }));
+  const main = checkout({ id: "hide:main", workspace: "hide", branch: "main", primary: true, age: 480, panes: ids, marks: { working: 4, idle: 1 } }, nowMs / 1000);
+  main.tabs = [["a1", "a2"], ["a3"], ["q1", "e1"]].map((panes, index) => ({ ...main.tabs[0]!, id: `hide:main:t${index + 1}`, sidebar: { number: index + 1, manual_name: index === 0 ? "아주 긴 한국어 탭 이름과 작업 묶음의 경계 확인 · Sidebar tab groups" : null }, panes: panes.map(pane) }));
+  const scope = statusAxisScope as unknown as AgentScope;
+  main.agent_scope = scope;
+  const project = workspace("hide", { checkouts: [main], agent_scope: scope, agent_presence: { working: true } }, folds);
+  const rest = { ...base.rest, navigator: { ...base.rest.navigator, agent_scope: scope, devices: [{ ...base.rest.navigator!.devices![0]!, agent_scope: scope, agent_count: 5 }], workspaces: [project], agents, sleeping_sessions: [], inactive_projects: [], no_agent_projects: [] }, ui_state: { ...base.rest.ui_state, workspace_registrations: [registrationOf(project, "local")] } };
+  return { rest, agents };
 }
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {

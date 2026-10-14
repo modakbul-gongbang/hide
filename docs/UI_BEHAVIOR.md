@@ -1167,13 +1167,20 @@ Its chevron changes disclosure alone, and other checkouts keep their own expansi
 The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
 A later Herdr projection failure retains these accepted values under the existing focus policy.
 The last-commit age stays in place whatever the pointer does and while the menu is open.
-An opened checkout and its agent rows share one small group fill; no card border nests inside another.
+Opened folder projects use the same icon/title columns, neutral selected fill and unboxed tab blocks as opened checkouts.
+Their required secondary lines and metadata remain visible.
+An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
 Within an open checkout or plain folder, the sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 A tab with two or more recognized agent panes has a header showing its manual name, or localized `Tab N` from the core's stable number, and its actual agent count.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root has no empty header.
-A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--spacing-xl` (24px) further in and each lineage level retains its 18px indent.
-Tab groups are separated by `--spacing-md` (12px), without another card or border.
+A singleton has no header even when named; its title starts on the header title column, while grouped roots start `--size-lineage-indent` (18px) further in and each lineage level retains that same step.
+Tab groups are separated by `--spacing-sm` (8px), without another card or border.
+At a 240px sidebar width, its 8px list inset puts header disclosures and singleton status marks on x18, and tab glyphs and grouped root status marks on x36.
+Headers and quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding; a header touches its own first row.
+Tab glyphs are 12px in a 16px lane; header and singleton titles start at x48, grouped titles at x66, and counts and elapsed times end at x208 with the existing trailing fold slot retained.
+Focused sidebar agent and checkout rows and collapsed tab representatives use the neutral `--secondary` fill.
+A singleton root with descendants in other tabs keeps its lineage disclosure inside the reserved trailing slot; its status mark stays on the outer axis.
 The existing tab Rename changes or clears the header's manual name; automatic tabbar titles remain independent.
 Headers open their real tab with click, Enter or Space, while the separate chevron changes disclosure only, without focus, read-state or process effects.
 Groups start open, and core-owned `sidebar_collapsed_tabs` saves collapsed choices by device, checkout and tab identity across restart and reconnect.

@@ -160,8 +160,14 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 
 ## Web screen list
 
-The Projects Sidebar screen and production gallery include actual-tab headers over multi-agent root groups, a header-free singleton, 24px grouped-root indentation and the existing 18px lineage step.
-Headers use the sidebar caption and row tokens, expose name/count and disclosure only, and separate tab groups with `--spacing-md` rather than another card.
+The Projects Sidebar screen and production gallery include actual-tab headers over multi-agent root groups, a header-free singleton, 18px grouped-root indentation and the existing 18px lineage step.
+Headers use the sidebar caption and row tokens, expose name/count and disclosure only, and separate tab groups with `--spacing-sm` rather than another card.
+The approved status-axis cutout adds the left disclosure and 12px tab glyph, 28px rows, an 8px block gap and neutral `--secondary` selection.
+The tab glyph and grouped status share one axis, and the disclosure and singleton status share the outer axis.
+`sidebar-status-axis` is a production Sidebar gallery scene with invented 2-1-2 tab facts, paired with the `psb-axis-l` and `psb-axis-d` Pen cutouts by `design/review-targets.json`.
+The `sidebar-status-axis` target captures the real checkout row with 8px of surrounding sidebar padding to match the approved 240px cutout.
+Its 900px square browser viewport keeps the device rail and every row visible; `capturePadding` changes the screenshot bounds only, never the rendered layout.
+`sidebar-tab-groups.spec.ts` owns the live tab geometry and `sidebar-root-only.spec.ts` owns the visible singleton lineage disclosure to children in other tabs.
 `scripts/pen-screens.mjs` owns the corresponding composed header and grouped tree offsets; `web/src/gallery/sceneData.ts` supplies explicit tab naming metadata and applies the same disclosure event for interactive comparison.
 
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.

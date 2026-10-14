@@ -1514,5 +1514,60 @@
       "The production column wraps its statistics at narrow widths; the approved reference is the wide composition.",
       "A day replaces period totals with its top contributors; filtering stays reversible."
     ]
+  },
+  "sidebar-status-axis": {
+    "description": "Approved sidebar status axes and neutral selection, retaining tab grouping and lineage.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-projects-sidebar",
+    "scene": "sidebar-status-axis",
+    "capturePadding": 8,
+    "viewportWidth": 900,
+    "viewportHeight": 900,
+    "selector": "[data-checkout-row=\"hide:main\"]",
+    "frames": [
+      {
+        "node": "psb-axis-l",
+        "referenceNode": "RHvaO",
+        "theme": "light",
+        "width": 240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "psb-axis-d",
+        "referenceNode": "MPgre",
+        "theme": "dark",
+        "width": 240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        240,
+        292
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "rest": "Expanded 2-1-2 tab groups and selected row."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Do the tab glyphs and grouped status marks share one axis, with disclosure and singleton status on the outer axis?",
+      "Do neutral selection, Korean titles and trailing metadata match the approved Pen in both themes?"
+    ]
   }
 }
