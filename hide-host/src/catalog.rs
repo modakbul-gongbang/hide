@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use hide_node_link::catalog::{
     PATH_FACTS_ANSWER_LIMIT, PATH_FACTS_LIMIT, PathFact, PathFacts, RepositoryPlace,
 };
+use hide_node_link::gh::repository_of_remote;
 use hide_platform::fs::identity;
 use hide_platform::path;
 
@@ -38,7 +39,7 @@ fn path_facts_within(paths: &[String], answer_limit: usize) -> HostResult<PathFa
         }
         let native = Path::new(asked);
         let fact = if native.is_absolute() {
-            read(native, &mut facts.repositories, &mut bytes)
+            read(native, &mut facts, &mut bytes)
         } else {
             PathFact {
                 comparison: asked.clone(),
@@ -87,20 +88,59 @@ fn notes_bytes(
     }
 }
 
-fn read(
-    native: &Path,
-    repositories: &mut BTreeMap<
-        String,
-        Result<BTreeMap<String, hide_node_link::catalog::BranchNote>, String>,
-    >,
-    bytes: &mut usize,
-) -> PathFact {
+/// The repositories `gh` could read from these remote URLs, sorted, or
+/// `None` when one names a server in a form `repository_of_remote` does not
+/// read (`http://`, `git+ssh://`): what `gh` makes of that remote is
+/// unknown, so it is asked. A remote that is a path on this machine names no
+/// server and is left out.
+fn github_remotes(urls: &[String]) -> Option<Vec<String>> {
+    let mut remotes = Vec::new();
+    for url in urls {
+        match repository_of_remote(url) {
+            Some(repository) => remotes.push(repository),
+            None if names_local_path(url) => {}
+            None => return None,
+        }
+    }
+    remotes.sort();
+    remotes.dedup();
+    Some(remotes)
+}
+
+/// Whether Git reads a remote URL as a local path: `file://`, or no
+/// `scheme://` and no `host:` before the first `/` (Git's
+/// `url_is_local_not_ssh`), a drive letter (`C:\`) being a path too.
+fn names_local_path(url: &str) -> bool {
+    let url = url.trim();
+    if url.starts_with("file://") {
+        return true;
+    }
+    if url.contains("://") {
+        return false;
+    }
+    let Some(colon) = url.find(':') else {
+        return true;
+    };
+    let drive = colon == 1 && url.as_bytes()[0].is_ascii_alphabetic();
+    drive || url.find('/').is_some_and(|slash| slash < colon)
+}
+
+/// One path's fact; the first path of a repository also reads its config
+/// once, for its branch notes and its remotes.
+fn read(native: &Path, facts: &mut PathFacts, bytes: &mut usize) -> PathFact {
     let repository = hide_project::git::discover(native).map(|repository| {
         let main_root = comparison(&repository.main_root());
-        if !repositories.contains_key(&main_root) {
-            let notes = repository.branch_notes();
+        if !facts.repositories.contains_key(&main_root) {
+            let (notes, remote_urls) = match repository.config() {
+                Ok(config) => (Ok(config.notes), config.remote_urls),
+                Err(error) => (Err(error), None),
+            };
             *bytes = bytes.saturating_add(main_root.len() + notes_bytes(&notes));
-            repositories.insert(main_root.clone(), notes);
+            facts.repositories.insert(main_root.clone(), notes);
+            if let Some(remotes) = remote_urls.as_deref().and_then(github_remotes) {
+                *bytes = bytes.saturating_add(remotes.iter().map(String::len).sum::<usize>());
+                facts.remotes.insert(main_root.clone(), remotes);
+            }
         }
         RepositoryPlace {
             root: comparison(&repository.root),
@@ -192,6 +232,48 @@ mod tests {
         assert!(path_facts_within(&asked, 8192).is_ok());
         let refused = path_facts_within(&asked, 4096).unwrap_err();
         assert_eq!(refused.code, ErrorCode::TooLarge);
+    }
+
+    /// The repository each remote names reaches the core with the path
+    /// facts it already asks for; the URL, which can carry a token, does not.
+    #[test]
+    fn a_repository_carries_the_repositories_its_remotes_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = identity::canonical(temp.path()).unwrap();
+        let git = root.join(".git");
+        std::fs::create_dir_all(git.join("refs/heads")).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let asked = vec![path::to_wire_lossy(&root)];
+        let remotes = |config: &str| {
+            std::fs::write(git.join("config"), config).unwrap();
+            path_facts(&asked).unwrap().remotes
+        };
+        let main_root = path::to_wire_lossy(&root);
+        assert_eq!(
+            remotes("[core]\n\tbare = false\n"),
+            [(main_root.clone(), Vec::new())].into(),
+            "no remote at all"
+        );
+        assert_eq!(
+            remotes(concat!(
+                "[remote \"origin\"]\n\turl = https://token@github.com/acme/app.git\n",
+                "[remote \"mirror\"]\n\turl = /srv/git/app.git\n",
+            )),
+            [(main_root, vec!["acme/app".to_owned()])].into(),
+        );
+        assert!(
+            remotes("[include]\n\tpath = more\n").is_empty(),
+            "an include may name a remote: unknown"
+        );
+        for url in [
+            "http://github.com/acme/app.git",
+            "git+ssh://git@github.com/acme/app",
+        ] {
+            assert!(
+                remotes(&format!("[remote \"origin\"]\n\turl = {url}\n")).is_empty(),
+                "{url}: a server in a form not read here is left to gh"
+            );
+        }
     }
 
     #[test]

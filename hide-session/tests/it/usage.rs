@@ -635,6 +635,54 @@ fn usage_opencode_reads_steps_not_overwritten_message_tokens_or_accumulated_cost
     );
 }
 
+/// A row past SQLite's 1 MiB value limit once failed every read that measured
+/// it, so the cursor never moved past it. It is skipped as capacity and the
+/// rows after it are read.
+#[test]
+fn usage_opencode_rows_past_the_read_limit_are_skipped_as_capacity_and_the_rest_is_read() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_fixture(home.path());
+    let oversized = "x".repeat(hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize + 1);
+    opencode_message(&db, "msg-a", true, 100);
+    opencode_part(&db, "part-a", "msg-a", Some(0.1));
+    db.execute(
+        "INSERT INTO part VALUES ('part-b', 'msg-a', 'ses_0a1b2c3d4e5f60718293a4b5c6', 1, 1, ?1)",
+        [serde_json::json!({"type":"step-finish","padding":oversized}).to_string()],
+    )
+    .unwrap();
+    opencode_part(&db, "part-c", "msg-a", Some(0.3));
+    db.execute(
+        "INSERT INTO message VALUES ('msg-b', 'ses_0a1b2c3d4e5f60718293a4b5c6', 1, 101, ?1)",
+        [serde_json::json!({"role":"assistant","padding":oversized}).to_string()],
+    )
+    .unwrap();
+    opencode_message(&db, "msg-c", true, 102);
+    opencode_part(&db, "part-d", "msg-c", Some(0.4));
+    let mut saved = None;
+    let mut events = Vec::new();
+    let mut skipped = std::collections::BTreeMap::<String, u64>::new();
+    for _ in 0..100 {
+        let step = usage::read(home.path(), Agent::OpenCode, &path, saved).unwrap();
+        assert!(step.read_bytes <= 1024 * 1024);
+        events.extend(step.events);
+        for (reason, count) in step.skipped {
+            *skipped.entry(reason).or_default() += count;
+        }
+        if !step.has_more {
+            break;
+        }
+        saved = Some(step.checkpoint);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e.recorded_cost_micro_usd.unwrap())
+            .collect::<Vec<_>>(),
+        [100_000, 300_000, 400_000]
+    );
+    assert_eq!(skipped, [("record_capacity".to_owned(), 2)].into());
+}
+
 #[test]
 fn usage_opencode_vacuum_rescans_without_changing_native_event_identity() {
     let home = tempfile::tempdir().unwrap();

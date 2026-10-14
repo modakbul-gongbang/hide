@@ -21,6 +21,7 @@ import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
 import { animationsFinished } from "./wait";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -144,7 +145,7 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     const repo = path.join(fs.realpathSync(herdr.root), "repo");
     const tree = path.join(fs.realpathSync(herdr.root), "repo-link");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
@@ -238,7 +239,7 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     const repo = path.join(fs.realpathSync(herdr.root), "repo");
     const tree = path.join(fs.realpathSync(herdr.root), "repo-link");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);

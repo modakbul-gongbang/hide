@@ -498,6 +498,49 @@ fn issue_creation_uses_both_window_edges_and_late_facts_attach_only_the_resolvin
         .unwrap_err();
 }
 
+/// An issue address a session printed reaches the project's issue read only
+/// when it is in the project's repository: a test fixture's `acme/repo` is
+/// never sent to GitHub, where it does not resolve.
+#[test]
+fn issue_sightings_outside_the_projects_repository_are_not_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    request(&mut store, 1, "이슈 정리");
+    for (repo, number) in [("owner/repo", 1), ("acme/repo", 2)] {
+        store.connection.execute("INSERT INTO ledger_sightings VALUES('device-a','codex','session-a','issue',?1,?2,1000)",params![repo,number]).unwrap();
+    }
+    let mut project = crate::links::ProjectFacts {
+        key: "project-a".into(),
+        device_id: "device-a".into(),
+        workspace_id: "workspace-a".into(),
+        root: "/repo".into(),
+        repository: None,
+        repository_id: None,
+        worktrees: Vec::new(),
+        prs: Vec::new(),
+        prs_read: true,
+        outputs: Vec::new(),
+    };
+    store.apply_project(&project, 1).unwrap();
+    assert_eq!(
+        store.ledger_issue_refs("project-a").unwrap(),
+        [],
+        "no repository answered yet"
+    );
+    let own = crate::issues::IssueReference::parse("owner/repo#1", None).unwrap();
+    project.repository = Some("owner/repo".into());
+    project.repository_id = Some("R_1".into());
+    store.apply_project(&project, 2).unwrap();
+    assert_eq!(
+        store.ledger_issue_refs("project-a").unwrap(),
+        std::slice::from_ref(&own)
+    );
+    // A renamed repository keeps the sightings made under its old name.
+    project.repository = Some("owner/renamed".into());
+    store.apply_project(&project, 3).unwrap();
+    assert_eq!(store.ledger_issue_refs("project-a").unwrap(), [own]);
+}
+
 #[test]
 fn search_returns_one_session_with_its_latest_matching_request_and_own_title_when_off() {
     let directory = tempfile::tempdir().unwrap();

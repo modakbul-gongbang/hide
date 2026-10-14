@@ -30,6 +30,7 @@ import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, screenshot } from "./wire";
 import { field } from "./chords";
 import { quietFor, unchangedForFrames } from "./wait";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -243,7 +244,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const origin = path.join(herdr.root, "origin.git");
     fs.mkdirSync(repo);
     git(herdr.root, ["init", "--bare", origin]);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);

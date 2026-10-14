@@ -24,6 +24,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { countSent, enterWorkspace, showProjectRow } from "./wire";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -101,7 +102,7 @@ process.exit(1);
 function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: string): string {
   const repo = path.join(herdr.root, name);
   fs.mkdirSync(repo);
-  git(repo, ["init"]);
+  initGithubRepository(repo);
   fs.writeFileSync(path.join(repo, "README.md"), `# ${name}\n`);
   git(repo, ["add", "README.md"]);
   git(repo, ["commit", "-m", "initial"]);

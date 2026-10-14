@@ -20,6 +20,7 @@ import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, rest, rowGeometry, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor } from "./wait";
+import { initGithubRepository } from "./github-remote";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -100,7 +101,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
-    git(repo, ["init"]);
+    initGithubRepository(repo);
     fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);

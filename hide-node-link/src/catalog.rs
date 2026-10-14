@@ -25,6 +25,15 @@ pub struct PathFacts {
     /// The branch notes of every repository a path is in, by the
     /// repository's main root, read once however many paths it holds.
     pub repositories: BTreeMap<String, Result<BTreeMap<String, BranchNote>, String>>,
+    /// The GitHub-shaped repository each remote names (`[HOST/]OWNER/NAME`,
+    /// as `gh::repository_of_remote` reads its URL; never the URL itself,
+    /// which can carry a token), by the repository's main root, read from
+    /// the same config as its branch notes. An empty list is a repository
+    /// with nothing `gh` could read. A repository whose config could not be
+    /// read or includes another file is not listed, and neither is any from
+    /// a node older than this field: its remotes are unknown.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub remotes: BTreeMap<String, Vec<String>>,
 }
 
 /// One path as its node reads it.
