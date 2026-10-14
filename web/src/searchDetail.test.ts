@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { READ_AT, RICH } from "./gallery/cmdkSceneData";
+import { PR_260, PR_275, READ_AT, RICH, requestWith } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { searchEntries } from "./search";
 import { detailOf } from "./searchDetail";
@@ -28,6 +28,16 @@ describe("the palette's detail pane in the operator's language", () => {
     expect(detail.facts.map(([label]) => label)).toEqual(["ブランチ", "閉じる課題", "読み込み"]);
     expect(detail.facts.at(-1)?.[1]).toBe("5 分前に読み込み");
     expect(detail.action).toBe("PR ビューで開く");
+  });
+
+  it("names the pull requests the core links to an agent, and has no line for an agent with none", () => {
+    const { t } = initializeInterfaceI18n("ko");
+    const tied = structuredClone(RICH) as typeof RICH;
+    tied.navigator!.agents = tied.navigator!.agents!.map((row) => (row.pane_id === "p-dag" ? { ...row, request: requestWith("review", [PR_275, PR_260]) } : row));
+    const agentFacts = (pane: string) => detailOf(tied, searchEntries(tied, t).find((row) => row.id === `agent:${pane}`)!, now, t, "ko").facts;
+    expect(agentFacts("p-child")).toContainEqual(["PR", "#275"]);
+    expect(agentFacts("p-dag")).toContainEqual(["PR", "#275, #260"]);
+    expect(agentFacts("p-parent").map(([label]) => label)).not.toContain("PR");
   });
 
   it("counts a pull request's recorded sessions and leaves the line out at none", () => {

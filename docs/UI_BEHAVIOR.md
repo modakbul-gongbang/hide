@@ -1766,6 +1766,7 @@ The session group carries its current loading or failure state; a successful sea
 The creator-session action in an output panel opens the same record.
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
+After them come the agents the core links to a pull request of that number (its session made it or its branch has it; every one the core links, a merged one included, which is more than the agent's PR mark draws), in `Agents` on every device, so `#275` reaches the agent that works on pull request 275 though no word of its row holds the number; an issue's number brings no agent.
 An agent is found by its title, by the name Herdr knows it by (`hide agent spawn --name`, `herdr agent rename`), by its place and by its state sentence; the core carries the Herdr name on the agent row (`herdr_name`), on this machine and on a device alike, and leaves it out when Herdr has none or has only a name Hide made up from a pane id (a task's `hide-claude-w9j-p52`, a wake's or a fork's), which would print the id the rule below keeps off every row.
 A query holding `:`, as every pane's Herdr id does (`w9J:p52`, as Copy pane ID or `$HERDR_PANE_ID` gives it), lists first the agents whose id holds it in its case, on every device, the whole id before longer ones (`:p5` lists `w9J:p5`, then `w9J:p52`); without a `:` no id matches, and no row prints the id.
 Only digits in the query match a number by substring on other rows.
@@ -1797,7 +1798,7 @@ On a screen with nothing in front, such as Settings, the palette shows Recent al
 
 ### The detail
 
-The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout and last words, and `N분 전 읽음` for the GitHub-backed ones.
+The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout, the pull requests the core links to it (`#275, #260`) and last words, and `N분 전 읽음` for the GitHub-backed ones.
 A pull request or an issue with sessions in the link record adds `세션 N`, the count the record's summary carries (PRD link-graph B35); with none there is no line, and the list and Related are unchanged.
 Under `관계` it draws the same groups the empty list draws for the row, when it has more than itself; the footer line says what ↵ does.
 
