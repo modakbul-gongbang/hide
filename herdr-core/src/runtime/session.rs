@@ -3865,8 +3865,9 @@ impl Runtime {
                 // The creation is settled here; the chosen agent starts on the
                 // same worker afterwards and reports on its own axis.
                 operation.agent_phase = operation.agent_kind.as_ref().map(|_| "starting".into());
-                // Keys typed for a plain terminal tab follow it now; for an
-                // agent they wait for its start (`ingest_task_agent_result`).
+                // Keys typed for a plain terminal tab follow it once its shell
+                // reads them; for an agent they wait for its start
+                // (`ingest_task_agent_result`).
                 let input_ready = operation.agent_phase.is_none().then(|| pane_id.clone());
                 if should_focus {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
@@ -3879,7 +3880,7 @@ impl Runtime {
                 let origin = super::terminal_input::InputOrigin::Task(id);
                 match input_ready {
                     _ if !should_focus => self.discard_input_request(&origin, "not_shown"),
-                    Some(pane_id) => self.resolve_input_request(&origin, &pane_id),
+                    Some(pane_id) => self.resolve_input_request_at_shell(&origin, &pane_id),
                     None => {}
                 }
                 let normalized = workspace::comparison_by_names(Path::new(&path));
@@ -5007,13 +5008,14 @@ impl Runtime {
                     self.persist_current_ui_state();
                 }
                 // Keys typed since the tab was asked for follow it only when
-                // it takes the screen; a tab that waits in the strip (the
-                // operator chose another since) gets none of them.
+                // it takes the screen, once its shell reads them; a tab that
+                // waits in the strip (the operator chose another since) gets
+                // none of them.
                 if let Some(id) = admission {
                     let origin = super::terminal_input::InputOrigin::TabCreate(id);
                     match created_pane_id.as_deref() {
                         Some(pane_id) if can_show_created => {
-                            self.resolve_input_request(&origin, pane_id)
+                            self.resolve_input_request_at_shell(&origin, pane_id)
                         }
                         _ => self.discard_input_request(&origin, "not_shown"),
                     }

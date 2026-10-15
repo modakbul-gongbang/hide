@@ -1557,8 +1557,9 @@ impl Runtime {
                             self.request_republish();
                         }
                         // Keys typed since the split was asked for belong to
-                        // the pane Herdr just named, and to no other.
-                        self.resolve_input_request(
+                        // the pane Herdr just named, and to no other, once its
+                        // shell reads them.
+                        self.resolve_input_request_at_shell(
                             &super::terminal_input::InputOrigin::Split(id.to_owned()),
                             created,
                         );
