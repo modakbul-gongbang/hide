@@ -33,6 +33,9 @@ name: perf
 on:
   workflow_call:
   workflow_dispatch:
+  # Temporary: measure this branch before perf.yml exists on main; removed before review.
+  push:
+    branches: [perf/nightly-lane]
 
 permissions:
   contents: read
