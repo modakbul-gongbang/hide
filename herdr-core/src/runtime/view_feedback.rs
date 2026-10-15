@@ -58,6 +58,8 @@ pub(super) struct FeedbackRuntime {
     deleted: Option<(WorkspaceKey, usize, Comment)>,
     /// The last Send of each checkout, while the screen says it.
     sends: HashMap<WorkspaceKey, ViewFeedbackSendSnapshot>,
+    /// What that Send asked for, which Retry asks again (B27).
+    asked: HashMap<WorkspaceKey, AskedSend>,
     /// Comments a running Send carries, by checkout and id.
     in_flight: HashSet<(WorkspaceKey, String)>,
     reopens: Vec<Reopen>,
@@ -67,6 +69,13 @@ pub(super) struct FeedbackRuntime {
     stop: Arc<AtomicBool>,
     /// Machines whose orphaned feedback files this run has swept (D-16).
     swept: HashSet<String>,
+}
+
+struct AskedSend {
+    request_id: String,
+    group: String,
+    display_id: Option<String>,
+    to: SendTo,
 }
 
 struct PendingOpener {
@@ -165,7 +174,7 @@ pub(super) struct ViewFeedbackSendPayload {
     to: SendTo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum SendTo {
     /// The group's opener, wherever its session is now.
@@ -174,6 +183,9 @@ enum SendTo {
     Pane { pane_id: String },
     /// Start the closed opener's session again, then send (B20).
     Reopen,
+    /// The Send `request_id` again, to whom and for which Views it first
+    /// asked (B27); `group` and `display_id` are not read.
+    Retry,
 }
 
 impl Runtime {
@@ -641,13 +653,37 @@ impl Runtime {
     ) -> Result<(), (&'static str, String)> {
         let ViewFeedbackSendPayload {
             request_id,
-            group,
-            display_id,
-            to,
+            mut group,
+            mut display_id,
+            mut to,
             ..
         } = payload;
         if !hide_node_link::attachments::valid_request_id(&request_id) {
             return Err(("view_feedback.invalid_request", "The Send has no id".into()));
+        }
+        if matches!(to, SendTo::Retry) {
+            let asked = self
+                .view_feedback
+                .asked
+                .get(key)
+                .filter(|asked| asked.request_id == request_id)
+                .ok_or((
+                    "view_feedback.nothing",
+                    "That Send is no longer here to retry".into(),
+                ))?;
+            group = asked.group.clone();
+            display_id = asked.display_id.clone();
+            to = asked.to.clone();
+        } else {
+            self.view_feedback.asked.insert(
+                key.clone(),
+                AskedSend {
+                    request_id: request_id.clone(),
+                    group: group.clone(),
+                    display_id: display_id.clone(),
+                    to: to.clone(),
+                },
+            );
         }
         // A Send already under way is not started twice.
         if self.view_feedback.sends.get(key).is_some_and(|send| {
@@ -723,6 +759,7 @@ impl Runtime {
                 ))?;
                 self.reopen_and_send(key, request_id, comments, opener)
             }
+            SendTo::Retry => unreachable!("a Retry takes what its Send asked above"),
         }
     }
 
@@ -1977,10 +2014,14 @@ mod tests {
     /// A file View the recipient opened, by the path a pane caller's open
     /// takes.
     fn opened_view(runtime: &mut Runtime) -> String {
+        opened_view_at(runtime, "src/login.ts")
+    }
+
+    fn opened_view_at(runtime: &mut Runtime, path: &str) -> String {
         let key = key();
         let view = runtime
             .change_view_layout(&key, |layout, stamp| {
-                let display = layout.new_display("src/login.ts", DisplayKind::File, None, false);
+                let display = layout.new_display(path, DisplayKind::File, None, false);
                 let id = display.id.clone();
                 let area = layout.active_area().id.clone();
                 layout.insert(&area, display, stamp)?;
@@ -1988,7 +2029,7 @@ mod tests {
             })
             .unwrap();
         let open = crate::workspace_control::Action::OpenFile {
-            path: "src/login.ts".into(),
+            path: path.into(),
             beside: false,
             reveal: false,
         };
@@ -2292,6 +2333,95 @@ mod tests {
                 .iter()
                 .any(|letter| letter.intent.starts_with("view-feedback-")),
             "no letter without its attachments (D-13)"
+        );
+        drop(guard);
+        drop(worker);
+    }
+
+    #[test]
+    fn a_retry_sends_again_only_the_views_and_recipient_its_send_asked_for() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, worker, state) = send_fixture(root.path());
+        let shots = hide_kit::layout::view_feedback_shots(&state);
+        hide_platform::fs::private::create_dir_all(&shots).unwrap();
+        std::fs::write(shots.join(SHOT), vec![7u8; 1024]).unwrap();
+        let full = hide_kit::layout::letter_attachments(&state)
+            .join("view-feedback-1f8fad5b-d9cb-469f-a165-70867728950e");
+        hide_platform::fs::private::create_dir_all(&full).unwrap();
+        let file = std::fs::File::create(full.join(SHOT)).unwrap();
+        file.set_len(hide_node_link::feedback::MAX_PLACED_BYTES)
+            .unwrap();
+        let request = "3f8fad5b-d9cb-469f-a165-70867728950e";
+        let workspace = json!({"device_id": crate::node::TEST_NODE, "path": CHECKOUT});
+        let (here, there) = {
+            let mut guard = runtime.lock().unwrap();
+            let here = opened_view_at(&mut guard, "src/login.ts");
+            let there = opened_view_at(&mut guard, "src/signup.ts");
+            comment(&mut guard, &here, "Here.", true);
+            comment(&mut guard, &there, "There.", false);
+            // This view only, to the agent chosen in the menu.
+            guard.apply_view_feedback_send(
+                serde_json::from_value(json!({
+                    "workspace": workspace, "request_id": request,
+                    "group": format!("{}/term-recipient", crate::node::TEST_NODE),
+                    "display_id": here, "to": {"kind": "pane", "pane_id": "recipient"},
+                }))
+                .unwrap(),
+            );
+            (here, there)
+        };
+        assert_eq!(settled(&runtime).state, ViewFeedbackSendState::Failed);
+        std::fs::remove_dir_all(&full).unwrap();
+        // Retry names only the Send; what it asked comes from the core.
+        runtime.lock().unwrap().apply_view_feedback_send(
+            serde_json::from_value(json!({
+                "workspace": workspace, "request_id": request, "group": "", "to": {"kind": "retry"},
+            }))
+            .unwrap(),
+        );
+        let sent = settled(&runtime);
+        assert_eq!(sent.state, ViewFeedbackSendState::Sent, "{sent:?}");
+        assert_eq!(
+            (sent.count, sent.pane_id.as_deref()),
+            (1, Some("recipient"))
+        );
+        let guard = runtime.lock().unwrap();
+        let layout = guard.view_layout_of(&key()).unwrap();
+        let on = |id: &str| {
+            let display = layout.display(id).unwrap().clone();
+            guard.feedback_of(&key()).unwrap().on(&display).count()
+        };
+        assert_eq!(
+            (on(&here), on(&there)),
+            (0, 1),
+            "the other View's comment stays"
+        );
+        drop(guard);
+        drop(worker);
+    }
+
+    #[test]
+    fn a_retry_with_no_send_of_that_id_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, worker, _) = send_fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        let view = opened_view(&mut guard);
+        comment(&mut guard, &view, "Here.", false);
+        send(
+            &mut guard,
+            "4f8fad5b-d9cb-469f-a165-70867728950e",
+            json!({"kind": "retry"}),
+        );
+        assert!(!guard.view_feedback.sends.contains_key(&key()));
+        assert_eq!(
+            guard
+                .feedback_of(&key())
+                .unwrap()
+                .comments
+                .iter()
+                .filter(|comment| comment.open())
+                .count(),
+            1
         );
         drop(guard);
         drop(worker);

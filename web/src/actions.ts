@@ -2483,10 +2483,11 @@ export function createActions(send: DispatchFn) {
 
     /**
      * Sends a recipient group's comments as one letter from the operator
-     * (B16-B20). A Retry sends the same `requestId`, so a letter the first
-     * try stored is not stored twice (engineering principle 11).
+     * (B16-B20). A Retry sends the same `requestId` with `to` `retry`: the
+     * core sends again what that Send asked, and a letter the first try
+     * stored is not stored twice (B27, engineering principle 11).
      */
-    sendViewFeedback(workspace: ViewWorkspace, requestId: string, group: string, to: { kind: "default" } | { kind: "pane"; pane_id: string } | { kind: "reopen" }, displayId: string | null) {
+    sendViewFeedback(workspace: ViewWorkspace, requestId: string, group: string, to: { kind: "default" } | { kind: "pane"; pane_id: string } | { kind: "reopen" } | { kind: "retry" }, displayId: string | null) {
       dispatch({
         schema_version: 2,
         kind: "view_feedback_send",

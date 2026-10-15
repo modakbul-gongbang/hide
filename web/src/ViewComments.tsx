@@ -26,6 +26,7 @@ import { displayMark } from "./ViewAreas";
 import { workspaceViewOf } from "./workspace";
 import type { ViewWorkspace } from "./viewLayout";
 import {
+  browserCommentKey,
   closeNote,
   commentsOn,
   COMMENTS_PER_VIEW,
@@ -372,7 +373,7 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
   const feedback = useViewFeedback();
   const sentFrom = useFeedbackStore((s) => s.sentFrom);
   const deletedFrom = useFeedbackStore((s) => s.deletedFrom);
-  const browserOn = useFeedbackStore((s) => s.browser[display.id]?.on === true);
+  const browserOn = useFeedbackStore((s) => s.browser[browserCommentKey(workspace, display.id)]?.on === true);
   const [lastRetry, setLastRetry] = useState<string | null>(null);
   const group = groupOn(feedback, display.id);
   const send = feedback?.send;
@@ -404,27 +405,25 @@ export function FeedbackRow({ display, workspace, actions }: { display: ViewDisp
     state = send.state;
     const device = send.device ?? "";
     if (send.state === "failed" && send.reason) {
-      const group = groupKeyOf(feedback, send.to);
       body = (
         <>
           <AlertCircleIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-destructive" />
           <span className="min-w-0 flex-1 truncate">
             <Trans i18n={i18n} t={t} i18nKey="feedback.state.failed" values={{ reason: reasonText(t, send.reason, device, send.to) }} components={{ bad: <span className="text-destructive" /> }} />
           </span>
-          {group !== null ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              data-view-feedback-retry={send.request_id}
-              disabled={lastRetry === send.request_id + send.at_unix_ms}
-              onClick={() => {
-                setLastRetry(send.request_id + send.at_unix_ms);
-                actions.sendViewFeedback(workspace, send.request_id, group, { kind: "default" }, null);
-              }}
-            >
-              {t("common.retry")}
-            </Button>
-          ) : null}
+          {/* The core sends again what this Send asked: its recipient and its Views (B27). */}
+          <Button
+            variant="secondary"
+            size="sm"
+            data-view-feedback-retry={send.request_id}
+            disabled={lastRetry === send.request_id + send.at_unix_ms}
+            onClick={() => {
+              setLastRetry(send.request_id + send.at_unix_ms);
+              actions.sendViewFeedback(workspace, send.request_id, "", { kind: "retry" }, null);
+            }}
+          >
+            {t("common.retry")}
+          </Button>
         </>
       );
     } else if (send.state === "sending" || send.state === "reopening") {
@@ -496,11 +495,6 @@ function reasonText(t: ReturnType<typeof useInterfaceTranslation>["t"], reason: 
 
 function allDisplayIds(root: ViewLayoutSnapshot["root"]): string[] {
   return areasOf(root).flatMap((area) => area.displays.map((display) => display.id));
-}
-
-/** The group a failed Send was for, found by its recipient's name, for Retry. */
-function groupKeyOf(feedback: ViewFeedback | undefined, to: string): string | null {
-  return feedback?.groups.find((group) => (group.recipient?.name ?? "") === to)?.key ?? feedback?.groups.find((group) => !group.recipient)?.key ?? null;
 }
 
 /** An agent's row in the Send menu: its status mark, then its logo while logos show (D-24, B17). */
