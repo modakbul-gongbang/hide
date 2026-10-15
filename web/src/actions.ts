@@ -2070,9 +2070,10 @@ export function createActions(send: DispatchFn) {
     },
 
     openUsageHistory() {
+      // Opening Home resets its view to Agents, so the view is chosen after Overview opens.
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
       ui().setOverviewProject(null);
       ui().setMainView("usage");
-      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openAgentsOverview() {
