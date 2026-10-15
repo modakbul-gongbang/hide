@@ -921,6 +921,55 @@ fn a_refused_add_is_a_row_that_says_why_and_the_oldest_of_nine_goes() {
     assert!(gh.calls("issue create").is_empty());
 }
 
+/// The typed attempts the ledger would offer again after a restart.
+fn pending_intents(shared: &SharedRuntime) -> Vec<String> {
+    let client = shared.lock().unwrap().links_work.client.clone().unwrap();
+    let crate::links::ledger::LedgerAnswer::Pending(rows) = client
+        .call(crate::links::ledger::LedgerCall::PendingBacklog)
+        .unwrap()
+    else {
+        panic!("the ledger answers its pending attempts");
+    };
+    rows.into_iter().map(|row| row.intent.intent).collect()
+}
+
+#[test]
+fn a_refused_row_that_is_let_go_does_not_come_back_after_a_restart() {
+    let gh = FakeGh::new();
+    *gh.create_prints.lock().unwrap() = Some("Something went wrong".into());
+    let (shared, _worker) = backlog_runtime(gh);
+    add(&shared, "i-1", "w", "Never confirmed");
+    wait(&shared, "the unconfirmed create", |runtime| {
+        failure(runtime, "i-1") == Some((BacklogPhase::Failed, Some(BacklogFailure::Unconfirmed)))
+    });
+    // Its retry is refused once the project names another repository.
+    move_repository(&shared);
+    send(
+        &shared,
+        "backlog_retry",
+        serde_json::json!({"intent": "i-1"}),
+    );
+    wait(&shared, "the refused retry", |runtime| {
+        failure(runtime, "i-1")
+            == Some((
+                BacklogPhase::Failed,
+                Some(BacklogFailure::RepositoryChanged),
+            ))
+    });
+    assert_eq!(pending_intents(&shared), ["i-1"]);
+
+    for index in 1..=8 {
+        add(&shared, &format!("r-{index}"), "gone", "No such project");
+    }
+    assert!(
+        failure(&shared.lock().unwrap(), "i-1").is_none(),
+        "the oldest refused row goes"
+    );
+    wait_for("the let-go attempt to be put away", || {
+        pending_intents(&shared).is_empty()
+    });
+}
+
 #[test]
 fn a_memo_that_could_not_be_saved_is_made_on_its_retry() {
     let gh = FakeGh::new();

@@ -209,7 +209,8 @@ impl Runtime {
     }
 
     /// Failed rows nothing can try again stay at most `REFUSED_LIMIT`; the
-    /// oldest go first.
+    /// oldest go first, and a typed one's attempt is put away with it so it
+    /// does not come back after a restart.
     fn cap_refused_rows(&mut self) {
         let refused: Vec<_> = self
             .snapshot
@@ -217,10 +218,10 @@ impl Runtime {
             .backlog
             .iter()
             .filter(|row| row.phase == BacklogPhase::Failed && !row.retry)
-            .map(|row| row.intent.clone())
+            .map(|row| (row.intent.clone(), row.missed.is_none()))
             .collect();
         let excess = refused.len().saturating_sub(REFUSED_LIMIT);
-        for intent in refused.into_iter().take(excess) {
+        for (intent, typed) in refused.into_iter().take(excess) {
             crate::diagnostic!(
                 serde_json::json!({"component":"backlog","kind":"backlog.refused_evicted","intent":intent})
             );
@@ -229,6 +230,31 @@ impl Runtime {
                 .backlog
                 .retain(|row| row.intent != intent);
             self.backlog_work.jobs.remove(&intent);
+            if typed {
+                self.put_away_attempt(intent);
+            }
+        }
+    }
+
+    /// A typed item's attempt stops being offered after a restart.
+    fn put_away_attempt(&self, intent: String) {
+        let Some(client) = self.links_work.client.clone() else {
+            return;
+        };
+        let spawned = self.spawn_backlog_worker(
+            "backlog-dismiss",
+            move || client.call(LedgerCall::DismissBacklog { intent }),
+            |_, result| {
+                if let Err(code) = result {
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.dismiss_failed","code":code}));
+                }
+                false
+            },
+        );
+        if let Err(code) = spawned {
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.dismiss_failed","code":code})
+            );
         }
     }
 
@@ -608,20 +634,8 @@ impl Runtime {
                 status: crate::links::ledger::MissedStatus::Dismissed,
             });
         }
-        if job.is_some_and(|job| !job.memo && job.missed.is_none())
-            && let Some(client) = self.links_work.client.clone()
-        {
-            let intent = row.intent.clone();
-            let _ = self.spawn_backlog_worker(
-                "backlog-dismiss",
-                move || client.call(LedgerCall::DismissBacklog { intent }),
-                |_, result| {
-                    if let Err(code) = result {
-                        crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.dismiss_failed","code":code}));
-                    }
-                    false
-                },
-            );
+        if job.is_some_and(|job| !job.memo && job.missed.is_none()) {
+            self.put_away_attempt(row.intent);
         }
         true
     }
