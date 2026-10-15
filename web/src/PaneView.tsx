@@ -314,7 +314,8 @@ export const PaneView = memo(function PaneView({
             }
           >
             {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
-            <span className="flex shrink-0" aria-hidden="true"><AgentMark kind={agentKind} /></span>
+            {/* The logo names its product as the plain head's does (agent-mark-quiet B4, B6); the button's own name already says it. */}
+            <span className="flex shrink-0" role="img" aria-label={agentProductName(agentKind)}><AgentMark kind={agentKind} /></span>
             <span className="min-w-0 truncate">
               {title}
               <span className="sr-only">, {agentProductName(agentKind)}</span>
