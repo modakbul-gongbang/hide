@@ -249,7 +249,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: { code: "KeyK", meta: true, shift: true }, moved: false },
   { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: { code: "KeyD", meta: true }, moved: false },
   { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: { code: "KeyD", meta: true, shift: true }, moved: false },
-  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, alt: true }, electron: { code: "Enter", meta: true, alt: true }, moved: false },
+  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, shift: true }, electron: { code: "Enter", meta: true, shift: true }, moved: false },
   { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: { code: "KeyW", meta: true, shift: true }, moved: true },
   { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: { code: "Equal", meta: true }, moved: false },
   { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: { code: "Minus", meta: true }, moved: false },

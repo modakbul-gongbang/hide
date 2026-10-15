@@ -160,6 +160,8 @@ function LaneMenu({ actions }: { actions: Actions }) {
 export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: WorkspaceView; tool: Tool; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const expanded = frame.mode === "expanded";
+  // The pane zoom's chord expands the lane while the keyboard is in it (`keyboard.ts`).
+  const expandChord = useShellStore((s) => commandLabel("toggle_zoom", s.rest?.ui_state));
   const scope = useScope(checkout);
   // Pinned in a window too narrow to dock, the tooltip reads as the approved
   // board draws it (PRD right-lane B19, D-17).
@@ -177,7 +179,7 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
             <PinIcon className={view.pinned ? "fill-current" : undefined} />
           </Button>
         </Hint>
-        <Hint label={t("panes.lane.expand")}>
+        <Hint label={t("panes.lane.expand")} shortcut={expandChord || undefined}>
           <Button variant={expanded ? "secondary" : "ghost"} size="icon-sm" className="text-muted-foreground" aria-pressed={expanded} aria-label={t("panes.lane.expand")} data-lane-expand={expanded ? "on" : "off"} onClick={() => useUiStore.getState().setLaneExpanded(!expanded)}>
             {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
           </Button>
