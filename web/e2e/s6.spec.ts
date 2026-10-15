@@ -85,6 +85,10 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await expect(page.locator("[data-task-card]")).toHaveCount(2, { timeout: 20_000 });
     await page.locator(`[data-task-card-open="${parent}"]`).click();
     await expect(page.locator("[data-overview-panel]")).toBeVisible();
+    // The head's Open link is set in the head's caption, not the heading's inherited size.
+    const head = page.locator('[data-task-section] h2').first();
+    const sizes = await head.evaluate((h2) => [h2.querySelector("span + span"), h2.querySelector("[data-section-open]")].map((node) => (node ? getComputedStyle(node).fontSize : null)));
+    expect(sizes[1]).toBe(sizes[0]);
     await screenshot(page, "s6-overview");
     await page.locator("[data-record-open-workspace]").click();
     await expect(workspace).toBeVisible();

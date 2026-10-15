@@ -38,6 +38,8 @@ const LINE_TONE: Record<CardLine["kind"], { bar: string; text: string }> = {
 
 const CARD = "relative flex min-w-0 flex-col gap-xxs rounded-md border bg-card px-sm py-xs text-caption";
 const CHIP = "relative z-1 inline-flex min-w-0 items-center gap-xxs rounded-xs px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring";
+/** A project head's link, in the head's caption size rather than the heading's inherited one. */
+const HEAD_LINK = `${CHIP} shrink-0 text-caption text-muted-foreground hover:text-foreground`;
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(var(--size-panel-min),1fr))] gap-sm";
 
 export function OverviewTasks({ projects, rows, deviceId, actions }: { projects: readonly BoardProject[]; rows: ReadonlyMap<string, AgentRow>; deviceId: string; actions: Actions }) {
@@ -85,14 +87,14 @@ function TaskSectionView({ section, rows, deviceId, actions }: { section: TaskSe
         </span>
         <span className="flex-1" />
         {backlog > 0 ? (
-          <button type="button" className={CHIP} data-section-backlog={project.id} onClick={() => { useUiStore.getState().setMainView("backlog"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
+          <button type="button" className={HEAD_LINK} data-section-backlog={project.id} onClick={() => { useUiStore.getState().setMainView("backlog"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
             <CircleDotIcon aria-hidden="true" className="size-(--size-icon-sm)" />
             {t("overviewTasks.backlogLink", { count: backlog })}
             <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           </button>
         ) : null}
         <Hint label={t("overviewTasks.openHint", { project: project.label })}>
-          <button type="button" className={CHIP} data-section-open={project.id} onClick={() => actions.openProjectSessions(project.device_id, project.id)}>
+          <button type="button" className={HEAD_LINK} data-section-open={project.id} onClick={() => actions.openProjectSessions(project.device_id, project.id)}>
             {t("overviewTasks.open")}
             <ExternalLinkIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           </button>
