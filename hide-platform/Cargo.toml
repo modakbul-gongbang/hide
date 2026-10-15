@@ -14,7 +14,7 @@ interprocess = "=2.4.4"
 trash = { version = "=5.2.9", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-libc = "=0.2.189"
+libc = "=0.2.190"
 notify = "=8.2.0"
 
 [target.'cfg(windows)'.dependencies]
