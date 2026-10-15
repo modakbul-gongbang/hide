@@ -133,7 +133,7 @@ pub(super) struct PromotionTracking {
     /// An attempt a retire could not finish for a reason that may pass (the
     /// machine away, Herdr refusing) stays here and is tried on the next
     /// check; one kept for what it holds is left until the next start.
-    retiring: HashMap<Retire, Tried>,
+    retiring: HashMap<Retire, RetireNote>,
     /// Whether a check has looked for attempts settled before this run
     /// started (B19).
     converged: bool,
@@ -142,11 +142,21 @@ pub(super) struct PromotionTracking {
 /// What a check has learned about retiring an attempt, in the order a check
 /// tries them: not tried yet, waiting for a machine that is away (written
 /// once), then refused by Herdr or the node (written once).
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum Tried {
+    #[default]
     Fresh,
     Away,
     Failed,
+}
+
+/// What a check knows of a settled attempt it has yet to retire: what it
+/// has already written about it, and the coordination ids of the agents that
+/// attempted it, the only agents a retire ends (`record_agent`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct RetireNote {
+    tried: Tried,
+    agents: BTreeSet<String>,
 }
 
 /// A settled attempt's branch, to retire its agent and worktree (D-18).
@@ -663,7 +673,7 @@ struct TrackOutcome {
     homes: Option<HashMap<String, HomeAttempt>>,
     /// The settled attempts still to retire after this check, and whether it
     /// looked for those settled before the run.
-    retiring: Option<(HashMap<Retire, Tried>, bool)>,
+    retiring: Option<(HashMap<Retire, RetireNote>, bool)>,
     /// Starts the check took to ask again and hands back, the agent still
     /// unseen.
     unseen: Vec<(AttemptKey, PromotionStart)>,
@@ -715,11 +725,16 @@ fn track_promotions(
                     .settled_branches(node.as_str())
                     .map_err(|error| error.to_string())?
                     .into_iter()
-                    .map(|(project_id, root, branch)| Retire {
-                        node: node.clone(),
-                        project_id,
-                        root,
-                        branch,
+                    .map(|(project_id, root, branch, agents)| {
+                        (
+                            Retire {
+                                node: node.clone(),
+                                project_id,
+                                root,
+                                branch,
+                            },
+                            agents,
+                        )
                     }),
             );
         }
@@ -737,7 +752,7 @@ fn track_promotions(
         }
     }
     drop(store);
-    let (moves, mut asks, reach, held, carried) = {
+    let (moves, mut asks, reach, held, carried, panes) = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
         let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
         let mut gone_now = HashSet::new();
@@ -841,6 +856,14 @@ fn track_promotions(
             })
             .collect::<HashSet<_>>();
         let carried = guard.project_memory.promotions.retiring.clone();
+        // The panes of the agents Hide started that are alive, by the
+        // coordination id a promotion records for its agent.
+        let panes = guard
+            .hide_started
+            .agents
+            .iter()
+            .map(|agent| (agent.agent_id.clone(), agent.pane_id.clone()))
+            .collect::<HashMap<_, _>>();
         let tracking = &mut guard.project_memory.promotions;
         let dropped = tracking
             .gone
@@ -858,7 +881,7 @@ fn track_promotions(
                     (project_id, *number, promotion.attempt) == (&key.0, key.1, key.2)
                 })
         });
-        (moves, asks, reach, held, carried)
+        (moves, asks, reach, held, carried, panes)
     };
     let mut store = match (moves.iter().any(Option::is_some) || !asks.is_empty())
         .then(|| super::memory::open_memory_store(database))
@@ -920,12 +943,15 @@ fn track_promotions(
                             PromotionState::Merged | PromotionState::ClosedUnmerged
                         ) && let Some(branch) = &promotion.branch
                         {
-                            settled.push(Retire {
-                                node: (*node).clone(),
-                                project_id: project_id.clone(),
-                                root: root.clone(),
-                                branch: branch.clone(),
-                            });
+                            settled.push((
+                                Retire {
+                                    node: (*node).clone(),
+                                    project_id: project_id.clone(),
+                                    root: root.clone(),
+                                    branch: branch.clone(),
+                                },
+                                promotion.agent_id.iter().cloned().collect::<Vec<_>>(),
+                            ));
                         }
                         if state == PromotionState::Failed
                             && pr_number.is_none()
@@ -967,10 +993,21 @@ fn track_promotions(
     let due = retire_due(&mut retiring, |node| reach.contains_key(node));
     for retire in due {
         let (connector, link) = &reach[&retire.node];
-        let noticed = retiring[&retire] == Tried::Failed;
-        match retire_attempt(connector.as_ref(), link.as_ref(), &retire, noticed) {
+        let note = &retiring[&retire];
+        let noticed = note.tried == Tried::Failed;
+        // The panes of the agents the store names for the attempt, from the
+        // ledger as it stood when the check was planned; an attempt with no
+        // such agent ends nothing.
+        let own = note
+            .agents
+            .iter()
+            .filter_map(|agent| panes.get(agent).cloned())
+            .collect::<Vec<_>>();
+        match retire_attempt(connector.as_ref(), link.as_ref(), &retire, &own, noticed) {
             Retired::Failed => {
-                retiring.insert(retire, Tried::Failed);
+                if let Some(note) = retiring.get_mut(&retire) {
+                    note.tried = Tried::Failed;
+                }
             }
             Retired::Done | Retired::Kept => {
                 retiring.remove(&retire);
@@ -1257,13 +1294,13 @@ fn release_attempt(
 /// branch an attempt still followed holds (a retry reuses a failed
 /// attempt's branch, and a batch shares one).
 fn retire_plan(
-    carried: HashMap<Retire, Tried>,
-    found: impl IntoIterator<Item = Retire>,
+    carried: HashMap<Retire, RetireNote>,
+    found: impl IntoIterator<Item = (Retire, Vec<String>)>,
     held: &HashSet<(String, String)>,
-) -> HashMap<Retire, Tried> {
+) -> HashMap<Retire, RetireNote> {
     let mut plan = carried;
-    for retire in found {
-        plan.entry(retire).or_insert(Tried::Fresh);
+    for (retire, agents) in found {
+        plan.entry(retire).or_default().agents.extend(agents);
     }
     plan.retain(|retire, _| !held.contains(&(retire.project_id.clone(), retire.branch.clone())));
     plan
@@ -1274,14 +1311,14 @@ fn retire_plan(
 /// holds no slot, so a backlog of refusals or an absent device never starves
 /// the rest (engineering principle 15). The absence is written once.
 fn retire_due(
-    retiring: &mut HashMap<Retire, Tried>,
+    retiring: &mut HashMap<Retire, RetireNote>,
     reachable: impl Fn(&NodeId) -> bool,
 ) -> Vec<Retire> {
     let mut due = Vec::new();
-    for (retire, tried) in retiring.iter_mut() {
+    for (retire, note) in retiring.iter_mut() {
         if reachable(&retire.node) {
             due.push(retire.clone());
-        } else if std::mem::replace(tried, Tried::Away) == Tried::Fresh {
+        } else if std::mem::replace(&mut note.tried, Tried::Away) == Tried::Fresh {
             crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "promotion.worktree_retired",
@@ -1293,7 +1330,11 @@ fn retire_due(
         }
     }
     due.sort_by(|a, b| {
-        (retiring[a], &a.project_id, &a.branch).cmp(&(retiring[b], &b.project_id, &b.branch))
+        (retiring[a].tried, &a.project_id, &a.branch).cmp(&(
+            retiring[b].tried,
+            &b.project_id,
+            &b.branch,
+        ))
     });
     due.truncate(RETIRE_PER_CHECK);
     due
@@ -1313,9 +1354,6 @@ enum Retired {
     Failed,
 }
 
-/// The names the attempts' agents are listed under start with this.
-const AGENT_NAME_PREFIX: &str = "memory-promote-m";
-
 /// Retires a settled attempt (PRD hide-ai-work-home D-18, D-24, engineering
 /// principle 14): its agent's panes close, then its worktree is removed when
 /// the tree is clean and no other agent or running program is in it. The
@@ -1325,6 +1363,7 @@ fn retire_attempt(
     connector: &dyn hide_herdr_client::ApiConnector,
     node: &dyn crate::node_access::NodeLink,
     retire: &Retire,
+    own: &[String],
     noticed: bool,
 ) -> Retired {
     use hide_node_link::git::GitCommand;
@@ -1356,12 +1395,7 @@ fn retire_attempt(
         let (attempt, others): (Vec<_>, Vec<_>) = agents
             .iter()
             .filter(|agent| panes.contains(&agent.pane_id))
-            .partition(|agent| {
-                agent
-                    .name
-                    .as_deref()
-                    .is_some_and(|name| name.starts_with(AGENT_NAME_PREFIX))
-            });
+            .partition(|agent| own.contains(&agent.pane_id));
         // The attempt's agent ends first, whatever else keeps the worktree.
         let attempt = attempt
             .into_iter()
@@ -2460,6 +2494,8 @@ mod tests {
         agents: Vec<String>,
         /// The panes of the attempt's own agent, named as Hide names it.
         attempt_agents: Vec<String>,
+        /// The panes of an operator's agent whose name looks like an attempt's.
+        lookalikes: Vec<String>,
         /// The panes with a program running that is not their shell.
         busy: Vec<String>,
         /// The worktree removals asked for, with whether each was forced.
@@ -2495,6 +2531,7 @@ mod tests {
                 "agent.list" => json!({"type": "agent_list", "agents":
                     repository.agents.iter().map(|pane| (pane, "m7"))
                         .chain(repository.attempt_agents.iter().map(|pane| (pane, "memory-promote-m7-1")))
+                        .chain(repository.lookalikes.iter().map(|pane| (pane, "memory-promote-m9-1")))
                         .map(|(pane, name)| json!({"pane_id": pane,
                         "workspace_id": "w2", "tab_id": "w2:t1", "terminal_id": "t",
                         "revision": 1, "focused": false, "agent_status": "idle",
@@ -2521,6 +2558,9 @@ mod tests {
                     repository.agents.retain(|pane| *pane != params["pane_id"]);
                     repository
                         .attempt_agents
+                        .retain(|pane| *pane != params["pane_id"]);
+                    repository
+                        .lookalikes
                         .retain(|pane| *pane != params["pane_id"]);
                     if let Some(commits) = repository.committed_on_close {
                         repository.commits = commits;
@@ -2711,6 +2751,11 @@ mod tests {
         }
     }
 
+    /// The pane of the attempt's own agent, as the store's agent id resolves it.
+    fn own() -> Vec<String> {
+        vec!["w2:p1".to_owned()]
+    }
+
     fn retire_of(branch: &str) -> Retire {
         Retire {
             node: NodeId::parse("test-node").unwrap(),
@@ -2750,6 +2795,7 @@ mod tests {
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
                 &retire,
+                &own(),
                 false
             ),
             Retired::Done
@@ -2791,7 +2837,7 @@ mod tests {
             let retire = retire_of(&branch(7, 1));
             for _ in 0..2 {
                 assert_eq!(
-                    retire_attempt(&herdr.connector(), &machine, &retire, false),
+                    retire_attempt(&herdr.connector(), &machine, &retire, &own(), false),
                     Retired::Kept,
                     "{case}"
                 );
@@ -2810,6 +2856,65 @@ mod tests {
         }
     }
 
+    /// Only the agent the store names for the attempt ends: an operator's
+    /// agent whose name looks like an attempt's keeps the worktree and its
+    /// pane, and an attempt with no agent recorded ends none.
+    #[test]
+    fn a_retire_ends_only_the_agent_the_attempt_recorded() {
+        let repository = settled_repository(|repository| {
+            repository.attempt_agents.clear();
+            repository
+                .panes
+                .push(("w2:p3".into(), "/r.worktrees/first".into()));
+            repository.lookalikes = vec!["w2:p3".into()];
+            repository.attempt_agents = vec!["w2:p1".into()];
+        });
+        let first = herdr(&repository);
+        assert_eq!(
+            retire_attempt(
+                &first.connector(),
+                &Machine(Arc::clone(&repository)),
+                &retire_of(&branch(7, 1)),
+                &own(),
+                false
+            ),
+            Retired::Kept
+        );
+        {
+            let held = repository.lock().unwrap();
+            assert_eq!(held.worktrees.len(), 1, "the lookalike's worktree stays");
+            assert!(
+                held.panes.iter().any(|(pane, _)| pane == "w2:p3"),
+                "its pane stays"
+            );
+            assert!(
+                !held.panes.iter().any(|(pane, _)| pane == "w2:p1"),
+                "the recorded agent ended"
+            );
+        }
+        // No agent recorded: nothing ends, and the listed agent keeps the worktree.
+        let repository = settled_repository(|_| {});
+        let second = herdr(&repository);
+        assert_eq!(
+            retire_attempt(
+                &second.connector(),
+                &Machine(Arc::clone(&repository)),
+                &retire_of(&branch(7, 1)),
+                &[],
+                false
+            ),
+            Retired::Kept
+        );
+        assert!(
+            repository
+                .lock()
+                .unwrap()
+                .panes
+                .iter()
+                .any(|(pane, _)| pane == "w2:p1")
+        );
+    }
+
     /// A machine that is away holds no slot, and an attempt not tried yet goes
     /// before one that already failed, so neither starves the rest.
     #[test]
@@ -2824,11 +2929,17 @@ mod tests {
         for index in 0..RETIRE_PER_CHECK + 4 {
             retiring.insert(
                 at("away", "a", &format!("hide-memory-m{index}")),
-                Tried::Fresh,
+                RetireNote::default(),
             );
         }
-        retiring.insert(at("here", "a", "failed-before"), Tried::Failed);
-        retiring.insert(at("here", "b", "fresh"), Tried::Fresh);
+        retiring.insert(
+            at("here", "a", "failed-before"),
+            RetireNote {
+                tried: Tried::Failed,
+                ..RetireNote::default()
+            },
+        );
+        retiring.insert(at("here", "b", "fresh"), RetireNote::default());
         let due = retire_due(&mut retiring, |node| {
             node == &NodeId::parse("here").unwrap()
         });
@@ -2842,7 +2953,7 @@ mod tests {
             retiring
                 .iter()
                 .filter(|(retire, _)| retire.node == NodeId::parse("away").unwrap())
-                .all(|(_, tried)| *tried == Tried::Away),
+                .all(|(_, note)| note.tried == Tried::Away),
             "the absence is noticed once"
         );
     }
@@ -2858,6 +2969,7 @@ mod tests {
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
                 &retire_of(&branch(7, 1)),
+                &own(),
                 false
             ),
             Retired::Done
@@ -2877,6 +2989,7 @@ mod tests {
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
                 &retire_of(&branch(7, 1)),
+                &own(),
                 false
             ),
             Retired::Kept
@@ -2903,6 +3016,7 @@ mod tests {
                 &Down,
                 &Machine(Arc::clone(&repository)),
                 &retire_of(&branch(7, 1)),
+                &own(),
                 false
             ),
             Retired::Failed
@@ -2915,13 +3029,37 @@ mod tests {
     #[test]
     fn the_retire_plan_merges_what_was_carried_and_found_and_spares_a_followed_branch() {
         let (a, b, c) = (retire_of("a"), retire_of("b"), retire_of("c"));
-        let carried = HashMap::from([(a.clone(), Tried::Failed), (c.clone(), Tried::Fresh)]);
+        let failed = RetireNote {
+            tried: Tried::Failed,
+            agents: BTreeSet::from(["agent-1".to_owned()]),
+        };
+        let carried = HashMap::from([
+            (a.clone(), failed.clone()),
+            (c.clone(), RetireNote::default()),
+        ]);
         let held = HashSet::from([("p".to_owned(), "c".to_owned())]);
-        let plan = retire_plan(carried, [a.clone(), b.clone(), b.clone()], &held);
+        let plan = retire_plan(
+            carried,
+            [
+                (a.clone(), vec!["agent-2".to_owned()]),
+                (b.clone(), vec![]),
+                (b.clone(), vec![]),
+            ],
+            &held,
+        );
         assert_eq!(
             plan,
-            HashMap::from([(a, Tried::Failed), (b, Tried::Fresh)]),
-            "a keeps its note, b is added once, c is held by a followed attempt"
+            HashMap::from([
+                (
+                    a,
+                    RetireNote {
+                        tried: Tried::Failed,
+                        agents: BTreeSet::from(["agent-1".to_owned(), "agent-2".to_owned()]),
+                    }
+                ),
+                (b, RetireNote::default())
+            ]),
+            "a keeps its note and gains the agent found, b is added once, c is held by a followed attempt"
         );
     }
 

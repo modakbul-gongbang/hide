@@ -1939,23 +1939,45 @@ impl MemoryStore {
     }
 
     /// The branches whose pull request ended, merged or closed, in every
-    /// Project on `device`, once each with the Project and its root. A
-    /// batch's cards share one branch, and a card's row keeps its last
-    /// attempt, so this is what an upgrade or a restart finds to retire.
+    /// Project on `device`, once each with the Project, its root and the
+    /// coordination ids of the agents that attempted it. A batch's cards
+    /// share one branch, and a card's row keeps its last attempt, so this is
+    /// what an upgrade or a restart finds to retire.
+    #[allow(clippy::type_complexity)]
     pub fn settled_branches(
         &self,
         device: &str,
-    ) -> Result<Vec<(String, String, String)>, MemoryError> {
+    ) -> Result<Vec<(String, String, String, Vec<String>)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT DISTINCT pr.id,pr.root,p.branch FROM card_promotions p \
+            "SELECT pr.id,pr.root,p.branch,p.agent_id FROM card_promotions p \
              JOIN memory_items i ON i.id=p.item_id JOIN projects pr ON pr.id=i.project_id \
              WHERE pr.device_id=?1 AND p.state IN ('merged','closed_unmerged') \
-             AND p.branch IS NOT NULL ORDER BY pr.id,p.branch",
+             AND p.branch IS NOT NULL ORDER BY pr.id,p.branch,p.agent_id",
         )?;
         let rows = statement
-            .query_map([device], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .query_map([device], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        let mut branches: Vec<(String, String, String, Vec<String>)> = Vec::new();
+        for (project, root, branch, agent) in rows {
+            match branches.last_mut() {
+                Some(last) if last.0 == project && last.2 == branch => {
+                    if let Some(agent) = agent
+                        && !last.3.contains(&agent)
+                    {
+                        last.3.push(agent);
+                    }
+                }
+                _ => branches.push((project, root, branch, agent.into_iter().collect())),
+            }
+        }
+        Ok(branches)
     }
 
     /// Moves card `number`'s promotion from the attempt and state `from` to
@@ -6347,7 +6369,8 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             [(
                 project.clone(),
                 temp.path().to_string_lossy().into_owned(),
-                "b-1".to_owned()
+                "b-1".to_owned(),
+                vec!["agent-7".to_owned()]
             )]
         );
         // A batch's cards share one branch; an open or failed attempt, or one
