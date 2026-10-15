@@ -517,8 +517,8 @@ fn the_work_basis_and_checkout_filter_are_stored_and_an_unknown_basis_is_refused
 /// PRD right-lane D-12, B2, B5, B7, B11, B20: every lane field ends at the
 /// value sent, so a repeat changes nothing and reports no change; a tool
 /// sent again is still a call, so a page shows a lane it had hidden; closing
-/// keeps the pin and the View tree and turns the file tree off; and the
-/// widths are stored per Workspace within the core's bound.
+/// keeps the pin, the View tree and the file tree; and the widths are stored
+/// per Workspace within the core's bound.
 #[test]
 fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     let (runtime, checkout_id, directory) = strip_checkout("lane-fields");
@@ -551,8 +551,8 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     layout(&mut runtime, serde_json::json!({"tool": null}));
     assert_eq!(
         lane(&runtime),
-        (None, true, false),
-        "closing keeps the pin and turns the tree off (B11)"
+        (None, true, true),
+        "closing keeps the pin and the tree (B11)"
     );
     assert_eq!(called(&runtime), before + 2, "a close is no call");
     assert_eq!(
@@ -571,7 +571,7 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
         serde_json::json!({"tool": null})
     )));
     layout(&mut runtime, serde_json::json!({"tool": "files"}));
-    assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
+    assert_eq!(lane(&runtime), (Some(Tool::Files), true, true));
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 
     layout(
@@ -588,7 +588,7 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     let saved = saved.get(&view.device_id, &view.path).unwrap();
     assert_eq!(
         (saved.tool, saved.pinned, saved.tree, saved.lane_width),
-        (Some(Tool::Files), true, false, Some(700))
+        (Some(Tool::Files), true, true, Some(700))
     );
     let written = std::fs::read_to_string(&state).unwrap();
     for retired in ["\"views\"", "\"tools\"", "views_width", "lane_called"] {

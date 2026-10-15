@@ -48,8 +48,18 @@ export function chipTitle(t: TFunction<"translation">, chip: AgentChip): string 
 
 /** Maps the core's semantic tone to this surface's existing tokens. */
 export function toneClass(tone: StatusTone): string {
-  const classes = { error: "text-destructive", warning: "text-warning", working: "text-agent-working", success: "text-success", subtle: "text-subtle-foreground", news: "text-foreground" };
-  return classes[tone.kind] + (tone.read ? " opacity-(--opacity-read-status)" : "");
+  return TONE_CLASSES[tone.kind] + (tone.read ? " opacity-(--opacity-read-status)" : "");
+}
+
+const TONE_CLASSES = { error: "text-destructive", warning: "text-warning", working: "text-agent-working", success: "text-success", subtle: "text-subtle-foreground", news: "text-foreground" };
+
+/**
+ * A status mark's colour: the tone's, except that a quiet mark (Seen, idle,
+ * stopped) keeps one grey in every color theme (hide-color-theme B11), while
+ * quiet text keeps following the palette.
+ */
+export function markToneClass(tone: StatusTone): string {
+  return (tone.kind === "subtle" ? "text-status-seen" : TONE_CLASSES[tone.kind]) + (tone.read ? " opacity-(--opacity-read-status)" : "");
 }
 
 export function chipTone(chip: Pick<AgentChip, "tone">): string {

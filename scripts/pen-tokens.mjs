@@ -4,8 +4,12 @@
 // consumer of it, the same way web/src/tokens.css is. This module answers what each
 // canvas variable should be; gen-pen.mjs writes those answers into the canvas and
 // check-pen.mjs fails when the canvas disagrees. Every token becomes a Pen variable
-// of the SAME name: a color token carries hide's whole theme axis, `Mode: [Light,
-// Dark]`, the same two values gen-tokens.mjs writes into `:root`/`.light` and `.dark`.
+// of the SAME name: a color token carries hide's two theme axes, `Mode: [Light,
+// Dark]`, the same two values gen-tokens.mjs writes into `:root`/`.light` and `.dark`,
+// and `Palette: [Neutral, Hide]`, whose Hide entries carry the values gen-tokens.mjs
+// writes into the `.palette-hide` blocks. Neutral is the axis default, so a frame
+// with no Palette tag draws Neutral; a variable without Hide entries draws its Mode
+// value under either Palette.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +17,7 @@ import {readTokens} from './gen-tokens.mjs';
 
 export const CANVAS = 'design/hide-ui.lib.pen';
 export const MAP = 'scripts/pen-token-map.json';
-export const THEMES = {Mode: ['Light', 'Dark']};
+export const THEMES = {Mode: ['Light', 'Dark'], Palette: ['Neutral', 'Hide']};
 
 function hex(value) {
   if (!/^#[0-9A-Fa-f]{6}$/.test(value)) throw new Error(`Not a 6-digit hex color: ${value}`);
@@ -34,7 +38,12 @@ function resolveToken(name, tokens, seen) {
   }
   if (token.type === 'color') {
     if (!token.light) throw new Error(`${name} has no Light value`);
-    return {type: 'color', value: [{value: hex(token.light)}, {value: hex(token.value), theme: {Mode: 'Dark'}}]};
+    const value = [{value: hex(token.light)}, {value: hex(token.value), theme: {Mode: 'Dark'}}];
+    if (token.hide !== undefined) {
+      if (!token.hide.value || !token.hide.light) throw new Error(`${name} has a Hide value without both Dark and Light`);
+      value.push({value: hex(token.hide.light), theme: {Palette: 'Hide'}}, {value: hex(token.hide.value), theme: {Mode: 'Dark', Palette: 'Hide'}});
+    }
+    return {type: 'color', value};
   }
   if (token.type === 'number' || token.type === 'scalar') {
     if (typeof token.value !== 'number') throw new Error(`${name} is not numeric: ${JSON.stringify(token.value)}`);

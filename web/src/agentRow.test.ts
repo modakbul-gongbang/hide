@@ -56,7 +56,7 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
 describe("the mark and the badge (D-01, D-02)", () => {
   it("draws a waiting root's ring in the working colour and every other row from its own axes", () => {
     expect(markTone(row("root", { activity: "stopped", symbol: "○", wait: "children" }))).toBe("text-agent-working");
-    expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-subtle-foreground");
+    expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-status-seen");
     expect(markTone(row("ask", { demand: "question", activity: "stopped", group: "needs_you", emphasized: true, unread: true }))).toBe("text-warning");
   });
 

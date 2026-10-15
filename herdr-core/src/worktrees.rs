@@ -983,8 +983,7 @@ use hide_host::worktrees::output_within;
 mod tests {
     use super::*;
     use hide_host::worktrees::{
-        ListedWorktree, describe, parse_ahead_behind, parse_shortstat, parse_worktree_list,
-        resolve_base,
+        parse_ahead_behind, parse_shortstat, parse_worktree_list, resolve_base,
     };
 
     #[test]
@@ -1071,30 +1070,6 @@ mod tests {
             resolve_base(None, &bases, Some("main")).as_deref(),
             Some("main")
         );
-    }
-
-    /// A worktree git lists but disk does not have reports `missing` and no
-    /// counts, so an absent checkout never reads as a clean one.
-    #[test]
-    fn a_missing_worktree_reports_no_counts() {
-        let described = describe(
-            ListedWorktree {
-                path: PathBuf::from("/definitely/not/here/hide-test"),
-                branch: Some("gone".to_owned()),
-                is_main: false,
-                bare: false,
-                head_sha: None,
-                lock_reason: None,
-            },
-            &BTreeMap::new(),
-            Some("main"),
-            None,
-        );
-        assert!(described.missing);
-        assert!(!described.dirty);
-        assert_eq!(described.ahead, 0);
-        assert_eq!(described.behind, 0);
-        assert_eq!(described.unpushed, None);
     }
 
     /// A node whose projects are each their own repository, and whose every

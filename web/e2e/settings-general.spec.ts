@@ -61,6 +61,18 @@ test("Settings lists its pages in two groups with About apart, and About shows t
     await expect(appearance.locator("[data-accent]")).toHaveCount(4);
     await expect(appearance.locator("[data-font-size]")).toBeVisible();
     await expect(appearance).not.toContainText(/#[0-9a-f]{6}/i);
+    // hide-color-theme B1, B2, B6: Color theme sits between Language and Mode,
+    // offers Hide and Neutral, and a store that never chose opens on Hide.
+    expect(await appearance.locator("[data-appearance-row]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-appearance-row")))).toEqual([
+      "language",
+      "color-theme",
+      "mode",
+      "accent",
+      "interface-text",
+    ]);
+    await expect(appearance.locator("[data-color-theme-option]")).toHaveText(["Hide", "Neutral"]);
+    await expect(appearance.locator("[data-color-theme-choice]")).toHaveAttribute("data-color-theme-choice", "hide");
+    await expect(appearance.locator('[data-appearance-row="mode"]')).toContainText("Mode");
 
     // B6 (settings-cleanup): no ownership sentence and no Authentication paragraph, and no device chip on this Mac.
     await expect(sheet).not.toContainText("kept by hided");
@@ -151,6 +163,30 @@ test("General and About read without sideways scrolling in Korean and English, l
     const panel = sheet.locator("[data-settings-page]");
     const overflow = () => panel.evaluate((node) => node.scrollWidth - node.clientWidth);
     const details = sheet.locator("[data-settings-details]");
+
+    // hide-color-theme B5, D-14: both rows and both choices are named in each
+    // language and fit the narrow sheet, none cut off.
+    const appearanceWords = {
+      en: ["Color theme", "Mode", "Hide", "Neutral"],
+      ko: ["색 테마", "모드", "Hide", "뉴트럴"],
+      ja: ["カラーテーマ", "モード", "Hide", "ニュートラル"],
+      "zh-CN": ["配色主题", "模式", "Hide", "中性"],
+    } as const;
+    await sheet.locator('[data-settings-tab="general"]').click();
+    for (const [language, [colorTheme, mode, hide, neutral]] of Object.entries(appearanceWords)) {
+      await sheet.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await expect(sheet.locator('[data-appearance-row="color-theme"]')).toContainText(colorTheme);
+      await expect(sheet.locator('[data-appearance-row="mode"]')).toContainText(mode);
+      await expect(sheet.locator("[data-color-theme-option]")).toHaveText([hide, neutral]);
+      await expect.poll(overflow).toBeLessThanOrEqual(0);
+      const cut = await sheet.locator('[data-appearance-row="color-theme"], [data-appearance-row="mode"]').evaluateAll((rows) =>
+        rows.flatMap((row) => [...row.querySelectorAll<HTMLElement>("div, button")].filter((node) => node.scrollWidth > node.clientWidth + 1).map((node) => node.textContent)),
+      );
+      expect(cut, language).toEqual([]);
+      await screenshot(page, `settings-appearance-${language}-narrow`);
+    }
 
     for (const [language, theme] of [
       ["en", "light"],

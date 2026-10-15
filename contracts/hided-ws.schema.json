@@ -688,6 +688,17 @@
       "additionalProperties": false,
       "properties": { "language": { "$ref": "#/$defs/interfaceLanguage" } }
     },
+    "colorTheme": {
+      "description": "The palette every window draws in, `ui_state.color_theme`: hide is the landing page's Owl Field colors and the default (a store without the field opens hide), neutral the grey chrome. Independent of `ui_state.theme`, which picks light, dark or system. A stored value the core does not know opens hide with the diagnostic ui_state.color_theme_unknown.",
+      "enum": ["hide", "neutral"]
+    },
+    "colorThemeSetPayload": {
+      "description": "Payload of color_theme_set. This event alone edits the color theme; ui_state_update never changes it, a value outside colorTheme is refused, and the current value again saves nothing.",
+      "type": "object",
+      "required": ["color_theme"],
+      "additionalProperties": false,
+      "properties": { "color_theme": { "$ref": "#/$defs/colorTheme" } }
+    },
     "closeReason": {
       "type": "string",
       "enum": ["invalid_token", "origin_not_allowed", "schema_mismatch", "client_limit"]

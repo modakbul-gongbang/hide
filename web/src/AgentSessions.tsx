@@ -29,6 +29,7 @@ import { MissedRow, SessionRecord } from "./SessionRecord";
 import { openMissedWork, sessionOfAgent, workKey } from "./sessionWork";
 import { summariesEnabled } from "./hideAi";
 import { useRequestViewDemand } from "./requestViewDemand";
+import { agentsByPane } from "./paneAgents";
 
 const GROUP_LABEL: Record<SessionGroup, MessageKey> = {
   needs_you: "agents.group.needs_you", working: "agents.group.working", done: "agents.group.done",
@@ -70,7 +71,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
   const groups = model.scope?.sessions.groups ?? [];
   const filtered = model.front !== null && onlyCheckout === model.front.id;
   const opened = useMemo(() => new Set(folds), [folds]);
-  const byPane = useMemo(() => new Map(model.agents.map((row) => [row.pane_id, row])), [model.agents]);
+  const byPane = agentsByPane(model.agents);
   const rest = useShellStore((state) => state.rest);
   const links = useShellStore((state) => state.linkSummaries);
   const work = model.projects.flatMap((project) => links?.projects[project.id]?.work ?? []);

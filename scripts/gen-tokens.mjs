@@ -3,7 +3,11 @@
 //
 // Colors carry a Dark value and a Light value: `:root` (and `.light`) holds
 // Light and `.dark` holds Dark, the way shadcn themes switch, and an alias names another token so
-// `--ring` follows `--primary` whichever theme is on. The Tailwind v4 theme maps
+// `--ring` follows `--primary` whichever theme is on. Those are the Neutral
+// color theme's values; a color the Hide color theme draws differently carries
+// `hide: {value, light}` too, written into blocks scoped to `.palette-hide`, the
+// class the shell puts on the document root beside the mode class
+// (hide-color-theme D-10). A subtree with no such ancestor draws Neutral. The Tailwind v4 theme maps
 // the utility namespaces onto these variables and resets Tailwind's own color,
 // text and radius scales, so only a token can reach a class.
 
@@ -13,6 +17,8 @@ import path from 'node:path';
 export const TOKENS = 'design/tokens.json';
 export const CSS = 'web/src/tokens.css';
 export const ACCENTS = 'web/src/generated/accents.ts';
+/** The class that selects the Hide color theme; the web shell's `theme.ts` names the same class. */
+export const PALETTE_HIDE = 'palette-hide';
 
 /** The interface text sizes Settings > Appearance > Interface font scales; terminal and editor text do not. */
 /** The class a subtree carries to draw the interface text at its own size whatever the Appearance scale. */
@@ -39,15 +45,22 @@ export function generate(root = process.cwd()) {
   const tokens = readTokens(root);
   const smallControl = tokens['--size-control-sm'];
   if (smallControl?.type !== 'number') throw new Error('Expected numeric --size-control-sm');
-  const theme = [], mapped = [], light = [], dark = [], rest = [], fixed = [];
+  const theme = [], mapped = [], light = [], dark = [], hideLight = [], hideDark = [], rest = [], fixed = [];
   for (const [name, token] of Object.entries(tokens)) {
     if (token.type === 'color') {
       if (!token.light) throw new Error(`${name} has no Light value`);
       light.push(`  ${name}: ${color(token.light)};`);
       dark.push(`  ${name}: ${color(token.value)};`);
+      if (token.hide !== undefined) {
+        if (!token.hide.value || !token.hide.light) throw new Error(`${name} has a Hide value without both Dark and Light`);
+        if (token.hide.value.toUpperCase() === token.value.toUpperCase() && token.hide.light.toUpperCase() === token.light.toUpperCase()) throw new Error(`${name} repeats its Neutral value as Hide; leave hide out so it inherits`);
+        hideLight.push(`  ${name}: ${color(token.hide.light)};`);
+        hideDark.push(`  ${name}: ${color(token.hide.value)};`);
+      }
       mapped.push(`  --color-${name.slice(2)}: var(${name});`);
     } else if (token.type === 'alias') {
       if (!tokens[token.value]) throw new Error(`${name} aliases unknown ${token.value}`);
+      if (token.hide !== undefined) throw new Error(`${name} is an alias; it takes its Hide value from ${token.value}`);
       // A custom property resolves its var() where it is declared, so each
       // theme block carries the aliases again for its own values.
       light.push(`  ${name}: var(${token.value});`);
@@ -100,6 +113,20 @@ export function generate(root = process.cwd()) {
     '',
     '.dark {',
     ...dark,
+    '}',
+    '',
+    // After `.dark` and one class more specific than it, so the root's
+    // `palette-hide dark` and a mode subtree under it both take Hide's values.
+    `/* The Hide color theme: the document root carries .${PALETTE_HIDE} beside its mode class. */`,
+    `.${PALETTE_HIDE},`,
+    `.${PALETTE_HIDE}.light,`,
+    `.${PALETTE_HIDE} .light {`,
+    ...hideLight,
+    '}',
+    '',
+    `.${PALETTE_HIDE}.dark,`,
+    `.${PALETTE_HIDE} .dark {`,
+    ...hideDark,
     '}',
     '',
   ].join('\n');

@@ -2,6 +2,7 @@
   "agent_onboarding": ["pending", "done"],
   "agent_wait": ["children", "background", "reply"],
   "changed_file_status": ["modified", "added", "deleted", "untracked", "renamed", "conflict"],
+  "color_theme": ["hide", "neutral"],
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
   "editor_tab_kind": ["file", "diff", "session"],

@@ -12,7 +12,7 @@ export const TONE_TEXT: Record<Tone, string> = {
   warning: "text-warning",
   working: "text-agent-working",
   success: "text-success",
-  subtle: "text-muted-foreground",
+  subtle: "text-status-seen",
 };
 
 /** The column a list row's detail lines start in: under the title, after the status mark alone. */
