@@ -13,7 +13,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import type { TFunction } from "i18next";
 import { commandTitle } from "../../../web/src/commandTitle";
 import { FACTORY_OPEN } from "../../../web/src/factory/launch";
-import { SETUP_COMMAND } from "../../../web/src/host";
+import { CHECK_UPDATES_COMMAND, SETUP_COMMAND } from "../../../web/src/host";
 import { AREA_COMMANDS, LANE_TOOL_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
@@ -130,8 +130,8 @@ function items(layout: readonly (CommandId | null)[], send: (id: CommandId) => v
   });
 }
 
-/** What a menu item sends the shell: a registry command, or the host's own Set up Hide. */
-export type MenuCommand = CommandId | typeof SETUP_COMMAND;
+/** What a menu item sends the shell: a registry command, or the host's own Set up Hide and Check for Updates…. */
+export type MenuCommand = CommandId | typeof SETUP_COMMAND | typeof CHECK_UPDATES_COMMAND;
 
 export function menuTemplate(options: {
   appName: string;
@@ -162,11 +162,14 @@ export function menuTemplate(options: {
   // Ctrl+Shift, and the Window menu stays macOS's, since those windows close
   // and minimize from their own title bar. Only the edit roles keep plain Ctrl.
   const pcKeys = (accelerator: string) => (mac ? {} : { accelerator });
+  // Where each system's apps keep it (PRD auto-update D-25): macOS's app menu, Windows' and Linux's Help.
+  const checkForUpdates: MenuItemConstructorOptions = { id: CHECK_UPDATES_COMMAND, label: t("native.menu.checkForUpdates"), click: () => send(CHECK_UPDATES_COMMAND) };
   return [
     {
       label: appName,
       submenu: [
         { role: "about", label: t("native.menu.about", { appName }) },
+        ...(mac ? [checkForUpdates] : []),
         { type: "separator" },
         ...items(MENU_LAYOUT.app, send, registry, t),
         { type: "separator" },
@@ -223,7 +226,12 @@ export function menuTemplate(options: {
     {
       role: "help",
       label: t("native.menu.help"),
-      submenu: [{ id: SETUP_COMMAND, label: t("native.menu.setupHide"), click: () => send(SETUP_COMMAND) }, { type: "separator" }, ...items(MENU_LAYOUT.Help, send, registry, t)],
+      submenu: [
+        { id: SETUP_COMMAND, label: t("native.menu.setupHide"), click: () => send(SETUP_COMMAND) },
+        ...(mac ? [] : [checkForUpdates]),
+        { type: "separator" },
+        ...items(MENU_LAYOUT.Help, send, registry, t),
+      ],
     },
   ];
 }

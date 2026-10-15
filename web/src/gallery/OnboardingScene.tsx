@@ -166,6 +166,7 @@ function sceneHost(system: OnboardingSystem, permission: NotificationPermission)
     onWindowChrome: () => () => undefined, editorAvailable: async () => false, openInEditor: () => undefined, openNotificationSettings: () => undefined,
     reportBadge: () => undefined,
     browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: none },
+    updates: { onStatus: none, check: () => undefined, restart: () => undefined, setPrerelease: () => undefined },
   };
 }
 

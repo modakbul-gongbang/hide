@@ -140,6 +140,47 @@ export type HostBridge = {
    */
   openInEditor(path: string): void;
   browser: BrowserBridge;
+  /** This app's own updates (PRD auto-update), which only the desktop host has. */
+  updates: UpdatesBridge;
+};
+
+/**
+ * Where this app's update stands (PRD auto-update D-17 to D-22), as the
+ * desktop host's updater reports it:
+ * - `off`: this app does not update itself: a development or CI build, or an
+ *   app not installed from a package (`development`, B23), or a macOS app in
+ *   a place it cannot replace itself, such as the disk image (`location`, B27);
+ * - `idle`: nothing newer; `checkedAt` is the last check that finished, in ms;
+ * - `checking`, `downloading` (with its version and 0-100 percent);
+ * - `ready`: downloaded and verified, waiting for a restart or the next quit;
+ * - `failed`: the last `check` or `download` (which includes its sha512 and,
+ *   on macOS, signature check) failed; the reason is in the host's log.
+ */
+export type UpdatePhase =
+  | { kind: "off"; reason: "development" | "location" }
+  | { kind: "idle"; checkedAt: number | null }
+  | { kind: "checking" }
+  | { kind: "downloading"; version: string; percent: number }
+  | { kind: "ready"; version: string }
+  | { kind: "failed"; stage: "check" | "download" };
+
+export type UpdateStatus = {
+  phase: UpdatePhase;
+  /** Whether preview releases (`-rc.N`) are taken too; this installation's choice, off at first (D-22). */
+  prerelease: boolean;
+  /** Whether a ready update installs when the app quits; Linux asks for the system password, so only on Restart (D-18). */
+  installOnQuit: boolean;
+};
+
+export type UpdatesBridge = {
+  /** Delivers the status at once and on every change; returns the unsubscribe. */
+  onStatus(listener: (status: UpdateStatus) => void): () => void;
+  /** Checks now, as Check for Updates… or About's button does. */
+  check(): void;
+  /** Installs the ready update and opens the new version; the core and its agents keep running (D-19). */
+  restart(): void;
+  /** Takes preview releases from the next check on, or stops taking them; never installs a lower version (D-22). */
+  setPrerelease(on: boolean): void;
 };
 
 /**
@@ -157,6 +198,12 @@ export type WindowChrome = { trafficLights: boolean; fullscreen: boolean };
  * first-run-onboarding B45).
  */
 export const SETUP_COMMAND = "setup_hide";
+
+/**
+ * The app menu's Check for Updates… (PRD auto-update D-25): the host starts a
+ * check and the shell opens Settings > About, where its outcome shows.
+ */
+export const CHECK_UPDATES_COMMAND = "check_updates";
 
 /**
  * The system's notification permission for Hide (`desktop/src/main/notificationPermission.ts`):

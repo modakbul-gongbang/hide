@@ -1,7 +1,10 @@
 // The sidebar footer's Help menu (PRD sidebar-titlebar-refresh D-11, D-12,
 // B13, B14): the shortcut sheet with its chord, Copy diagnostics with the
 // same text as Settings' About, the repository's new-issue page in the default
-// browser, and the version, which is a line to read rather than an action.
+// browser, and the version, which is a line to read rather than an action
+// until an update of this app is ready (PRD auto-update D-03, B15): then a dot
+// sits on the menu's button and the line names the ready version and restarts
+// into it. Nothing else of an update shows here (D-21).
 
 import { CircleHelpIcon } from "lucide-react";
 import { useState } from "react";
@@ -10,6 +13,7 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { diagnosticsInputOf, diagnosticsText } from "../settings";
 import { commandLabel } from "../shortcutLabels";
 import { useShellStore } from "../store";
+import { readyVersion, restartIntoUpdate, useUpdateStatus } from "../updates";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
@@ -23,6 +27,8 @@ const COPIED_SHOWN_MS = 1500;
 export function HelpMenu({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const version = useShellStore((s) => s.daemon?.version ?? null);
+  const ready = readyVersion(useUpdateStatus());
+  const label = ready ? `${t("sidebar.help")} · ${t("sidebar.help.updateReady")}` : t("sidebar.help");
   const chord = useShellStore((s) => commandLabel("shortcuts", s.rest?.ui_state));
   const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
   const copyDiagnostics = (event: Event) => {
@@ -39,10 +45,11 @@ export function HelpMenu({ actions }: { actions: Actions }) {
   };
   return (
     <DropdownMenu onOpenChange={(open) => (open ? setCopy("idle") : undefined)}>
-      <Hint label={t("sidebar.help")}>
+      <Hint label={label}>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label={t("sidebar.help")} data-help-menu-trigger="true">
+          <Button variant="ghost" size="icon-sm" aria-label={label} data-help-menu-trigger="true" className="relative">
             <CircleHelpIcon />
+            {ready ? <span role="img" aria-label={t("sidebar.help.updateReady")} className="absolute right-xxs top-xxs size-(--size-tab-status-dot) rounded-full bg-primary" data-help-update-dot="true" /> : null}
           </Button>
         </DropdownMenuTrigger>
       </Hint>
@@ -67,9 +74,16 @@ export function HelpMenu({ actions }: { actions: Actions }) {
           {t("sidebar.help.reportIssue")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="font-mono text-caption font-normal text-muted-foreground" data-help-version={version ?? ""}>
-          {`hide ${version ?? t("settings.unavailable")}`}
-        </DropdownMenuLabel>
+        {ready ? (
+          <DropdownMenuItem data-help-update={ready} onSelect={restartIntoUpdate}>
+            <span className="font-mono text-caption">{t("sidebar.help.versionReady", { version: ready })}</span>
+            <span className="ml-auto text-caption font-medium text-primary">{t("sidebar.help.restart")}</span>
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuLabel className="font-mono text-caption font-normal text-muted-foreground" data-help-version={version ?? ""}>
+            {`hide ${version ?? t("settings.unavailable")}`}
+          </DropdownMenuLabel>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

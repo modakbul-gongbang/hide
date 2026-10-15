@@ -18,7 +18,7 @@ describe("the environment registry", () => {
     const readers = sources(SRC).filter((file) => fs.readFileSync(file, "utf8").includes("process.env"));
     expect(readers.map((file) => path.relative(SRC, file).split(path.sep).join("/"))).toEqual(["main/index.ts"]);
     const envSource = fs.readFileSync(path.join(SRC, "main/env.ts"), "utf8");
-    const read = [...envSource.matchAll(/(?:absolute|windows)\("([A-Za-z_]+)"|source\.([A-Za-z_]+)/g)].map((match) => match[1] ?? match[2]);
+    const read = [...envSource.matchAll(/(?:absolute|windows|feed)\("([A-Za-z_]+)"|source\.([A-Za-z_]+)/g)].map((match) => match[1] ?? match[2]);
     const registered = ENV_REGISTRY.map((entry) => entry.key);
     for (const key of read) expect(registered, key).toContain(key);
   });
@@ -31,6 +31,11 @@ describe("the environment registry", () => {
     expect(() => loadEnv({ HERDR_BIN_PATH: "\\herdr" })).toThrow("HERDR_BIN_PATH: not an absolute path");
   });
 
+  it("takes an update feed only as an http or https URL", () => {
+    expect(loadEnv({ HIDE_UPDATE_FEED_URL: "http://127.0.0.1:8080/feed" }).updateFeedUrl).toBe("http://127.0.0.1:8080/feed");
+    for (const value of ["file:///tmp/feed", "not a url"]) expect(() => loadEnv({ HIDE_UPDATE_FEED_URL: value })).toThrow("HIDE_UPDATE_FEED_URL: not an http or https URL");
+  });
+
   it.runIf(process.platform !== "win32")("reads the macOS and Linux keys", () => {
     const source = { PATH: "/bin", HOME: "/h", SHELL: "/bin/sh", HIDE_STATE_DIR: "/s", LOCALAPPDATA: "/l" };
     expect(loadEnv(source)).toEqual({
@@ -39,6 +44,7 @@ describe("the environment registry", () => {
       herdrBinPath: null,
       herdrPaneId: null,
       systemLanguage: null,
+      updateFeedUrl: null,
       shell: "/bin/sh",
       home: "/h",
       localAppData: null,
@@ -70,6 +76,7 @@ describe("the environment registry", () => {
       herdrBinPath: null,
       herdrPaneId: null,
       systemLanguage: null,
+      updateFeedUrl: null,
       shell: null,
       home: "C:\\Users\\example",
       localAppData: "C:\\Users\\example\\AppData\\Local",

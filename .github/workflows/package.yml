@@ -9,7 +9,9 @@
 # and the rpm in a Fedora container; each installed app then starts without a
 # window (`desktop/scripts/smoke-package.mjs`). The installed Windows app is
 # then opened with its window (`desktop/e2e/packaged-window.spec.ts`), and the
-# shell it draws is kept.
+# shell it draws is kept. Last, on both systems, a release-numbered build of
+# the same package is installed and updates itself to the next number from a
+# local feed through Help's Restart (`desktop/e2e/packaged-update.spec.ts`).
 #
 # A release calls this workflow and attaches what it uploads, and the nightly
 # calls it on main. A pull request runs it as `pr.yml`'s `package` lane, which
@@ -98,9 +100,9 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: Install zsh for the Herdr fetch and rpmbuild for the rpm
+      - name: Install zsh for the Herdr fetch, rpmbuild for the rpm and a display for the update test
         if: matrix.system == 'linux'
-        run: sudo apt-get install -y --no-install-recommends zsh rpm
+        run: sudo apt-get install -y --no-install-recommends zsh rpm xvfb
       - name: Name the version
         env:
           REQUESTED: ${{ inputs.version }}
@@ -121,7 +123,7 @@ jobs:
         # fetches the pinned Herdr and refuses when any of them cannot run;
         # electron-builder then wraps the app in desktop/out/release.
         timeout-minutes: 50
-        run: bash scripts/verify-web.sh desktop package
+        run: bash scripts/verify-web.sh desktop package | tee "$RUNNER_TEMP/package.out"
       - name: Check each installer against its checksum
         working-directory: desktop/out/release
         run: for checksum in *.sha256; do sha256sum -c "$checksum"; done
@@ -160,13 +162,13 @@ jobs:
             test -f /usr/share/applications/hide.desktop
             node desktop/scripts/smoke-package.mjs /opt/hide
           '
-      - name: Name the installed package's binaries for the window fixture
-        if: matrix.system == 'windows'
+      - name: Name the installed package's binaries for the window and update fixtures
         run: |
           # The fixture's own `hide status` and `hide stop` read target/debug;
           # these are the package's binaries, so no workspace is built twice.
           mkdir -p target/debug
-          cp "${{ steps.installed.outputs.app }}/resources/hide.exe" "${{ steps.installed.outputs.app }}/resources/hided.exe" target/debug/
+          exe="${{ matrix.system == 'windows' && '.exe' || '' }}"
+          cp "${{ steps.installed.outputs.app }}/resources/hide$exe" "${{ steps.installed.outputs.app }}/resources/hided$exe" target/debug/
       - name: The packaged app's window
         # The installed hide.exe with its window, against a private HOME, state
         # and Herdr (desktop/e2e/packaged-window.spec.ts); the shell it draws
@@ -181,10 +183,44 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           bash scripts/verify-web.sh desktop e2e packaged-window.spec.ts
+      - name: Build two release versions of the same app for the update test
+        # N is installed, N+1 is served from a local feed (PRD auto-update
+        # D-29); both are the package above with another version, so the
+        # update changes nothing but the version.
+        timeout-minutes: 15
+        run: |
+          bundle="$(sed -n 's/^bundle=//p' "$RUNNER_TEMP/package.out")"
+          test -d "$bundle"
+          node desktop/scripts/installers.mjs "$bundle" 0.0.1 "$RUNNER_TEMP/update-n"
+          node desktop/scripts/installers.mjs "$bundle" 0.0.2 "$RUNNER_TEMP/update-next"
+          if [ "${{ matrix.system }}" = windows ]; then
+            MSYS_NO_PATHCONV=1 "$RUNNER_TEMP/update-n/hide-v0.0.1-windows-x64-setup.exe" /S
+          else
+            sudo apt-get install -y --allow-downgrades "$RUNNER_TEMP/update-n/hide-v0.0.1-linux-x64.deb"
+          fi
+      - name: Update the installed app to the next version
+        # The installed N finds N+1, downloads it, and Restart in the Help
+        # menu installs it while the Herdr server and the daemon keep running
+        # (desktop/e2e/packaged-update.spec.ts).
+        id: update
+        timeout-minutes: 15
+        env:
+          HIDE_E2E_UPDATE_APP: ${{ steps.installed.outputs.app }}/hide${{ matrix.system == 'windows' && '.exe' || '' }}
+          HIDE_E2E_UPDATE_FEED: ${{ runner.temp }}/update-next
+          HIDE_E2E_UPDATE_VERSION: 0.0.2
+          HIDE_E2E_HERDR_BIN: ${{ steps.installed.outputs.app }}/resources/herdr${{ matrix.system == 'windows' && '.exe' || '' }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          if [ "${{ matrix.system }}" = windows ]; then
+            bash scripts/verify-web.sh desktop e2e packaged-update.spec.ts
+          else
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e packaged-update.spec.ts
+          fi
       - name: Report flaky and failed window tests
         # See the macOS job below: this workflow has no `issues: write`.
         id: flaky
-        if: ${{ !cancelled() && matrix.system == 'windows' }}
+        if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -198,11 +234,10 @@ jobs:
           path: ${{ runner.temp }}/hide-e2e/*.png
           if-no-files-found: error
       - name: Keep the failed window run
-        # On Linux nothing is there to keep, and the step keeps nothing.
         if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: hide-package-window-logs-windows
+          name: hide-package-window-logs-${{ matrix.system }}
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results

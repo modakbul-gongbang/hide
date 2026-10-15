@@ -106,6 +106,13 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     note: "Stands in for the system language when the operator has made no explicit choice, so a QA or e2e instance draws the menu and status page in a known language",
   },
   {
+    key: "HIDE_UPDATE_FEED_URL",
+    requirement: "optional",
+    shape: "an http or https URL of a folder holding an update file (latest-mac.yml, latest.yml or latest-linux.yml) and the files it names",
+    fallback: "the release `updater.ts` chooses from with-hide/hide's GitHub releases",
+    note: "Points a packaged release build's updater at another feed, for the CI update test (PRD auto-update D-29); the build must still be one that updates itself",
+  },
+  {
     key: "PATH",
     requirement: "optional",
     shape: "directories separated by the system's PATH separator (`:`, `;` on Windows)",
@@ -121,6 +128,8 @@ export type DesktopEnv = {
   herdrPaneId: string | null;
   /** A language tag standing in for the system's; null on a normal launch. */
   systemLanguage: string | null;
+  /** Another update feed than with-hide/hide's releases; null on a normal launch. */
+  updateFeedUrl: string | null;
   /** The login shell; null on Windows, and where neither SHELL nor the user database names one. */
   shell: string | null;
   home: string;
@@ -158,12 +167,28 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
     return value;
   };
   const windows = (key: string): string | null => (process.platform === "win32" ? absolute(key) : null);
+  const feed = (key: string): string | null => {
+    const value = source[key];
+    if (value === undefined || value === "") return null;
+    let url: URL | null = null;
+    try {
+      url = new URL(value);
+    } catch {
+      // Reported below.
+    }
+    if (url?.protocol !== "http:" && url?.protocol !== "https:") {
+      problems.push({ key, kind: "not an http or https URL" });
+      return null;
+    }
+    return value;
+  };
   const env: DesktopEnv = {
     cliPath: absolute("HIDE_CLI_PATH"),
     userDataDir: absolute("HIDE_DESKTOP_USER_DATA_DIR"),
     herdrBinPath: absolute("HERDR_BIN_PATH"),
     herdrPaneId: source.HERDR_PANE_ID || null,
     systemLanguage: source.HIDE_DESKTOP_SYSTEM_LANGUAGE || null,
+    updateFeedUrl: feed("HIDE_UPDATE_FEED_URL"),
     shell: HAS_LOGIN_SHELL ? (absolute("SHELL") ?? accountShell()) : null,
     home: (process.platform === "win32" ? absolute("USERPROFILE") : absolute("HOME")) ?? os.userInfo().homedir,
     localAppData: windows("LOCALAPPDATA"),

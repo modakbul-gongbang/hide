@@ -171,6 +171,8 @@ for (const companion of herdr.companions) {
 const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
+// The updater's own settings, which electron-builder writes only when it packs the app itself.
+extraResource.push(path.join(resources, "app-update.yml"));
 
 const APP_BUNDLE_ID = APP_ID;
 
