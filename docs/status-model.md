@@ -614,7 +614,7 @@ Each pull request stops at the first slot that fits:
 A merged pull request is Merging · merged below the queued ones, newest merge first.
 When GitHub has not computed `mergeStateStatus` (`UNKNOWN`) the pull request keeps the group it stood in on the previous board with the reason `checking`, and waits when it is new, so a pull request never jumps while GitHub thinks.
 A pull request nothing has changed on for 7 days (`OLD_MS`) in any group but Merging · merged is folded as `오래된 PR N` inside its group.
-Folded lines (a team's review asks, old pull requests) are in no count: the Work tab's number is the Sessions Needs You rows plus these unfolded Needs You rows, one for an agent that stands in both, and the sidebar's Needs You is unchanged.
+Folded lines (a team's review asks, old pull requests) are in no count: the Work icon's number is the Sessions Needs You rows plus these unfolded Needs You rows, one for an agent that stands in both, and the sidebar's Needs You is unchanged.
 Within a group the order is the reason's urgency, then the newest update (the newest merge for Merging · merged), then the larger number.
 Times in a reason are the instants they began, never durations, so time passing publishes nothing; the web counts them on its one clock.
 

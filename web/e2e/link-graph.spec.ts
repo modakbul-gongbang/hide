@@ -114,9 +114,8 @@ async function openCard(page: Page, number: number, fresh = true): Promise<Locat
     await (await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first())).click();
     await showTool(page, "work");
   } else if (!(await page.locator("[data-work-panel]").isVisible())) {
-    // The card opened in the PR's own Workspace, whose Tools column is its own.
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.locator('[data-tool-tab="work"]').click();
+    // The card opened in the files tool; the rail's Work icon brings the list back.
+    await showTool(page, "work");
   }
   await page.locator('[data-work-lens="prs"]').click();
   // Waiting starts folded (B7); a group opens from its header.

@@ -80,7 +80,7 @@ Closing the last view leaves the lane on Files in that state, and ⌘⇧B on a W
 
 Opening a file, a diff or a page from the tree, Changes, ⌘P, a terminal link, Open in Browser or Open server opens the lane on Files, over the agents or docked as its pin says, with the opened tab in its active View area; another tool showing gives way to Files.
 Select in File Tree, a reveal, or a terminal link that names a folder opens Files with the tree on and the row unfolded and selected.
-⌘⇧B (`Toggle File Views`) opens and closes the lane on Files, and ⌘E (`Toggle Tools`) on Sessions; the desktop app's View menu names those two and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
+⌘⇧B (`Toggle File Views`) opens and closes the lane on Files, and ⌘E (`Toggle Tools`) on Work; the desktop app's View menu names those two and `Toggle File Tree`, and a chord bound to any of them in Settings, Shortcuts keeps doing the same.
 Each sends the value the lane should end at, so the same command arriving twice lands where it did once.
 A right-click or the menu key on the Workspace's path offers Show or Hide Files and Show or Hide Sessions with the same effect.
 A file read opens the files tool when its document is ready, in the Agent tab that requested it.
@@ -937,11 +937,11 @@ When the source answers the issues but not their dependencies, the last blockers
 
 ### Work: the PRs lens and the PR card
 
-The Tools column's first tab is Work (PRD work-tab-pr-lens), the tab row `Work · Explorer · History · Memory`.
-A Work tab holds the project's name, `Sessions | PRs` and the scope chip (`All checkouts` or `<checkout> only`); the lens a Workspace was last on, and the chip, are remembered per Workspace across restarts.
-A Workspace saved on the old Sessions tool opens on Work's Sessions lens, and every other saved choice stays.
+Work is the rail's third tool (PRD work-tab-pr-lens D-34), the rail reading `Files · Changes · Work · Memory` (`파일 · 변경 · Work · 기억` in Korean); the name is `Work` in all four languages, and its icon tooltip and the lane header read `Work · <project> 전체`.
+The Work tool holds the project's name, `Sessions | PRs` and the scope chip (`All checkouts` or `<checkout> only`); the lens a Workspace was last on, and the chip, are remembered per Workspace across restarts.
+A Workspace saved on the sessions tool (`agent_sessions`) opens on Work's Sessions lens, and the rest of its lane (open tool, pin, tree, widths) and its View layout stay.
 The switch has no numbers: a lens with something for the operator carries a warning dot, whose tooltip and accessible name say the lens and the count, `PRs · Needs You 4`, and PRs carries ⚠ instead of the count while its last GitHub read failed.
-The tab's own number adds the Needs You rows of both lenses, an agent that asks and also stands in its pull request's Needs You row counted once, and leaves the folded lines out; the sidebar's Needs You is unchanged.
+The Work icon's number badge on the rail adds the Needs You rows of both lenses, an agent that asks and also stands in its pull request's Needs You row counted once, and leaves the folded lines out; the sidebar's Needs You is unchanged.
 The Sessions lens is Sessions as it was (the next section); a PR mark on a session row opens that pull request's card, or lists them when there are several.
 A project with no GitHub remote has Sessions only, whatever it was left on.
 
@@ -969,7 +969,7 @@ The lens, the Sessions lens and a card each hold that one demand, and it is rele
 
 #### The PR card
 
-A card opens as a `PR #N` tab in File Views, from a row, the sidebar's PR card, ⌘K, a session's PR chip, Memory's PR button, Recent Panels and `이슈 없는 PR N` (which opens the PRs lens instead); one event does it: the Workspace is chosen (the PR's agent's checkout, else the branch's checkout, else the project's primary), the pull request's live agent is brought to the front of Agent Views (asking, then stopped, then working, then most recent; none leaves Agent Views as it was and the pane being looked at goes behind, never closed), and the tab opens or comes forward.
+A card opens as a `PR #N` tab in the lane's files tool, under the same rule as any View (an unpinned lane that was away comes up over the agents, a pinned one stays docked); the lane shows one tool at a time, so opening a card turns it from Work to the files tool and the rail's Work icon brings the list back; the same pull request brings its tab forward, and card tabs survive a restart. A card opens from a row, the sidebar's PR card, ⌘K, a session's PR chip, Memory's PR button, Recent Panels and `이슈 없는 PR N` (which opens the PRs lens instead); one event does it: the Workspace is chosen (the PR's agent's checkout, else the branch's checkout, else the project's primary), the pull request's live agent is brought to the front of Agent Views (asking, then stopped, then working, then most recent; none leaves Agent Views as it was and the pane being looked at goes behind, never closed), and the tab opens or comes forward.
 The tab is saved with the other Views and returns after a restart; a pull request on a device this core does not read opens on GitHub.
 
 From the top the card reads: the head (PR mark and number, the author on a teammate's pull request, Workspace and GitHub buttons, the title, then branch, checks, the review only when there is one, and files with +/-); the reason box, in the row's words and colour, with the AI summary under it when Hide AI makes one; what is blocking (the conflict, each failed check with its log link, each unresolved review thread as reviewer, file:line and first sentence), absent when nothing blocks; what the pull request's agent last said, and its question in the warning colour while it asks; the body, folded to a preview and `##` heading chips and opened as Markdown; the changed files, with files `.gitattributes` marks `linguist-generated` and the common lock files gathered into `생성 파일 N개 접음`; the sessions that made or worked on it and the issue link and worktrees (the link record, below); and the button row.

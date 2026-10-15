@@ -240,8 +240,9 @@ async function openWork(page: Page, fn: (stack: { gh: { bin: string; state: stri
 
 test("the Work tab's PRs lens groups by whose move it is and says why on each row", async ({ page }) => {
   await openWork(page, async ({ work, sent }) => {
-    // The Tools column's first tab is Work; its lens switch holds Sessions and PRs (B1, B2).
-    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(4);
+    // The rail's third tool is Work; its lens switch holds Sessions and PRs (B1, B2).
+    await expect(page.locator("[data-lane-tool]")).toHaveCount(4);
+    await expect(page.locator('[data-lane-tool="work"]')).toHaveAttribute("aria-pressed", "true");
     expect(sent.get("workspace_view")).toBeGreaterThan(0);
 
     // The groups by whose move it is; each row says why in its second line (B6, B8, B24).
@@ -287,12 +288,20 @@ test("the card opens as a File Views tab and Merge goes out on the head it showe
     await expect(card.locator("[data-pr-card-confirm]")).toBeVisible();
     expect(writes(gh.state)).toEqual([]);
     await card.locator("[data-pr-card-confirm-yes]").click();
-    await expect(work.locator('[data-pr-group="needs_you"] [data-pr="31"]')).toHaveCount(0, { timeout: 30_000 });
+    // The merged pull request's buttons, and with them the write line, are
+    // gone as soon as the merge is seen, so the write is read from gh's log.
+    await expect.poll(() => writes(gh.state), { timeout: 30_000 }).toHaveLength(1);
     expect(sent.get("pr_merge")).toBe(1);
     expect(last.get("pr_merge")).toMatchObject({ pr_number: 31, head: head(gh.state, 31) });
     expect(writes(gh.state)).toEqual([["pr", "merge", "31", "--merge", "--match-head-commit", head(gh.state, 31)]]);
-    // The merged pull request has left Needs You and its card draws no Merge.
+    // The merged pull request's card draws no Merge, and the rail's Work icon
+    // brings the list back with it out of Needs You (B20).
     await expect(card.locator("[data-pr-card-merge]")).toHaveCount(0);
+    await page.locator('[data-lane-tool="work"]').click();
+    await expect(work.locator('[data-pr-group="needs_you"] [data-pr]').first()).toBeVisible();
+    await expect(work.locator('[data-pr-group="needs_you"] [data-pr="31"]')).toHaveCount(0);
+    await work.locator('[data-pr-group="merged"] [data-pr-focus="group"]').click();
+    await expect(work.locator('[data-pr-group="merged"] [data-pr="31"]')).toHaveCount(1);
   });
 });
 
@@ -342,9 +351,12 @@ test("the list and the card read without sideways scrolling in each language and
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+      // One tool shows at a time: the card in the files tool, then the list in Work.
+      await page.locator('[data-lane-tool="files"]').click();
+      await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
+      await page.locator('[data-lane-tool="work"]').click();
       await expect(work.locator('[data-prs-view="board"]')).toBeVisible();
       await expect.poll(() => overflow(work.locator('[data-prs-view="board"]'))).toBeLessThanOrEqual(0);
-      await expect.poll(() => overflow(review)).toBeLessThanOrEqual(0);
       await screenshot(page, `work-prs-${language}-${theme}`);
     }
   });
