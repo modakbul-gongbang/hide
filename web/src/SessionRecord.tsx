@@ -235,7 +235,22 @@ function Work({ record, descendants = NO_RECORDS, words, actions, head = false }
       {group.tasks.map((item) => <TaskRow key={item.task.id} item={item} session={record.session} cwd={record.cwd} words={words} actions={actions} />)}
     </div>)}
     {list.otherMissed.length || (words && list.otherWords.length) || list.now ? <OtherWork list={list} words={words} actions={actions} /> : null}
+    {head && !list.now ? <LastWords session={record.session} /> : null}
   </section>;
+}
+
+/** When the session is not working, the last thing its agent said (B17): the newest line of what it last reported, while its pane is still known. */
+function LastWords({ session }: { session: WorkSession }) {
+  const { t } = useInterfaceTranslation();
+  const said = useShellStore((state) => {
+    const row = [...everyAgent(state.rest, state.agents).values()].find((agent) => agent.session_id === session.session_id);
+    return row?.message?.trim().split(/\r?\n/).filter((line) => line.trim()).at(-1) ?? null;
+  });
+  if (!said) return null;
+  return <p className="flex min-w-0 items-start gap-xs py-xs text-subtle-foreground" data-record-last-words="true">
+    <span className="shrink-0 font-medium text-muted-foreground">{t("sessionWork.lastWords")}</span>
+    <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" title={said}>{said}</span>
+  </p>;
 }
 
 function WordsButton({ label }: { label: string }) {

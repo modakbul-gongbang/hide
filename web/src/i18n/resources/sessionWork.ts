@@ -10,6 +10,7 @@ const words = {
   "sessionWork.received": ["Show requests received", "받은 요청 보기", "受けた依頼を表示", "显示收到的请求"],
   "sessionWork.otherWords": ["Other words", "그 밖의 말", "その他の発言", "其他的话"],
   "sessionWork.now": ["Now", "지금", "今", "现在"],
+  "sessionWork.lastWords": ["Last said", "마지막 말", "最後の発言", "最后说的"],
   "sessionWork.collapse": ["Collapse", "접기", "閉じる", "收起"],
   "sessionWork.earlier": ["Earlier requests {{count}}", "이전 요청 {{count}}", "以前の依頼 {{count}}", "更早的请求 {{count}}"],
   "sessionWork.tasks": ["Assigned work", "시킨 일", "依頼した仕事", "分配的工作"],

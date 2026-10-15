@@ -885,6 +885,7 @@ Missed work from a turn that was not a task, from a turn no longer in the record
 A speech-bubble icon button with no text sits at the right of the head, pressed state filled, named `내 말 보기` (`받은 요청 보기` when a parent made the requests): off by default, it adds each task's words as bubbles of up to two lines under the task, above its missed work, and the words that belong to no task under `그 밖의 말`, each behind a quiet person icon (a parent's words have none); a bubble that overflows opens to the whole text with `접기`.
 The button's state stays across records and Back while the app runs and is not stored.
 The newest request not yet judged shows as `지금` with a turning mark and its first line at the end of the checklist while the session works, whatever the button says, and leaves when it is judged or the session stops.
+Otherwise the record ends with `마지막 말`: the newest line of what the session's agent last reported, while its pane is still known (B17).
 A child opens to its own checklist by these rules, its PRs being in the list above and its missed work last in its parent's list; its row is the title and status only.
 At narrow Tools widths, Korean text in a task, a bubble and a missed item wraps between words; titles truncate with their full text in a tooltip.
 The folded missed-work group above Sessions lists every open missed item in the current scope, of live and ended sessions, newest first, and a session that works again keeps its items there; with Hide AI off there is no group.

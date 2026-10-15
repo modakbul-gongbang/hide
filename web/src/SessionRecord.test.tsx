@@ -178,3 +178,14 @@ it("says so when the only requests were not tasks and the words button is off, a
     expect(text(container.querySelector("[data-record-child]"))).not.toContain("0/0");
   } finally { await unmount(); }
 });
+
+it("ends an idle record with the last thing its agent said, and a working one with its Now line instead (B17)", async () => {
+  const { container, unmount } = await mount(BASE);
+  try {
+    await act(async () => useShellStore.setState({ agents: [{ pane_id: "w1:p1", session_id: "root", message: "Fix the header\nRan the tests\nAll green, ready for review" } as never] }));
+    expect(text(container.querySelector("[data-record-last-words]"))).toContain("All green, ready for review");
+    await act(async () => useShellStore.setState({ sessionRecord: { session: SESSION, loading: false, failure: null, record: { ...BASE, state: "working", requests: [...BASE.requests, request(99, "Keep going", [], "operator", false)] } } }));
+    expect(container.querySelector("[data-record-now]")).not.toBeNull();
+    expect(container.querySelector("[data-record-last-words]")).toBeNull();
+  } finally { await unmount(); }
+});
