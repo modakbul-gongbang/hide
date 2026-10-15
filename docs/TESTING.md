@@ -378,6 +378,18 @@ Nightly calls `verify` on main with the same lanes, and `package.yml` on its own
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY`, `NAMED_LANES` or `READERS`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
 `Cargo.lock` stays among them: every member but `hide-platform` and `hide-herdr-client` depends on `workspace-hack`, which holds nearly every third-party crate, so a lock change reaches every crate and no narrower plan can be read from it.
+
+A pull request whose last green run still stands reuses it: the plan names `policy` alone, and its summary names the run it reuses.
+A push that merges main to resolve a conflict in a guide, or that only edits documentation, is the case it is for.
+The run stands on two conditions.
+What the pull request adds to main as it is now differs from what that run's head added only in paths no lane but `policy` reads (documentation, `design/`, the `POLICY_ONLY` paths); the plan merges that run's head into the current main with `git merge-tree` and compares the result with this run's merge, so a conflict resolved differently in code, or any change to code, a guide a test reads or a contract, fails it.
+And main has changed none of the paths the pull request changes that a lane reads since the main that run checked: when pull request #1133 merged main, main had changed six files it changed too since its green run, four of them in `herdr-core`, and no run had checked those changes together.
+`policy` still runs, because its script suite and invariants read the documentation the push changed.
+Each pull request run keeps a plan record, the `ci-plan` artifact, naming the run whose lanes ran and the main and head they checked; a run that reused one records that one, so the comparison is always with lanes that ran.
+The plan job reads the newest green run of the pull request's branch and head repository (`actions: read`) and fetches the commits and trees it needs (`--filter=blob:none`, about 9 MB for main's whole history).
+No green run, no record, a record for another head, a failed lookup, download or fetch, or a comparison that fails leaves the plan the change itself needs, and the summary says why; no failure turns into a reuse.
+This applies the merge policy's reasoning to the run itself ([CONTRIBUTING.md](../CONTRIBUTING.md#merging-into-main)): a green pull request merges without catching up with main, and `premerge-check.py` runs on the merge result before it merges, reused or not.
+`ReuseGreenRun` and `LastGreenRun` in `scripts/tests/test_ci_plan.py` check the conditions, the fallbacks and the record.
 ### Where the macOS runners went
 
 The organization runs 20 jobs at once and five of them on macOS, so a pull request asks for a macOS runner only for what one proves:
@@ -410,7 +422,7 @@ A run that plans every lane a pull request can plan starts at most 21 jobs, down
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
 
-The common runs are smaller: a `herdr-core` or `hided` change starts 15 jobs and none on macOS, a web shell change 10, a desktop-only change 6 with one on macOS, a `hide-platform` change 16 with one on macOS, a `hide-kit` or `hide-agent-hooks` change 18 with one on macOS (`package`), and a documentation change 3.
+The common runs are smaller: a `herdr-core` or `hided` change starts 15 jobs and none on macOS, a web shell change 10, a desktop-only change 6 with one on macOS, a `hide-platform` change 16 with one on macOS, a `hide-kit` or `hide-agent-hooks` change 18 with one on macOS (`package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
 The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
 
