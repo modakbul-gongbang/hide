@@ -878,6 +878,9 @@ async fn screen_loop(
     // come back through `device_bytes`, at most two ranges ahead of the
     // socket, and every read ends with the connection.
     let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
+    // The operator's comments and Sends from this screen, in the order it
+    // made them, off the socket loop; started by the first one.
+    let mut feedback: Option<tokio::sync::mpsc::Sender<FeedbackJob>> = None;
     let mut device_reads: std::collections::VecDeque<DeviceRead> =
         std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
@@ -1144,11 +1147,21 @@ async fn screen_loop(
                                     Some("comment_unavailable_here".to_owned())
                                 } else {
                                     let context = crate::browser_page::comment::Context {
-                                        core: Arc::clone(&state.core),
-                                        attachments: Arc::clone(&state.attachments),
                                         control: Arc::clone(&state.browser_control),
                                     };
-                                    state.browser_comments.handle(context, connection, &event, device_frames_tx.clone()).err()
+                                    match state.browser_comments.handle(context, connection, &event, device_frames_tx.clone()) {
+                                        Ok(Some(added)) => {
+                                            let job = FeedbackJob { event: added.event, png: added.png };
+                                            if let Some(refusal) = queue_feedback(&state, &mut feedback, job, &device_frames_tx)
+                                                && socket.send(Message::Text(refusal.into())).await.is_err()
+                                            {
+                                                break;
+                                            }
+                                            None
+                                        }
+                                        Ok(None) => None,
+                                        Err(reason) => Some(reason),
+                                    }
                                 };
                                 if let Some(reason) = refused {
                                     let frame = json!({"type": "browser_comment", "payload": {
@@ -1170,8 +1183,13 @@ async fn screen_loop(
                                 }
                                 spawn_device_listing(&state, event, device_frames_tx.clone(), slot.flatten());
                             }
-                            Ok(ClientAction::CommentShot(event)) => {
-                                spawn_comment_shot(&state, event, device_frames_tx.clone());
+                            Ok(ClientAction::Feedback(event)) => {
+                                let job = FeedbackJob { event, png: None };
+                                if let Some(refusal) = queue_feedback(&state, &mut feedback, job, &device_frames_tx)
+                                    && socket.send(Message::Text(refusal.into())).await.is_err()
+                                {
+                                    break;
+                                }
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -1867,8 +1885,9 @@ enum ClientAction {
     DeviceListing(Value),
     /// Comment mode on a browser View, answered when its page is ready.
     BrowserComment(Value),
-    /// An image or PDF comment whose crop is staged off the socket loop.
-    CommentShot(Value),
+    /// The operator's comment or Send, which the screen's feedback queue
+    /// hands the core in order.
+    Feedback(Value),
     Replies(Vec<Message>),
 }
 
@@ -2021,11 +2040,7 @@ fn handle_client_text(
         Some("view_comment" | "view_feedback_send") if !renderer => {
             return Err("View feedback is an operator window's".to_owned());
         }
-        // An image or PDF comment's crop, which the screen made: staged
-        // here, and only its name goes on to the core (D-23).
-        Some("view_comment") if event.pointer("/payload/shot_png").is_some() => {
-            return Ok(ClientAction::CommentShot(event));
-        }
+        Some("view_comment" | "view_feedback_send") => return Ok(ClientAction::Feedback(event)),
         Some("browser_comment") => {
             if !renderer {
                 return Err("View feedback is an operator window's".to_owned());
@@ -2077,38 +2092,109 @@ fn handle_client_text(
         .map(|()| ClientAction::Replies(Vec::new()))
 }
 
-/// Replaces a `view_comment` add's `shot_png` (base64) with the staged
-/// screenshot's node and name.
-/// Stages a comment's crop on a blocking task (a decode of up to 16 MiB, a
-/// staging scan and an fsync), then hands the comment to the core; the
-/// screen's loop goes on meanwhile. A refusal reaches that screen as an error.
-fn spawn_comment_shot(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+/// One of the operator's comments or Sends, with the screenshot a page's
+/// pick took for it.
+struct FeedbackJob {
+    event: Value,
+    png: Option<Vec<u8>>,
+}
+
+/// Comments and Sends a screen may have waiting: each can carry a
+/// screenshot of up to 16 MiB.
+const FEEDBACK_QUEUE: usize = 4;
+
+/// Hands one comment or Send to the screen's feedback queue, which starts
+/// with the first. A full queue is refused, and the answer says so.
+fn queue_feedback(
+    state: &AppState,
+    feedback: &mut Option<tokio::sync::mpsc::Sender<FeedbackJob>>,
+    job: FeedbackJob,
+    frames: &tokio::sync::mpsc::Sender<String>,
+) -> Option<String> {
+    let queue = feedback.get_or_insert_with(|| spawn_feedback(state, frames.clone()));
+    queue.try_send(job).err().map(|_| {
+        json!({"type": "error", "payload": {"kind": "view_feedback", "reason": "busy"},
+            "message": "Too many comments are still being saved; try again."})
+        .to_string()
+    })
+}
+
+/// The screen's feedback queue: one task that stages each comment's
+/// screenshot (a decode of up to 16 MiB, a staging scan and an fsync) on a
+/// blocking thread and then hands it to the core, one after another, so a
+/// Send made after a comment reaches the core after it. It ends with the
+/// screen, when the socket loop drops its sender. A refusal reaches that
+/// screen as an error.
+fn spawn_feedback(
+    state: &AppState,
+    frames: tokio::sync::mpsc::Sender<String>,
+) -> tokio::sync::mpsc::Sender<FeedbackJob> {
+    let (queue, mut jobs) = tokio::sync::mpsc::channel::<FeedbackJob>(FEEDBACK_QUEUE);
     let attachments = Arc::clone(&state.attachments);
     let core = Arc::clone(&state.core);
     let boundary = Arc::clone(&state.boundary);
     let roots = Arc::clone(&state.roots);
     tokio::spawn(async move {
-        let outcome = tokio::task::spawn_blocking(move || {
-            let mut event = event;
-            stage_comment_shot(&attachments, core.node().as_str(), &mut event)?;
-            if let Some(reply) = admit_event(&boundary, &mut event, || roots_current(&roots)) {
-                return Ok(Some(reply.to_string()));
+        while let Some(job) = jobs.recv().await {
+            let (attachments, core, boundary, roots) = (
+                Arc::clone(&attachments),
+                Arc::clone(&core),
+                Arc::clone(&boundary),
+                Arc::clone(&roots),
+            );
+            let outcome = tokio::task::spawn_blocking(move || {
+                let FeedbackJob { mut event, png } = job;
+                match png {
+                    Some(png) => stage_page_shot(&attachments, core.node().as_str(), &mut event, &png),
+                    None if event.pointer("/payload/shot_png").is_some() => {
+                        stage_comment_shot(&attachments, core.node().as_str(), &mut event)?
+                    }
+                    None => {}
+                }
+                if let Some(reply) = admit_event(&boundary, &mut event, || roots_current(&roots)) {
+                    return Ok(Some(reply.to_string()));
+                }
+                let bytes =
+                    serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+                core.dispatch(bytes).map(|()| None)
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("comment failed: {error}")));
+            let frame = match outcome {
+                Ok(None) => continue,
+                Ok(Some(reply)) => reply,
+                Err(error) => json!({"type": "error", "payload": {}, "message": error}).to_string(),
+            };
+            if frames.send(frame).await.is_err() {
+                break;
             }
-            let bytes =
-                serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
-            core.dispatch(bytes).map(|()| None)
-        })
-        .await
-        .unwrap_or_else(|error| Err(format!("comment screenshot failed: {error}")));
-        let frame = match outcome {
-            Ok(None) => return,
-            Ok(Some(reply)) => reply,
-            Err(error) => json!({"type": "error", "payload": {}, "message": error}).to_string(),
-        };
-        let _ = frames.send(frame).await;
+        }
     });
+    queue
 }
 
+/// A page comment's screenshot, taken as its place was picked: staged, and
+/// its name put on the add. A page that gave none, or one that could not be
+/// staged, leaves the comment without one, as the diagnostic log says.
+fn stage_page_shot(
+    attachments: &crate::attachments::Attachments,
+    node: &str,
+    event: &mut Value,
+    png: &[u8],
+) {
+    match attachments.stage_view_shot(png) {
+        Ok(name) => event["payload"]["shot"] = json!({"node": node, "name": name}),
+        Err(error) => herdr_core::diagnostic!(json!({
+            "component": "browser_comment",
+            "kind": "shot.stage_failed",
+            "display_id": event.pointer("/payload/display_id"),
+            "error": error,
+        })),
+    }
+}
+
+/// Replaces a `view_comment` add's `shot_png` (base64) with the staged
+/// screenshot's node and name.
 fn stage_comment_shot(
     attachments: &crate::attachments::Attachments,
     node: &str,
