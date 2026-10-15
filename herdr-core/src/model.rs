@@ -2539,6 +2539,35 @@ impl ThemePreference {
     }
 }
 
+/// The palette every window draws in (Settings > Appearance > Color theme),
+/// independent of the Mode above: Hide is the landing page's Owl Field
+/// colors, Neutral the grey chrome. Hide is the default, including for a store
+/// written before the choice existed (hide-color-theme D-04).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorTheme {
+    #[default]
+    Hide,
+    Neutral,
+}
+
+impl ColorTheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Neutral => "neutral",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "hide" => Some(Self::Hide),
+            "neutral" => Some(Self::Neutral),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionsProviderFilter {
@@ -3210,9 +3239,12 @@ pub struct UiStateSnapshot {
     pub device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     pub accent_hex: String,
-    /// The web shell's color theme.
+    /// The web shell's mode (Light, Dark or System).
     #[serde(default)]
     pub theme: ThemePreference,
+    /// The palette every window draws in; `color_theme_set` owns it.
+    #[serde(default)]
+    pub color_theme: ColorTheme,
     /// None follows each client's system language. Raw JSON preserves an
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
@@ -3783,6 +3815,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            color_theme: ColorTheme::Hide,
             interface_language: None,
             usage: Default::default(),
             agent_onboarding: None,
@@ -6486,6 +6519,15 @@ mod wire_enum_tests {
             &WorkerTextSource::ALL,
         );
         checked.insert("factory_diagnosis_source");
+
+        let color_themes = [ColorTheme::Hide, ColorTheme::Neutral];
+        for variant in color_themes {
+            match variant {
+                ColorTheme::Hide | ColorTheme::Neutral => {}
+            }
+        }
+        assert_wire(&contract, "color_theme", &color_themes);
+        checked.insert("color_theme");
 
         let unchecked = contract
             .keys()

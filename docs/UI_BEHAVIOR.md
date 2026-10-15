@@ -69,13 +69,13 @@ The pin is the lane's, whatever tool it shows, and a pinned lane closed and open
 A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, though it stays through a terminal click, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 While the keyboard is in the lane, a document, a page or the tool, the Zoom pane chord (⇧⌘↩, Alt+Shift+Enter on Windows and Linux) is Expand and Expand again, so one key fills the window with whatever the operator works in; anywhere else it zooms the focused pane, and the Expand tooltip shows the chord.
-Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and turns the file tree off; it closes no view, and the Files badge counts what stays open.
+Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and leaves the file tree as it was; it closes no view, and the Files badge counts what stays open.
 
 The files tool shows the View areas below, with their tabs, splits, previews and browser displays, each page inside its area's bounds.
 The active document's header starts with the tree button, the checkout's name, then the path in ` › ` steps, cutting a long path at its start so the file name stays; a browser display's toolbar carries the same tree button.
 The tree button or ⌘⇧E (`Toggle File Tree`) turns the file tree, the Explorer, on and off, the button pressed while it is on; ⌘⇧E while the lane does not show Files opens it on Files with the tree.
 On, the tree is a column left of the documents and the lane widens by its width, so the documents keep theirs: over Agent Views it covers more of them, and docked, Agent Views give up the tree's width as well.
-The tree stays on when a file is picked, when the lane is put away and comes back, and when another tool shows and Files comes back; only the tree button, ⌘⇧E and closing the lane turn it off.
+The tree stays on when a file is picked, when the lane is put away or closed and comes back, and when another tool shows and Files comes back; only the tree button and ⌘⇧E turn it off.
 With no document open, the files tool shows the tree across the lane, its head saying `No open document · tree only`; a file picked there, or anything opened meanwhile (⌘P, a terminal link, a page, `hide` from the front tab), opens beside the tree, which goes back to its own width and stays on, and ⌘⇧E there changes nothing.
 Closing the last view leaves the lane on Files in that state, and ⌘E on a Workspace with no view opens to it; nothing opens a blank page in its place and the lane is never empty, while a View area's New tab still opens a browser display (see Browser displays).
 
@@ -1987,7 +1987,15 @@ Settings opens on General unless the way in names a page: Explorer's and a devic
 
 ### General
 
-General is Appearance alone: one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5).
+General is Appearance alone: one group with Language, Color theme, Mode, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes (PRD settings-left-nav B5; hide-color-theme B1).
+Color theme chooses the palette every window draws in, Hide or Neutral, as a segmented toggle like Mode's, each name led by a small swatch of its brand color, the same in Light and Dark (Hide the owl mark's blue-grey, Neutral a grey), and no color code; it waits for a live connection, as Language does.
+Hide is the landing page's Owl Field palette and the default, including for an install that never chose; Neutral is the grey chrome.
+Both have their own sixteen terminal colors, each readable at 4.5:1 on its background, and the choice changes the sidebar, tabs, pane headers, terminals, editors, sheets and popovers at once, keeping a terminal's content, scroll position, half-typed line and selection.
+Status colors, the accent choices and what uses them, the destructive color, and the diff, PR and file icon colors are the same in both.
+A quiet status mark (Seen, Idle, stopped, and the badge's ○ and ◐) is one grey in both, `--status-seen`, while quiet text beside it, such as a read request line, follows the palette's `--subtle-foreground`.
+Mode is the former Theme row unchanged: System, Light or Dark, each color theme having both.
+The choice is the core's, one for every window attached to it, and survives a restart of the app or of hided; the first paint, the desktop window before the page draws and the host status page are Hide Dark, and a paired phone draws the operator's color theme in its own light or dark.
+A stored value this build does not know opens Hide with only the `ui_state.color_theme_unknown` diagnostic.
 
 ### Notifications
 
