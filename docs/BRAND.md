@@ -42,6 +42,9 @@ At small sizes, use the full mark rather than extracting either eye.
 Inside the app the mark names Hide AI as the one who started an agent, never an agent's state: it heads the Hide AI group of a project's tree and stands beside the status mark, in the place of a provider logo, on a row that stands alone (`web/src/AgentMark.tsx`, `web/src/assets/hide-mark.png`, a 64-pixel derivative of the full square mark).
 The macOS app icon at `desktop/resources/hide-icon-1024.png` is the mark inside a rounded 896-pixel tile with a 64-pixel transparent inset on a 1024-pixel canvas.
 `desktop/resources/hide.icns` packages that icon for the app.
+`design/brand/hide-icon-blinking.svg` is that app icon drawn as vectors and set moving in a three-second loop: the face rises six pixels and settles, the eyes look left and then right with the lime shape and beak following a little, and the eyes blink twice along the face's tilt.
+It was drawn in LottieFiles Creator over a trace of `hide-icon-1024.png` and exported as SVG with SMIL animation, so it plays inside an `<img>` with no script, GitHub's README included.
+The site header and the repository README show it; it is the mark at ease, so it never stands for loading, progress or an agent's state, and inside the app it appears only where a PRD puts it.
 The mobile web icons in `web/public/m/` are size derivatives of the full square mark.
 
 ## The owl character
