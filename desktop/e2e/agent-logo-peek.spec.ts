@@ -50,7 +50,7 @@ test("⌥ shows the logos with the keycaps while hidden, and a key, a blur or th
   await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
   const rows = page.locator("nav[data-sidebar] li[data-pane]");
   const logos = page.locator("nav[data-sidebar] li[data-pane] [data-agent-mark], [data-tab] [data-agent-mark]");
-  await showTool(page, "agent_sessions");
+  await showTool(page, "work");
   const sessionLogos = page.locator("aside[data-lane] [data-session-focus] [data-agent-mark]");
   await expect(rows).toHaveCount(2);
   await expect(logos).toHaveCount(0);

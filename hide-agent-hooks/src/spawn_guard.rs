@@ -195,6 +195,7 @@ pub fn read_question(
         (HookDialect::ClaudeCode, "AskUserQuestion") => "AskUserQuestion",
         (HookDialect::ClaudeCode, "ExitPlanMode") => "ExitPlanMode",
         (HookDialect::Codex, "request_user_input") => "request_user_input",
+        (HookDialect::Codex, "request_user_input_async") => "request_user_input_async",
         (HookDialect::Grok, "ask_user_question") => "ask_user_question",
         (HookDialect::Grok, "exit_plan_mode") => "exit_plan_mode",
         _ => return None,

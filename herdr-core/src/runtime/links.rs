@@ -545,7 +545,7 @@ impl Runtime {
                     &record.actor.device_id,
                     &record.actor.kind,
                     &record.session,
-                    &record.name,
+                    record.wire_name(),
                 )
                     .hash(&mut hasher);
             }
@@ -605,6 +605,24 @@ impl Runtime {
             .link_lineage_agents()
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect::<HashMap<_, _>>();
+        let wire_name = |agent: &SidebarAgentSnapshot, device: &str| {
+            let pane = if device == self.node.as_str() {
+                agent.pane_id.clone()
+            } else {
+                format!("remote:{device}:pane:{}", agent.pane_id)
+            };
+            match (
+                self.delivery_observations.get(&pane),
+                self.delivery_ledger.as_ref(),
+            ) {
+                (Some(observed), Ok(ledger)) => {
+                    crate::coordination::wire_name(ledger, &observed.actor)
+                }
+                (Some(observed), Err(_)) => observed.actor.name.clone(),
+                // Delivery never saw this pane, so no letter names it.
+                (None, _) => agent.pane_id.clone(),
+            }
+        };
         let mut parents = self
             .link_lineage_agents()
             .filter_map(|agent| {
@@ -616,10 +634,7 @@ impl Runtime {
                     parent_device_id: (*devices.get(parent.pane_id.as_str())?).to_owned(),
                     parent_agent: session_agent(&parent.agent_kind)?.to_owned(),
                     parent_session_id: parent.session_id.clone()?,
-                    parent_name: parent
-                        .herdr_name
-                        .clone()
-                        .unwrap_or_else(|| parent.pane_id.clone()),
+                    parent_name: wire_name(parent, devices.get(parent.pane_id.as_str())?),
                 })
             })
             .map(|parent| {
@@ -656,7 +671,7 @@ impl Runtime {
                     parent_device_id: parent.actor.device_id.clone(),
                     parent_agent: session_agent(&parent.actor.kind)?.to_owned(),
                     parent_session_id: parent.session.clone(),
-                    parent_name: parent.name.clone(),
+                    parent_name: parent.wire_name().to_owned(),
                 })
             })
             .collect::<Vec<_>>();
@@ -880,6 +895,7 @@ impl Runtime {
         }
         for workspace in &mut self.snapshot.navigator.workspaces {
             associate_landed(workspace, projects.get(&workspace.id));
+            associate_pr_sessions(&mut workspace.pull_requests, projects.get(&workspace.id));
         }
         summaries.projects = projects;
         self.refresh_inactive_groups();
@@ -919,6 +935,37 @@ pub(super) fn associate_landed(
             && summary.is_some_and(|summary| summary.landed.contains(&checkout.path));
         if checkout.landed != landed {
             checkout.landed = landed;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Attaches to each pull request the sessions the link record says made or
+/// worked on it and the checkouts they ran in: what the Work tab's PRs list
+/// reads to find a pull request's live agents (PRD work-tab-pr-lens D-09).
+pub(super) fn associate_pr_sessions(
+    pull_requests: &mut [crate::model::PullRequestSnapshot],
+    summary: Option<&ProjectLinkSummary>,
+) -> bool {
+    let mut changed = false;
+    for pull_request in pull_requests {
+        let number = u64::from(pull_request.number);
+        let sessions: Vec<String> = summary
+            .and_then(|summary| summary.pr_workers.get(&number))
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let checkouts: Vec<String> = summary
+            .and_then(|summary| summary.pr_checkouts.get(&number))
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        if pull_request.work.sessions != sessions || pull_request.work.checkouts != checkouts {
+            pull_request.work.sessions = sessions;
+            pull_request.work.checkouts = checkouts;
             changed = true;
         }
     }

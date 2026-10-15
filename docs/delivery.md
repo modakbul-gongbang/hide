@@ -45,6 +45,7 @@ Retry the same intent after an interrupted call: the same sender identity and in
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
 The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
+`<name>` is the sender's [wire name](#names-on-the-wire-and-on-screen), and so are the names of a letter's and a watch's endpoints in every answer.
 A batch keeps the first letter's sender attribution in the request view; neither later headers nor older delivery formats select a sender.
 
 ### The contract a calling tool checks
@@ -166,7 +167,8 @@ The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 
 ```
 
 The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
-The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session (not the runtime's name, such as Codex, that a row without a title shows), else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
+The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its runtime's name, such as Codex; never a pane id and never its registration id, which belong to the letter's envelope ([Names](#names-on-the-wire-and-on-screen)).
+A watch warning is named by the agent it watches, and its first line says for how long nothing moved.
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
 Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.
@@ -221,6 +223,8 @@ The answer is kept with the Herdr `state_change_seq` the read was asked under, a
 Herdr can read the agent at rest before Codex writes how the turn ended; that state's read then does not settle a plan-mode turn, so the bell holds and the row shows no wait until Herdr's next state is read, because this rule adds no session reads of its own (PRD codex-plan-approval-hold B10).
 The same turn tracker reads Claude Code's native `AskUserQuestion` calls and matching tool-result records.
 When a supported session reader says a native question or plan approval waits, the bell holds with `awaiting_operator`.
+This includes Codex 0.162.1's `request_user_input_async` question, which stays open after Codex returns to work or stops, until its reply arrives.
+The hold is what keeps a wake from landing on it: in an isolated Codex 0.162.1 TUI (2026-10-15) the question is plain assistant text over an ordinary composer, and a bell-shaped line plus Enter was submitted as an ordinary prompt that started a new turn, writing no reply, so the question stayed unanswered in Codex while Hide would have read the person's message as the end of the wait.
 For an agent whose read reports turns, a state that no read has settled holds the bell too, with `session_unread`: a session file not found (Codex is looked up in its seven newest day folders), a failed read, a device helper that predates the field, a read still behind Herdr's newest state, a record past the line cap the read could not structure (until the next turn starts or a person writes; `docs/ARCHITECTURE.md`, What the last turn waits for), or a daemon that does not hold the label generator lock and so reads nothing.
 That lock is one per Herdr server and taken with `flock` (`herdr-core/src/labels/generator.rs`): the operator's single daemon lacks it only while another hided follows the same Herdr server (a candidate or development daemon pointed at the operator's socket, even with a private HOME), or, after a restart that overlapped the old daemon, until its next attempt, at most thirty seconds after the old one exits; the kernel frees a crashed holder's lock.
 Unknown is never read as "nothing waits".
@@ -327,6 +331,24 @@ A receipt from before the task existed has none, and its agent and checkout are 
 The kind is a closed set in code (`TaskKind`), and each known kind names its home, the screen that shows its work (`TaskKind::home`, today `memory_promote` to the Memory tab); a new kind cannot be added without naming one.
 A kind this build does not know loads from the ledger as it was written, so a record a newer build wrote never fails the load or loses the rest of the ledger, and its agent stays an operator's row.
 A new spawn of a kind with no home is refused `task_kind_unknown`, and the first time an agent of such a kind is seen the diagnostic log records `hide_ai.task_kind_unknown` once.
+
+## Names on the wire and on screen
+
+An agent has two kinds of name, and each is made in one place.
+
+- The wire name is what a program reads and compares: the envelope header, the `name` of a letter's or a watch's sender, recipient, target and observer, an agent's `name` in `hide agent show` and `list`, and the `parent_name` the label worker matches a parent's request against.
+  It is the name the agent registered under, else its registration id (`agent-12`), which is stable and which `hide request send` and `--parent` already resolve; an agent that never registered is called by the only identifier Herdr gave it, its Herdr agent name or else its pane id.
+  `coordination::wire_name` makes it, the writing side (`mailbox::send`, `watch::start`) and the reading side (`link_parent_facts`) both call it, and nothing else may spell it, because the label worker accepts a parent's request as the child's work only when the two strings are equal ([status-model.md](status-model.md#task-identity)).
+  It never follows a screen title, which changes every turn.
+- The screen name is what a person reads: the name it registered under, else the title Hide's screens give it while its pane hosts it, else its runtime's name (the bell line, the sidebar and Sessions rows).
+  It is derived when it is drawn and stored nowhere.
+
+A registration stores a name only when it has one of its own.
+A parent that `hide agent spawn --parent here` registers for the caller takes the name Herdr has for the pane, and none when Herdr has none, so a pane id is never stored as a name (`AgentRecord::name` is optional, and an executor-made record drops a name that only restates its pane).
+On disk the field stays a string on every record, so a build before this one reads the ledger this one writes: an unnamed record is written under its registration id, and reading a name equal to the record's own id or to its pane as no name turns that back (`AgentRecordOnDisk`).
+A ledger written by an earlier build can hold a pane id as a name; reading it that way gives such a record no name, with no migration file, and a code-owned identity keeps its name, which is also its pane.
+A letter keeps the endpoint names it was written with, so a letter written before this rule keeps a pane id in its history until its one-day retention ends.
+`hide inbox` and a letter's envelope show the registration id of an unnamed sender, not its title, and show the pane id of a sender that never registered and that Herdr never named.
 
 ## Agent registration and spawning
 

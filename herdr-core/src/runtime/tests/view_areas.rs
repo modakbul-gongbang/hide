@@ -2015,6 +2015,56 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
         .map(|error| error.kind.as_str())
 }
 
+/// PRD work-tab-pr-lens B20, B22: the decision card of a pull request is one
+/// View tab, opened by one event, brought forward when it is already open,
+/// and refused with a reason when the project has no such pull request.
+#[test]
+fn a_pull_request_card_opens_once_as_a_view_tab() {
+    let (mut runtime, _, _directory) = views_runtime("pr-card");
+    layout(&mut runtime, serde_json::json!({"tool": null}));
+    let pr: crate::model::PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+        "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
+        "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing",
+        "is_draft":false,"closing_issues":[]
+    }))
+    .unwrap();
+    runtime.snapshot.navigator.workspaces[0].pull_requests = vec![pr];
+    let event = |runtime: &mut Runtime, number: u32| {
+        runtime.dispatch_json(&explorer_event(
+            "pr_open",
+            serde_json::json!({"workspace_id": "workspace:order", "pr_number": number}),
+        ))
+    };
+    let cards = |runtime: &mut Runtime| {
+        areas(&tree(runtime))
+            .into_iter()
+            .flat_map(|(_, _, displays)| displays)
+            .filter(|display| display.kind == crate::view_layout::DisplayKind::PullRequest)
+            .map(|display| (display.pr, display.label))
+            .collect::<Vec<_>>()
+    };
+    assert!(event(&mut runtime, 42));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(cards(&mut runtime), vec![(Some(42), "PR #42".to_owned())]);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files),
+        "the lane shows its files tool"
+    );
+    event(&mut runtime, 42);
+    assert_eq!(
+        cards(&mut runtime).len(),
+        1,
+        "the same pull request is not opened twice"
+    );
+    event(&mut runtime, 99);
+    assert_eq!(
+        last_error_kind(&runtime),
+        Some("pr_open.unknown_pull_request")
+    );
+    assert_eq!(cards(&mut runtime).len(), 1);
+}
+
 /// A page's own new tab (a `target=_blank` link, an image a page wraps in
 /// one) opens beside that page, so the page that asked stays in view: in a
 /// new area to its right the first time, then in that area, and never a

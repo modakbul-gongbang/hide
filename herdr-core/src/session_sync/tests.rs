@@ -2755,7 +2755,7 @@ fn registrations_end_only_on_a_fresh_snapshot_never_during_the_resync() {
         let scope = socket_path.to_str().unwrap().to_owned();
         let record = |id: &str, pane: &str, scope: &str| crate::coordination::AgentRecord {
             id: id.into(),
-            name: id.into(),
+            name: Some(id.into()),
             machine: node.clone(),
             host_scope: scope.into(),
             native_machine: "fixture-machine".into(),

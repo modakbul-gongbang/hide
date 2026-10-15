@@ -1619,7 +1619,14 @@ impl SleepingChild {
         ] {
             ledger.agents.push(AgentRecord {
                 id: id.into(),
-                name: (if pane == SLEEPER { "reviewer" } else { "lead" }).into(),
+                name: Some(
+                    (if pane == SLEEPER {
+                        "reviewer"
+                    } else {
+                        "lead-agent"
+                    })
+                    .into(),
+                ),
                 machine: node.clone(),
                 host_scope: "scope".into(),
                 native_machine: "fixture-machine".into(),

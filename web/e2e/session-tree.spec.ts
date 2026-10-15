@@ -66,7 +66,7 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     daemon = await startHided(herdr, "session-tree");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${root}"]`).first().click();
-    await showTool(page, "agent_sessions");
+    await showTool(page, "work");
     const panel = page.locator("[data-session-panel]");
     const childRow = (pane: string) => panel.locator(`[data-session-child="${pane}"]`);
     const open = (pane: string) => panel.locator(`[data-session-chevron="${pane}"]`).click();
@@ -106,7 +106,7 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await childRow(deeper).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${deeper}"]`)).toHaveAttribute("data-focused", "true");
     // The child's checkout is a Workspace seen for the first time, with its lane closed.
-    await showTool(page, "agent_sessions");
+    await showTool(page, "work");
     await expect(childRow(deeper).locator('[data-session-focus="row"]')).toHaveAttribute("aria-current", "true");
     await open(grandchild);
     await expect(childRow(deeper)).toHaveCount(0);

@@ -934,6 +934,7 @@ mod tests {
                 closed_at_unix_ms: None,
                 head_oid: None,
                 cross_repository: false,
+                work: Default::default(),
             }),
             ..Default::default()
         };

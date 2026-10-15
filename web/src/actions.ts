@@ -1,6 +1,6 @@
 import { projectCheckout } from "./projects";
+import { deviceConnected, readsHere } from "./devices";
 import { sameGithubPullRequest } from "./pullRequestIdentity";
-import { deviceConnected } from "./devices";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
@@ -34,7 +34,7 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
 import { registeredName } from "./screenMachine";
-import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
+import { allAgents, projectEntryLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -60,6 +60,7 @@ import {
   type Tab,
   type Workspace,
   type LinkTarget,
+  type PrMergeMethod,
 } from "./snapshot";
 import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
@@ -382,7 +383,7 @@ export function createActions(send: DispatchFn) {
    * should end at, so the same event sent twice lands where it did once. The
    * core keeps the lane per Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { tool?: Tool | null; pinned?: boolean; tree?: boolean; lane_width?: number; tree_width?: number; width_request_id?: string; reveal?: string }) => {
+  const setWorkspaceView = (patch: { tool?: Tool | null; pinned?: boolean; tree?: boolean; work_lens?: "sessions" | "prs"; work_only_checkout?: boolean; lane_width?: number; tree_width?: number; width_request_id?: string; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     return dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -409,11 +410,11 @@ export function createActions(send: DispatchFn) {
 
   /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it last showed, Files for a Workspace whose lane never showed one. */
   const toggleLane = () => {
     const { mode } = ui().drawnLane;
     if (mode !== "closed" && mode !== "hidden") return closeLane();
-    showTool(workspaceViewOf(rest())?.tool ?? "files");
+    showTool(workspaceViewOf(rest())?.last_tool ?? "files");
   };
 
   /**
@@ -1090,6 +1091,10 @@ export function createActions(send: DispatchFn) {
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
     },
+    /** The `PR 요약` switch (PRD work-tab-pr-lens D-29): off, no pull request summary is asked for or shown. */
+    setPrSummary(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { pr_summary: on } });
+    },
     /** The usage limit (PRD hide-ai-usage-limit D-01): a percent, or `"none"`; the core refuses a number outside 1 to 100. */
     setAiUsageLimit(limit: number | "none") {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { usage_limit: limit } });
@@ -1445,14 +1450,67 @@ export function createActions(send: DispatchFn) {
       const projects = catalogWorkspaces(rest());
       const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)))
         ?? projects.find((row) => row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)));
-      if (project) this.openPullRequestRow(project.id, pull.number);
+      if (project) this.openPrCard(project.id, pull.number);
       else this.openLink(pull.url, false);
     },
 
-    /** A pull request's row on its Project's PRs tab with its panel open (PRD overview-lenses-prs B21, link-graph B36); ⌘-click stays GitHub's. */
-    openPullRequestRow(projectId: string, number: number | null) {
+    /**
+     * A pull request's decision card (PRD work-tab-pr-lens D-02, D-03, D-28):
+     * one event, and the core chooses the Workspace, brings the PR's live
+     * agent forward and opens the `PR #N` tab in File Views. A project this
+     * core does not read opens the page on GitHub instead. A modal Overview
+     * closes first so the card shows.
+     */
+    openPrCard(projectId: string, number: number, checkoutId?: string) {
       const project = catalogWorkspaces(rest()).find((row) => row.id === projectId);
-      if (project) this.openOverview(project.device_id, projectId, { pullRequest: number });
+      if (!project) return diagnostic(`pr_open: no project ${projectId}`);
+      const pull = project.pull_requests?.find((row) => row.number === number);
+      if (!readsHere(project, rest()?.navigator?.devices)) {
+        if (pull) this.openPullRequest(pull.url, project.device_id, true);
+        return;
+      }
+      const state = ui();
+      if (state.overviewOpen || state.screen?.kind !== "workspace") state.setScreen({ kind: "workspace" });
+      dispatch({ schema_version: 2, kind: "pr_open", payload: { workspace_id: projectId, pr_number: number, ...(checkoutId ? { checkout_id: checkoutId } : {}) } });
+    },
+
+    /** The Work tool's PRs basis, for a list that is not tied to one pull request (`이슈 없는 PR N`). */
+    openWorkPrs() {
+      const state = ui();
+      if (state.overviewOpen || state.screen?.kind !== "workspace") state.setScreen({ kind: "workspace" });
+      if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
+      state.showLane();
+      dispatch({ schema_version: 2, kind: "workspace_view", payload: { tool: "work", work_lens: "prs" } });
+    },
+
+    /** The Work tool's basis, remembered for this Workspace (B2). */
+    setWorkLens(lens: "sessions" | "prs") {
+      return setWorkspaceView({ work_lens: lens });
+    },
+
+    /** The Work tool's scope chip: this checkout only, or all checkouts; shared by both bases (B2). */
+    setWorkScope(onlyCheckout: boolean) {
+      return setWorkspaceView({ work_only_checkout: onlyCheckout });
+    },
+
+    /** Reads a card's body, files and review threads again, or the part that failed. */
+    readPrCard(workspaceId: string, number: number) {
+      dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number } });
+    },
+
+    /** The operator's Look again after a refused write: dismisses its notice and reads the list and the card. */
+    lookAgainPrCard(workspaceId: string, number: number) {
+      dispatch({ schema_version: 2, kind: "pr_card_read", payload: { workspace_id: workspaceId, pr_number: number, look_again: true } });
+    },
+
+    /** Merge (or add to the merge queue) from a card, conditioned on the head commit the card showed (D-21, D-22). */
+    mergePullRequest(workspaceId: string, number: number, head: string, method: PrMergeMethod | null) {
+      dispatch({ schema_version: 2, kind: "pr_merge", payload: { workspace_id: workspaceId, pr_number: number, head, ...(method ? { method } : {}) } });
+    },
+
+    /** Brings a behind pull request's branch up to its base, conditioned on the head commit the card showed. */
+    updatePullRequestBranch(workspaceId: string, number: number, head: string) {
+      dispatch({ schema_version: 2, kind: "pr_update_branch", payload: { workspace_id: workspaceId, pr_number: number, head } });
     },
 
     /**
@@ -1461,13 +1519,11 @@ export function createActions(send: DispatchFn) {
      * Overview shows, as one action. The screen is this page's own state, so
      * the only event is the device's (PRD cmdk-navigation B20).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null } | { session: SessionTarget } | { box: string; fold: string | null }) {
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { session: SessionTarget } | { box: string; fold: string | null }) {
       const state = ui();
       const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
       const selected =
-        lens && "pullRequest" in lens
-          ? pullRequestLens(next, lens.pullRequest)
-          : lens && "session" in lens
+        lens && "session" in lens
             ? { ...next, tab: "sessions" as const, focusTask: null, panel: null, session: lens.session }
             : lens && "box" in lens
               ? // A cross-project chip's other end (issue 718): its box selected and unfolded, with no filter to hide it.
@@ -2183,12 +2239,12 @@ export function createActions(send: DispatchFn) {
       ui().setOverviewProject(null);
       ui().setScreen({ kind: "main" });
       ui().setMainView("agents");
-      showTool("agent_sessions");
+      showTool("work");
     },
 
     openSessionRecord(session: import("./snapshot").WorkSession) {
       ui().setSessionWorkTarget(session);
-      showTool("agent_sessions");
+      showTool("work");
       dispatch({ schema_version: 2, kind: "session_record_open", payload: { session } });
     },
     closeSessionRecord() {

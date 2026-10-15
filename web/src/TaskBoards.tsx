@@ -84,7 +84,7 @@ import { holdsCommandKey } from "./host";
 // hover shows its buttons in the id line's reserved slot, a half-second rest
 // on a part opens that part's card, and each part has one destination: the
 // card and its title the issue's panel, an agent row that agent's pane, the
-// checkout chip its Workspace, the PR chip its row on the PRs tab, and ⌘-click
+// checkout chip its Workspace, the PR chip its PR card, and ⌘-click
 // GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
@@ -121,8 +121,10 @@ export type BoardHandlers = {
   openGitHub: (url: string, deviceId: string) => void;
   /** `N worktrees without an issue`: the Agents graph with its `Worktrees without agents` line open (B4). */
   showCheckouts: () => void;
-  /** A PR chip, or `N PRs without an issue` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
-  openPullRequestRow: (owner: Workspace, number: number | null) => void;
+  /** A PR chip: the pull request's card (PRD work-tab-pr-lens D-28). */
+  openPrCard: (owner: Workspace, number: number) => void;
+  /** `N PRs without an issue`: the Work tool's PRs basis (B45). */
+  openWorkPrs: () => void;
 };
 
 /** What Start and Edit say on a card and in the panel (B7). */
@@ -335,7 +337,7 @@ function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWo
 
 /**
  * `N PRs without an issue`: its popover names them and says where it goes; its
- * click opens the PRs tab, where each has an issue cell to link (PRD
+ * click opens the Work tool's PRs lens, where each row links to an issue (PRD
  * overview-lenses-prs B21; on the Overview of every project, the first one's
  * Project).
  */
@@ -345,7 +347,7 @@ function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: reado
   if (!first) return null;
   return (
     <Hint label={t("board.showPrs", { names: foldNames(pullRequests.map((value) => `#${value.number}`)) })}>
-      <FoldLine onClick={() => handlers.openPullRequestRow(first.owner, null)} data={{ "data-loose-prs": String(pullRequests.length) }}>
+      <FoldLine onClick={() => handlers.openWorkPrs()} data={{ "data-loose-prs": String(pullRequests.length) }}>
         {t("board.loosePrs", { count: pullRequests.length })}
       </FoldLine>
     </Hint>
@@ -702,7 +704,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
           {card.pr && checkout ? (
             <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
-              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
+              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPrCard(owner, number)} now={Date.now()} />
             </span>
           ) : null}
         </div>

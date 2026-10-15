@@ -195,7 +195,7 @@ impl Fixture {
             let pane = actor.pane_id.rsplit(':').next().unwrap().to_owned();
             ledger.agents.push(AgentRecord {
                 id: format!("agent-{}", index + 1),
-                name: actor.name.clone(),
+                name: Some(format!("{}-agent", actor.name)),
                 machine: actor.device_id.clone(),
                 host_scope: "fixture-scope".into(),
                 native_machine: format!("machine-{}", actor.device_id),
@@ -330,7 +330,7 @@ impl Fixture {
     fn register_after_read(&mut self) {
         let mut record = self.ledger.agents[1].clone();
         record.id = format!("agent-{}", self.ledger.next_id);
-        record.name = "late".into();
+        record.name = Some("late-agent".into());
         record.pane = "late".into();
         record.session = "late-native".into();
         record.instance = "terminal-late".into();

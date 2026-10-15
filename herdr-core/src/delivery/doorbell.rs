@@ -472,9 +472,11 @@ impl Doorbell {
 
 /// The line the bell types for `letter`, naming its writer as the operator
 /// knows it: the name it registered under, else the title Hide's screens give
-/// it while its pane still hosts it, else its Herdr agent id. A watch warning
-/// names the agent it watches. Memory only: the ledger is the pass's copy and
-/// the title one short look under the lock.
+/// it while its pane still hosts it, else its runtime's name. Never an id: the
+/// ledger's `wire_name` is for the letter's envelope, which a program reads,
+/// and this line is read by a person. A watch warning names the agent it
+/// watches. Memory only: the ledger is the pass's copy and the title one short
+/// look under the lock.
 fn bell_line(owner: &Mutex<Runtime>, ledger: &Ledger, letter: &Letter, others: usize) -> String {
     let about = letter
         .watch_warning
@@ -485,7 +487,7 @@ fn bell_line(owner: &Mutex<Runtime>, ledger: &Ledger, letter: &Letter, others: u
         .iter()
         .rev()
         .find(|record| record.actor.same_identity(about))
-        .map(|record| record.name.clone());
+        .and_then(|record| record.name.clone());
     let name = registered
         .or_else(|| {
             owner
@@ -494,7 +496,7 @@ fn bell_line(owner: &Mutex<Runtime>, ledger: &Ledger, letter: &Letter, others: u
                 .and_then(|guard| guard.delivery_title(about))
         })
         .filter(|name| crate::display_text::one_line(name, 1).is_some())
-        .unwrap_or_else(|| about.name.clone());
+        .unwrap_or_else(|| crate::sidebar::provider_name(Some(&about.kind)));
     super::bell::line(&super::bell::Ring {
         sender: &name,
         kind: &letter.kind,
@@ -1030,7 +1032,7 @@ mod tests {
             assert_eq!(typed[0]["pane_id"], "recipient");
             // The recipient is a Codex, so the line names where the letter is.
             assert_eq!(
-                typed[0]["text"], "🔔 sender 보고: private · hide inbox",
+                typed[0]["text"], "🔔 Codex 보고: private · hide inbox",
                 "{flags}"
             );
             assert_eq!(typed[0]["keys"], json!(["enter"]));
@@ -1039,7 +1041,7 @@ mod tests {
             // recognizes the turn the bell opens.
             assert_eq!(
                 bell.line().as_deref(),
-                Some("🔔 sender 보고: private · hide inbox")
+                Some("🔔 Codex 보고: private · hide inbox")
             );
         }
     }
@@ -1143,7 +1145,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bell_names_the_writer_by_registration_then_title_then_herdr_id() {
+    fn the_bell_names_the_writer_by_registration_then_title_then_runtime() {
         use crate::delivery::{ledger::Ledger, mailbox};
         let root = tempfile::tempdir().unwrap();
         let (runtime, sender, recipient, _) = crate::runtime::delivery::tests::fixture(root.path());
@@ -1160,11 +1162,12 @@ mod tests {
         )
         .unwrap();
         let line = |ledger: &Ledger, letter: &Letter| bell_line(&runtime, ledger, letter, 1);
+        // No registration and no row: the runtime's name, never an id.
         assert_eq!(
             line(&ledger, &letter),
-            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+            "🔔 Codex 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
-        // A row with no title is called by its runtime, which names no one.
+        // A row with no title is called by its runtime too.
         let untitled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
             "agents": [{"id":"sender","pane_id":"sender","agent":"codex",
                 "agent_status":"working","state_change_seq":1}]
@@ -1173,7 +1176,7 @@ mod tests {
         crate::runtime::delivery::tests::show_agents(&mut runtime.lock().unwrap(), untitled);
         assert_eq!(
             line(&ledger, &letter),
-            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+            "🔔 Codex 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         // The sidebar's title for the pane, while the pane still hosts it.
         let titled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
@@ -1191,12 +1194,12 @@ mod tests {
         moved_on.sender.session = Some("an-earlier-session".into());
         assert_eq!(
             line(&ledger, &moved_on),
-            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+            "🔔 Codex 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         // The name it registered under comes first.
         ledger.agents.push(crate::coordination::AgentRecord {
             id: "agent-1".into(),
-            name: "label-end-fix".into(),
+            name: Some("label-end-fix".into()),
             machine: "local".into(),
             host_scope: "scope".into(),
             native_machine: "local".into(),
@@ -1214,6 +1217,14 @@ mod tests {
             line(&ledger, &letter),
             "🔔 label-end-fix 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
+        // A registration with no name of its own is called by the title, not
+        // by its registration id, which the letter's envelope carries.
+        ledger.agents[0].name = None;
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 라벨 제목 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        ledger.agents[0].name = Some("label-end-fix".into());
         // A watch warning is about the agent it watches, not its parent.
         let mut warning = letter.clone();
         warning.kind = "watch".into();

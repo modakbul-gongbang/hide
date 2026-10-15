@@ -105,7 +105,7 @@ pub(crate) mod tests {
     fn record(actor: &Actor) -> AgentRecord {
         AgentRecord {
             id: String::new(),
-            name: actor.name.clone(),
+            name: Some(actor.name.clone()),
             machine: actor.device_id.clone(),
             host_scope: actor.kind.clone(),
             native_machine: actor.kind.clone(),

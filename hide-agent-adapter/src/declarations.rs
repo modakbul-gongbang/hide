@@ -123,7 +123,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         logo_id: "codex",
         factory: FactoryCapabilities {
             direct_ask: Available(DirectAsk {
-                tools: &["request_user_input"],
+                tools: &["request_user_input", "request_user_input_async"],
                 denial: HookDialect::Codex,
             }),
             user_turn: Available(SessionFormat::Codex),
