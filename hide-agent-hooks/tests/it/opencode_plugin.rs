@@ -51,6 +51,8 @@ fn the_plugin_behaves_as_opencode_runs_it() {
             crate_dir().join("tests/opencode/helper.mjs"),
         )
         .env("HIDE_OPENCODE_HELPER_LOG", dir.path().join("calls.jsonl"))
+        // The guardrails policy is read from HOME, which the test writes.
+        .env("HOME", dir.path())
         .env(
             "HIDE_OPENCODE_HELPER_ANSWERS",
             dir.path().join("answers.json"),

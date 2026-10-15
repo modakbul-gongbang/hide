@@ -289,6 +289,19 @@ pub fn may_hold_launch(payload: &[u8]) -> bool {
 /// removed. A substitution (`$(...)`, `` `...` ``) stays inside its word as
 /// the text it was written with: it is not parsed.
 fn simple_commands(text: &str) -> Vec<Vec<String>> {
+    Lexer::new(text).run().commands
+}
+
+/// A shell line as [`simple_commands`] reads it, with the file each
+/// redirection names (`< f`, `> f`, `2>> f`, `&> f`) kept beside the index of
+/// the command it belongs to. The guardrails (`crate::guardrails`) read both:
+/// `cat < .env` names `.env` as much as `cat .env` does.
+pub(crate) struct ShellLine {
+    pub commands: Vec<Vec<String>>,
+    pub targets: Vec<(usize, String)>,
+}
+
+pub(crate) fn shell_line(text: &str) -> ShellLine {
     Lexer::new(text).run()
 }
 
@@ -301,6 +314,9 @@ struct Lexer {
     in_word: bool,
     /// The word after a redirection operator is its target, not an argument.
     drop_next: bool,
+    /// Whether that word names a file (`<`, `>`), not a here-string's text.
+    next_is_file: bool,
+    targets: Vec<(usize, String)>,
     /// The word after `<<` names the heredoc's end; `true` strips leading tabs.
     heredoc_next: Option<bool>,
     heredocs: Vec<(String, bool)>,
@@ -319,6 +335,8 @@ impl Lexer {
             word: String::new(),
             in_word: false,
             drop_next: false,
+            next_is_file: false,
+            targets: Vec::new(),
             heredoc_next: None,
             heredocs: Vec::new(),
             unclosed: false,
@@ -329,7 +347,7 @@ impl Lexer {
         self.chars.get(self.at + offset).copied()
     }
 
-    fn run(mut self) -> Vec<Vec<String>> {
+    fn run(mut self) -> ShellLine {
         while let Some(c) = self.peek(0) {
             match c {
                 '\\' => self.backslash(),
@@ -371,9 +389,15 @@ impl Lexer {
         }
         self.end_command();
         if self.unclosed {
-            return Vec::new();
+            return ShellLine {
+                commands: Vec::new(),
+                targets: Vec::new(),
+            };
         }
-        self.commands
+        ShellLine {
+            commands: self.commands,
+            targets: self.targets,
+        }
     }
 
     fn end_word(&mut self) {
@@ -386,6 +410,9 @@ impl Lexer {
             self.heredocs.push((word, strip));
         } else if self.drop_next {
             self.drop_next = false;
+            if std::mem::take(&mut self.next_is_file) {
+                self.targets.push((self.commands.len(), word));
+            }
         } else {
             self.words.push(word);
         }
@@ -394,6 +421,7 @@ impl Lexer {
     fn end_command(&mut self) {
         self.end_word();
         self.drop_next = false;
+        self.next_is_file = false;
         self.heredoc_next = None;
         if !self.words.is_empty() {
             self.commands.push(std::mem::take(&mut self.words));
@@ -643,6 +671,7 @@ impl Lexer {
                 self.at += 1;
             }
             self.drop_next = true;
+            self.next_is_file = true;
         } else {
             self.end_command();
             self.at += 1;
@@ -670,6 +699,7 @@ impl Lexer {
                 Some('<') => {
                     self.at += 1;
                     self.drop_next = true;
+                    self.next_is_file = false;
                 }
                 Some('-') => {
                     self.at += 1;
@@ -679,11 +709,14 @@ impl Lexer {
             }
             return;
         }
+        // `>&2` duplicates a descriptor and names no file.
+        let duplicate = self.peek(0) == Some('&');
         if matches!(self.peek(0), Some('>' | '&' | '|')) || (c == '<' && self.peek(0) == Some('>'))
         {
             self.at += 1;
         }
         self.drop_next = true;
+        self.next_is_file = !duplicate;
     }
 
     /// After a newline, skips the body of each heredoc the line opened.
@@ -738,7 +771,7 @@ const TARGET_VARIABLES: [&str; 2] = ["HERDR_SOCKET_PATH", "HERDR_SESSION"];
 /// environment of the command that follows and without the prefix words above,
 /// and whether those assignments pointed `herdr` at another server than the
 /// one `env` says the pane has.
-fn command_words<'a>(
+pub(crate) fn command_words<'a>(
     words: &'a [String],
     env: &dyn Fn(&str) -> Option<String>,
     compound: bool,
@@ -1111,7 +1144,7 @@ pub fn registration(program: &OsStr, deadline: Instant) -> Registration {
 const LOG_LIMIT: u64 = 256 * 1024;
 const LOG_LOCK_WAIT: Duration = Duration::from_millis(100);
 
-fn log_path(home: &Path) -> PathBuf {
+pub(crate) fn log_path(home: &Path) -> PathBuf {
     home.join(".hide")
         .join("agent-hooks")
         .join("spawn-guard.log")
@@ -1147,7 +1180,7 @@ pub fn record_question_refusal(home: &Path, runtime: &str, pane: &str, tool: &st
     let _ = append_line(&log_path(home), &line);
 }
 
-fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
+pub(crate) fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("log parent unavailable"))?;
@@ -1187,7 +1220,7 @@ pub fn unreachable(home: &Path, runtime: &str, cause: &'static str) {
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)

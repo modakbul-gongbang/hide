@@ -266,14 +266,19 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
 /// trust step read it here, so an event that has a matcher is written and
 /// recognised as Hide's by the same line.
 ///
-/// Select only shell spawning and native questions. Pinned Codex 0.160.1
+/// Select the shell, native questions and the file tools the guardrails read
+/// (PRD agent-guardrails D-12): Claude Code 2.1.300's `Edit`, `Write`,
+/// `MultiEdit`, `NotebookEdit` and `Read`, and Codex 0.162.1's `apply_patch`,
+/// which its `Edit` and `Write` aliases also select. Pinned Codex 0.160.1
 /// sends real plan-mode request_user_input through PreToolUse as well.
 pub(crate) fn hook_matcher(runtime: AgentRuntime, event: HookEvent) -> Option<&'static str> {
     match (runtime, event) {
         (AgentRuntime::ClaudeCode, HookEvent::PreToolUse) => {
-            Some("Bash|AskUserQuestion|ExitPlanMode")
+            Some("Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read")
         }
-        (AgentRuntime::Codex, HookEvent::PreToolUse) => Some("Bash|request_user_input"),
+        (AgentRuntime::Codex, HookEvent::PreToolUse) => {
+            Some("Bash|request_user_input|apply_patch|Edit|Write")
+        }
         _ => None,
     }
 }
@@ -877,7 +882,7 @@ mod tests {
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
-        assert!(session_start_command.contains("--source hide-subagents@7"));
+        assert!(session_start_command.contains("--source hide-subagents@8"));
         let guard = if cfg!(windows) {
             "if (Test-Path -LiteralPath '"
         } else {
@@ -900,12 +905,12 @@ mod tests {
             (
                 AgentRuntime::ClaudeCode,
                 HookEvent::SessionStart,
-                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@7; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@8; fi","timeout":8}"#,
             ),
             (
                 AgentRuntime::Codex,
                 HookEvent::Stop,
-                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@7; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@8; fi","timeout":8}"#,
             ),
         ];
         for (runtime, event, bytes) in pinned {
@@ -936,7 +941,7 @@ mod tests {
         let quoted = "'C:\\Users\\example\\a b''c\\it\u{2019}\u{2019}s\\hide-agent-hooks.exe'";
         let guard = |runtime: &str| {
             format!(
-                "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@7 }}"
+                "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@8 }}"
             )
         };
         let codex = windows_hook(helper, AgentRuntime::Codex, HookEvent::Stop);
@@ -1045,8 +1050,10 @@ mod tests {
             let written = fixture.read(runtime);
             let group = &written["hooks"]["PreToolUse"][0];
             let expected = match runtime {
-                AgentRuntime::ClaudeCode => "Bash|AskUserQuestion|ExitPlanMode",
-                AgentRuntime::Codex => "Bash|request_user_input",
+                AgentRuntime::ClaudeCode => {
+                    "Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read"
+                }
+                AgentRuntime::Codex => "Bash|request_user_input|apply_patch|Edit|Write",
             };
             assert_eq!(group["matcher"], expected, "{runtime:?}");
             let hook = &group["hooks"][0];

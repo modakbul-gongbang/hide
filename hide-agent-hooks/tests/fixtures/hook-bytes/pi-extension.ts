@@ -1,4 +1,4 @@
-// hide-extension@3 sha256=69e16aad5cef668fb965174cae3e86434ec16aee6a8671d711ad0789b378e075
+// hide-extension@4 sha256=483becdeb873668831fc67eeee7b8745675bb056b4447274f8412ebefb7691b8
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -7,12 +7,13 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 const HELPER = "/kit path/it's/hide-agent-hooks";
 const AGENT = "pi";
-const VERSION = 3;
+const VERSION = 4;
 
 // The prompt budget is Claude Code's prompt hook's; the tool budget is the spawn guard's. Both hosts wait for
 // a handler far longer (omp gives up at 30 s and then blocks the tool), so these are the limits.
@@ -30,6 +31,49 @@ const CHILD_LIMIT = 64;
 const PENDING_LIMIT = 16;
 const PENDING_AGE_MS = 10 * 60 * 1000;
 const CUSTOM_TYPE = "hide";
+
+// The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
+// call reaches the helper for them only while some project has a protection on, read again when the file changes,
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). No file is none on; a file that
+// cannot be read lets the helper read it and record why.
+const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+const FILE_TOOLS = new Set(["read", "edit", "write"]);
+// The arguments that name a file; the rest of a write (its content) is not sent.
+const PATH_ARGS = ["filePath", "path", "file_path"];
+const policy = { mtimeMs: -1, size: -1, on: true };
+
+function guardrailsOn() {
+  let stat;
+  try {
+    stat = statSync(POLICY);
+  } catch (error) {
+    // No file is no protection on; one that cannot be read is the helper's to report.
+    return error?.code !== "ENOENT";
+  }
+  if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
+  let on = true;
+  try {
+    const read = JSON.parse(readFileSync(POLICY, "utf8"));
+    if (read?.version === 1 && Array.isArray(read.projects)) {
+      on = read.projects.some((project) => {
+        const rules = project?.rules;
+        return Boolean(rules?.worktree_folder || rules?.base_branch || rules?.git_commands || rules?.files);
+      });
+    }
+  } catch {}
+  Object.assign(policy, { mtimeMs: stat.mtimeMs, size: stat.size, on });
+  return on;
+}
+
+/** A file tool's arguments that name its files: its paths, and a patch's file lines. */
+function fileArgs(args) {
+  const named = {};
+  for (const key of PATH_ARGS) if (typeof args?.[key] === "string") named[key] = args[key];
+  if (typeof args?.patchText === "string") {
+    named.patchText = args.patchText.split("\n").filter((line) => line.startsWith("*** ")).join("\n");
+  }
+  return named;
+}
 // Any spelling of the reminder tag the model reads as one, opening or closing.
 const REMINDER_TAG = /<(\s*\/?\s*system-reminder)/gi;
 
@@ -348,10 +392,15 @@ async function onTool(state, event, ctx) {
   let request;
   if (tool === "bash") {
     const command = event?.input?.command;
-    // Every shell call comes here: only one that can start an agent through Herdr asks the helper.
-    if (typeof command !== "string" || !(command.includes("herdr") || command.includes("HERDR_BIN_PATH"))) return null;
+    // Every shell call comes here: one asks the helper while a guardrail is on, or when it can start an agent
+    // through Herdr.
+    if (typeof command !== "string") return null;
+    if (!(command.includes("herdr") || command.includes("HERDR_BIN_PATH")) && !guardrailsOn()) return null;
     const cwd = typeof event.input.cwd === "string" && event.input.cwd ? event.input.cwd : ctx?.cwd;
     request = { tool, command, cwd };
+  } else if (FILE_TOOLS.has(tool)) {
+    if (!guardrailsOn()) return null;
+    request = { tool, args: fileArgs(event?.input), cwd: ctx?.cwd };
   } else if (tool === "ask" && AGENT === "omp") {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
     const session = root(ctx) ? sessionFile(ctx) : shared.rootSession;

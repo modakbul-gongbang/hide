@@ -21,7 +21,7 @@ use hide_agent_hooks::delivery::{self, Intake, Prompt};
 use hide_agent_hooks::memory::{self, HookMemoryOutcome, MemoryRequest, memory_context_until};
 use hide_agent_hooks::runtime::HookEvent;
 use hide_agent_hooks::spawn_guard::{self as guard, QuestionDecision, Registration};
-use hide_agent_hooks::{counters, guidance, report};
+use hide_agent_hooks::{counters, guardrails, guidance, report};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -53,6 +53,9 @@ struct Input {
     letters: Vec<String>,
     tool: Option<String>,
     command: Option<String>,
+    /// A file tool's own arguments, as the host hands them to the script,
+    /// for the guardrails (`hide_agent_hooks::guardrails::payload`).
+    args: Option<Value>,
     working: u32,
     done: u32,
     /// Helper calls the script skipped at its cap or gave up on since its last
@@ -283,15 +286,32 @@ fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
     }
 }
 
-/// The spawn guard for `bash` and the Factory guard for the agent's question
-/// tool (OpenCode's `question`, omp's `ask`): `deny` carries the reason the
-/// script refuses with, and every other outcome lets the call run, as the
-/// Claude Code and Codex guards do.
+/// The project's guardrails for a shell or file tool, the spawn guard for
+/// `bash` and the Factory guard for the agent's question tool (OpenCode's
+/// `question`, omp's `ask`): `deny` carries the reason the script refuses
+/// with, and every other outcome lets the call run, as the Claude Code and
+/// Codex guards do.
 fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
     let runtime = agent.runtime();
     let Some(pane) = pane() else {
         return json!({});
     };
+    let call = || {
+        let tool = input.tool.as_deref()?;
+        let args = input.args.clone().or_else(|| {
+            input
+                .command
+                .as_ref()
+                .map(|command| json!({ "command": command }))
+        })?;
+        Some(guardrails::payload::ToolCall {
+            action: guardrails::payload::action(tool, &args)?,
+            cwd: input.cwd.clone(),
+        })
+    };
+    if let Some(reason) = guardrails::refusal_for(home, runtime, Some(&pane), call) {
+        return json!({ "deny": reason });
+    }
     let Some(program) = workspace_context::cli_program() else {
         return json!({});
     };

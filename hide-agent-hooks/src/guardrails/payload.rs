@@ -1,0 +1,208 @@
+//! What each runtime's pre-tool payload says a call does, for the
+//! guardrails: a shell command, the files a tool writes, or the files it
+//! reads (PRD agent-guardrails D-05, B23).
+//!
+//! The tool names and input keys are each runtime's own, observed on the
+//! versions Hide installs into: Claude Code 2.1.300 (`Edit`, `Write`,
+//! `NotebookEdit`, `Read` with `file_path` or `notebook_path`), Codex 0.162.1
+//! (`apply_patch` with the patch text in `command`), Cursor 2026.10.14
+//! (`Read` and `Write`, an edit included, with `file_path`, and
+//! `beforeReadFile` with a top-level `file_path`), Grok 1.0.52 (`read_file`
+//! with `path`, `search_replace` and `write` with `file_path`), OpenCode
+//! 1.18.30 (`read`, `edit`, `write` with `filePath`, `apply_patch` with
+//! `patchText`), Pi 1.0.4 and omp 18.7.0 (`read`, `edit`, `write` with
+//! `path`). A key another version renames reads as no path, and the call runs.
+
+use std::path::PathBuf;
+
+use hide_agent_adapter::HookDialect;
+use serde_json::Value;
+
+use super::Action;
+
+/// A tool call: what it does, and the folder it runs in when the payload
+/// names one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub action: Action,
+    pub cwd: Option<PathBuf>,
+}
+
+/// The shell tools by name, across runtimes.
+const SHELL_TOOLS: [&str; 4] = ["Bash", "run_terminal_command", "Shell", "bash"];
+
+/// The tools that write a file by name, across runtimes.
+const WRITE_TOOLS: [&str; 12] = [
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "apply_patch",
+    "search_replace",
+    "write",
+    "edit",
+    "StrReplace",
+    "Delete",
+    "EditNotebook",
+    "multiedit",
+];
+
+const READ_TOOLS: [&str; 3] = ["Read", "read_file", "read"];
+
+/// The keys a tool's input names its file under, across runtimes.
+const PATH_KEYS: [&str; 5] = [
+    "file_path",
+    "path",
+    "filePath",
+    "notebook_path",
+    "target_file",
+];
+
+/// The keys a patch tool's input carries its text under.
+const PATCH_KEYS: [&str; 3] = ["command", "patchText", "patch"];
+
+/// The pre-tool payload of a command hook (Claude Code, Codex, Cursor,
+/// Grok), or Cursor's `beforeReadFile`. A payload cut at the read limit is
+/// read for its tool and path from the bytes that arrived.
+pub fn read_hook(payload: &[u8], truncated: bool, dialect: HookDialect) -> Option<ToolCall> {
+    if truncated {
+        return read_cut(payload, dialect);
+    }
+    let value: Value = serde_json::from_slice(payload).ok()?;
+    let (tool, input, cwd) = match dialect {
+        HookDialect::Grok => (
+            value.get("toolName").and_then(Value::as_str),
+            value.get("toolInput"),
+            value.get("cwd").and_then(Value::as_str),
+        ),
+        _ => (
+            value.get("tool_name").and_then(Value::as_str),
+            value.get("tool_input"),
+            value.get("cwd").and_then(Value::as_str),
+        ),
+    };
+    let input_cwd = input
+        .and_then(|input| input.get("working_directory").or_else(|| input.get("cwd")))
+        .and_then(Value::as_str);
+    let workspace = value
+        .get("workspace_roots")
+        .and_then(Value::as_array)
+        .and_then(|roots| roots.first())
+        .and_then(Value::as_str);
+    let cwd = [input_cwd, cwd, workspace]
+        .into_iter()
+        .flatten()
+        .find(|cwd| !cwd.is_empty())
+        .map(PathBuf::from);
+    // Cursor's `beforeReadFile` names its file at the top.
+    if value.get("hook_event_name").and_then(Value::as_str) == Some("beforeReadFile") {
+        let path = value.get("file_path").and_then(Value::as_str)?;
+        return Some(ToolCall {
+            action: Action::Read(vec![path.to_owned()]),
+            cwd,
+        });
+    }
+    let action = action(tool?, input?)?;
+    Some(ToolCall { action, cwd })
+}
+
+/// What `tool` with `input` does, for a hook payload and for the scripts of
+/// OpenCode, Pi and omp alike.
+pub fn action(tool: &str, input: &Value) -> Option<Action> {
+    if SHELL_TOOLS.contains(&tool) {
+        return input
+            .get("command")
+            .and_then(Value::as_str)
+            .map(|command| Action::Shell(command.to_owned()));
+    }
+    let paths = paths(input);
+    if WRITE_TOOLS.contains(&tool) {
+        return (!paths.is_empty()).then_some(Action::Write(paths));
+    }
+    if READ_TOOLS.contains(&tool) {
+        return (!paths.is_empty()).then_some(Action::Read(paths));
+    }
+    None
+}
+
+fn paths(input: &Value) -> Vec<String> {
+    let mut paths: Vec<String> = PATH_KEYS
+        .iter()
+        .filter_map(|key| input.get(*key).and_then(Value::as_str))
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect();
+    for key in PATCH_KEYS {
+        if let Some(patch) = input.get(key).and_then(Value::as_str) {
+            paths.extend(patch_paths(patch));
+        }
+    }
+    paths
+}
+
+/// The files a patch in the `*** Begin Patch` form names (Codex's and
+/// OpenCode's `apply_patch`): added, updated, deleted and moved to.
+pub fn patch_paths(patch: &str) -> Vec<String> {
+    patch
+        .lines()
+        .filter_map(|line| {
+            [
+                "*** Add File: ",
+                "*** Update File: ",
+                "*** Delete File: ",
+                "*** Move to: ",
+            ]
+            .iter()
+            .find_map(|marker| line.strip_prefix(marker))
+        })
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty())
+        .collect()
+}
+
+/// A payload cut at the read limit: its tool name and its file path, read
+/// from the bytes that arrived. A shell command cut short is not decided on.
+fn read_cut(payload: &[u8], dialect: HookDialect) -> Option<ToolCall> {
+    let tool_key = match dialect {
+        HookDialect::Grok => "toolName",
+        _ => "tool_name",
+    };
+    let tool = string_after(payload, tool_key)?;
+    if SHELL_TOOLS.contains(&tool.as_str()) {
+        return None;
+    }
+    let paths: Vec<String> = PATH_KEYS
+        .iter()
+        .filter_map(|key| string_after(payload, key))
+        .filter(|path| !path.is_empty())
+        .collect();
+    let action = if WRITE_TOOLS.contains(&tool.as_str()) && !paths.is_empty() {
+        Action::Write(paths)
+    } else if READ_TOOLS.contains(&tool.as_str()) && !paths.is_empty() {
+        Action::Read(paths)
+    } else {
+        return None;
+    };
+    Some(ToolCall {
+        action,
+        cwd: string_after(payload, "cwd")
+            .filter(|cwd| !cwd.is_empty())
+            .map(PathBuf::from),
+    })
+}
+
+/// The whole JSON string value of the first `"key":` in `bytes`.
+fn string_after(bytes: &[u8], key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let at = bytes
+        .windows(needle.len())
+        .position(|window| window == needle.as_bytes())?;
+    let rest = &bytes[at + needle.len()..];
+    let rest = &rest[rest.iter().position(|byte| !byte.is_ascii_whitespace())?..];
+    let rest = rest.strip_prefix(b":")?;
+    let start = rest.iter().position(|byte| !byte.is_ascii_whitespace())?;
+    serde_json::Deserializer::from_slice(&rest[start..])
+        .into_iter::<String>()
+        .next()?
+        .ok()
+}

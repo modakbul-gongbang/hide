@@ -202,6 +202,62 @@ fn a_shell_call_that_starts_an_agent_through_herdr_is_refused_with_the_spawn_gua
 }
 
 #[test]
+fn a_file_tool_on_a_protected_path_is_refused_for_opencode_pi_and_omp() {
+    let machine = Machine::new();
+    let project = machine.home.join("project");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    std::fs::write(project.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
+    let policy = machine.home.join(".hide/agent-hooks/guardrails.json");
+    std::fs::create_dir_all(policy.parent().unwrap()).unwrap();
+    std::fs::write(
+        &policy,
+        json!({"version": 1, "projects": [{"root": project, "base": null, "rules": {
+            "worktree_folder": false, "base_branch": false, "agent_merge": false,
+            "git_commands": false, "files": true, "paths": [".env"]}}]})
+        .to_string(),
+    )
+    .unwrap();
+    let env = project.join(".env");
+    for (agent, args) in [
+        ("opencode", json!({"filePath": env})),
+        (
+            "opencode",
+            json!({"patchText": format!("*** Begin Patch\n*** Update File: {}\n*** End Patch", env.display())}),
+        ),
+        ("pi", json!({"path": env})),
+        ("omp", json!({"path": env})),
+    ] {
+        let tool = if args.get("patchText").is_some() {
+            "apply_patch"
+        } else {
+            "write"
+        };
+        let answer = machine.run_as(
+            agent,
+            "tool",
+            &json!({"session_id": "ses_root", "tool": tool, "args": args, "cwd": project,
+                    "version": hide_agent_hooks::pi_extension::VERSION}),
+            true,
+        );
+        let reason = answer["deny"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{agent}: {answer}"));
+        assert!(
+            reason.contains("\"Guard files\" protection is on"),
+            "{reason}"
+        );
+    }
+    let answer = machine.run(
+        "tool",
+        &json!({"session_id": "ses_root", "tool": "write",
+                "args": {"filePath": project.join("README.md")}, "cwd": project}),
+        true,
+    );
+    assert_eq!(answer, json!({}));
+    assert!(machine.calls().is_empty(), "no protection asks the daemon");
+}
+
+#[test]
 fn the_question_tool_asks_the_factory_guard_as_opencode() {
     let machine = Machine::new();
     let answer = machine.run(

@@ -11,7 +11,9 @@
 // HIDE_EXTENSION_HELPER_ANSWERS set.
 
 import assert from "node:assert/strict";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -191,7 +193,7 @@ test("a new session's first prompt carries the guidance and the letters in one h
   // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
   // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 3 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 4 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -388,11 +390,47 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(await host.emit("tool_call", launch, context("tool_call.bash")), { block: true, reason: "Use hide agent spawn --parent here" });
   const [call] = await until("tool");
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 3 });
+  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 4 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
   await settled(host);
   assert.equal(made("tool").length, 1, "an ordinary shell call starts no helper");
+});
+
+/** Writes the guardrails policy the core would publish, with `rules` on the fixture project, or removes it. */
+function policy(rules) {
+  const file = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+  if (!rules) return rmSync(file, { force: true });
+  mkdirSync(path.dirname(file), { recursive: true });
+  const all = { worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [] };
+  writeFileSync(file, JSON.stringify({ version: 1, projects: [{ root: "/checkouts/fixture", base: null, rules: { ...all, ...rules } }] }));
+}
+
+test("while a project has a protection on, file and shell calls ask the helper with paths only", async () => {
+  const host = await extension();
+  await started(host, "");
+  policy({ files: true, paths: [".env"] });
+  try {
+    answer({ tool: { deny: "Not run: Guard files is on" } });
+    const write = { ...sample("tool_call.bash").event, toolName: "write", input: { path: "/checkouts/fixture/.env", content: "SECRET=1" } };
+    assert.deepEqual(await host.emit("tool_call", write, context("tool_call.bash")), { block: true, reason: "Not run: Guard files is on" });
+    const shell = { ...sample("tool_call.bash").event, input: { command: "cat .env" } };
+    assert.deepEqual(await host.emit("tool_call", shell, context("tool_call.bash")), { block: true, reason: "Not run: Guard files is on" });
+    const sent = (await until("tool", 2)).map(({ input: { lost: _lost, ...input } }) => input);
+    assert.deepEqual(sent[0], { tool: "write", args: { path: "/checkouts/fixture/.env" }, cwd: "/checkouts/fixture", version: 4 });
+    assert.equal(sent[1].command, "cat .env");
+
+    // Every protection off again: no file or shell call starts the helper (B27).
+    policy({});
+    answer({ tool: {} });
+    const before = made("tool").length;
+    assert.equal(await host.emit("tool_call", write, context("tool_call.bash")), undefined);
+    assert.equal(await host.emit("tool_call", shell, context("tool_call.bash")), undefined);
+    await settled(host);
+    assert.equal(made("tool").length, before);
+  } finally {
+    policy(null);
+  }
 });
 
 test("a helper that fails or is late lets the shell call run, as Claude Code's guard does", async () => {
@@ -416,7 +454,7 @@ if (AGENT === "omp") {
     assert.deepEqual(await host.emit("tool_call", ask.event, context("tool_call.ask")), { block: true, reason: "Ask with hide factory ask" });
     const [call] = await until("tool");
     const { lost: _lost, ...input } = call.input;
-    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 3 });
+    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 4 });
     answer({ tool: {} });
     assert.equal(await host.emit("tool_call", ask.event, context("tool_call.ask")), undefined, "outside a worker the question shows");
 

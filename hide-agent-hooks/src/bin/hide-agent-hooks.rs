@@ -297,19 +297,32 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     }
 }
 
-/// The guard's decision for one tool call: the reason it is refused, or
-/// `None` to let it run (not a launch, not in a registered checkout, the
-/// daemon unreachable, any failure of its own). A refusal and an unreachable
-/// daemon are written to the guard's log here; the caller prints the answer
-/// in its runtime's form.
+/// The guards' decision for one tool call: the reason it is refused, or
+/// `None` to let it run. The project's guardrails refuse what a protection
+/// that is on names; the spawn guard refuses a launch through Herdr (not a
+/// launch, not in a registered checkout, the daemon unreachable and any
+/// failure of its own let it run). A refusal and an unreachable daemon are
+/// written to the guard's log here; the caller prints the answer in its
+/// runtime's form.
 fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Option<String> {
     use hide_agent_hooks::spawn_guard::{self as guard, Registration};
 
-    // Outside a Herdr pane there is nothing to redirect.
+    // Outside a Herdr pane there is nothing to redirect, and no agent of
+    // Hide's to guard.
     let pane = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())?;
     let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
+    // The project's guardrails come first: they read only local files, and
+    // a call they refuse never reaches the daemon (PRD agent-guardrails).
+    if let Some(home) = home_directory()
+        && let Some(reason) =
+            hide_agent_hooks::guardrails::refusal_for(&home, runtime_id, Some(&pane), || {
+                hide_agent_hooks::guardrails::payload::read_hook(&payload, truncated, dialect)
+            })
+    {
+        return Some(reason);
+    }
     // Question tools have no shell command and take their own readonly route,
     // for an agent whose question tools are confirmed to reach this hook
     // (Grok's are not yet, so its questions stay native).

@@ -9,7 +9,9 @@
 // HIDE_OPENCODE_HELPER_ANSWERS set.
 
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -221,6 +223,46 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   await hooks["tool.execute.before"]({ ...launch.input, tool: "read" }, { args: { filePath: "/x" } });
   await sleep(100);
   assert.equal(calls().filter((c) => c.operation === "tool").length, 1);
+});
+
+/** Writes the guardrails policy the core would publish, with `rules` on the fixture project, or removes it. */
+function policy(rules) {
+  const file = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
+  if (!rules) return rmSync(file, { force: true });
+  mkdirSync(path.dirname(file), { recursive: true });
+  const all = { worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [] };
+  writeFileSync(file, JSON.stringify({ version: 1, projects: [{ root: "/checkouts/fixture", base: null, rules: { ...all, ...rules } }] }));
+}
+
+test("while a project has a protection on, file and shell calls ask the helper with paths only", async () => {
+  answer({ start: { context: "" }, tool: { deny: "Not run: Guard files is on" } });
+  policy({ files: true, paths: [".env"] });
+  try {
+    const hooks = await plugin();
+    const launch = sample("tool.execute.before.bash");
+    await assert.rejects(
+      hooks["tool.execute.before"]({ ...launch.input, tool: "write" }, { args: { filePath: "/checkouts/fixture/.env", content: "SECRET=1" } }),
+      { message: "Not run: Guard files is on" },
+    );
+    const patch = "*** Begin Patch\n*** Update File: /checkouts/fixture/.env\n@@\n-OLD=1\n+NEW=1\n*** End Patch";
+    await assert.rejects(hooks["tool.execute.before"]({ ...launch.input, tool: "apply_patch" }, { args: { patchText: patch } }));
+    await assert.rejects(hooks["tool.execute.before"]({ ...launch.input }, { args: { command: "cat .env" } }));
+    const sent = (await until("tool", 3)).map((call) => call.input);
+    assert.deepEqual(sent[0], { session_id: "ses_root", tool: "write", args: { filePath: "/checkouts/fixture/.env" }, cwd: "/checkouts/fixture" });
+    // A patch reaches the helper as its file lines alone, without the text it writes.
+    assert.deepEqual(sent[1].args, { patchText: "*** Begin Patch\n*** Update File: /checkouts/fixture/.env\n*** End Patch" });
+    assert.equal(sent[2].command, "cat .env");
+
+    // Every protection off again: no file or shell call starts the helper (B27).
+    policy({});
+    rmSync(LOG, { force: true });
+    await hooks["tool.execute.before"]({ ...launch.input, tool: "read" }, { args: { filePath: "/checkouts/fixture/.env" } });
+    await hooks["tool.execute.before"]({ ...launch.input }, { args: { command: "cat .env" } });
+    await sleep(100);
+    assert.deepEqual(calls(), []);
+  } finally {
+    policy(null);
+  }
 });
 
 test("the question tool is refused only when the helper says the pane is a Factory worker", async () => {
