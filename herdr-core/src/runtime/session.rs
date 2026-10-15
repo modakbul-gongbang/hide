@@ -1276,13 +1276,21 @@ impl Runtime {
             })
         });
         if !focused_checkout_exists && self.snapshot.ui_state.focused_checkout_id.is_none() {
-            self.snapshot.navigator.focused_checkout_id = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.checkouts.iter())
-                .find(|checkout| checkout.exists)
+            // The catalog's first checkout, passing over one whose folder
+            // the node found gone: a restored pane's row stays while its
+            // folder is missing, and with no activity its place in the order
+            // is its id's, so the window would open on it by chance.
+            let starts = || {
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .filter(|checkout| checkout.exists)
+            };
+            self.snapshot.navigator.focused_checkout_id = starts()
+                .find(|checkout| !self.catalog_paths.gone(&checkout.path))
+                .or_else(|| starts().next())
                 .map(|checkout| checkout.id.clone());
         }
         let focused = self

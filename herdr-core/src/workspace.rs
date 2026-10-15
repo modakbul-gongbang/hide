@@ -398,6 +398,11 @@ impl PathIndex {
         self.paths.get(path).is_some_and(|fact| fact.exists)
     }
 
+    /// Whether the node answered for `path` and found nothing there.
+    pub fn gone(&self, path: &str) -> bool {
+        self.paths.get(path).is_some_and(|fact| !fact.exists)
+    }
+
     /// The working tree holding `path`, else `path` itself, in comparison
     /// form.
     pub fn root(&self, path: &str) -> String {
