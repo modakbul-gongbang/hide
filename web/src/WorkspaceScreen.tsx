@@ -218,6 +218,10 @@ function LaneRow({ view, frame, width, body, setBody, sizes, actions, checkout }
           data-lane-frame={frame.mode}
           data-lane-hidden={up ? undefined : "true"}
         >
+          {/* A lane over the agents is sized from its own left edge; nothing beside it moves (B6). */}
+          {frame.mode === "overlay" ? (
+            <LaneDivider kind="lane" edge label={t("panes.workspace.resize", { name: t("panes.lane.aria") })} workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} frame={frame} origin={body} sizes={sizes} setGuide={setGuide} actions={actions} />
+          ) : null}
           <Lane view={view} tool={view.tool} frame={frame} sizes={sizes} checkout={checkout} actions={actions} />
         </div>
       ) : null}

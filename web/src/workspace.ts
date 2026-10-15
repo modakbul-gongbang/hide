@@ -135,15 +135,18 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Where the divider left of a docked lane, dragged to `x` pixels from the
+ * Where the divider at the lane's left edge, dragged to `x` pixels from the
  * body's left edge, lands: the document's width, so the tree keeps its own,
- * never under the lane's minimum or over what leaves Agent Views its own.
+ * never under the lane's minimum. Docked, it leaves Agent Views their own
+ * width; over the agents it may reach the body's edge, since nothing beside
+ * it gives way.
  */
 export function laneLanding(input: { x: number; body: number; frame: LaneFrame; sizes: LaneSizes }): { lane_width: number } {
   const { x, body, frame, sizes } = input;
   const tree = frame.tree === null ? 0 : frame.tree + sizes.divider;
   const document = body - x - sizes.divider - tree;
-  return { lane_width: clamp(document, sizes.laneMin, body - sizes.divider - tree - sizes.agentMin) };
+  const beside = frame.mode === "overlay" ? 0 : sizes.agentMin;
+  return { lane_width: clamp(document, sizes.laneMin, body - sizes.divider - tree - beside) };
 }
 
 /**

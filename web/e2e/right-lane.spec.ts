@@ -62,6 +62,25 @@ test("an opened file comes up over Agent Views without resizing a terminal, and 
     await expect(page.locator("[data-lane-header]")).toContainText("Files");
     await screenshot(page, "right-lane-overlay");
 
+    // The divider at the overlay's left edge widens the lane by what it is
+    // dragged, lands once on release, and resizes no terminal (B6).
+    const laneBox = (await page.locator('[data-lane-frame="overlay"]').boundingBox())!;
+    const grip = page.locator('[data-lane-frame="overlay"] [data-lane-divider="lane"]');
+    await expect(grip).toHaveAttribute("aria-valuenow", String(Math.round(laneBox.width)));
+    const gripBox = (await grip.boundingBox())!;
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x + gripBox.width / 2 - 120, gripBox.y + 200, { steps: 6 });
+    await expect(page.locator("[data-lane-guide]")).toHaveCount(1);
+    await page.mouse.up();
+    await expect(page.locator("[data-lane-guide]")).toHaveCount(0);
+    // The pointer lands on a whole pixel, so the width grows by the drag within a pixel.
+    const widened = () => page.locator('[data-lane-frame="overlay"]').boundingBox().then((box) => Math.round(box!.width));
+    await expect.poll(async () => Math.abs((await widened()) - (laneBox.width + 120))).toBeLessThanOrEqual(1);
+    await expect(grip).toHaveAttribute("aria-valuenow", String(await widened()));
+    await expect(pane(page, lane.herdr.panes[0]!)).toBeVisible();
+    expect(resizes(lane)).toBe(before);
+
     await pane(page, lane.herdr.panes[0]!).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "hidden");
     await expect(page.locator('[data-lane-badge="1"]')).toBeVisible();

@@ -98,6 +98,13 @@ describe("the right lane (PRD right-lane)", () => {
     // With the tree beside the document, the tree keeps its width.
     const tree = frame({ tool: "files", pinned: true, tree: true, body: 1600 });
     expect(laneLanding({ x: 1600 - 768 - 8 - 32, body: 1600, frame: tree, sizes })).toEqual({ lane_width: 552 });
+    // Over the agents the same drag lands the same width, and the lane may
+    // reach the body's edge: nothing beside it keeps a minimum.
+    const over = frame({ tool: "files", shown: true, body: 1600 });
+    expect(over.mode).toBe("overlay");
+    expect(laneLanding({ x: 1600 - 520 - 8 - 100, body: 1600, frame: over, sizes })).toEqual({ lane_width: 620 });
+    expect(laneLanding({ x: 0, body: 1600, frame: over, sizes })).toEqual({ lane_width: 1600 - 8 });
+    expect(laneLanding({ x: 1590, body: 1600, frame: over, sizes })).toEqual({ lane_width: 360 });
   });
 
   it("trades width between the tree and the document, so the lane and Agent Views keep theirs (B10)", () => {

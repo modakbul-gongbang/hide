@@ -99,13 +99,13 @@ The sidebar is one list with no mode strip.
 ⌘⇧P shows and focuses it, and ⌘⇧A opens the Overview Agents graph.
 `Toggle device rail` has no default chord either and is bound the same way; it shows or hides the device rail.
 
-A docked lane has a divider at its left edge, and the tree a divider between it and the documents; a lane over the agents has no divider at its edge.
+The lane has a divider at its left edge, docked or over the agents, and the tree a divider between it and the documents.
 A divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each a separator that reports its width.
 Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
-The tree's divider trades width between the tree and the documents, so the lane and Agent Views keep theirs; the lane's divider changes the documents' width against Agent Views.
-The documents are never narrower than 360px and start at 520px, the tree never narrower than 180px and starts at 240px, and Agent Views keep 480px beside a docked lane; both widths are the Workspace's and the same over the agents and docked.
+The tree's divider trades width between the tree and the documents, so the lane and Agent Views keep theirs; the lane's divider changes the documents' width, against Agent Views when docked, and over them otherwise, where it may reach the body's left edge.
+The documents are never narrower than 360px and start at 520px, the tree never narrower than 180px and starts at 240px, and Agent Views keep 480px beside a docked lane; both widths are the Workspace's and the same over the agents and docked, so a width dragged over the agents is the width the pin docks at.
 The pin turning on or off, a docked lane opening or closing, a docked divider landing, and the tree turning on or off beside a docked lane resize the agents' terminals once.
-A lane over the agents opening, going away, coming back, expanding or closing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
+A lane over the agents opening, going away, coming back, expanding or closing, its divider landing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
 Changing Workspace or lane geometry during a divider drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
 The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one put away until asked, and neither expanded.
 A Workspace stored with the earlier File Views and Tools columns comes back once on Files where File Views was on, else on the tool Tools showed, unpinned (see View states).
