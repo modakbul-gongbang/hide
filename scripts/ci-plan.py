@@ -101,7 +101,8 @@ SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e", "windows-desktop")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
-# is a folder. Keep this beside the test that reads the file.
+# is a folder. Keep this beside the test that reads the file. A path no other
+# rule claims plans its readers here and nothing else.
 READERS = (
     # herdr-core/src/runtime/tests/snapshot_delta.rs asserts the agent notes.
     ("AGENTS.md", {"rust"}, {"herdr-core"}),
@@ -114,7 +115,33 @@ READERS = (
     ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "windows-e2e"}, set()),
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
     ("design/tokens.json", {"checks", "web-e2e"}, set()),
+    # web/src/shortcutsDoc.test.ts checks the guide's chord table.
+    ("docs/UI_BEHAVIOR.md", {"checks"}, set()),
+    # hide-agent-adapter's contract test checks the usage coverage table in
+    # the guide and the logo manifest the shell bundles.
+    ("docs/AI_PROVIDERS.md", {"rust"}, {"hide-agent-adapter"}),
+    ("web/src/assets/agents/manifest.json", {"rust"}, {"hide-agent-adapter"}),
+    # The contracts a test holds the code to; the code does not read them.
+    # herdr-core's memory_hook test and hide-agent-adapter's contract test
+    # read the WebSocket schema. The web shell's types are generated from it
+    # by hand (`gen:types`) and committed, so no web lane reads it.
+    ("contracts/hided-ws.schema.json", {"rust"}, {"herdr-core", "hide-agent-adapter"}),
+    # herdr-core's `model::wire_enum_tests`, and web/src/userTurn.test.ts,
+    # prMark.test.ts and factory/labels.test.ts.
+    ("contracts/snapshot-wire-enums.json", {"rust", "checks"}, {"herdr-core"}),
+    # hide-agent-adapter's contract test; web/src/agentAdapters.ts imports it
+    # into the shell, which plans what a web shell file plans.
+    ("contracts/agent-adapters.json", {"rust", "checks", "web-e2e"}, {"hide-agent-adapter"}),
+    # hided's `cli_contract` test.
+    ("contracts/hide-cli.json", {"rust"}, {"hided"}),
+    # hide-agent-adapter's contract test.
+    ("contracts/usage-coverage.json", {"rust"}, {"hide-agent-adapter"}),
 )
+
+
+def reader_entries(name):
+    """The READERS entries that read the changed path `name`."""
+    return [entry for entry in READERS if name == entry[0] or (entry[0].endswith("/") and name.startswith(entry[0]))]
 
 
 # The paths that change what goes into a package: the package scripts and
@@ -131,8 +158,8 @@ PACKAGE_PATHS = (
 )
 
 
-# Paths named here are the only ones narrower than "every lane"; a path no rule
-# names still plans every lane. Each entry says who reads the path, and
+# Paths named here and in READERS are the only ones narrower than "every
+# lane"; a path no rule names still plans every lane. Each entry says who reads the path, and
 # `scripts/tests/test_ci_plan.py` checks the claim where it can be checked.
 #
 # Paths no `pr.yml` lane reads: `policy` alone. Its script suite and the
@@ -154,6 +181,13 @@ POLICY_ONLY = (
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
     "scripts/check-release-assets.mjs", "scripts/release-draft.mjs", "scripts/premerge-check.py",
     "scripts/pen-*.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/*",
+    # The design contract's generators, their token map and its checks:
+    # `design-contract.yml` runs the checks on every pull request, and what
+    # the generators write (`web/src/tokens.css`, the Pen files) is committed
+    # and planned as its own path.
+    "scripts/gen-tokens.mjs", "scripts/gen-pen.mjs", "scripts/gen-screens.mjs", "scripts/pen-token-map.json",
+    "scripts/check-design-contract.mjs", "scripts/check-pen.mjs", "scripts/check-pen-gallery.mjs",
+    "scripts/check-web-tokens.mjs", "scripts/check-agent-logos.mjs", "scripts/check-hide-design-enforcement.mjs",
 )
 
 # Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
@@ -173,6 +207,10 @@ NAMED_LANES = (
     ("web/eslint-rules/*", {"checks"}),
     ("web/scripts/check-e2e-test-size.mjs", {"checks"}),
     ("web/scripts/gen-types.mjs", {"checks", "web-e2e"}),
+    # `vite build` in `checks` and in the web and desktop e2e builds (Linux,
+    # Windows, macOS), and its `test` block is vitest's in `checks` and
+    # `windows check`.
+    ("web/vite.config.ts", {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-desktop", "windows-check"}),
     ("desktop/eslint.config.mjs", {"checks"}),
     ("desktop/eslint.globals.mjs", {"checks"}),
     # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
@@ -180,7 +218,13 @@ NAMED_LANES = (
     ("desktop/scripts/build.mjs", {"checks", "desktop-e2e", "windows-desktop"}),
     ("desktop/scripts/package.mjs", {"checks"}),
     ("desktop/scripts/smoke-package.mjs", {"checks"}),
-    # The `package` lane's workflow and the release that calls it.
+    # The workflows `pr.yml` lanes call: each plans the lanes that call it
+    # (the nightly calls them too). The `package` lane's workflow and the
+    # release that calls it plan `package` through PACKAGE_PATHS.
+    (".github/workflows/web-e2e.yml", {"web-e2e", "windows-e2e"}),
+    (".github/workflows/desktop-e2e.yml", {"desktop-e2e", "windows-desktop"}),
+    (".github/workflows/os-contract.yml", {"os-contract", "os-contract-macos"}),
+    (".github/workflows/remote-mailbox.yml", {"remote-mailbox"}),
     (".github/workflows/package.yml", set()),
     (".github/workflows/release.yml", set()),
 )
@@ -305,9 +349,14 @@ def classify(path, status, crates, root):
     named = named_lanes(path)
     if named is not None:
         return named[0], named[1], set()
-    # Workflows, scripts, contracts and the Herdr pin, lockfiles, toolchain and
-    # package configuration, and any path no rule above or in `named_lanes`
-    # names: every lane.
+    if reader_entries(path.as_posix()):
+        # `select` adds the readers' lanes and crates.
+        return set(), f"read by a known set of readers: {path}", set()
+    # `pr.yml`, the scripts the lanes call, the Herdr pin and schema, lockfiles,
+    # toolchain and package configuration, and any path no rule above, in
+    # `named_lanes` or in READERS names: every lane. `Cargo.lock` is among
+    # them: every member but two depends on `workspace-hack`, which holds
+    # nearly every third-party crate, so a lock change reaches every crate.
     return None, f"shared or unclassified: {path}", set()
 
 
@@ -330,10 +379,9 @@ def select(entries, crates, root=ROOT, full_reason=None):
         if lanes is None:
             full.append(reason)
             continue
-        for reader, extra_lanes, extra_packages in READERS:
-            if name == reader or (reader.endswith("/") and name.startswith(reader)):
-                lanes |= extra_lanes
-                reached = reached | extra_packages
+        for _, extra_lanes, extra_packages in reader_entries(name):
+            lanes |= extra_lanes
+            reached = reached | extra_packages
         packages |= reached
         reasons["policy"].append(reason)
         for lane in lanes:

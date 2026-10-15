@@ -1858,26 +1858,35 @@ impl Runtime {
             &crate::model::WorktreeCatalogSnapshot::default(),
             &catalog_paths,
         );
-        let diagnostic = match disposition {
-            persistence::LoadDisposition::Loaded => None,
-            persistence::LoadDisposition::UnknownTheme => Some((
-                "ui_state.theme_unknown",
-                "The stored theme was not recognized; Dark was used",
-            )),
-            persistence::LoadDisposition::UnknownAgentLogoMode => Some((
-                "ui_state.agent_logo_mode_unknown",
-                "The stored agent logo mode was not recognized; hidden was used",
-            )),
-            persistence::LoadDisposition::Missing => Some((
+        let diagnostics: Vec<(&str, &str)> = match disposition {
+            persistence::LoadDisposition::Loaded => Vec::new(),
+            persistence::LoadDisposition::Unrecognized(fields) => fields
+                .iter()
+                .map(|field| match field {
+                    persistence::UnrecognizedField::Theme => (
+                        "ui_state.theme_unknown",
+                        "The stored theme was not recognized; Dark was used",
+                    ),
+                    persistence::UnrecognizedField::ColorTheme => (
+                        "ui_state.color_theme_unknown",
+                        "The stored color theme was not recognized; Hide was used",
+                    ),
+                    persistence::UnrecognizedField::AgentLogoMode => (
+                        "ui_state.agent_logo_mode_unknown",
+                        "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                })
+                .collect(),
+            persistence::LoadDisposition::Missing => vec![(
                 "ui_state.missing",
                 "UI state was not found; safe defaults were loaded",
-            )),
-            persistence::LoadDisposition::Corrupt => Some((
+            )],
+            persistence::LoadDisposition::Corrupt => vec![(
                 "ui_state.corrupt",
                 "UI state could not be decoded; safe defaults were loaded",
-            )),
+            )],
         };
-        if let Some((kind, message)) = diagnostic {
+        for (kind, message) in diagnostics {
             crate::diagnostic!(serde_json::json!({
                 "component": "ui_state",
                 "kind": kind,

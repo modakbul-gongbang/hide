@@ -1042,13 +1042,13 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_right_panel"));
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The open brings the files tool back; the close
-    // turned the tree off, and turned on it shows the row revealed (PRD
-    // right-lane B11, B16).
+    // preview tab (B12). The open brings the files tool back with the tree
+    // the close left on, and it shows the row revealed (PRD right-lane B11,
+    // B16).
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1059,8 +1059,6 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
-    await expect(page.locator("[data-lane-tree]")).toHaveCount(0);
-    await page.keyboard.press(chord("toggle_file_tree"));
     await expect(page.locator("[data-lane-tree] [data-explorer]")).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);

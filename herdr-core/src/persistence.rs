@@ -5,9 +5,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AgentLogoMode, DeviceRegistration, PaneCompletion, PaneReadRecord, PetOriginSnapshot,
-    RightPanelSection, ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex,
-    default_font_size, default_pane_text_scale, default_panel_visible, default_sidebar_width,
+    AgentLogoMode, ColorTheme, DeviceRegistration, PaneCompletion, PaneReadRecord,
+    PetOriginSnapshot, RightPanelSection, ThemePreference, UiStateSnapshot, WorkspaceRegistration,
+    default_accent_hex, default_font_size, default_pane_text_scale, default_panel_visible,
+    default_sidebar_width,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -106,6 +107,10 @@ struct StoredUiState {
     /// loads as hidden.
     #[serde(default)]
     agent_logo_mode: Option<String>,
+    /// Kept as text for the same reason as `theme`; absent in a store written
+    /// before the color theme existed, which loads as Hide (D-04).
+    #[serde(default)]
+    color_theme: Option<String>,
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
     #[serde(default)]
@@ -206,13 +211,22 @@ fn default_pet_visible() -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadDisposition {
     Loaded,
-    /// Loaded, but the stored theme was not one this build knows; Dark was used.
-    UnknownTheme,
-    /// Loaded, but the stored agent logo mode was not one this build knows;
-    /// hidden was used. A store with an unknown theme reports that first.
-    UnknownAgentLogoMode,
+    /// Loaded, but a stored appearance value was not one this build knows;
+    /// each named field took its default.
+    Unrecognized(Vec<UnrecognizedField>),
     Missing,
     Corrupt,
+}
+
+/// A stored appearance field whose value this build does not know.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnrecognizedField {
+    /// The mode; Dark was used.
+    Theme,
+    /// The color theme; Hide was used.
+    ColorTheme,
+    /// The agent logo mode; hidden was used.
+    AgentLogoMode,
 }
 
 /// What the removed native app's state file holds for `shortcut_bindings`.
@@ -336,22 +350,32 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             LoadDisposition::Corrupt,
         );
     }
-    let (theme, disposition) = match stored.theme.as_deref() {
-        None => (ThemePreference::Dark, LoadDisposition::Loaded),
-        Some(value) => match ThemePreference::parse(value) {
-            Some(theme) => (theme, LoadDisposition::Loaded),
-            None => (ThemePreference::Dark, LoadDisposition::UnknownTheme),
-        },
+    let mut unrecognized = Vec::new();
+    let theme = match stored.theme.as_deref() {
+        None => ThemePreference::Dark,
+        Some(value) => ThemePreference::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::Theme);
+            ThemePreference::Dark
+        }),
     };
-    let (agent_logo_mode, disposition) = match stored.agent_logo_mode.as_deref() {
-        None => (AgentLogoMode::Hidden, disposition),
-        Some(value) => match AgentLogoMode::parse(value) {
-            Some(mode) => (mode, disposition),
-            None if disposition == LoadDisposition::Loaded => {
-                (AgentLogoMode::Hidden, LoadDisposition::UnknownAgentLogoMode)
-            }
-            None => (AgentLogoMode::Hidden, disposition),
-        },
+    let color_theme = match stored.color_theme.as_deref() {
+        None => ColorTheme::Hide,
+        Some(value) => ColorTheme::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::ColorTheme);
+            ColorTheme::Hide
+        }),
+    };
+    let agent_logo_mode = match stored.agent_logo_mode.as_deref() {
+        None => AgentLogoMode::Hidden,
+        Some(value) => AgentLogoMode::parse(value).unwrap_or_else(|| {
+            unrecognized.push(UnrecognizedField::AgentLogoMode);
+            AgentLogoMode::Hidden
+        }),
+    };
+    let disposition = if unrecognized.is_empty() {
+        LoadDisposition::Loaded
+    } else {
+        LoadDisposition::Unrecognized(unrecognized)
     };
     (
         UiStateSnapshot {
@@ -392,6 +416,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             accent_hex: stored.accent_hex,
             theme,
             agent_logo_mode,
+            color_theme,
             interface_language: stored.interface_language,
             usage: stored.usage.restored(),
             agent_onboarding: stored.agent_onboarding,
@@ -507,6 +532,7 @@ pub fn save(
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
         agent_logo_mode: Some(state.agent_logo_mode.as_str().to_owned()),
+        color_theme: Some(state.color_theme.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
         usage: state.usage.clone(),
         agent_onboarding: state.agent_onboarding,

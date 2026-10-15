@@ -21,7 +21,7 @@ import { deviceConnected } from "./devices";
 import { remoteTargetOfPane } from "./remote";
 import { useRelationProgress } from "./PaneRelations";
 import { lineText } from "./agentRow";
-import { allAgents, agentsByPane, deviceFacts } from "./paneAgents";
+import { allAgents, agentsByPane } from "./paneAgents";
 import { paneChildren, type PaneChildren } from "./paneChildren";
 
 const LABELS: Record<string, MessageKey> = {
@@ -186,7 +186,9 @@ export function usePaneAgents(): AgentRow[] {
  */
 function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneChildren | null; devices: SnapshotRest | null } {
   const parent = (agentsByPane(agents).get(paneId)?.lineage_child_pane_ids?.length ?? 0) > 0;
-  const devices = useShellStore((state) => (parent ? deviceFacts(state.rest) : null));
+  const deviceList = useShellStore((state) => (parent ? state.rest?.navigator?.devices : null));
+  const remote = useShellStore((state) => (parent ? state.rest?.status?.remote : null));
+  const devices = useMemo<SnapshotRest | null>(() => (parent ? { navigator: { devices: deviceList ?? undefined }, status: { remote: remote ?? undefined } } : null), [parent, deviceList, remote]);
   const children = useMemo(() => paneChildren(paneId, agents, devices), [paneId, agents, devices]);
   return { children, devices };
 }

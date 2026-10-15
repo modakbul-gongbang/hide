@@ -126,6 +126,7 @@ export type SnapshotSections =
   | InterfaceLanguageSetPayload
   | AgentLogoMode
   | AgentLogoModeSetPayload
+  | ColorThemeSetPayload
   | TerminalFrame
   | AgentNotice
   | DesktopNoticesPayload;
@@ -137,6 +138,10 @@ export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
  * Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.
  */
 export type AgentLogoMode = "shown" | "hidden";
+/**
+ * The palette every window draws in, `ui_state.color_theme`: hide is the landing page's Owl Field colors and the default (a store without the field opens hide), neutral the grey chrome. Independent of `ui_state.theme`, which picks light, dark or system. A stored value the core does not know opens hide with the diagnostic ui_state.color_theme_unknown.
+ */
+export type ColorTheme = "hide" | "neutral";
 
 export interface HideWireTypes {
   frame?: HidedWs;
@@ -532,6 +537,12 @@ export interface InterfaceLanguageSetPayload {
  */
 export interface AgentLogoModeSetPayload {
   mode: AgentLogoMode;
+}
+/**
+ * Payload of color_theme_set. This event alone edits the color theme; ui_state_update never changes it, a value outside colorTheme is refused, and the current value again saves nothing.
+ */
+export interface ColorThemeSetPayload {
+  color_theme: ColorTheme;
 }
 /**
  * Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence, with terminal_epoch as have_terminal_epoch, when it reconnects; each daemon's hub has its own epoch, so a cursor resumes only on the hub that gave it. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.

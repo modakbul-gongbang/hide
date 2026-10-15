@@ -457,6 +457,10 @@ pub mod phone {
         /// resolves the value; it is part of the projection so a change republishes
         /// the frame like any other change.
         pub interface_language: Option<String>,
+        /// The core's color theme (`ui_state.color_theme`) as published, so
+        /// the phone draws the operator's palette (hide-color-theme D-12);
+        /// the phone reads anything but `neutral` as Hide.
+        pub color_theme: Option<String>,
     }
 
     impl Projection {
@@ -771,9 +775,14 @@ pub mod phone {
             .pointer("/ui_state/interface_language")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let color_theme = rest
+            .pointer("/ui_state/color_theme")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         Projection {
             groups,
             interface_language,
+            color_theme,
         }
     }
 }

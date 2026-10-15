@@ -493,7 +493,7 @@ test("Needs You and Done are raised above Pinned and stay in their tree, whateve
     expect(await top(needsYou)).toBeLessThan(await top(done));
     expect(await top(done)).toBeLessThan(await top(pinned));
     await expect(page.locator("[data-raised-more]")).toHaveCount(0);
-    await expect(page.locator("[data-project-list] > li").first()).toHaveAttribute("data-raised-group", "needs_you");
+    await expect(page.locator("[data-raised-list] > li").first()).toHaveAttribute("data-raised-group", "needs_you");
     // The raised row names where the agent runs, as the Agents list does.
     await expect(needsYou.locator(`[data-pane="${asking}"] [data-agent-place]`)).toHaveText("raised › main");
 
@@ -521,6 +521,49 @@ test("Needs You and Done are raised above Pinned and stay in their tree, whateve
     await setFixtureLifecycle(herdr, asking, "working");
     await setFixtureLifecycle(herdr, asking, "idle");
     await expect(needsYou).toHaveCount(0, { timeout: 20_000 });
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});
+
+// docs/UI_BEHAVIOR.md, The sidebar list: Needs You and Done stand still above the projects.
+test("Done stands still above the scrolled projects, and opening its first row moves the next one up into its place", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 560 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const panes: string[] = [];
+    for (const name of ["alpha-repo", "bravo-repo", "charlie-repo", "delta-repo", "echo-repo"]) panes.push(await workspaceAt(herdr, repoAt(herdr, name), `${name} 작업`));
+    daemon = await startHided(herdr, "projects-raised-held");
+    await open(page, daemon);
+    const elsewhere = elsewhereTab(herdr);
+    await finishFixtureTurn(herdr, panes[3]!, elsewhere);
+    await finishFixtureTurn(herdr, panes[4]!, elsewhere);
+    const done = page.locator('[data-raised-group="done"]');
+    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 2", { timeout: 20_000 });
+    const list = page.locator("[data-project-list]");
+    expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    // The projects scroll under Done, which stays where it stood.
+    const top = async (locator: Locator) => Math.round((await locator.boundingBox())!.y);
+    const held = await top(done);
+    await list.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+    await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    expect(await top(done)).toBe(held);
+    await list.evaluate((element) => element.scrollTo({ top: 0 }));
+
+    // Opening the first Done row reads it: it leaves Done, and the second row stands where the first stood.
+    const rows = done.locator("li[data-pane]");
+    const first = (await rows.first().getAttribute("data-pane"))!;
+    const second = (await rows.nth(1).getAttribute("data-pane"))!;
+    const slot = await top(rows.first());
+    await rows.first().locator("[data-agent-open]").click();
+    await expect(done.locator(`[data-pane="${first}"]`)).toHaveCount(0, { timeout: 20_000 });
+    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 1");
+    expect(await top(done)).toBe(held);
+    expect(await top(done.locator(`li[data-pane="${second}"]`))).toBe(slot);
+    await screenshot(page, "projects-raised-held");
   } finally {
     await daemon?.stop();
     await herdr.stop();

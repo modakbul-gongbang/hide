@@ -8,7 +8,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { AgentLogoMode, AgentLogoModeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
+import type { AgentLogoMode, AgentLogoModeSetPayload, ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -412,10 +412,14 @@ export function createActions(send: DispatchFn) {
     setWorkspaceView({ tool: null });
   };
 
-  /** A rail icon, ⌘⇧B or ⌘E (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
+  /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  const toggleFileViews = () => toggleTool("files");
-  const toggleTools = () => toggleTool("agent_sessions");
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  const toggleLane = () => {
+    const { mode } = ui().drawnLane;
+    if (mode !== "closed" && mode !== "hidden") return closeLane();
+    showTool(workspaceViewOf(rest())?.tool ?? "files");
+  };
 
   /**
    * The tree button or ⌘⇧E (B9, B11): with the files tool on screen the tree
@@ -950,6 +954,11 @@ export function createActions(send: DispatchFn) {
     /** One typed event; the core owns the choice and stores it (D-15). */
     setTheme(theme: ThemeChoice) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
+    },
+    /** One typed event; the core owns the color theme and stores it (hide-color-theme D-08). */
+    setColorTheme(color_theme: ColorThemeSetPayload["color_theme"]) {
+      const payload = { color_theme } satisfies ColorThemeSetPayload;
+      dispatch({ schema_version: 2, kind: "color_theme_set", payload });
     },
 
     /** One typed event; the core owns whether list rows and tabs draw the agent's logo (PRD agent-logo-view-mode D-07). */
@@ -2188,13 +2197,12 @@ export function createActions(send: DispatchFn) {
 
     showSidebarMode,
 
-    toggleFileViews,
     toggleTool,
     toggleFileTree,
     closeLane,
     setLanePinned,
 
-    toggleTools,
+    toggleLane,
 
     setWorkspaceView,
 

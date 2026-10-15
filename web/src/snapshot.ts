@@ -1765,6 +1765,8 @@ export type SnapshotRest = {
     theme?: string;
     /** Whether list rows and tabs draw the agent's logo (`contracts/snapshot-wire-enums.json`: `agent_logo_mode`); absent reads as hidden. */
     agent_logo_mode?: AgentLogoMode;
+    /** `hide` or `neutral` (`contracts/snapshot-wire-enums.json`: `color_theme`); the page reads anything else as Hide. */
+    color_theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */
     interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
     /** The first-run agent choice (`contracts/snapshot-wire-enums.json`: `agent_onboarding`): absent until this Mac's kit answered, `pending` while its kit record waits for the operator's answer. */

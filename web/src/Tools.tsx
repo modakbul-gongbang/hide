@@ -1,4 +1,4 @@
-import { BookOpenIcon, EllipsisIcon, FileIcon, GitBranchIcon, Maximize2Icon, MessageSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, Maximize2Icon, MessagesSquareIcon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
@@ -19,7 +19,6 @@ import { workspaceKey } from "./viewLayout";
 import { TOOLS, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import type { CommandId } from "./shortcuts";
 
 // The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
 // one lane shows one tool at a time, Files (the View areas, with the file
@@ -30,9 +29,8 @@ import type { CommandId } from "./shortcuts";
 // page's (`ui.ts`).
 
 const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", agent_sessions: "panes.lane.sessions", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
-const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FileIcon, changes: GitBranchIcon, agent_sessions: MessageSquareIcon, memory: BookOpenIcon };
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, agent_sessions: MessagesSquareIcon, memory: BrainIcon };
 /** The chord that opens and closes the lane on a tool, where one does (D-12). */
-const TOOL_CHORDS: Partial<Record<Tool, CommandId>> = { files: "toggle_right_panel", agent_sessions: "toggle_explorer" };
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -63,7 +61,6 @@ export function ToolRail({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const views = useShellStore((s) => (s.rest?.workspace_view as WorkspaceView | undefined)?.layout?.display_count ?? 0);
   const drawn = useUiStore((s) => s.drawnLane);
-  const bindings = useShellStore((s) => s.rest?.ui_state);
   const asking = useShellStore((state) => {
     const project = state.memory?.project;
     return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
@@ -78,24 +75,20 @@ export function ToolRail({ actions }: { actions: Actions }) {
         const Icon = TOOL_ICONS[tool];
         const pressed = up && drawn.tool === tool;
         const name = t(TOOL_NAMES[tool]);
-        const chord = TOOL_CHORDS[tool];
         const count = tool === "files" && !pressed ? views : 0;
         return (
-          <Hint key={tool} label={`${name} · ${scope(tool)}`} shortcut={chord ? commandLabel(chord, bindings) : undefined} side="left">
+          <Hint key={tool} label={`${name} · ${scope(tool)}`} side="left">
             <button
               type="button"
               aria-pressed={pressed}
               aria-label={name}
               aria-description={count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined}
-              className={`relative flex size-(--size-tool-rail-button) flex-col items-center justify-center gap-xxs rounded-md text-micro outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
+              className={`relative flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
               data-lane-tool={tool}
               onClick={() => actions.toggleTool(tool)}
             >
               {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
-              <Icon aria-hidden="true" className="size-(--size-icon)" />
-              <span className="whitespace-nowrap tracking-tight [:lang(ja)_&]:[font-feature-settings:'palt']" data-lane-tool-name="true">
-                {name}
-              </span>
+              <Icon aria-hidden="true" className="size-(--size-icon-lg)" />
               {count > 0 ? (
                 <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-lane-badge={count}>
                   {count}

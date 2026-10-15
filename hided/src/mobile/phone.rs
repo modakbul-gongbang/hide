@@ -95,6 +95,8 @@ fn agents_frame(projection: &Projection) -> Value {
         "groups": projection.groups,
         // The core's language as stored, or null to follow the phone's own.
         "interface_language": projection.interface_language,
+        // The operator's palette; the phone keeps its own light or dark.
+        "color_theme": projection.color_theme,
     })
 }
 
@@ -892,15 +894,17 @@ mod tests {
     }
 
     #[test]
-    fn the_agents_frame_carries_the_interface_language() {
+    fn the_agents_frame_carries_the_interface_language_and_color_theme() {
         let mut projection = Projection::default();
         assert_eq!(
             agents_frame(&projection),
-            json!({"type": "agents", "groups": [], "interface_language": null})
+            json!({"type": "agents", "groups": [], "interface_language": null, "color_theme": null})
         );
         projection.interface_language = Some("ko".to_owned());
         let frame = agents_frame(&projection);
         assert_eq!(frame["interface_language"], "ko");
         assert_eq!(frame["type"], "agents");
+        projection.color_theme = Some("neutral".to_owned());
+        assert_eq!(agents_frame(&projection)["color_theme"], "neutral");
     }
 }
