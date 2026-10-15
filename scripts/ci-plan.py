@@ -169,8 +169,9 @@ POLICY_ONLY = (
     ".gitignore", "web/.gitignore", "desktop/.gitignore",
     ".github/pull_request_template.md", ".github/dependabot.yml",
     # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
-    # request trigger.
+    # request trigger, and the nightly calls `perf.yml`.
     ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
+    ".github/workflows/perf.yml",
     "scripts/tests/*",
     # Scripts only `policy`, another workflow or nobody runs.
     "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
