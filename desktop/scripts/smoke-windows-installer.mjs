@@ -125,8 +125,11 @@ try {
 
   // The uninstaller copies itself aside and returns at once; its result is
   // awaited by what it removes. It runs with the private home, as an
-  // operator's runs with theirs, so its `hide stop` finds this daemon.
-  execFileSync(path.join(installDir, "Uninstall hide.exe"), ["/S"], { env: isolated, stdio: "inherit", timeout: 300_000 });
+  // operator's runs with theirs, so its `hide stop` finds this daemon; the
+  // account's own profile stays, since Windows spells the Start menu folder
+  // the installer wrote into from %USERPROFILE%.
+  const uninstalling = { ...isolated, USERPROFILE: process.env.USERPROFILE };
+  execFileSync(path.join(installDir, "Uninstall hide.exe"), ["/S"], { env: uninstalling, stdio: "inherit", timeout: 300_000 });
   await until("the uninstaller removing the app", () => !fs.existsSync(path.join(installDir, "hide.exe")) && appsEntries().length === 0);
   await until("the daemon stopping", () => !isAlive(connected.pid), 30_000);
   check("uninstalling removes the app and stops the daemon, and leaves the Herdr server", () => {
