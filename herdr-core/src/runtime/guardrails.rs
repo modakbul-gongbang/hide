@@ -59,7 +59,7 @@ impl Publication {
 }
 
 impl Runtime {
-    /// What `device`'s policy file must say: every project registered there
+    /// What `device`'s policy file must say: every project of that machine
     /// with a protection on, by its confirmed record, a save on its way to
     /// disk, or a save waiting for this delivery.
     fn guardrail_policy(&self, device: &str) -> (Policy, Vec<String>) {

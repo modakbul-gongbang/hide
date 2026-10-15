@@ -3,7 +3,7 @@
 //! (PRD agent-guardrails).
 //!
 //! The core publishes one policy file per machine, `~/.hide/agent-hooks/
-//! guardrails.json` ([`policy_path`]), naming each registered project of that
+//! guardrails.json` ([`policy_path`]), naming each project of that
 //! machine with a protection on: its main worktree root, the base branch the
 //! operator chose (none for automatic, which is `origin/HEAD`) and its
 //! [`Rules`]. The hook reads that file and the repository's own Git files and

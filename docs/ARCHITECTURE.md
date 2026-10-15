@@ -1516,7 +1516,7 @@ The weak answer-sender list is pruned on admission and bounded by those same slo
 
 | The core's | The node's |
 | --- | --- |
-| Every decision, the runtime and its snapshot | Files and folders: lists, bytes, saves, stamps, path facts (`Call::PathFacts`), new projects (`Call::ProjectCreate`) |
+| Every decision, the runtime and its snapshot | Files and folders: lists, bytes, saves, stamps, path facts (`Call::PathFacts`), new projects (`Call::ProjectCreate`), the project guardrails' policy file (`Call::GuardrailPolicy`) |
 | Its own stores: UI state, saved Views, the delivery ledger, labels, the link record, local issues, saved GitHub answers, its log, and their one-time node-id conversion | Processes: git, `gh`, the AI CLIs, ports, agent sleep's process groups, the file opener (`hide-node/src/opener.rs`) |
 | Which node a call goes to | The Herdr socket (the connector `Core::create` takes), session files, the install kit, pane credential proofs and the bootstrap socket (`hide-node/src/pane_proof.rs` here, `hide-host/src/panes.rs` on a device) |
 
@@ -2061,6 +2061,17 @@ An accepted newer checkout, pane, tab, device, file or local Memory navigation s
 Memory projects expose their own hook-preparation and failed-action state, preserving confirmed values and cards for Retry.
 Settings retries only its enable or disable action; card deletion, forgetting and promotion retain the existing Memory tool's confirmation and card identity.
 Tests in `herdr-core/src/runtime/tests/project_settings.rs` cover the save acknowledgment, failed save, fallback, identity and late-answer boundary.
+
+#### Project guardrails
+
+A project's protections are a field of its settings record (`guardrails`, record version 2; a version 1 record reads as every protection off), saved by the same `project_settings_set` and validated in the core (`hide_agent_hooks::guardrails::Rules::validate`: at most 32 paths of at most 200 bytes, no duplicate, each a pattern the gitignore reader takes); a Git protection on a plain folder is refused `project_settings_not_git`.
+The hooks never ask the daemon: each machine holds one policy file its agents' hooks read (`~/.hide/agent-hooks/guardrails.json`), and the core has that machine's node write it (`Call::GuardrailPolicy`, `herdr-core/src/runtime/guardrails.rs`), so the decision stays on the agent's machine and a tool call costs no round trip ([agent-hooks.md](agent-hooks.md#project-guardrails)).
+The file names every project of that machine with a protection on, whether or not it is registered, since a project shown from a Herdr workspace is guarded too; removing a project clears its protections (`Runtime::forget_project_guardrails`).
+A save that moves a machine's policy is delivered first and saved after: the record waits outside the frame the state writer saves until its machine answers, so Saved means the machine has the new file, and a refused or timed-out write (10 s) fails the save `project_settings_policy_failed`, keeps the confirmed record and writes the confirmed policy once more.
+One worker thread per machine (`herdr-core-guardrails`) writes one call at a time and computes the policy when it takes the job, so a burst of changes is one write of the newest state; nothing is added under `Mutex<Runtime>` but the map reads that build the policy.
+The core writes its own machine's file after `Core::create` and each device's when it is Ready, so a file changed outside Hide is put right at the next start or connection; a device that goes away is forgotten.
+Tests in `herdr-core/src/runtime/tests/guardrails.rs` cover the ordering, the failed delivery, a base branch change, the folder and path refusals, the removal and the start, and `hided/tests/it/node_contract.rs` the node's write.
+
 Interface language is a core-owned UI preference: `interface_language_set` alone changes `ui_state.interface_language`, and unrelated UI saves preserve it.
 The existing coalesced persistence queue stores the raw choice; snapshot serialization publishes English for an invalid stored value while keeping that value and logging a diagnostic.
 Clients resolve an unset choice from their own primary system language and apply only confirmed snapshot choices.
