@@ -913,6 +913,9 @@ Closing also releases the node's label-generator locks, even while unfinished ca
 The teardown-only `AiRelease` and `LabelUnlock` requests remain callable after close under the existing call cap and timeout, because their owners may drop later; closing does not wake or replace their cleanup answers.
 The node's unfinished HTTP work retains its capacity slot and five-second deadline until it ends.
 
+`usage_ledger::ai_usage` is the other writer's input: routers tell its bounded `AiUsageQueue` after each attempt, and the same ledger worker drains it at most once a second into `ai_daily`/`ai_state` of `usage.sqlite3` (`store/ai.rs`).
+It reloads those rows and publishes only when a usage page is visible, so a hidden window costs the queue push and the batched write only; `docs/AI_PROVIDERS.md`, Counting Hide AI's own usage, owns what counts and the caps.
+
 `usage_ledger::query` prepares both the 20-week and 53-week calendars on the worker, including every agent selection; the shell formats and draws their prepared values.
 Each range sends inclusive `calendar_start` and `calendar_end` civil dates and only days with recorded calls, including calls with zero new tokens.
 The mounted calendar fills omitted dates as level-zero cells, pending while that range is reading; it does not recalculate totals, prices, quartiles, streaks or recorded-day contributions.

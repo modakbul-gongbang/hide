@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{DAILY_DAYS, DAILY_LIMIT, DAY_MS, EVENT_DAYS, EVENT_LIMIT, local_day};
+mod ai;
+pub use ai::{AiPart, AiRecorded, AiRow, AiUnknown};
 mod stream;
 
 const VERSION: i64 = 3;
@@ -39,6 +41,21 @@ CREATE TABLE devices(device TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE price_cache(slot INTEGER PRIMARY KEY CHECK(slot=1), value TEXT NOT NULL);
 PRAGMA user_version=3;
 ";
+
+/// Hide's own background AI, counted by day, provider, model and feature.
+/// Added beside the session tables without a version bump, so an older build
+/// opens the same file and ignores them (PRD hide-ai-usage-split D-10).
+/// `limited_day` is the earliest day whose calls found the row cap full.
+const AI_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS ai_daily(day TEXT NOT NULL, provider TEXT NOT NULL,
+    model TEXT NOT NULL, feature TEXT NOT NULL, totals TEXT NOT NULL,
+    unknown INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(day,provider,model,feature));
+CREATE INDEX IF NOT EXISTS ai_daily_day ON ai_daily(day);
+CREATE TABLE IF NOT EXISTS ai_state(slot INTEGER PRIMARY KEY CHECK(slot=1), limited_day TEXT);
+";
+/// Distinct (day, provider, model, feature) rows kept for Hide AI. About 400
+/// days of four features, two providers and a few models each.
+pub const AI_ROW_LIMIT: usize = 40_000;
 
 /// No error returned by this boundary includes source content or paths.
 fn failed(error: rusqlite::Error) -> &'static str {
@@ -66,49 +83,67 @@ pub struct Totals {
     pub price_bands: [Tokens; 4],
 }
 
+fn plus(a: &mut u64, b: u64) -> Result<(), &'static str> {
+    *a = a.checked_add(b).ok_or("usage_total_overflow")?;
+    Ok(())
+}
+
 impl Totals {
     fn add(&mut self, event: &Event) -> Result<(), &'static str> {
-        fn plus(a: &mut u64, b: u64) -> Result<(), &'static str> {
-            *a = a.checked_add(b).ok_or("usage_total_overflow")?;
-            Ok(())
-        }
-        plus(&mut self.tokens.input, event.tokens.input)?;
-        plus(&mut self.tokens.output, event.tokens.output)?;
-        plus(&mut self.tokens.cache_read, event.tokens.cache_read)?;
-        plus(&mut self.tokens.cache_write, event.tokens.cache_write)?;
-        plus(&mut self.tokens.cache_write_1h, event.tokens.cache_write_1h)?;
-        if let Some(n) = event.tokens.reasoning {
+        self.add_call(
+            &event.tokens,
+            event.recorded_cost_micro_usd,
+            event.incomplete,
+            event.provider.as_deref(),
+        )
+    }
+
+    /// One call's tokens into the totals and into the price band its prompt
+    /// size selects. Hide AI's own calls come through here too, with no
+    /// recorded cost, so the same price table reads them.
+    pub(super) fn add_call(
+        &mut self,
+        tokens: &Tokens,
+        recorded_cost_micro_usd: Option<u64>,
+        incomplete: bool,
+        provider: Option<&str>,
+    ) -> Result<(), &'static str> {
+        plus(&mut self.tokens.input, tokens.input)?;
+        plus(&mut self.tokens.output, tokens.output)?;
+        plus(&mut self.tokens.cache_read, tokens.cache_read)?;
+        plus(&mut self.tokens.cache_write, tokens.cache_write)?;
+        plus(&mut self.tokens.cache_write_1h, tokens.cache_write_1h)?;
+        if let Some(n) = tokens.reasoning {
             plus(self.tokens.reasoning.get_or_insert(0), n)?;
         }
-        let prompt = event
-            .tokens
+        let prompt = tokens
             .input
-            .checked_add(event.tokens.cache_read)
-            .and_then(|n| n.checked_add(event.tokens.cache_write))
+            .checked_add(tokens.cache_read)
+            .and_then(|n| n.checked_add(tokens.cache_write))
             .ok_or("usage_total_overflow")?;
         let band = &mut self.price_bands[super::prices::prompt_band(prompt)];
-        plus(&mut band.input, event.tokens.input)?;
-        plus(&mut band.output, event.tokens.output)?;
-        plus(&mut band.cache_read, event.tokens.cache_read)?;
-        plus(&mut band.cache_write, event.tokens.cache_write)?;
-        plus(&mut band.cache_write_1h, event.tokens.cache_write_1h)?;
-        if let Some(n) = event.tokens.reasoning {
+        plus(&mut band.input, tokens.input)?;
+        plus(&mut band.output, tokens.output)?;
+        plus(&mut band.cache_read, tokens.cache_read)?;
+        plus(&mut band.cache_write, tokens.cache_write)?;
+        plus(&mut band.cache_write_1h, tokens.cache_write_1h)?;
+        if let Some(n) = tokens.reasoning {
             plus(band.reasoning.get_or_insert(0), n)?;
         }
         plus(&mut self.calls, 1)?;
-        if let Some(cost) = event.recorded_cost_micro_usd.filter(|_| !event.incomplete) {
+        if let Some(cost) = recorded_cost_micro_usd.filter(|_| !incomplete) {
             plus(&mut self.recorded_cost_micro_usd, cost)?;
         } else {
             plus(&mut self.missing_cost_calls, 1)?;
         }
-        plus(&mut self.incomplete_calls, u64::from(event.incomplete))?;
-        if let Some(provider) = &event.provider
-            && !self.providers.contains(provider)
+        plus(&mut self.incomplete_calls, u64::from(incomplete))?;
+        if let Some(provider) = provider
+            && !self.providers.iter().any(|known| known == provider)
         {
             if self.providers.len() == 32 {
                 return Err("usage_provider_capacity");
             }
-            self.providers.push(provider.clone());
+            self.providers.push(provider.to_owned());
             self.providers.sort();
         }
         Ok(())
@@ -193,6 +228,7 @@ impl Store {
         if version == 1 || version == 2 {
             store.connection.execute_batch("BEGIN; ALTER TABLE backfills ADD COLUMN limited INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3; COMMIT;").map_err(failed)?;
         }
+        store.connection.execute_batch(AI_SCHEMA).map_err(failed)?;
         Ok(store)
     }
 
@@ -587,8 +623,21 @@ impl Store {
                 [&oldest],
             )
             .map_err(failed)?;
+        let ai_days = tx
+            .execute(
+                "DELETE FROM ai_daily WHERE rowid IN(SELECT rowid FROM ai_daily WHERE day<?1 LIMIT 512)",
+                [&oldest],
+            )
+            .map_err(failed)?;
+        // A call lost to the row cap on a day that is now gone no longer
+        // makes the remaining days look incomplete.
+        tx.execute(
+            "UPDATE ai_state SET limited_day=NULL WHERE limited_day<?1",
+            [&oldest],
+        )
+        .map_err(failed)?;
         tx.commit().map_err(failed)?;
-        Ok(expired.len() == 512 || days == 512)
+        Ok(expired.len() == 512 || days == 512 || ai_days == 512)
     }
 }
 
@@ -615,7 +664,7 @@ fn horizon(now: u64, zone: &jiff::tz::TimeZone, days: i64) -> Result<String, &'s
         .map_err(|_| "usage_timestamp_invalid")
 }
 
-fn valid_name(text: &str, limit: usize) -> Result<(), &'static str> {
+pub(super) fn valid_name(text: &str, limit: usize) -> Result<(), &'static str> {
     if text.is_empty() || text.len() > limit || text.chars().any(char::is_control) {
         Err("usage_field_invalid")
     } else {

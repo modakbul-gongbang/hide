@@ -13,11 +13,14 @@ use hide_session::{
     usage::{Candidate, Candidates, Checkpoint, Step},
 };
 
+use super::ai_usage::AiUsageQueue;
 use super::prices::{Cache, Fetch};
 use super::query::{self, Projection};
-use super::store::{Daily, Store};
+use super::store::{AiRow, Daily, Store};
 
 const REST: Duration = Duration::from_millis(20);
+/// Hide AI's queue is written at most this often, in one transaction.
+const AI_BATCH: Duration = Duration::from_secs(1);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 const RETRY: Duration = Duration::from_secs(30);
 
@@ -89,6 +92,7 @@ impl Worker {
         path: PathBuf,
         device: String,
         own: Arc<dyn NodeLink>,
+        ai: Arc<AiUsageQueue>,
         mut publish: impl FnMut(Report) + Send + 'static,
     ) -> Result<Self, &'static str> {
         let client = Client(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
@@ -98,19 +102,24 @@ impl Worker {
             .spawn(move || {
                 let mut previous = None;
                 while let Some(activity) = worker_client.wait(Duration::from_millis(1)) {
-                    match Engine::open(&path, device.clone()) {
+                    match Engine::open(&path, device.clone(), Arc::clone(&ai)) {
                         Ok(mut engine) => {
                             let mut activity = activity;
                             let mut published = None;
                             loop {
+                                // Stored whether or not a window is open; only
+                                // a visible window makes it a new report.
+                                engine.flush_ai(false);
                                 if activity.visible {
                                     engine.prices_step(&own);
                                     engine.step(own.as_ref(), activity);
                                 }
                                 let interval =
                                     Duration::from_secs(if activity.open { 5 } else { 30 });
-                                if published.is_none_or(|at: Instant| at.elapsed() >= interval) {
-                                    let report = engine.report();
+                                if published.is_none_or(|at: Instant| at.elapsed() >= interval)
+                                    || (activity.visible && engine.ai_dirty)
+                                {
+                                    let report = engine.report(activity.visible);
                                     if previous.as_ref() != Some(&report) {
                                         publish(report.clone());
                                         previous = Some(report);
@@ -122,6 +131,7 @@ impl Worker {
                                 } else {
                                     Duration::from_secs(1)
                                 }) else {
+                                    engine.flush_ai(true);
                                     return;
                                 };
                                 activity = next;
@@ -186,6 +196,13 @@ struct Engine {
     next: usize,
     dirty: bool,
     daily: Arc<Vec<Daily>>,
+    ai: Arc<AiUsageQueue>,
+    ai_flushed: Instant,
+    /// What the report was last built from. The store may hold newer rows
+    /// (`ai_dirty`), which a visible window reads and a hidden one does not.
+    ai_rows: Arc<Vec<AiRow>>,
+    ai_limited: bool,
+    ai_dirty: bool,
     failure: Option<&'static str>,
     pruned: Instant,
     pruning: bool,
@@ -197,7 +214,11 @@ struct Engine {
 }
 
 impl Engine {
-    fn open(path: &std::path::Path, device: String) -> Result<Self, &'static str> {
+    fn open(
+        path: &std::path::Path,
+        device: String,
+        ai: Arc<AiUsageQueue>,
+    ) -> Result<Self, &'static str> {
         let store = Store::open(path)?;
         let agents = Agent::supported()
             .filter(|agent| *agent != Agent::Cursor)
@@ -220,6 +241,16 @@ impl Engine {
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
         let daily = Arc::new(store.daily()?);
+        // A Hide AI table that cannot be read must not stop the session
+        // ledger: it is named once and read again at the next write.
+        let (ai_rows, ai_limited, ai_unread) = match (store.ai_rows(), store.ai_limited()) {
+            (Ok(rows), Ok(limited)) => (rows, limited, false),
+            (Err(code), _) | (_, Err(code)) => {
+                diagnostic(code, None, 0);
+                (Vec::new(), false, true)
+            }
+        };
+        let ai_rows = Arc::new(ai_rows);
         let (prices, price_failure) = match store.prices() {
             Ok(prices) => (prices, None),
             Err(code) => {
@@ -234,6 +265,11 @@ impl Engine {
             next: 0,
             dirty: false,
             daily,
+            ai,
+            ai_flushed: Instant::now(),
+            ai_rows,
+            ai_limited,
+            ai_dirty: ai_unread,
             failure: None,
             pruned: Instant::now(),
             pruning: true,
@@ -305,6 +341,8 @@ impl Engine {
                     self.pruning = more;
                     self.pruned = Instant::now();
                     self.dirty = true;
+                    // Pruning also ages Hide AI rows out.
+                    self.ai_dirty = true;
                     self.prune_retry = None;
                 }
                 Err(code) => {
@@ -488,7 +526,75 @@ impl Engine {
         self.failure = Some(code);
     }
 
-    fn report(&mut self) -> Report {
+    /// Writes what the routers told since the last write. A failed write is a
+    /// diagnostic with the calls it lost, not a screen state: the operator
+    /// cannot act on it.
+    fn flush_ai(&mut self, force: bool) {
+        if !force && self.ai_flushed.elapsed() < AI_BATCH {
+            return;
+        }
+        self.ai_flushed = Instant::now();
+        let batch = self.ai.take(&jiff::tz::TimeZone::system());
+        if batch.is_empty() {
+            return;
+        }
+        for feature in &batch.unmapped {
+            crate::diagnostic!(
+                serde_json::json!({ "component": "usage_ledger", "kind": "ai_usage_feature_unmapped", "feature": feature })
+            );
+        }
+        for (code, count) in [
+            ("ai_usage_queue_full", batch.dropped),
+            ("ai_usage_tokens_invalid", batch.invalid),
+            ("ai_usage_day_invalid", batch.lost),
+        ] {
+            if count > 0 {
+                diagnostic(code, None, count);
+            }
+        }
+        if batch.parts.is_empty() && batch.unknown.is_empty() {
+            return;
+        }
+        match self.store.ai_record(&batch.parts, &batch.unknown) {
+            Ok(recorded) => {
+                self.ai_dirty = true;
+                if recorded.refused > 0 {
+                    diagnostic("ai_usage_row_capacity", None, recorded.refused as u64);
+                }
+            }
+            Err(code) => {
+                // The batch is gone with the failed transaction, so every
+                // failure names how many calls it lost.
+                let lost = batch
+                    .parts
+                    .iter()
+                    .filter(|part| part.starts_attempt)
+                    .count() as u64
+                    + batch.unknown.iter().map(|u| u.count).sum::<u64>();
+                diagnostic(code, None, lost);
+            }
+        }
+    }
+
+    /// A report for a window that is `visible` or not. A hidden window's
+    /// report keeps the Hide AI rows it last read, so a call alone makes no
+    /// new report and nothing is published for it (B17); the next visible
+    /// report reads the newest.
+    fn report(&mut self, visible: bool) -> Report {
+        if self.ai_dirty && visible {
+            match (self.store.ai_rows(), self.store.ai_limited()) {
+                (Ok(rows), Ok(limited)) => {
+                    self.ai_rows = Arc::new(rows);
+                    self.ai_limited = limited;
+                    self.ai_dirty = false;
+                }
+                (Err(code), _) | (_, Err(code)) => {
+                    // Read again at the next write, not on every turn.
+                    self.ai_dirty = false;
+                    self.failed(code);
+                }
+            }
+        }
         if self.dirty {
             match self.store.daily() {
                 Ok(daily) => {
@@ -506,6 +612,10 @@ impl Engine {
             .collect();
         let projection = match query::prepare(
             &self.daily,
+            &query::Hide {
+                rows: &self.ai_rows,
+                limited: self.ai_limited,
+            },
             &progress,
             self.prices.table.as_ref(),
             &self.device,
