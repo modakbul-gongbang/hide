@@ -488,6 +488,7 @@ export function createActions(send: DispatchFn) {
     const here = explorerHere();
     if (!here) return diagnostic(`${what}: no focused checkout`);
     revealAncestors(path);
+    followOpen(path, "file");
     dispatch({
       schema_version: 2,
       kind: "file_open",
@@ -500,6 +501,16 @@ export function createActions(send: DispatchFn) {
         ...deviceField(here.device, localDeviceId(rest())),
       },
     });
+  };
+
+  /**
+   * The keyboard follows what the operator opened into the view that shows
+   * it once the core places it (B20), so ⌘W, ⌘S and typing act on that file
+   * rather than on the tree, row or palette it was opened from.
+   */
+  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null) => {
+    const front = frontViewWorkspace();
+    if (front) ui().setViewFocusRequest({ workspace: workspaceKey(front), opened: { path, kind, committed } });
   };
 
   /**
@@ -656,6 +667,7 @@ export function createActions(send: DispatchFn) {
     }
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+    followOpen(path, "diff", committed);
     dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
   };
 
