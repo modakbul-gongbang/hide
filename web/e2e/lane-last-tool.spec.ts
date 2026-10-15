@@ -3,7 +3,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord, commandLabel } from "./chords";
 import { chooseLane, enterWorkspace, screenshot } from "./wire";
-import { TOOLS } from "../src/workspace";
+import { TOOLS } from "../src/laneTools";
 
 // A closed lane remembers the tool it last showed, and ⌥⌘1-4 press the rail's
 // icons. Each test starts one stack and asserts one contract.

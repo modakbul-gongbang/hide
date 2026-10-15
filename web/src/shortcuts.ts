@@ -35,7 +35,7 @@
 
 import { FACTORY_OPEN } from "./factory/launch";
 import type { HostKind } from "./host";
-import { TOOLS, type Tool } from "./workspace";
+import { TOOLS, type Tool } from "./laneTools";
 
 export type Chord = {
   code: string;
