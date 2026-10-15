@@ -301,7 +301,7 @@ impl Runtime {
         }
         // The paste text lands only when the upload ends, which can be long
         // after; the operator is typing into the pane meanwhile.
-        self.note_delivery_key(&payload.pane_id);
+        self.note_delivery_key(&payload.pane_id, "attachment");
         let remote = self
             .remote_file_transports
             .keys()
@@ -498,7 +498,7 @@ impl Runtime {
         let pane_id = pending.pane_id.clone();
         // The paste is composer text the operator has not sent, and an Enter
         // held behind it does not send it either.
-        self.note_delivery_key(&pane_id);
+        self.note_delivery_key(&pane_id, "attachment");
         // The node dropped its hold with the write; the release lets the
         // router forget where the paste went.
         self.clear_attachment();

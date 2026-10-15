@@ -156,11 +156,7 @@ pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
         }
         Turn::Unread => return Err(Hold::SessionUnread),
     }
-    if observation.last_input_at_unix_ms
-        > observation
-            .last_submit_at_unix_ms
-            .max(observation.entered_working_at_unix_ms)
-    {
+    if observation.unsent_draft() {
         return Err(Hold::Draft);
     }
     if now.saturating_sub(observation.last_input_at_unix_ms) < QUIET_MS

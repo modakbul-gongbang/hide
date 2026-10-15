@@ -397,7 +397,8 @@ impl Runtime {
                 &action,
                 material.as_ref().map(|material| material.path.as_str()),
             ) {
-                self.make_view_room(&key);
+                let tab = self.caller_parked_tab(&key, pane_id);
+                self.make_view_room(&key, tab.as_deref());
             }
             // A pane of a tab the operator is not looking at keeps the
             // operator's fronts and only bookmarks its own tab (D-05).

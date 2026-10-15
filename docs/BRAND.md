@@ -5,7 +5,7 @@
 hide is a multi-agent IDE that helps one person keep several coding efforts in view without watching every terminal.
 It preserves the context of each task and brings forward the questions, approvals, and results that need a person's attention.
 
-**Brand line:** Many agents. One clear view.
+**Brand line:** Run more agents. Hold less.
 **Korean line:** 여러 에이전트의 흐름은 한눈에, 집중은 필요한 곳에만.
 
 The product should make three things easy:
@@ -64,10 +64,22 @@ It never speaks for an agent, never stands in for a status mark, and never signa
 Copy beside it describes keeping work in view, never watching people or agents.
 Inside the app the character appears only where a PRD puts it, because the shell's states belong to its status marks (design principle 13).
 
-The current poses are in `site/assets/owls/`: `owl-peek` around the hero window, `owl-agents`, `owl-devices`, `owl-ai` and `owl-factory` beside the pillars, and `owl-rest` at the close.
-`owl-peek` is not a new pose but `owl-agents` traced into vector parts: it peeks out from behind the window's edges, glances at the work in each place and ducks back, the same loop every time.
-It keeps work in view rather than reacting to it: its expression never changes with what a pane shows, and it holds one still frame under reduced motion.
-They were made with the mark as the style reference, so a new pose starts from the mark again rather than from an edited copy of another pose, and it is reviewed against this section before it ships.
+The current poses are in `site/assets/owls/`.
+Each takes part in one clear action that belongs to what it is doing, and under it the owl rises and settles on its own breath and blinks while its eyes are open:
+
+| Pose | Where | Scene | Motion |
+| --- | --- | --- | --- |
+| `owl-peek` | around the hero window | `owl-agents` traced into vector parts, peeking out from behind the window's edges | pops out at an edge, glances at the work there and ducks back, the same loop every time |
+| `owl-ai` | beside the attention pillar | reading an open book | reads along the lines of each page, lifts the corner with its wing and turns the page, its head and body following the page across |
+| `owl-agents` | beside the hand-off pillar | at ease among four terminals | the terminals clear and type in again one after another, clockwise, and the owl turns its head and leans toward each in turn |
+| `owl-devices` | beside the core pillar | waving beside a laptop, the always-on core and a phone | a light runs along the dots from the laptop through the core to the phone and back, each device flashing as it arrives, and the owl's head follows it |
+| `owl-factory` | in the Software Factory section | in a hard hat beside a conveyor | the conveyor steps one box on (the last box rolls off, the next gets its check, a new box is set down) and the owl turns to watch the box go |
+| `owl-rest` | at the close | asleep in the crescent moon | breathes in and out, and a small Z drifts up on each breath out |
+
+A pose keeps work in view rather than reacting to it: the face keeps its expression whatever a pane shows, the owl follows its own prop on a fixed schedule, and nothing in a loop answers what an agent did.
+Every moving pose has a `-still.svg` frame that is complete on its own and is what shows off screen, in a hidden tab and under reduced motion; a section pose's loop starts on that frame.
+The poses were made with the mark as the style reference, so a new pose starts from the mark again rather than from an edited copy of another pose, and it is reviewed against this section before it ships.
+The SVGs are traced from those generated poses into separate flat shapes, with a moving prop redrawn as plain geometry and the owl's ears, face, eyes, wings and body kept as separate shapes so they can move.
 
 ## Third-party agent marks
 
