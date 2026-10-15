@@ -771,7 +771,7 @@ export type Workspace = {
   agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
-  /** The project's tasks, the Overview's Tasks and Agents views read these. */
+  /** The project's tasks, which the device Overview's Tasks and backlog read. */
   tasks?: ProjectTasks;
   /**
    * The project's pull requests for the Work tool's PRs lens, one per branch:

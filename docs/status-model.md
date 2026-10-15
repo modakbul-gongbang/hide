@@ -979,7 +979,7 @@ The scope cache compares owned agent rows, device connection facts and checkout 
 The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
 
 `agent_state/tally/lineage.rs` projects the list headings, the sidebar tree, folded checkout badges and checkout trees with their two card representatives.
-The sidebar uses the connected-device tree; the Issues board uses the project device's tree, preserving the previous scope difference.
+The sidebar uses the connected-device tree.
 A done descendant turns a card yellow only when it is a root relative to that checkout.
 Folded checkout lines carry status-priority tiers; the browser keeps its existing locale-aware alphabetical placement inside a tier so Korean and English labels keep their displayed order.
 The cross-checkout counts, relative-root highlight and fold transitions are asserted by `runtime::tests::agent_scopes::checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority`.

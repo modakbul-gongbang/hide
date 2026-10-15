@@ -724,7 +724,7 @@ A section with no task reads `진행 중인 일감 없음 · New agent`, and New
 
 A card's first line is the root's status mark (and Hide AI's mark on a task Hide AI started), the task's title (the root session's label) and its age; while it asks, the question follows in at most two lines in the warning colour (B8).
 Its second line is the descendants' status marks with `자식 N`, the PR mark, the chip of the issue or memo it started from (`#N` or `L-N`), `→ <project>` when it delegated into another project, and `→ <device>` when it delegated to another device.
-A card follows the agent logo rule of the Sessions rows.
+A card leads with the status mark alone and draws no provider logo in either agent logo view mode (PRD agent-mark-quiet).
 A card whose root needs the operator is outlined in the warning colour.
 Its third line is the four-step bar `작업 → PR → 검토 → 머지` and one line of state (B9).
 The bar fills one step with no pull request, two while the open pull request is a draft, running checks or failing them, three when it can merge and four when every pull request merged; a task that is only a conversation, with no worktree and no pull request, has no bar.
@@ -775,6 +775,7 @@ On a device the core dials every section is the one line `이 기기의 <project
 
 A row opens the item in the panel: its title, `#N` or `L-N`, its source, when it was made, its labels, `어디서 왔나` for an item from missed work (the session's title, the assigned work it came from and the missed sentence, which open that session's record), `▷ 시작`, `GitHub에서 열기` for a GitHub issue, and `되돌리기` while it is not started and Hide made it: every memo, and a GitHub issue made by the quick add, the backlog's input or `백로그로`; an issue someone else made never offers it (B31).
 `되돌리기` deletes a memo or closes a GitHub issue and the row leaves the backlog; a missed line it came from opens again with `백로그로 · 무시`, and a close that fails leaves why and `다시 시도` in the panel with the row in place (B32).
+The record that names a Hide-made GitHub issue keeps the newest 256 typed items, so an older issue no longer offers `되돌리기`; a refusal from the core, which sent nothing anywhere, reads `되돌리지 못함` with no `다시 시도`.
 
 `▷ 시작` opens the Start dialog, which turns an item into work in one step: a worktree named for the item, its base, the agent, and the agent's first prompt.
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.

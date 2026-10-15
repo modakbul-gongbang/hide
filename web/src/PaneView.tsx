@@ -300,6 +300,8 @@ export const PaneView = memo(function PaneView({
         {agentKind ? (
           <PaneRecordButton
             paneId={paneId}
+            title={title}
+            product={agentProductName(agentKind)}
             actions={actions}
             plain={
               <>

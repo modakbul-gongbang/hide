@@ -26,6 +26,7 @@ import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
 import { fieldLabel } from "./shortcutLabels";
+import { useBacklogOrigin } from "./backlogOrigin";
 
 export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, closes_instruction: true };
 
@@ -145,8 +146,8 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   // So is where it came from: a missed line's request and answer join the prompt (B33).
   useEffect(() => {
     actions.requestIssueDetail(workspace.id, task.key);
-    actions.readBacklogOrigin(workspace.id, task.key);
   }, [actions, workspace.id, task.key]);
+  useBacklogOrigin(actions, workspace.id, task.key);
   const bodyKnown = detail !== null && detail.phase !== "reading";
   const originKnown = origin !== null && origin.phase !== "reading";
   useEffect(() => {

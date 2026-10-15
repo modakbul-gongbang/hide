@@ -208,7 +208,7 @@ function usePaneChildren(paneId: string, agents: AgentRow[]): { children: PaneCh
  * keeps the plain head. The press never takes the keyboard from the terminal,
  * and `data-pane-record` keeps an overlay lane from going away under it.
  */
-export function PaneRecordButton({ paneId, actions, children, plain }: { paneId: string; actions: Actions; children: ReactNode; plain: ReactNode }) {
+export function PaneRecordButton({ paneId, title, product, actions, children, plain }: { paneId: string; title: string; product: string; actions: Actions; children: ReactNode; plain: ReactNode }) {
   const { t } = useInterfaceTranslation();
   const agent = agentsByPane(usePaneAgents()).get(paneId);
   // Only this machine's id, so the head redraws on its own pane's changes rather than on every snapshot.
@@ -216,11 +216,13 @@ export function PaneRecordButton({ paneId, actions, children, plain }: { paneId:
   const session = agent ? sessionOfAgentOn(agent, localId) : null;
   if (!session) return <>{plain}</>;
   return (
-    <Hint label={t("record.recordHint")}>
+    // The button names the agent as the plain head does, then what a press
+    // does; the hint reveals a title the head cuts short.
+    <Hint label={`${title}\n${product}\n${t("record.recordHint")}`} reveals>
       <button
         type="button"
         className="flex min-w-0 items-center gap-sm rounded-sm px-xxs -mx-xxs outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-        aria-label={t("record.recordHint")}
+        aria-label={`${title}, ${product}, ${t("record.recordHint")}`}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => actions.togglePaneRecord(session)}
         data-pane-record={session.session_id}

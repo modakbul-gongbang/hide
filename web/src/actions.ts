@@ -1289,7 +1289,7 @@ export function createActions(send: DispatchFn) {
 
     /**
      * Asks the core to read a local Git project's pull requests and issues,
-     * the tasks its Tasks and Agents views draw; the core reads a project
+     * the tasks the device Overview's Tasks and backlog draw; the core reads a project
      * once and keeps the answer, so asking again costs nothing (D-14).
      */
     readProjectTasks(workspaceId: string) {
@@ -2265,7 +2265,7 @@ export function createActions(send: DispatchFn) {
     retryBacklog(intent: string) {
       dispatch({ schema_version: 2, kind: "backlog_retry", payload: { intent } });
     },
-    /** `지우기` on a failed item. */
+    /** `지우기` on a failed item; for a missed line's item the core also puts the line away (one event). */
     dismissBacklog(intent: string) {
       dispatch({ schema_version: 2, kind: "backlog_dismiss", payload: { intent } });
     },
@@ -2276,6 +2276,10 @@ export function createActions(send: DispatchFn) {
     /** Where an item came from, for its panel (B31). */
     readBacklogOrigin(workspaceId: string, taskKey: string) {
       dispatch({ schema_version: 2, kind: "backlog_origin", payload: { workspace_id: workspaceId, task_key: taskKey } });
+    },
+    /** No screen shows that item's origin any more: the core drops the session text it held for it. */
+    closeBacklogOrigin(taskKey: string) {
+      dispatch({ schema_version: 2, kind: "backlog_origin_close", payload: { task_key: taskKey } });
     },
     /** The projects the Projects tab shows, in its order, for the disk sweep; none when it is hidden (D-15, B53). */
     watchDisk(workspaceIds: readonly string[]) {
