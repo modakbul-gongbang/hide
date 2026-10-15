@@ -1975,12 +1975,12 @@ fn handle_client_text(
                 .hold(connection, &payload_str(&event, "task_key"))?;
         }
         Some("backlog_origin_close") => {
-            if !state
-                .origin_holds
-                .let_go(connection, &payload_str(&event, "task_key"))
-            {
-                return Ok(ClientAction::Replies(Vec::new()));
-            }
+            let key = payload_str(&event, "task_key");
+            crate::demand::origin_key(&key)?;
+            state.origin_holds.let_go(connection, &key, |key| {
+                close_backlog_origin(&state.core, connection, key)
+            });
+            return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
             let Some(observing) = event
@@ -2199,6 +2199,21 @@ impl Demand {
 
 /// Runs under the demand lock (`ObservationDemand::set`), so it only logs
 /// and hands the event to the core's channel.
+/// Tells the core no window shows `task_key`'s origin any more.
+fn close_backlog_origin(core: &CoreHandle, connection: u64, task_key: &str) {
+    let event = json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "backlog_origin_close",
+        "payload": {"task_key": task_key},
+    });
+    if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
+        eprintln!(
+            "{}",
+            json!({"component": "hided", "kind": "backlog.origin_release_failed", "connection": connection, "message": error})
+        );
+    }
+}
+
 pub(crate) fn dispatch_observation(
     core: &CoreHandle,
     demand: Demand,
@@ -3752,19 +3767,9 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
             dispatch_observation(&state.core, demand, connection, observing)
         });
     }
-    for task_key in state.origin_holds.release(connection) {
-        let event = json!({
-            "schema_version": SCHEMA_VERSION,
-            "kind": "backlog_origin_close",
-            "payload": {"task_key": task_key},
-        });
-        if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
-            eprintln!(
-                "{}",
-                json!({"component": "hided", "kind": "backlog.origin_release_failed", "connection": connection, "message": error})
-            );
-        }
-    }
+    state.origin_holds.release(connection, |key| {
+        close_backlog_origin(&state.core, connection, key)
+    });
     let remaining = state
         .clients
         .fetch_sub(1, Ordering::SeqCst)
