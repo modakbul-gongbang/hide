@@ -224,6 +224,12 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           if [ "${{ matrix.system }}" = windows ]; then
+            # The installer stops every program under the install folder, and
+            # the app runs its Herdr server from the build's runtime copy, so
+            # the test's server runs from the packaged folder, not the install.
+            HIDE_E2E_HERDR_BIN="$(sed -n 's/^bundle=//p' "$RUNNER_TEMP/package.out")/resources/herdr.exe"
+            export HIDE_E2E_HERDR_BIN
+            test -f "$HIDE_E2E_HERDR_BIN"
             bash scripts/verify-web.sh desktop e2e packaged-update.spec.ts
           else
             xvfb-run -a bash scripts/verify-web.sh desktop e2e packaged-update.spec.ts
