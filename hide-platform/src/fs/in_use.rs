@@ -38,6 +38,10 @@ pub fn first_in_use(folder: &Path) -> io::Result<Option<PathBuf>> {
                 Err(error) if error.raw_os_error() == Some(SHARING_VIOLATION) => {
                     return Ok(Some(path));
                 }
+                // Removed since the folder was read: nothing holds it.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                // A read-only file, a refusing ACL or a pending delete: the
+                // question has no answer here, and the caller keeps the folder.
                 Err(error) => return Err(error),
             }
         }

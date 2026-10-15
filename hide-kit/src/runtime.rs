@@ -222,6 +222,15 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
             copy_tree(&entry.path(), &target)?;
         } else if kind.is_file() {
             fs::copy(entry.path(), &target)?;
+            // The copy is hide's own: a read-only file in it could never be
+            // asked whether a process holds it, nor removed with the copy.
+            let mut permissions = fs::metadata(&target)?.permissions();
+            if permissions.readonly() {
+                #[allow(clippy::permissions_set_readonly_false)]
+                // Windows' read-only attribute only
+                permissions.set_readonly(false);
+                fs::set_permissions(&target, permissions)?;
+            }
         } else {
             return Err(io::Error::other(format!(
                 "{} is not a file or a folder",

@@ -1690,6 +1690,23 @@ fn idle_role() {
     thread::sleep(Duration::from_secs(60));
 }
 
+/// Waits until nothing holds a file under `folder`: Windows unmaps a program
+/// and a scanner lets a new file go a moment later, with no event to wait on.
+#[cfg(windows)]
+#[allow(clippy::disallowed_methods)] // the kernel's release has no event; this polls it, bounded
+fn until_free(folder: &Path) {
+    use hide_platform::fs::in_use::first_in_use;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while let Some(held) = first_in_use(folder).unwrap() {
+        assert!(
+            Instant::now() < deadline,
+            "{} is still held",
+            held.display()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// A folder whose files nothing holds is free to remove, on every system.
 #[test]
 fn a_folder_nothing_holds_is_not_in_use() {
@@ -1714,7 +1731,8 @@ fn a_program_running_from_a_folder_or_a_file_open_in_it_holds_it_in_use() {
     let program = sandbox.path().join("nested").join("program.exe");
     fs::create_dir(program.parent().unwrap()).unwrap();
     fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
-    assert_eq!(first_in_use(sandbox.path()).unwrap(), None);
+    // A scanner may hold a new program for a moment after it is written.
+    until_free(sandbox.path());
 
     let mut running = Killed(
         Command::new(&program)
@@ -1742,14 +1760,8 @@ fn a_program_running_from_a_folder_or_a_file_open_in_it_holds_it_in_use() {
         .expect("Windows renames a running program's folder");
     fs::rename(&moved, program.parent().unwrap()).unwrap();
     drop(running);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while first_in_use(sandbox.path()).unwrap().is_some() {
-        assert!(
-            Instant::now() < deadline,
-            "the ended program still holds its file"
-        );
-        thread::yield_now();
-    }
+    // The image is unmapped a moment after the process has ended.
+    until_free(sandbox.path());
 
     let file = sandbox.path().join("open.txt");
     fs::write(&file, "open").unwrap();
