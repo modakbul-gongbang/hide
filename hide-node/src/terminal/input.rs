@@ -548,6 +548,7 @@ pub(super) struct InputFacts {
     /// When the last key the core has not heard about was typed, and
     /// whether any of them was typed on the screen.
     pending: Option<(u64, bool)>,
+    trace: TraceWindow,
 }
 
 /// A report the core should get now.
@@ -556,20 +557,72 @@ pub(super) struct InputFact {
     pub(super) at_unix_ms: u64,
     pub(super) submitted: bool,
     pub(super) focus: bool,
+    /// What the pane's keys since the last trace amount to, when a window
+    /// has passed since it: the record that says which input held a draft.
+    pub(super) trace: Option<InputTrace>,
+}
+
+/// The keys of one pane since its last trace, counted and never read: no
+/// content, only how many bytes and from which path they came.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct InputTrace {
+    pub(super) keys: usize,
+    pub(super) bytes: usize,
+    pub(super) submitted: bool,
+    pub(super) path: &'static str,
+}
+
+/// The counts behind [`InputTrace`]: one trace per pane per
+/// [`INPUT_REPORT_WINDOW`], so a flood of keys writes one record a second and
+/// the rest ride the next.
+#[derive(Debug, Default)]
+struct TraceWindow {
+    last: Option<Instant>,
+    keys: usize,
+    bytes: usize,
+    submitted: bool,
+    path: &'static str,
+}
+
+impl TraceWindow {
+    fn add(&mut self, bytes: usize, submitted: bool, path: &'static str) {
+        self.keys += 1;
+        self.bytes += bytes;
+        self.submitted |= submitted;
+        self.path = path;
+    }
+
+    fn take(&mut self, now: Instant) -> Option<InputTrace> {
+        if self
+            .last
+            .is_some_and(|last| now.saturating_duration_since(last) < INPUT_REPORT_WINDOW)
+        {
+            return None;
+        }
+        self.last = Some(now);
+        Some(InputTrace {
+            keys: std::mem::take(&mut self.keys),
+            bytes: std::mem::take(&mut self.bytes),
+            submitted: std::mem::take(&mut self.submitted),
+            path: self.path,
+        })
+    }
 }
 
 impl InputFacts {
-    /// Records a key typed at `at_unix_ms`. The first key after a gap of
-    /// [`INPUT_REPORT_WINDOW`], an Enter and a key that moves the keyboard
-    /// to another pane (`focus`) are reported at once; the rest wait for
-    /// [`InputFacts::due`].
+    /// Records a key of `bytes` bytes typed at `at_unix_ms`, which reached the
+    /// pane by `path`. The first key after a gap of [`INPUT_REPORT_WINDOW`],
+    /// an Enter and a key that moves the keyboard to another pane (`focus`)
+    /// are reported at once; the rest wait for [`InputFacts::due`].
     pub(super) fn key(
         &mut self,
         now: Instant,
         at_unix_ms: u64,
         submitted: bool,
         focus: bool,
+        (bytes, path): (usize, &'static str),
     ) -> Option<InputFact> {
+        self.trace.add(bytes, submitted, path);
         let quiet = self
             .last_report
             .is_none_or(|last| now.saturating_duration_since(last) >= INPUT_REPORT_WINDOW);
@@ -580,6 +633,7 @@ impl InputFacts {
                 at_unix_ms,
                 submitted,
                 focus,
+                trace: self.trace.take(now),
             });
         }
         self.pending = Some(match self.pending {
@@ -607,6 +661,7 @@ impl InputFacts {
             at_unix_ms,
             submitted: false,
             focus,
+            trace: self.trace.take(now),
         })
     }
 }
@@ -754,17 +809,31 @@ mod tests {
     fn the_first_key_after_a_quiet_gap_and_every_enter_are_reported_at_once() {
         let start = Instant::now();
         let mut facts = InputFacts::default();
-        let first = facts.key(start, 1_000, false, false).expect("first key");
+        let first = facts
+            .key(start, 1_000, false, false, (1, "write_key"))
+            .expect("first key");
         assert_eq!(first.at_unix_ms, 1_000);
         // Inside the window: held back, carrying the last key's own time.
         assert!(
             facts
-                .key(start + Duration::from_millis(100), 1_100, false, false)
+                .key(
+                    start + Duration::from_millis(100),
+                    1_100,
+                    false,
+                    false,
+                    (1, "write_key")
+                )
                 .is_none()
         );
         assert!(
             facts
-                .key(start + Duration::from_millis(200), 1_200, false, false)
+                .key(
+                    start + Duration::from_millis(200),
+                    1_200,
+                    false,
+                    false,
+                    (1, "write_key")
+                )
                 .is_none()
         );
         assert_eq!(facts.deadline(), Some(start + INPUT_REPORT_WINDOW));
@@ -783,14 +852,73 @@ mod tests {
                 2_010,
                 true,
                 false,
+                (1, "write_key"),
             )
             .expect("enter at once");
         assert!(enter.submitted);
         // A key after a quiet gap is reported at once again.
         assert!(
             facts
-                .key(start + Duration::from_secs(5), 5_000, false, false)
+                .key(
+                    start + Duration::from_secs(5),
+                    5_000,
+                    false,
+                    false,
+                    (1, "write_key")
+                )
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn a_pane_leaves_one_trace_a_window_with_the_counts_of_every_key_since() {
+        let start = Instant::now();
+        let mut facts = InputFacts::default();
+        let first = facts
+            .key(start, 1_000, false, false, (2, "write_key"))
+            .and_then(|fact| fact.trace)
+            .expect("the first key leaves a trace");
+        assert_eq!(
+            first,
+            InputTrace {
+                keys: 1,
+                bytes: 2,
+                submitted: false,
+                path: "write_key"
+            }
+        );
+        // Enters inside the window are reported at once but traced later.
+        for step in 1..=5u64 {
+            let fact = facts
+                .key(
+                    start + Duration::from_millis(step * 100),
+                    1_000 + step,
+                    true,
+                    false,
+                    (1, "write_key"),
+                )
+                .expect("an Enter is reported at once");
+            assert!(fact.trace.is_none(), "one trace a window");
+        }
+        let later = facts
+            .key(
+                start + 2 * INPUT_REPORT_WINDOW,
+                2_000,
+                false,
+                false,
+                (3, "write_key_attachment_hold"),
+            )
+            .and_then(|fact| fact.trace)
+            .expect("the next window's trace");
+        assert_eq!(
+            later,
+            InputTrace {
+                keys: 6,
+                bytes: 8,
+                submitted: true,
+                path: "write_key_attachment_hold"
+            },
+            "the five Enters and the key that closed the window"
         );
     }
 

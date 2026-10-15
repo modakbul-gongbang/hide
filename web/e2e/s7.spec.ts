@@ -449,7 +449,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await page.goto("about:blank");
     await open(page, stack.daemon);
     await expect.poll(() => shape(page), { timeout: 20_000 }).toBe("@(keep.txt >other.txt)");
-    await showTool(page, "files"); // an unpinned lane comes back put away (PRD right-lane B22)
+    await showTool(page, "files");
     await tab(page, "keep.txt").hover();
     await tab(page, "keep.txt").getByRole("button", { name: /Close view/ }).click();
     const dontSave = page.locator("[data-notice-dont-save]");
@@ -708,7 +708,6 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
-    // Another Workspace in front starts with its unpinned lane put away (B15).
     await showTool(page, "files");
     const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.layout ?? null);
     await expect.poll(betaLayout).toContain("b2.txt");
@@ -1083,9 +1082,9 @@ test("at six view areas every split is refused with its reason, in the menu and 
   } finally { stopStack(stack); }
 });
 
-test("a Workspace holds at most sixty-four views: opening one more closes the view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
+test("a tab holds at most sixteen views: opening one more closes its view looked at longest ago, and opening a shown file still moves to it", async ({ page }) => {
   await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
-  const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
+  const files = Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps-views", files);
   try {
     // B19, contract 2. Seeded as a schema 2 file, the File Views column
@@ -1105,8 +1104,8 @@ test("a Workspace holds at most sixty-four views: opening one more closes the vi
             root: {
               area: {
                 id: "a1",
-                active: "d64",
-                displays: Array.from({ length: 64 }, (_, index) => ({
+                active: "d16",
+                displays: Array.from({ length: 16 }, (_, index) => ({
                   id: `d${index + 1}`,
                   path: `${stack.root}/f${String(index + 1).padStart(2, "0")}.txt`,
                   kind: "file",
@@ -1118,7 +1117,7 @@ test("a Workspace holds at most sixty-four views: opening one more closes the vi
               },
             },
             active_area: "a1",
-            next_id: 65,
+            next_id: 17,
           },
         },
       ],
@@ -1126,21 +1125,21 @@ test("a Workspace holds at most sixty-four views: opening one more closes the vi
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(seeded)));
     await page.goto("about:blank");
     await open(page, stack.daemon);
-    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(64, { timeout: 30_000 });
+    await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(16, { timeout: 30_000 });
     await showTool(page, "files");
     // Explorer virtualizes this long list: reveal its last rows before clicking one.
     await page.getByRole("tree", { name: "Checkout files" }).hover();
     await page.mouse.wheel(0, 2000);
-    await explorerRow(page, stack, "f65.txt").click();
-    await expect(tab(page, "f65.txt")).toHaveAttribute("aria-selected", "true");
+    await explorerRow(page, stack, "f17.txt").click();
+    await expect(tab(page, "f17.txt")).toHaveAttribute("aria-selected", "true");
     await expect(tab(page, "f10.txt")).toHaveCount(0);
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
     await expect(page.locator("[data-notice]")).toHaveCount(0);
     await screenshot(page, "s7-caps-display-limit");
-    await explorerRow(page, stack, "f60.txt").click();
-    await expect(tab(page, "f60.txt")).toHaveAttribute("aria-selected", "true");
+    await explorerRow(page, stack, "f12.txt").click();
+    await expect(tab(page, "f12.txt")).toHaveAttribute("aria-selected", "true");
     await expect(page.locator("[data-notice]")).toHaveCount(0);
-    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
+    await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(16);
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
@@ -1386,7 +1385,7 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(v1)));
     await reopen(page, stack.daemon);
     await expect(workspace).toHaveAttribute("data-lane-shows", "files", { timeout: 20_000 });
-    await expect(workspace).toHaveAttribute("data-lane-mode", "hidden");
+    await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
     await showTool(page, "files");
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe("@(a.txt >b.txt c.txt*)");
     await expect(editor(page, 0)).toContainText("b text");

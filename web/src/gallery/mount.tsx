@@ -12,6 +12,7 @@ import { FactoryScene, factorySceneParams } from "./FactoryScene";
 import { SessionWorkflowScene } from "./SessionWorkflowScene";
 import { CoreMoveScene, coreMoveSceneParams } from "./CoreMoveScene";
 import { NodeProjectScene, nodeProjectSceneParams } from "./NodeProjectScene";
+import { LandingScene, landingSceneParams } from "./LandingScene";
 import { MemoryScene, memorySceneParams } from "./MemoryScene";
 import { UsageScene } from "./UsageScene";
 import { ProjectSettingsScene } from "./ProjectSettingsScene";
@@ -67,6 +68,11 @@ export function mountGallery(root: Root) {
     if (scene === "search-palette") {
       document.title = "hide · ⌘K scene";
       root.render(<StrictMode><CmdkScene {...cmdkSceneParams(params)} /></StrictMode>);
+      return;
+    }
+    if (scene === "landing") {
+      document.title = "hide · Landing shots scene";
+      root.render(<StrictMode><LandingScene {...landingSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "memory") {

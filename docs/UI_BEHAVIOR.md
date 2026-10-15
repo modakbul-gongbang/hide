@@ -63,12 +63,12 @@ A Workspace seen for the first time shows Agent Views alone, its lane closed.
 The lane's header names its tool and scope, `Files · <checkout>`, `Changes · <checkout>`, `Sessions · all of <project>` and `Memory · <project>`, with Pin, Expand and Close at its right; a new checkout in front renames the Files and Changes scopes and leaves Sessions and Memory as they are.
 
 Unpinned, the lane opens over Agent Views at their right edge, set apart by a shadow and a left border in both themes; the terminals under it keep their grid and layout, are not dimmed, and keep their input and output.
-A click on a terminal pane, or Escape inside the lane or on its rail, puts the lane away and hands the keyboard to the focused pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
-A lane put away keeps its documents, tabs, scroll, previews and searches, and its rail icon brings it back as it was.
-Another Workspace coming in front, from this window or another, starts with its unpinned lane put away unless an open or a reveal brought it there.
-Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once, and it stays through a terminal click; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
+An unpinned lane stays up until the operator takes it down: a click on a terminal pane, choosing an agent or a tab, another Workspace in front and a restart all leave it as it was.
+Close, ⌘E or its rail icon closes it, and Escape inside the lane or on its rail puts it away and hands the keyboard to the focused pane; Escape first closes a menu, popover or search open in the lane, and Escape in a terminal is the program's.
+A lane put away keeps its documents, tabs, scroll, previews and searches, and its rail icon, ⌘E, an open or a reveal brings it back as it was.
+Pinned (a filled pin; an empty one says `Pin · keep it beside the agents`), the lane docks beside Agent Views, which narrow by its width once; unpinned (`Unpin · back over the agents`), Agent Views take their width back and the lane is over them again.
 The pin is the lane's, whatever tool it shows, and a pinned lane closed and opened again comes back docked.
-A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, though it stays through a terminal click, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
+A pinned lane docks in any window where its minimums (360px of documents, 180px of tree) fit beside 480px of Agent Views, giving up its own width first and taking its stored width back as the window widens; a window too narrow for even that opens the lane over them as if unpinned, with the pin still filled and its tooltip saying `Pin · too narrow, drawn over`.
 Expand gives the lane the whole body between the sidebar and the rail, with the file tree as a column beside the documents; Expand again or Escape returns to the pin, widths and terminal layout as they were, no terminal resizes meanwhile, and Agent Views under an expanded lane take no pointer or keyboard.
 While the keyboard is in the lane, a document, a page or the tool, the Zoom pane chord (⇧⌘↩, Alt+Shift+Enter on Windows and Linux) is Expand and Expand again, so one key fills the window with whatever the operator works in; anywhere else it zooms the focused pane, and the Expand tooltip shows the chord.
 Close (the header's ×, the pressed rail icon, or the tool's chord) closes the lane and leaves the file tree as it was; it closes no view, and the Files badge counts what stays open.
@@ -94,7 +94,7 @@ Choosing another Agent tab while it reads keeps that tab's presentation intact, 
 When several tabs request the same file during its read, they share the read and document buffer while each keeps its own display request.
 A buffer opened through another path before the read answers retains its draft and save state, and the pending GUI displays still open in their requesting tabs.
 Closing that buffer's last current display does not cancel another tab's pending GUI open.
-Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, puts an unpinned lane away and leaves a pinned one; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or the tab strip, or a terminal taking the keyboard, leaves the lane where it is, pinned or not; the lane keeps its tool, pin and tree, and the files tool shows the chosen tab's views (see File Views per Agent tab).
 
 Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone.
 At Home it shows the selected device's projects together.
@@ -114,7 +114,7 @@ The documents are never narrower than 360px and start at 520px, the tree never n
 The pin turning on or off, a docked lane opening or closing, a docked divider landing, and the tree turning on or off beside a docked lane resize the agents' terminals once.
 A lane over the agents opening, going away, coming back, expanding or closing, its divider landing, a drag in progress, and anything inside the lane, an open, a close, a tab change, a split or a drag of a view, resize nothing.
 Changing Workspace or lane geometry during a divider drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
-The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one put away until asked, and neither expanded.
+The lane's tool, pin, tree, and both widths are stored per Workspace and survive a restart: a pinned lane comes back docked, an unpinned one over the agents, and neither expanded.
 A Workspace stored with the earlier File Views and Tools columns comes back once on Files where File Views was on, else on the tool Tools showed, unpinned (see View states).
 
 Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, the lane's tool or a pane.
@@ -282,8 +282,8 @@ An exclusively owned clean document closes with its tab; unsaved content remains
 An unanswered connected-device session or unresolved catalog preserves saved state; a fully answered catalog with no tabs closes its final presentation.
 Local and connected-device callers follow the same rules; the phone keeps its existing flow.
 No additional badge, notice or setting is introduced.
-The checkout shares the existing cap of 64 Views and six occupied areas, with depth three per layout.
-An open that would add a 65th View first closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
+Each tab keeps at most 16 Views in its own six View areas and depth three, so a tab can always open a View while other tabs hold theirs; the checkout holds at most 256 Views across its tabs.
+An open that would add a tab's 17th View first closes that tab's View looked at longest ago, and one that would add the checkout's 257th closes the View looked at longest ago in any of the checkout's tabs, the way closing its last View closes a file (Reopen Closed brings it back); a View on screen, which is its area's front in the tab shown, and a document with unsaved work never close.
 Only when nothing can close is the open refused, with the View notice, and existing content stays as it was.
 Web owner: none, the shell draws the existing snapshot projection.
 Core owner: `herdr-core/src/runtime/{view_bookmarks,view_areas,workspace_control,workspace_view}.rs` and `herdr-core/src/workspace_views.rs`.
@@ -295,6 +295,7 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is, including a double-click that lands while the file's first read is still running; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
+The keyboard goes with every open from the Explorer (a click, a double-click or Enter), a History row, ⌘P or Open to the side into the view that shows it once the core places it, so ⌘W, ⌘S and typing act on that file; the tree's arrow keys only move its selection, so the keyboard stays in the tree until something opens.
 Opening a file while the lane is closed, put away or on another tool opens it on Files first.
 Diffs are placed by the same rules.
 
@@ -335,12 +336,12 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
-After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and both widths, a pinned lane docked and an unpinned one put away; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
+After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and both widths, a pinned lane docked and an unpinned one over the agents; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 Herdr connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
 The unanswered-connection fallback does not settle a connected session's pending saved Workspace; a settled connection failure still opens All projects.
 A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
-A Workspace stored with the File Views and Tools columns, or with the side panel or layout before them, restarts once on Files where File Views was on (a panel open or expanded, a layout that did not show the agents alone), else on the tool Tools showed, the Explorer becoming Files with its tree, unpinned and put away, its views, tabs and areas as they were.
+A Workspace stored with the File Views and Tools columns, or with the side panel or layout before them, restarts once on Files where File Views was on (a panel open or expanded, a layout that did not show the agents alone), else on the tool Tools showed, the Explorer becoming Files with its tree, unpinned, its views, tabs and areas as they were.
 File Views' stored width becomes the lane's; a Workspace stored before the columns, and the tree, start at the default widths.
 
 ### Browser displays
@@ -369,7 +370,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Narrow windows
 
 Whether a pinned lane docks depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can dock it again.
-A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled and stays through a terminal click, and widening the body docks it again.
+A pinned lane docks while its minimums and Agent Views' 480px fit side by side with its divider, the lane narrowing first; in a body too narrow for even those it opens over Agent Views with its pin still filled, and widening the body docks it again.
 The lane opens at any width: in a body narrower than the lane it takes the whole body, giving up document width down to its 360px minimum first and tree width after.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back what the Workspace stores, the lane's tool, pin, tree, widths and the area sizes, because none of these narrow arrangements is stored, and another Workspace's lane never changes while one is narrow.

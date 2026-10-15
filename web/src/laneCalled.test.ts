@@ -19,19 +19,18 @@ const reveal = (is_directory: boolean) => ({
 describe("laneCalled", () => {
   // PRD right-lane B15, B16: a linked file reaches the lane through the
   // core's call number; a linked folder opens the files tool's tree, so the
-  // lane comes up at once; an agent chosen puts an unpinned lane away.
+  // lane comes up at once; an agent or tab chosen leaves it as it is.
   it("puts the lane up for a linked folder or a tool, and nothing for a linked file", () => {
-    expect(laneCalled(reveal(true))).toBe("lane");
-    expect(laneCalled(reveal(false))).toBeNull();
-    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { tool: "memory" } })).toBe("lane");
-    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { tool: null } })).toBeNull();
-    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { pinned: true } })).toBeNull();
+    expect(laneCalled(reveal(true))).toBe(true);
+    expect(laneCalled(reveal(false))).toBe(false);
+    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { tool: "memory" } })).toBe(true);
+    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { tool: null } })).toBe(false);
+    expect(laneCalled({ schema_version: 2, kind: "workspace_view", payload: { pinned: true } })).toBe(false);
   });
 
-  it("puts the lane away for an agent or tab chosen", () => {
-    expect(laneCalled({ schema_version: 2, kind: "focus_pane", payload: { pane_id: "w1:p1" } } as never)).toBe("agents");
-    expect(laneCalled({ schema_version: 2, kind: "focus_tab", payload: { tab_id: "w1:t2" } } as never)).toBe("agents");
-    expect(laneCalled({ schema_version: 2, kind: "remote_control", payload: { action: "focus_tab", tab_id: "w1:t2" } } as never)).toBe("agents");
-    expect(laneCalled({ schema_version: 2, kind: "remote_control", payload: { action: "send_keys" } } as never)).toBeNull();
+  it("leaves the lane as it is for an agent or tab chosen", () => {
+    expect(laneCalled({ schema_version: 2, kind: "focus_pane", payload: { pane_id: "w1:p1" } } as never)).toBe(false);
+    expect(laneCalled({ schema_version: 2, kind: "focus_tab", payload: { tab_id: "w1:t2" } } as never)).toBe(false);
+    expect(laneCalled({ schema_version: 2, kind: "remote_control", payload: { action: "focus_tab", tab_id: "w1:t2" } } as never)).toBe(false);
   });
 });

@@ -23,7 +23,7 @@ fn session_resolution_survives_restart_and_new_input_restores_the_live_pane() {
         ResolveSource::Operator
     );
     let at = loaded.resolved_sessions["session"].at_unix_ms;
-    runtime.note_delivery_key("session");
+    runtime.note_delivery_key("session", "phone");
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
     assert!(
         persistence::load(&runtime.state_path)
@@ -79,7 +79,7 @@ fn session_resolve_waits_for_save_and_ignores_an_ack_after_new_input() {
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
     let pending = runtime.ui_state_to_save();
     persistence::save(&runtime.state_path, &pending, &BTreeMap::new()).unwrap();
-    runtime.note_delivery_key("session");
+    runtime.note_delivery_key("session", "phone");
     assert!(!runtime.acknowledge_session_save(&pending, true));
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_none());
 
