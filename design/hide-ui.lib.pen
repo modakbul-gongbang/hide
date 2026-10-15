@@ -48091,7 +48091,7 @@
           "type": "text",
           "id": "cmp-sidebar-chrome-spec",
           "name": "web/src/components/sidebar-h",
-          "content": "web/src/components/sidebar-header.tsx, sidebar.tsx and help-menu.tsx (PRD sidebar-titlebar-refresh D-05, D-08, D-11, D-12): the Search row under the window's top row, a field-shaped button that reads Search and the bound ⌘K chord and opens the palette; the Projects list's section header, 10/500 on its baseline in a 26 row on the sidebar's fill, which sticks to the list's top and wears a hairline while rows pass under it, Pinned led by the pin (its rows carry none) and Projects ending in Add project; and the Help menu the footer's ? opens: Keyboard shortcuts with its chord, Copy diagnostics, Report an issue and, under a separator, the hide version line, which takes no press.",
+          "content": "web/src/components/sidebar-header.tsx, sidebar.tsx, view-menu.tsx and help-menu.tsx (PRD sidebar-titlebar-refresh D-05, D-08, D-11, D-12; PRD agent-logo-view-mode D-01, D-06): the Search row under the window's top row, a field-shaped button that reads Search and the bound ⌘K chord and opens the palette; the Projects list's section header, 10/500 on its baseline in a 26 row on the sidebar's fill, which sticks to the list's top and wears a hairline while rows pass under it, Pinned led by the pin (its rows carry none) and Projects ending in Add project; the View menu the footer's eye opens: the Agent logo label, Show beside each row and Hide with a check on the current one and, under a separator, the key line that names the key held to peek, which takes no press; and the Help menu the footer's ? opens: Keyboard shortcuts with its chord, Copy diagnostics, Report an issue and, under a separator, the hide version line, which takes no press.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -48378,6 +48378,134 @@
             },
             {
               "type": "frame",
+              "id": "sbc-view-l-cell",
+              "name": "View menu",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-view-l-cap",
+                  "name": "View menu",
+                  "content": "View menu",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "sbc-view-l",
+                  "name": "View menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sbc-view-l-label",
+                      "name": "Label",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-view-l-label-t",
+                          "name": "Agent logo",
+                          "content": "Agent logo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    },
+                    {
+                      "id": "sbc-view-l-shown",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Show beside each row",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Show beside each row"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-view-l-hidden",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Hide",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": true,
+                          "icon": "check"
+                        },
+                        "mnu-item-label": {
+                          "content": "Hide"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-view-l-sep",
+                      "type": "ref",
+                      "ref": "mnu-sep-m",
+                      "name": "Separator"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sbc-view-l-key",
+                      "name": "Key line",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-view-l-key-t",
+                          "name": "Hold ⌥ to peek",
+                          "content": "Hold ⌥ to peek",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "padding": "$--spacing-xxs",
+                  "width": 220,
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
               "id": "sbc-help-l-cell",
               "name": "Help menu",
               "children": [
@@ -48643,6 +48771,134 @@
                       "enabled": true
                     }
                   }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "sbc-view-d-cell",
+              "name": "View menu",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "sbc-view-d-cap",
+                  "name": "View menu",
+                  "content": "View menu",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "sbc-view-d",
+                  "name": "View menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sbc-view-d-label",
+                      "name": "Label",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-view-d-label-t",
+                          "name": "Agent logo",
+                          "content": "Agent logo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    },
+                    {
+                      "id": "sbc-view-d-shown",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Show beside each row",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": false
+                        },
+                        "mnu-item-label": {
+                          "content": "Show beside each row"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-view-d-hidden",
+                      "type": "ref",
+                      "ref": "mnu-item-m",
+                      "name": "Hide",
+                      "descendants": {
+                        "mnu-item-icon": {
+                          "enabled": true,
+                          "icon": "check"
+                        },
+                        "mnu-item-label": {
+                          "content": "Hide"
+                        },
+                        "mnu-item-reason": {
+                          "enabled": false
+                        },
+                        "mnu-item-shortcut": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "sbc-view-d-sep",
+                      "type": "ref",
+                      "ref": "mnu-sep-m",
+                      "name": "Separator"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sbc-view-d-key",
+                      "name": "Key line",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sbc-view-d-key-t",
+                          "name": "Hold ⌥ to peek",
+                          "content": "Hold ⌥ to peek",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "padding": "$--spacing-xxs",
+                  "width": 220,
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
                 }
               ],
               "layout": "vertical",
@@ -65809,6 +66065,14 @@
           }
         }
       ]
+    },
+    "--size-hide-badge": {
+      "type": "number",
+      "value": 11
+    },
+    "--size-hide-badge-mark": {
+      "type": "number",
+      "value": 9
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

@@ -8,6 +8,7 @@
   "editor_tab_kind": ["file", "diff", "session"],
   "first_run_step": ["agents", "notifications", "project", "done"],
   "screen_intro": ["factory"],
+  "agent_logo_mode": ["shown", "hidden"],
   "factory_attempt_outcome": ["passed", "failed", "environment", "cancelled", "running"],
   "factory_attempt_stage": ["task", "pre_merge"],
   "factory_column": ["before", "moving", "stuck", "done"],

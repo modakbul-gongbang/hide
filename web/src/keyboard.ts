@@ -198,7 +198,7 @@ export function installKeyboard(actions: Actions): () => void {
       const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
       if (!target) return;
       if (numbered.family === "tabs") actions.focusTab(target);
-      else actions.openAgent(target);
+      else actions.openListedAgent(target);
       return;
     }
     switch (id) {

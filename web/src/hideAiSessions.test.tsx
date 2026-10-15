@@ -21,19 +21,19 @@ afterAll(() => browserCanvas.restore());
 
 // The Sessions tab's rows as the operator sees them when Hide AI started one
 // of the agents (PRD hide-ai-origin-mark B4, B9).
-function row(id: string, over: Partial<AgentRow> = {}): AgentRow {
+function row(id: string, over: Partial<AgentRow> = {}, group: "working" | "needs_you" = "working"): AgentRow {
   return {
     ...legacyAgentRow({ id, pane_id: id, identity_label: `작업 ${id}`, agent_kind: "claude", symbol: "○", group: "seen", demand: "none", unread: false, status_code: "idle", emphasized: false, changed_at_unix_ms: 1, ...over }),
-    state: { ...legacyAgentRow({}).state, session: { group: "working", line: "", unfinished: false } },
+    state: { ...legacyAgentRow({}).state, session: { group, line: "", unfinished: false } },
   } as AgentRow;
 }
 
-it("draws the owl on the Sessions row of an agent Hide AI started, names Hide AI in its label, and leaves the operator's row plain", async () => {
+/** The Sessions tab over `agents`, all in the one section `group`. */
+async function render(agents: AgentRow[], group: "working" | "needs_you") {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const agents = [row("operator"), row("started", { hide_ai: { task: { kind: "memory_promote", target: "m43" } } })];
   const scope: AgentScope = { ...emptyScope(),
     members: agents.map((agent) => ({ pane_id: agent.pane_id, project_id: "project", checkout_id: "main" })),
-    sessions: { groups: [{ group: "working", members: [0, 1] }] },
+    sessions: { groups: [{ group, members: agents.map((_, index) => index) }] },
   };
   const checkout = { id: "main", workspace_id: "project", label: "main", branch: "main", path: "/fixture", agent_scope: scope, tabs: [{ id: "tab", panes: agents.map((agent) => ({ id: agent.pane_id })) }] } as unknown as Checkout;
   const project = { id: "project", device_id: "local", label: "프로젝트", path: "/fixture", is_git: true, agent_scope: scope, checkouts: [checkout] } as Workspace;
@@ -44,8 +44,22 @@ it("draws the owl on the Sessions row of an agent Hide AI started, names Hide AI
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
+  await act(async () => root.render(<TooltipProvider><AgentSessions actions={createActions(() => true)} /></TooltipProvider>));
+  return {
+    container,
+    cleanup: async () => {
+      await act(async () => root.unmount());
+      container.remove();
+      useShellStore.setState(shell, true);
+      useUiStore.setState(ui, true);
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
+it("draws the owl on the Sessions row of an agent Hide AI started, names Hide AI in its label, and leaves the operator's row plain", async () => {
+  const { container, cleanup } = await render([row("operator"), row("started", { hide_ai: { task: { kind: "memory_promote", target: "m43" } } })], "working");
   try {
-    await act(async () => root.render(<TooltipProvider><AgentSessions actions={createActions(() => true)} /></TooltipProvider>));
     const started = container.querySelector('[data-session-row="started"]');
     expect(started).not.toBeNull();
     expect(started?.querySelector("[data-hide-mark]")).not.toBeNull();
@@ -58,10 +72,19 @@ it("draws the owl on the Sessions row of an agent Hide AI started, names Hide AI
     expect(operators?.querySelector("[data-agent-mark]")).toBeNull();
     expect(operators?.querySelector("[data-session-focus]")?.getAttribute("aria-label")).not.toContain("Hide AI");
   } finally {
-    await act(async () => root.unmount());
-    container.remove();
-    useShellStore.setState(shell, true);
-    useUiStore.setState(ui, true);
-    vi.unstubAllGlobals();
+    await cleanup();
+  }
+});
+
+// PRD hide-ai-work-home D-14, D-16, B8, B9, B12.
+it("draws what the home waits for under a Needs You row it owns, and names it in the row's label", async () => {
+  const owned = row("owned", { hide_ai: { task: { kind: "memory_promote", target: "m72" }, home: "memory", workspace_id: "project", turn: { kind: "ci_failed", pr_number: 924 } } }, "needs_you");
+  const { container, cleanup } = await render([owned], "needs_you");
+  try {
+    const line = container.querySelector('[data-session-row="owned"] [data-session-line="home-turn"]');
+    expect(line?.textContent).toBe("CI failed");
+    expect(container.querySelector('[data-session-row="owned"] [data-session-focus]')?.getAttribute("aria-label")).toContain("Hide AI · Promote Memory · m72 · CI failed");
+  } finally {
+    await cleanup();
   }
 });

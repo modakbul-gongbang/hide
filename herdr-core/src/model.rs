@@ -562,10 +562,40 @@ pub struct NavigatorSnapshot {
 
 /// Hide AI started this agent, read from the coordination ledger's record of
 /// the spawn and never from a branch name. `task` is what it was started for.
+///
+/// A kind with a home makes the row the home's: it leaves the operator's
+/// lists and reaches Needs You only on the operator's turn (PRD
+/// hide-ai-work-home D-06, D-13). A kind this build has no home for keeps
+/// its mark and stays an operator row (D-19).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct HideAiSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::coordination::SpawnTask>,
+    /// The screen that owns this agent's work; absent for a kind this build
+    /// has no home for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home: Option<crate::coordination::TaskHome>,
+    /// The catalog Project whose home shows the work, once the home has
+    /// recorded the attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// What the home waits for the operator to do, beyond what the agent
+    /// itself asks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn: Option<HomeTurn>,
+}
+
+/// The home's turn: the operator is to act on the work the agent did
+/// (D-14). The agent's own question, approval or block is the row's demand,
+/// not this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HomeTurn {
+    /// The pull request is open, ready, passing or unchecked, and nobody
+    /// asked for changes: it waits for the operator's review.
+    PrReview { pr_number: u64 },
+    /// Checks failed and the agent is not at work on them.
+    CiFailed { pr_number: u64 },
 }
 
 /// A checkout Hide AI made for an agent it started.
@@ -2509,6 +2539,34 @@ impl ThemePreference {
     }
 }
 
+/// Whether the sidebar, the Sessions list and the tab bar draw an agent's
+/// provider logo before its title (PRD agent-logo-view-mode D-02). Hidden is the
+/// quiet default, so an update never changes a screen on its own (D-03).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLogoMode {
+    Shown,
+    #[default]
+    Hidden,
+}
+
+impl AgentLogoMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shown => "shown",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "shown" => Some(Self::Shown),
+            "hidden" => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+}
+
 /// The palette every window draws in (Settings > Appearance > Color theme),
 /// independent of the Mode above: Hide is the landing page's Owl Field
 /// colors, Neutral the grey chrome. Hide is the default, including for a store
@@ -3225,6 +3283,9 @@ pub struct UiStateSnapshot {
     /// The web shell's mode (Light, Dark or System).
     #[serde(default)]
     pub theme: ThemePreference,
+    /// Whether list rows and tabs draw the agent's logo (`agent_logo_mode_set`).
+    #[serde(default)]
+    pub agent_logo_mode: AgentLogoMode,
     /// The palette every window draws in; `color_theme_set` owns it.
     #[serde(default)]
     pub color_theme: ColorTheme,
@@ -3798,6 +3859,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            agent_logo_mode: AgentLogoMode::Hidden,
             color_theme: ColorTheme::Hide,
             interface_language: None,
             usage: Default::default(),
@@ -6174,6 +6236,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "screen_intro", &intros);
         checked.insert("screen_intro");
+
+        let logo_modes = [AgentLogoMode::Shown, AgentLogoMode::Hidden];
+        for variant in logo_modes {
+            match variant {
+                AgentLogoMode::Shown | AgentLogoMode::Hidden => {}
+            }
+        }
+        assert_wire(&contract, "agent_logo_mode", &logo_modes);
+        checked.insert("agent_logo_mode");
 
         let kit_availability = [
             hide_kit::Availability::Available,

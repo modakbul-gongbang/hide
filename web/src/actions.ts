@@ -8,7 +8,7 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
+import type { AgentLogoMode, AgentLogoModeSetPayload, ColorThemeSetPayload, FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints, UsagePinSetPayload, UsageHiddenSetPayload } from "./generated/hided-ws";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
@@ -64,6 +64,8 @@ import {
 import { fileUrl, isHtmlFile } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { terminalPathOwner, type FoundPath } from "./terminalLinkProvider";
+import { homeOpening } from "./hideAiOrigin";
+import { agentsByPane, allAgents as allPaneAgents } from "./paneAgents";
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
@@ -961,6 +963,12 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "color_theme_set", payload });
     },
 
+    /** One typed event; the core owns whether list rows and tabs draw the agent's logo (PRD agent-logo-view-mode D-07). */
+    setAgentLogoMode(mode: AgentLogoMode) {
+      const payload = { mode } satisfies AgentLogoModeSetPayload;
+      dispatch({ schema_version: 2, kind: "agent_logo_mode_set", payload });
+    },
+
     /** Sleep idle agents after `hours`; null is Never (PRD agent-sleep B2). */
     setAgentSleepAfter(hours: number | null) {
       dispatch({ schema_version: 2, kind: "agent_sleep_set", payload: { after_hours: hours } });
@@ -1559,6 +1567,20 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });
     },
 
+    /**
+     * An agent chosen in a list that shows only what the operator has to do
+     * (the sidebar, Sessions, a digit): a row its home owns opens the home,
+     * the Memory tab with that attempt's row open, and any other row its pane
+     * (PRD hide-ai-work-home B11). Its pane stays one link away from there.
+     */
+    openListedAgent(paneId: string) {
+      const state = useShellStore.getState();
+      const agent = agentsByPane(allPaneAgents(state.agents, state.rest?.status?.remote)).get(paneId);
+      const home = homeOpening(state.rest, agent);
+      if (home) return this.openMemoryCard(home.deviceId, home.workspaceId, home.number);
+      this.openAgent(paneId);
+    },
+
     openAgent(paneId: string) {
       beginOpening({ paneId });
       const node = localDeviceId(rest());
@@ -2075,9 +2097,10 @@ export function createActions(send: DispatchFn) {
     },
 
     openUsageHistory() {
+      // Opening Home resets its view to Agents, so the view is chosen after Overview opens.
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
       ui().setOverviewProject(null);
       ui().setMainView("usage");
-      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openAgentsOverview() {

@@ -689,6 +689,26 @@ impl Runtime {
         // group, so a letter's step or a watch never rebuilds the lineage.
         let started = crate::coordination::started::hide_started(&ledger);
         let started_moved = started != self.hide_started;
+        // An agent whose kind this build has no home for stays an operator's
+        // row (PRD hide-ai-work-home D-19); said once, when it first shows.
+        for agent in started.agents.iter().filter(|agent| {
+            agent
+                .task
+                .as_ref()
+                .is_none_or(|task| task.kind.home().is_none())
+                && !self
+                    .hide_started
+                    .agents
+                    .iter()
+                    .any(|known| known.agent_id == agent.agent_id)
+        }) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "coordination",
+                "kind": "hide_ai.task_kind_unknown",
+                "agent_id": agent.agent_id,
+                "task_kind": agent.task.as_ref().map(|task| task.kind.as_str().chars().take(64).collect::<String>()),
+            }));
+        }
         self.hide_started = started;
         self.delivery_ledger = Ok(ledger);
         let continued = self.settle_dormant_registrations();

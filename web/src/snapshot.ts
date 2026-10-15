@@ -6,7 +6,7 @@ import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
-import type { UsagePreferences } from "./generated/hided-ws";
+import type { AgentLogoMode, UsagePreferences } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
@@ -66,8 +66,18 @@ export type RaisedAsk = {
 /** What Hide AI started an agent for, as codes the screen words (`memory_promote`, the card `m72`). */
 export type HideAiTask = { kind: string; target?: string };
 
-/** Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none. */
-export type HideAi = { task?: HideAiTask };
+/** The screen that owns what a Hide AI task does (PRD hide-ai-work-home D-10); a kind the core has no home for carries none. */
+export type HideAiHome = "memory";
+
+/** What the home waits for the operator to do, beyond what the agent itself asks (D-14); the core decides it. */
+export type HomeTurn = { kind: "pr_review" | "ci_failed"; pr_number: number };
+
+/**
+ * Hide AI started this agent (PRD hide-ai-origin-mark D-01); `task` is absent for a start that named none.
+ * With a `home` the row belongs to that screen: it is listed only while the operator has something to do,
+ * `workspace_id` names the catalog Project whose home shows it and `turn` what that home waits for.
+ */
+export type HideAi = { task?: HideAiTask; home?: HideAiHome; workspace_id?: string; turn?: HomeTurn };
 
 /** A checkout Hide AI made for an agent it started, joined to a checkout by device and path. */
 export type HideAiCheckout = { device_id: string; path: string; task?: HideAiTask };
@@ -1769,6 +1779,8 @@ export type SnapshotRest = {
     accent_hex?: string;
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
+    /** Whether list rows and tabs draw the agent's logo (`contracts/snapshot-wire-enums.json`: `agent_logo_mode`); absent reads as hidden. */
+    agent_logo_mode?: AgentLogoMode;
     /** `hide` or `neutral` (`contracts/snapshot-wire-enums.json`: `color_theme`); the page reads anything else as Hide. */
     color_theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */

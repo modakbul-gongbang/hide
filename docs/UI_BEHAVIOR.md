@@ -116,7 +116,7 @@ Agent Views is always live: clicking a pane or a tab focuses it and typing goes 
 A lane going out of sight with the keyboard inside it, or a files tool another tool replaces while the keyboard is in its documents, hands the keyboard to the focused pane.
 Tab never walks into a lane out of sight: a lane put away is inert and holds no Escape layer or focus return, and a native page in it is hidden before it goes inert.
 
-An Agent tab shows the focused pane's status mark, then title, with no provider logo, using the sidebar row's title and mark rules; a tab with no agent keeps the neutral `>_`.
+An Agent tab shows the focused pane's status mark, then title, using the sidebar row's title and mark rules; the agent's logo stands between them only while the agent logo view mode shows it ([Agent logo view mode](#agent-logo-view-mode)); a tab with no agent keeps the neutral `>_` in both modes.
 A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's chosen agent title (manual name, Hide AI goal, automatic name, then provider, as [Task identity](status-model.md#task-identity) defines), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
 A plain terminal tab shows the terminal icon and that name; terminal titles are never used to guess a process.
 Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
@@ -382,7 +382,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
 The provider logo is drawn on a pane's own header, and in the heads and places that are about the agent or its provider itself: the start picker, Settings, the footer's usage chips and the Usage pages, the session record's head, a Project conversation's detail head, the tree popover's head, the last-words popover's head, the phone's detail head, the Memory tab's Hide AI chip, the Factory card and the first-run tiles.
-No list row draws it: the sidebar and Sessions rows, the Agent tabs, ⌘K and the recent-pane list, the link sessions, the Agents graph, the Issue card, list and panel rows, a session record's children, a Project's conversation list and the phone's list lead with the status mark alone (PRD agent-mark-quiet).
+The sidebar and Sessions rows and the Agent tabs draw it only by the operator's choice or while ⌥ is held ([Agent logo view mode](#agent-logo-view-mode)); ⌘K and the recent-pane list, the link sessions, the Agents graph, the Issue card, list and panel rows, a session record's children, a Project's conversation list and the phone's list lead with the status mark alone in both modes (PRD agent-mark-quiet).
 A pane header draws exactly one logo, the pane's own agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
 A row without a logo names its agent by product name (`Claude Code`, `Codex`, the adapter's label, never the raw kind) in its hover hint and its accessible name, and the pane header's logo and title say it the same way.
 Only a plain shell and an agent Hide does not support draw the neutral `>_`.
@@ -479,19 +479,57 @@ While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
 Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
-### Rows Hide AI started
+### Work Hide AI does for a home
 
-Hide AI starts agents for the operator by itself (today a Memory card's `올리기`), and the screen tells them from the agents the operator started with one fact, that Hide AI started it; the work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work.
-The fact comes only from the coordination record of the spawn (`docs/delivery.md`), never from a branch or worktree name: a checkout the operator made by hand on a branch called `hide-memory-m9` is an ordinary checkout.
-In a project's tree the checkouts Hide AI made gather behind the operator's under a `Hide AI` head, its 12 mark, its name and the number of checkouts; the head exists only while the project has one and goes with the last, and the rows inside carry no badge.
-An opened checkout in the group shows a second line under its agent row with the task (`Memory 올리기 · m43`), and a folded one puts the task in the purpose line's place ahead of the purpose (`Memory 올리기 · m72 · PR 없이 끝남`); a start the core named no task for says `Hide AI` alone, and nothing else is invented.
-A checkout in one of the folds (`에이전트 없는 워크트리`, `정리할 것`, inactive) stays in that fold and names its task there.
-The group is by who made the checkout and the task line and badge are by who started the agent, so an agent the operator started in a Hide AI worktree has neither, and a Hide AI agent has both wherever it is listed.
-Where a row stands alone, in the sidebar's Needs You and Done and in Sessions, the Hide owl mark stands beside the status mark in the place of a provider logo, and a place line names the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`); a row the operator started and a delegated child have neither.
-The row's accessible name carries `Hide AI` and the task (`Hide AI · Memory 올리기 · m72`), and the head's list is named `Hide AI, N`.
-A connected device's projects get the same group and badges, and they hold across a restart of hided because the ledger is persisted.
-The digits that number agent rows follow the drawn order, so the checkouts Hide AI made are numbered after the operator's.
-Web owners: `web/src/hideAiOrigin.ts` (the words, the place line and the split of a project's checkouts), `web/src/AgentMark.tsx` (the owl and the pane header's mark), `web/src/sidebar.tsx` (the head and the group) and `web/src/components/sidebar-agent-row.tsx` (the task line); core owner: `herdr-core/src/coordination/started.rs`.
+Hide AI starts agents for the operator by itself (today a Memory card's `올리기`), and the work belongs to a screen, its home, not to the operator's agent lists (PRD hide-ai-work-home).
+The Memory tab's To ask row is the home of a promotion: it shows the progress, the pull request, the failure and the agent link, and it is where the work is read and acted on.
+The fact that Hide AI started an agent comes only from the coordination record of the spawn (`docs/delivery.md`), never from a branch or worktree name: a checkout the operator made by hand on a branch called `hide-memory-m9` is an ordinary checkout.
+The work is named in words, `Memory 올리기 · m72`, and never by an icon of its own, because Hide AI will start other work, each kind with its own home.
+`docs/status-model.md`, Work Hide AI does for a home, owns the ownership value, the group rule and the turn table; this section owns what the screen draws.
+
+While the agent works, finishes or rests, the work is in no list: not the sidebar's tree or Working, not Sessions' Working, Done or Idle, not the phone's list, not Overview's requests and graph, and it moves no badge, rail count, checkout count, desktop notification or push.
+The agent is still found by ⌘K, the recent panel, the tab strip and `hide agent list`, and its pane header keeps the owl; only the lists that enumerate the operator's work leave it out.
+The sidebar tree has no `Hide AI` head, and a checkout Hide AI made is drawn as an ordinary checkout only while it is the front checkout or an agent the operator started works in it; the Hide AI agent's own row is never in a tree.
+The same rule applies inside the empty-worktree and Inactive folds, so a fold's count is of the checkouts it draws; the cleanup fold lists every cleanup candidate, because reviewing them is its job, and that is where a worktree kept after its pull request settled is found.
+
+The operator is called out in two cases, and both are one row in the sidebar's Needs You and Sessions' Needs You with the owl beside the status mark, the task name and a place line naming the task where the branch would stand (`herdr-ide › Memory 올리기 · m72`).
+The agent asks: a question, an approval or a block, with the same read rules as an operator's row, so an AI-inferred question leaves once read and a block or native question stays until answered.
+The home has a turn: the attempt's pull request is open, ready, passing or unchecked and nobody asked for changes, so the second line is `PR #924 리뷰` and the row stays after it is read until the pull request is merged, closed, made a draft, or gets a requested change or a failed check; or checks failed and the agent is no longer working, so the second line is `CI 실패` until the agent works again.
+A draft, running checks and a requested change are the author's turn and draw nothing.
+A row has one line, and its second line is the agent's ask or its block's cause, then `CI 실패`, then `PR #n 리뷰`; the core decides the turn and the screen only words it.
+The row's accessible name carries `Hide AI`, the task and the turn (`Hide AI · Memory 올리기 · m72 · PR #924 리뷰`).
+An attempt with no live agent (a failure with no pull request, an open pull request after the operator closed the pane) never has a row; the Memory tab alone shows it, as it did.
+
+Choosing the row, by click, by its digit or from its desktop notification, does not go to the pane: it opens the Tools lane on the Memory tab of the row's Project with that attempt's To ask row open, and the `Agent ↗` link there opens the pane.
+A row whose Project the core has not yet named opens the pane as any row does.
+The phone's Needs You row opens the agent's detail.
+The digits that number agent rows follow the drawn order, so a Hide AI row is numbered with the Needs You rows above the tree and no checkout of its own takes a digit.
+
+When GitHub reports the attempt's pull request merged or closed, the row leaves Needs You, the agent ends and its pane closes, and the worktree is removed when its tree is clean and no other agent or running program is in it; the branch is always kept, and a pull request reopened later does not revive the attempt.
+A worktree that is dirty or in use stays and is named in the diagnostic log, and it appears in the disk cleanup review; nothing is removed while GitHub's answer is missing, and an attempt already merged or closed before an upgrade is retired the same way on the next start.
+A kind of Hide AI task this build does not know, or a record with no task, shows its agent as an operator's row naming its task (`Hide AI` alone for none) and leaves the rest of the ledger alone.
+A feature that makes Hide AI start a new kind of agent names the kind's home in code, and chooses what its turn and cleanup are, before it has a row.
+A connected device's agents follow the same rules, and they hold across a restart of hided because the ledger is persisted.
+Web owners: `web/src/hideAiOrigin.ts` (the words, the place line, the turn line, whether a tree draws a checkout, where a row opens), `web/src/AgentMark.tsx` (the owl, the badge and the pane header's mark), `web/src/AgentRowMark.tsx` (the row's mark by view mode), `web/src/sidebar.tsx` and `web/src/components/sidebar-agent-row.tsx` (the rows), `web/src/AgentSessions.tsx` (Sessions' row) and `openListedAgent` in `web/src/actions.ts`; core owners: `herdr-core/src/coordination/started.rs`, `herdr-core/src/agent_state/axes.rs` and `herdr-core/src/runtime/memory_promotion.rs`.
+
+### Agent logo view mode
+
+The sidebar footer carries a View menu between the usage chips and Help: an eye button whose hint and accessible name are `보기` (`View`).
+It opens above the footer with the label `에이전트 로고`, two choices, `행 왼쪽에 표시` and `숨기기`, with a check on the current one, a separator, and a muted line that is not a choice: `⌥ 누르고 있으면 잠깐 보기` (`Alt` on Windows and Linux).
+Arrow keys move through the choices, Enter chooses, and Escape or a click outside closes the menu without changing anything and returns focus to the button.
+Choosing the checked choice only closes the menu.
+While the daemon is not connected both choices are disabled and the check stays on the last value received.
+A browser has no Agents hold, so its menu has no key line and no peek.
+The choice is a core preference, `ui_state.agent_logo_mode` (`shown` or `hidden`, `hidden` when never chosen), changed only by `agent_logo_mode_set`; `ui_state_update` never changes it, the check always reads the core's value, every window of one daemon changes at once, and it survives a restart.
+A mode the core refuses leaves the check and the screens as they were and records a diagnostic, with no alert; a change the core accepts but cannot save is drawn as chosen until the next start and records `ui_state.save_failed`, as the theme does.
+Hidden is the default and draws the screens as before.
+Shown draws the agent's 16-pixel logo after the status mark and before the title in the sidebar's agent rows (a sleeping row after its moon), in Sessions rows and child rows, and in the Agent tabs; a row's second and branch lines indent past it in Sessions, and a kind with no logo draws the neutral `>_`.
+A row Hide AI started wears the owl as a badge on the logo.
+Search, overlays, Overview, a Project's conversation list, the graph, Task boards and the phone never follow the mode, and the pane header, the usage chips and the Usage pages draw their logos in both modes.
+While hidden, holding the Agents key (⌥, or Alt) draws the same logos for as long as the number keycaps show: the peek is the existing hold state, with its 0.15 second delay, its end on any other key, on a window that loses focus and while a layer is open, and it adds no key listener.
+Shown, the same hold shows only the keycaps.
+Changing the mode or peeking never changes a row's height, the scroll position or the selection.
+Web owners: `web/src/components/view-menu.tsx`, `web/src/agentLogoMode.ts` (the one rule), `web/src/AgentRowMark.tsx`, `web/src/TabBar.tsx`, `web/src/AgentSessions.tsx`, `web/src/components/sidebar-agent-row.tsx` and `web/src/components/sleeping-session-row.tsx`; core owner: `herdr-core/src/runtime/events.rs`.
 
 ### Subagent count
 
@@ -638,6 +676,8 @@ Checkboxes, links and action buttons perform only their own actions.
 An ordinary question opens its current body, cited files and sources below its action buttons, while a document disagreement opens Compare content.
 A progress row opens each card's title and a two-line body preview, followed by Open PR and Open agent where their real targets are available.
 Merged promotions leave To ask and become document pointers; closed-unmerged promotions leave To ask as ordinary cards and are not suggested again at that revision.
+A promotion row whose agent is alive is also in Needs You while the operator has something to do (`PR #n 리뷰` or `CI 실패`), and choosing that row opens this tab with it open (Work Hide AI does for a home); the row here still shows the progress, the pull request and the agent link whether or not it is in Needs You.
+When the pull request merges or closes, its agent ends and its worktree goes with the branch kept, so a closed attempt's `Agent ↗` link leaves with the pane.
 A card that was not processed returns with `Card was not processed · Ended without a PR` in warning text and the agent's reason behind the row; every failed row offers Retry, continuing the shared branch and PR, and `Don't promote`, which leaves an ordinary card.
 A card whose decision the code does not have yet, which another branch builds, stays in To ask as a progress row, `Goes in with the PR that builds it`, with `Agent ↗` to that branch's agent and `PR <number>` once its pull request is open; it asks nothing, puts no dot on the tab and is still given to agents, and that pull request's merge makes it a document pointer like any merged promotion.
 When nothing builds it, one row says `Not built yet · nothing builds it` with a clock mark in the checkbox slot and the agent's reason behind the row, and offers only `Keep as is`, which leaves an ordinary card that is not asked about again, its document disagreement included, until its text changes.
@@ -1235,21 +1275,22 @@ Opened folder projects use the same neutral selected fill and unboxed tab segmen
 Their required secondary lines and metadata remain visible.
 An opened checkout keeps its rows on the sidebar background, without an enclosing card, border or group fill.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
-Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth and, unless named, no row.
+Within an open checkout or plain folder, every operator root stands at one depth whatever tab holds it: tabs make no depth, and a tab adds only the quiet line below.
 The sidebar keeps each root and its complete lineage subtree together under the root's actual tab, in checkout tab order and then the core's root order.
 Groups stay separated by `--spacing-sm` (8px), without a card or border.
 The first group hangs `--spacing-xxs` (2px) under its checkout row, only so the checkout's fill and a selected row's never merge, and the last group ends with the same 8px before the next row, so every agent stands nearer its own checkout than the one below it.
 Root status marks share one axis on the checkout name's column, to the right of the checkout's kind glyph, so no agent row's leftmost ink stands left of its checkout's glyph and a `?` or `!` is scanned on one line.
 Lineage children keep their `--size-lineage-indent` (18px) step and elbow rails from that axis, and a root's lineage disclosure stays in the reserved trailing slot.
-A tab with two or more recognized agent panes draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
+A tab with two or more recognized agent panes, or with a manual name, draws a 1px vertical guide centered under the checkout's kind glyph (a plain folder's folder glyph) and spanning the group's rows, and opens with one quiet line at its head, a sidebar line and a hairline high, standing inside the guide like a row: the guide runs past it unbroken, the tab glyph stands on the status-mark column and the tab's name in 11px subtle text starts on the title column, so the tab reads as part of its checkout and never as a row beside the checkout's own glyph.
 The name is the tab's manual name, or localized `Tab N` from the core's stable number when it has none.
 Shell panes are not counted, children in other tabs do not inflate their parent's count, and a tab without a sidebar root draws no segment.
 Pointer or keyboard focus on the line shows its hint, the same name and its agent count.
 The line is a button with that accessible name: click, Enter and Space open the real tab without read-state or process effects, and it is a stop in the Arrow Up/Down and Home/End traversal, ahead of its segment's rows.
 The existing tab Rename still sets or clears the manual name; automatic tabbar titles remain independent.
-A single-agent tab draws no guide and no line even when named: its row alone is the segment, and the 8px gap between segments is the tab boundary.
+An unnamed single-agent tab draws no guide and no line: its row alone is the segment, and the 8px gap between segments is the tab boundary.
+Naming a single-agent tab with Rename brings its guide and line, and clearing the name takes them away again.
 A tab has no disclosure and the sidebar saves nothing about it; a stored fold choice from an earlier version is ignored on load and dropped on the next write.
-When two agents become one the segment loses its guide and line, and a second agent brings them back with the name the tab still has.
+When two agents become one an unnamed tab's segment loses its guide and line and a named one keeps them, and a second agent brings them back with the name the tab still has.
 At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x28 with the guide centered on x35, root status marks starting at x46 and titles at x62, and a tab line's glyph centered on the status-mark column at x52 with its name at x62; quiet agent rows are 28px high, using the existing 20px line and 4px vertical padding, and a tab line is 22px.
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
 Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
@@ -1725,7 +1766,7 @@ Web owner: `web/src/components/usage.tsx`, `web/src/components/usage-history.tsx
 The core owns account windows and shared preferences (`usage`, `ui_state.usage`); all limits refer to the core's own node, even with a remote device in front.
 The declaration lists all seven agents; only agents with a declared limit source appear in the footer and popover.
 
-The footer draws up to three pinned account windows, followed by Help and Settings.
+The footer draws up to three pinned account windows, followed by the View menu, Help and Settings.
 Defaults pin each supported agent's weekly window.
 Each chip shows the agent mark and its rounded percent, naming the window when the agent has multiple visible chips.
 A numberless not-started or expired chip always names its window.

@@ -1,5 +1,5 @@
 //! Lifecycle, completion, read and ownership axes, including lineage.
-use super::turn::{derive_from_axes, sort_agents};
+use super::turn::{AgentGroup, derive_from_axes, group_of, sort_agents};
 use crate::labels::analysis::LabelEnd;
 use crate::model::{AgentWait, PaneReadRecord, SidebarAgentSnapshot};
 use crate::sidebar::SessionAgentPayload;
@@ -70,6 +70,14 @@ pub enum Ownership {
     Operator,
     /// Delegated work. Its demands stay with its parent.
     Delegated,
+    /// Work Hide AI started for a screen that owns it, its home (PRD
+    /// hide-ai-work-home D-13). The row stays in the agent data, so links,
+    /// search, tabs and the phone still reach it, but it belongs to no
+    /// operator list: it reaches Needs You on the operator's turn alone, and
+    /// is Seen otherwise, never Working or Done. `operator_turn` is the
+    /// home's own turn (a pull request to review, a failed check), beside
+    /// the agent's own demand, which every row carries.
+    HideAi { operator_turn: bool },
 }
 
 /// Names each fork's source (`SidebarAgentSnapshot::forked_from`). A fork is
@@ -506,9 +514,23 @@ pub(crate) fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivi
 pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
     if agent.delegated {
         Ownership::Delegated
+    } else if let Some(home) = agent.hide_ai.as_ref().filter(|mark| mark.home.is_some()) {
+        Ownership::HideAi {
+            operator_turn: home.turn.is_some(),
+        }
     } else {
         Ownership::Operator
     }
+}
+
+/// Whether a row belongs in the lists that enumerate the operator's own work
+/// (the sidebar tree's roots, Sessions, Overview's requests and graph, the
+/// phone): a row its home owns is listed only while it is in Needs You, the
+/// one place the home calls the operator out (PRD hide-ai-work-home D-13).
+/// This is the one decision, so no list filters on its own.
+pub fn listed_for_operator(agent: &SidebarAgentSnapshot) -> bool {
+    !matches!(ownership_of(agent), Ownership::HideAi { .. })
+        || group_of(agent) == AgentGroup::NeedsYou
 }
 
 /// The demand axis of a projected row, for callers outside this module.
