@@ -52,7 +52,7 @@ Only when the window's frame itself cannot draw does the line take the whole win
 ### The right lane
 
 The Workspace body, under the top row, is Agent Views (the Agent area), one right lane, and the tool rail, 48px wide, at the window's right edge.
-The rail lists Work, Files, Changes and Memory from the top, each an icon alone (a kanban board, files, a file diff, a brain) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Work (Sessions and PRs), and Memory.
+The rail lists Work, Memory, Files and Changes from the top, the Project's tools before the checkout's, each an icon alone (a kanban board, a brain, files, a file diff) whose name and scope are its hint on hover and its accessible name, and the lane shows one of them at a time: Files (the View areas and the file tree), Changes (History), Work (Sessions and PRs), and Memory.
 A rail icon is drawn pressed, with a primary bar at the rail's edge, while the lane shows its tool; pressing it opens the lane on that tool, and pressing the pressed one closes the lane.
 Each icon's hint names the tool and its scope (`Files · settings-ui`, `Sessions · all of hide`); the tools have no chords of their own.
 While the lane does not show Files, its icon carries a badge counting the views open, also given as its accessible description; Memory's carries a dot while its Project has questions waiting.
@@ -581,7 +581,7 @@ Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider
 ## Project Memory: the Memory tab
 
 Web owner: `web/src/MemoryTab.tsx`, `web/src/memoryList.ts`; core owner: `herdr-core/src/runtime/project_memory.rs`, `herdr-core/src/runtime/memory_promotion.rs`.
-Memory is the rail's fourth tool, after Work, Files and Changes, and shows the Project of the checkout in front (PRD project-memory-v2 D-17, B19-B32).
+Memory is the rail's second tool, after Work and before Files and Changes, and shows the Project of the checkout in front (PRD project-memory-v2 D-17, B19-B32).
 The core opens one Project's Memory per daemon; the rail, whatever the lane holds, names its Project when it shows, when the front Project changes and when its window comes forward after another window named another Project, so the Memory icon's dot is current, and the tool reads until the core answers for its own.
 Its head is the `Auto memory 사용` switch and the Hide AI chip, the agent Hide AI asks now with its logo (the listed agent standing in while Runs on is past the usage limit or cannot answer); with Memory off, one line says what is sent where and a `데이터 삭제` link sits under it while the Project has cards.
 Turning the switch on when this Mac's agent hooks do not carry Memory yet updates them first and turns it on once they land.
@@ -897,7 +897,7 @@ Web owners: `web/src/AgentSessions.tsx`, `web/src/sessionPanel.ts`, and `web/e2e
 
 ### Work: the PRs lens and the PR card
 
-Work is the rail's first tool, drawn as a kanban board (PRD work-tab-pr-lens D-34, D-35), the rail reading `Work · Files · Changes · Memory` (`Work · 파일 · 변경 · 기억` in Korean); the name is `Work` in all four languages, and its icon tooltip and the lane header read `Work · <project> 전체`.
+Work is the rail's first tool, drawn as a kanban board (PRD work-tab-pr-lens D-34, D-35), the rail reading `Work · Memory · Files · Changes` (`Work · 기억 · 파일 · 변경` in Korean); the name is `Work` in all four languages, and its icon tooltip and the lane header read `Work · <project> 전체`.
 The Work tool holds the project's name, `Sessions | PRs` and the scope chip (`All checkouts` or `<checkout> only`); the lens a Workspace was last on, and the chip, are remembered per Workspace across restarts.
 A Workspace saved on the sessions tool (`agent_sessions`) opens on Work's Sessions lens, and the rest of its lane (open tool, pin, tree, widths) and its View layout stay.
 The switch has no numbers: a lens with something for the operator carries a warning dot, whose tooltip and accessible name say the lens and the count, `PRs · Needs You 4`, and PRs carries ⚠ instead of the count while its last GitHub read failed.
