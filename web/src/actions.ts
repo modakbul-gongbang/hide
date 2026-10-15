@@ -1567,6 +1567,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "archive_open", payload: { kind: "session", id: sessionId, workspace_id: workspaceId } });
     },
 
+    /**
+     * Deliver now on a pane whose letters wait on a possible draft: one event,
+     * and the core rings them as its doorbell would (docs/delivery.md). A press
+     * the core no longer stands behind is logged there, never shown.
+     */
+    deliverLettersNow(paneId: string) {
+      dispatch({ schema_version: 2, kind: "deliver_letters_now", payload: { pane_id: paneId } });
+    },
+
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     resolveSession(paneId: string) {
       dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });

@@ -1366,6 +1366,7 @@ pub(super) enum Event {
     PaneInputSubmitted(PaneTargetPayload),
     PaneInputSent(PaneTargetPayload),
     ResolveSession(PaneTargetPayload),
+    DeliverLettersNow(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     WakeSleepingSession(SleepingSessionPayload),
@@ -1598,6 +1599,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
         "resolve_session" => decode!(PaneTargetPayload, ResolveSession),
+        "deliver_letters_now" => decode!(PaneTargetPayload, DeliverLettersNow),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "wake_sleeping_session" => decode!(SleepingSessionPayload, WakeSleepingSession),
@@ -1906,6 +1908,7 @@ impl Runtime {
                 self.note_delivery_key(&payload.pane_id, "phone");
                 false
             }
+            Event::DeliverLettersNow(payload) => self.deliver_letters_now(&payload.pane_id),
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
             Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::WakeSleepingSession(payload) => self.request_dormant_wake(&payload.sleep_id),

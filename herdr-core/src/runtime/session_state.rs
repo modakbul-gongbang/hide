@@ -166,20 +166,57 @@ impl Runtime {
         }
     }
 
+    /// The doorbell's reasons for each pending letter after a pass at `now`.
+    /// A pass that moves neither a raise nor a waiting mark publishes
+    /// nothing, so the mark costs one publish when it shows and one when it
+    /// goes, never one per pass.
     pub(crate) fn publish_delivery_holds(
         &mut self,
         holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
+        now: u64,
     ) {
+        let waiting = self
+            .delivery_ledger
+            .as_ref()
+            .ok()
+            .map(|ledger| {
+                crate::delivery::doorbell::letters_waiting(
+                    ledger,
+                    &holds,
+                    &self.delivery_observations,
+                    now,
+                )
+            })
+            .unwrap_or_default();
         let holds = escalation::retain_raised_holds(&self.delivery_holds, holds);
-        if self.delivery_holds == holds {
+        if self.delivery_holds == holds && self.letters_waiting == waiting {
             return;
         }
         self.delivery_holds = holds;
+        self.set_letters_waiting(waiting);
         if (self.sync_session_state() | self.refresh_agent_scopes())
             && let Some(context) = &self.worker_context
         {
             context.notifier.notify();
         }
+    }
+
+    /// Logs each pane whose waiting mark appears or goes, with its count and
+    /// never a letter, so a held letter shown to the operator can be traced.
+    pub(super) fn set_letters_waiting(&mut self, waiting: BTreeMap<String, u32>) {
+        for (pane, letters) in &waiting {
+            if self.letters_waiting.get(pane) != Some(letters) {
+                crate::diagnostic!(serde_json::json!({"component":"delivery",
+                    "kind":"letter_mark.shown","pane_id":pane,"letters":letters}));
+            }
+        }
+        for pane in self.letters_waiting.keys() {
+            if !waiting.contains_key(pane) {
+                crate::diagnostic!(serde_json::json!({"component":"delivery",
+                    "kind":"letter_mark.cleared","pane_id":pane}));
+            }
+        }
+        self.letters_waiting = waiting;
     }
 
     fn project_session_state(&mut self) -> bool {
@@ -196,6 +233,7 @@ impl Runtime {
                 self.delivery_ledger.as_ref().ok().map(AsRef::as_ref),
                 &self.delivery_holds,
             );
+            row.letters_waiting = self.letters_waiting.get(&row.pane_id).copied();
             let record = self.snapshot.ui_state.resolved_sessions.get(&row.pane_id);
             let pending = self.pending_session_resolutions.get(&row.pane_id);
             if record.or(pending).is_some_and(|record| {

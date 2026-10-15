@@ -4,7 +4,7 @@
 //! at rest. Nothing here reads the terminal, and nothing clears or restores
 //! input; a TUI that redraws its footer or statusline cannot change a verdict.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
@@ -31,6 +31,10 @@ const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 /// wait until the letter expires.
 const RETRY_FIRST_MS: u64 = 5_000;
 const RETRY_LIMIT_MS: u64 = 120_000;
+/// How long a pane whose letters wait on a possible draft rests, with no
+/// input hide routed and no change of Herdr status, before the operator is
+/// shown that they wait (`docs/delivery.md`, Delivering a held letter now).
+pub(crate) const WAITING_MARK_REST_MS: u64 = 120_000;
 
 /// Why a pending letter was not belled. Each is an expected wait, so it goes
 /// to the diagnostic log and never to the screen.
@@ -165,6 +169,51 @@ pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
         return Err(Hold::Quiet);
     }
     Ok(())
+}
+
+/// The panes the operator is shown letters waiting on, with how many: a
+/// pending letter waits there only because a draft may stand in the
+/// composer (`Hold::Draft`, the doorbell's last reason for it), the pane
+/// still holds that draft and has rested for `WAITING_MARK_REST_MS`. Every
+/// other hold resolves itself and shows nothing. A pane is listed only while
+/// a bell can still ring for one of its letters, since Deliver now rings as
+/// the doorbell does; the count is every letter held there, which the bell
+/// turn brings together. Memory only, bounded by the open letters.
+pub(crate) fn letters_waiting(
+    ledger: &Ledger,
+    holds: &BTreeMap<String, Hold>,
+    observations: &HashMap<String, Observation>,
+    now: u64,
+) -> BTreeMap<String, u32> {
+    if !holds.values().any(|hold| *hold == Hold::Draft) {
+        return BTreeMap::new();
+    }
+    let mut waiting = BTreeMap::<&str, (u32, bool)>::new();
+    for letter in &ledger.letters {
+        if letter.state != State::Pending || holds.get(&letter.id) != Some(&Hold::Draft) {
+            continue;
+        }
+        let pane = letter.recipient.pane_id.as_str();
+        let Some(observation) = observations.get(pane).filter(|observation| {
+            observation.actor.same_identity(&letter.recipient) && observation.unsent_draft()
+        }) else {
+            continue;
+        };
+        let rest_since = observation
+            .last_input_at_unix_ms
+            .max(observation.status_changed_at_unix_ms);
+        if now.saturating_sub(rest_since) < WAITING_MARK_REST_MS {
+            continue;
+        }
+        let (count, ringable) = waiting.entry(pane).or_default();
+        *count += 1;
+        *ringable |= letter.attempts() < 3;
+    }
+    waiting
+        .into_iter()
+        .filter(|(_, (_, ringable))| *ringable)
+        .map(|(pane, (count, _))| (pane.to_owned(), count))
+        .collect()
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -372,6 +421,7 @@ impl Doorbell {
                 .iter()
                 .map(|(id, hold)| (id.clone(), *hold))
                 .collect(),
+            now,
         );
     }
 
@@ -597,6 +647,7 @@ mod tests {
             last_input_at_unix_ms: NOW - 60_000,
             last_submit_at_unix_ms: NOW - 60_000,
             entered_working_at_unix_ms: NOW - 120_000,
+            released_input_at_unix_ms: 0,
             session: None,
             host_scope: None,
             turn: if kind == "codex" {
@@ -1177,6 +1228,233 @@ mod tests {
             line(&ledger, &warning),
             "🔔 label-end-fix 감시: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
+    }
+
+    /// docs/delivery.md, Delivering a held letter now: the operator is shown
+    /// a pane's letters only while they wait on a possible draft and the pane
+    /// has rested two minutes, counted from its last key or change of status.
+    #[test]
+    fn letters_wait_visibly_only_on_a_draft_in_a_pane_rested_two_minutes() {
+        use crate::delivery::{ledger::Ledger, mailbox};
+        let root = tempfile::tempdir().unwrap();
+        let (_runtime, sender, recipient, _) =
+            crate::runtime::delivery::tests::fixture(root.path());
+        let mut ledger = Ledger::default();
+        let send = |ledger: &mut Ledger, intent: &str| {
+            mailbox::send(
+                ledger,
+                &sender,
+                &recipient.actor,
+                intent,
+                "body",
+                "report",
+                None,
+                1,
+            )
+            .unwrap()
+            .id
+        };
+        let first = send(&mut ledger, "first");
+        let second = send(&mut ledger, "second");
+        let mut pane = recipient.clone();
+        pane.status = "idle".into();
+        pane.last_submit_at_unix_ms = NOW - 600_000;
+        pane.entered_working_at_unix_ms = NOW - 600_000;
+        pane.status_changed_at_unix_ms = NOW - 500_000;
+        pane.last_input_at_unix_ms = NOW - WAITING_MARK_REST_MS;
+        let pane_id = pane.actor.pane_id.clone();
+        let observed = |pane: &Observation| HashMap::from([(pane_id.clone(), pane.clone())]);
+        let draft = BTreeMap::from([(first.clone(), Hold::Draft), (second.clone(), Hold::Draft)]);
+        let waiting = |ledger: &Ledger, holds: &BTreeMap<String, Hold>, pane: &Observation, at| {
+            letters_waiting(ledger, holds, &observed(pane), at)
+        };
+
+        assert_eq!(
+            waiting(&ledger, &draft, &pane, NOW),
+            BTreeMap::from([(pane_id.clone(), 2)]),
+            "both letters held there, from the first moment of the two minutes"
+        );
+        assert!(
+            waiting(&ledger, &draft, &pane, NOW - 1).is_empty(),
+            "a key 1 ms short of it"
+        );
+        let mut moved = pane.clone();
+        moved.last_input_at_unix_ms = NOW - 600_000;
+        moved.last_submit_at_unix_ms = NOW - 700_000;
+        moved.status_changed_at_unix_ms = NOW - 60_000;
+        assert!(
+            waiting(&ledger, &draft, &moved, NOW).is_empty(),
+            "a status change a minute ago"
+        );
+
+        for hold in [
+            Hold::Quiet,
+            Hold::Working,
+            Hold::Launching,
+            Hold::NotReady,
+            Hold::Exhausted,
+        ] {
+            let other = BTreeMap::from([(first.clone(), hold), (second.clone(), hold)]);
+            assert!(
+                waiting(&ledger, &other, &pane, NOW).is_empty(),
+                "{hold:?} resolves itself"
+            );
+        }
+        let mixed = BTreeMap::from([(first.clone(), Hold::Draft), (second.clone(), Hold::Quiet)]);
+        assert_eq!(
+            waiting(&ledger, &mixed, &pane, NOW),
+            BTreeMap::from([(pane_id.clone(), 1)])
+        );
+
+        let mut released = pane.clone();
+        released.released_input_at_unix_ms = released.last_input_at_unix_ms;
+        assert!(
+            waiting(&ledger, &draft, &released, NOW).is_empty(),
+            "no draft stands"
+        );
+        let mut moved_on = pane.clone();
+        moved_on.actor.session = Some("another-session".into());
+        assert!(
+            waiting(&ledger, &draft, &moved_on, NOW).is_empty(),
+            "another session"
+        );
+
+        // A letter whose three bells are spent comes with a ringable one, and
+        // alone shows nothing, since pressing could ring nothing.
+        ledger.letters[1].bell_attempts = Some(3);
+        assert_eq!(
+            waiting(&ledger, &draft, &pane, NOW),
+            BTreeMap::from([(pane_id.clone(), 2)])
+        );
+        ledger.letters[0].bell_attempts = Some(3);
+        assert!(waiting(&ledger, &draft, &pane, NOW).is_empty());
+        ledger.letters[0].bell_attempts = None;
+        ledger.letters[0].state = State::Delivered;
+        ledger.letters[1].bell_attempts = None;
+        assert_eq!(
+            waiting(&ledger, &draft, &pane, NOW),
+            BTreeMap::from([(pane_id, 1)])
+        );
+    }
+
+    /// The press in the pane header rings the held letters with the line the
+    /// doorbell types, once, and the mark shows and goes as one change each.
+    #[test]
+    fn deliver_now_rings_a_letter_held_by_a_draft_with_the_doorbell_line() {
+        let bell = Bell::start(json!({}));
+        let rows: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
+            "agents": [{"id":"recipient","pane_id":"recipient","agent":"codex",
+                "agent_status":"idle","state_change_seq":2}]
+        }))
+        .unwrap();
+        crate::runtime::delivery::tests::show_agents(&mut bell.runtime.lock().unwrap(), rows);
+        let start = now();
+        // The operator typed into the pane long ago and never sent it.
+        bell.runtime
+            .lock()
+            .unwrap()
+            .note_delivery_key_at("recipient", start - WAITING_MARK_REST_MS - 10_000);
+        let mark = || {
+            let guard = bell.runtime.lock().unwrap();
+            guard
+                .snapshot()
+                .navigator
+                .agents
+                .iter()
+                .find(|row| row.pane_id == "recipient")
+                .unwrap()
+                .letters_waiting
+        };
+        let press = || {
+            crate::diagnostics::capture(|| {
+                bell.runtime.lock().unwrap().dispatch_json(
+                    &serde_json::to_vec(&json!({"schema_version": crate::model::SCHEMA_VERSION,
+                        "kind": "deliver_letters_now", "payload": {"pane_id": "recipient"}}))
+                    .unwrap(),
+                )
+            })
+            .1
+        };
+        let kinds = |records: &[Value]| -> Vec<String> {
+            records
+                .iter()
+                .filter(|record| record["pane_id"] == "recipient")
+                .filter_map(|record| record["kind"].as_str().map(str::to_owned))
+                .filter(|kind| !kind.starts_with("doorbell."))
+                .collect()
+        };
+        let mut doorbell = Doorbell::default();
+
+        // Before the doorbell has said the draft holds it, a press is refused.
+        let refused = press();
+        assert_eq!(kinds(&refused), ["deliver_now.refused"]);
+        assert_eq!(refused[0]["reason"], "no_letter_waiting");
+
+        let passes = crate::diagnostics::capture(|| {
+            for at in [start, start + 250, start + 500] {
+                doorbell.pass(&bell.runtime, &bell.client, &AtomicBool::new(false), at);
+            }
+        })
+        .1;
+        assert_eq!(held(&passes), ["draft"]);
+        assert_eq!(
+            kinds(&passes),
+            ["letter_mark.shown"],
+            "one change, not one per pass"
+        );
+        assert_eq!(mark(), Some(1));
+        assert!(bell.typed().is_empty());
+
+        // The press clears the mark at once, and the next pass rings.
+        assert_eq!(
+            kinds(&press()),
+            ["deliver_now.released", "letter_mark.cleared"]
+        );
+        assert_eq!(mark(), None);
+        let rung = crate::diagnostics::capture(|| {
+            doorbell.pass(&bell.runtime, &bell.client, &AtomicBool::new(false), now())
+        })
+        .1;
+        assert!(kinds(&rung).is_empty(), "the mark stays gone: {rung:?}");
+        let typed = bell.typed();
+        assert_eq!(typed.len(), 1);
+        assert_eq!(typed[0]["text"], "🔔 sender 보고: private · hide inbox");
+        assert_eq!(typed[0]["keys"], json!(["enter"]));
+        assert_eq!(bell.attempts(), 1);
+    }
+
+    /// A key that reaches the pane after the press is a draft again, so the
+    /// letter waits for it as before and nothing is typed over it.
+    #[test]
+    fn a_key_after_deliver_now_holds_the_letter_again() {
+        let bell = Bell::start(json!({}));
+        let start = now();
+        bell.runtime
+            .lock()
+            .unwrap()
+            .note_delivery_key_at("recipient", start - WAITING_MARK_REST_MS - 10_000);
+        let mut doorbell = Doorbell::default();
+        bell.pass(&mut doorbell, start);
+        bell.runtime.lock().unwrap().dispatch_json(
+            &serde_json::to_vec(&json!({"schema_version": crate::model::SCHEMA_VERSION,
+                "kind": "deliver_letters_now", "payload": {"pane_id": "recipient"}}))
+            .unwrap(),
+        );
+        bell.runtime
+            .lock()
+            .unwrap()
+            .note_delivery_key_at("recipient", now());
+        let at = now();
+        for pass in [at, at + 250, at + 1_000] {
+            bell.pass(&mut doorbell, pass);
+        }
+        assert!(bell.typed().is_empty());
+        assert_eq!(
+            bell.asked(),
+            0,
+            "a draft holds the letter before Herdr is asked"
+        );
+        assert_eq!(bell.attempts(), 0);
     }
 
     #[test]
