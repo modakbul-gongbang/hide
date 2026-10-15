@@ -110,7 +110,8 @@ No matched Orca comparison completed, so these results support no claim of relat
 
 ## Development
 
-Contributions go through pull requests gated by the `verify` workflow; `CONTRIBUTING.md` lists the gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.
+Report a bug you reproduced with the bug form and bring ideas to Discussions; pull requests are open only to maintainers and the people in `.github/APPROVED_CONTRIBUTORS`, and others are closed automatically.
+`CONTRIBUTING.md` owns that policy and lists the `verify` gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.
 
 Prerequisites are a Rust toolchain with Rust 2024 edition support, Node.js 22.12.0 or later, and pnpm 10.
 

@@ -323,6 +323,8 @@ class NamedPaths(unittest.TestCase):
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
             ".gitignore", "web/.gitignore", "LICENSE", "NOTICE", ".github/pull_request_template.md", ".github/dependabot.yml",
             ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/perf.yml",
+            ".github/ISSUE_TEMPLATE/bug.yml", ".github/DISCUSSION_TEMPLATE/ideas.yml", ".github/APPROVED_CONTRIBUTORS",
+            ".github/workflows/contribution-gate.yml",
             "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
             # The design contract's generators and checks, which `design-contract.yml` runs.
