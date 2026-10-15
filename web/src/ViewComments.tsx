@@ -79,6 +79,9 @@ export function OpenerMark({ opener, actions }: { opener: ViewOpener; actions: A
           closed ? "cursor-default opacity-[var(--opacity-dimmed)] grayscale" : "cursor-pointer",
         )}
         onPointerDown={(event) => event.stopPropagation()}
+        // The tab around it has its own hint; the mark's pointer and focus stay with the mark, so only its hint opens.
+        onPointerMove={(event) => event.stopPropagation()}
+        onFocus={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
         onClick={(event) => {

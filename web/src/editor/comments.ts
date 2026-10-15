@@ -255,7 +255,26 @@ export function viewComments(host: { current: CommentHost }): Extension {
     },
   ]);
 
-  return [field, commentGutter, hover, numbers, chord, commentTheme];
+  // A block is as wide as the visible text, not the longest line, and stays
+  // beside the gutters while the lines scroll sideways, so an unwrapped View
+  // keeps its note's buttons in sight. Measured only when the geometry moves.
+  const fit = ViewPlugin.define((view) => {
+    const measure = () =>
+      view.requestMeasure({
+        read: () => {
+          const gutters = view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0;
+          return { left: gutters, width: Math.max(0, view.scrollDOM.clientWidth - gutters) };
+        },
+        write: ({ left, width }) => {
+          view.dom.style.setProperty("--cm-view-comment-left", `${left}px`);
+          view.dom.style.setProperty("--cm-view-comment-width", `${width}px`);
+        },
+      });
+    measure();
+    return { update: (update) => (update.geometryChanged ? measure() : undefined) };
+  });
+
+  return [field, commentGutter, hover, numbers, chord, fit, commentTheme];
 }
 
 const commentTheme = EditorView.theme({
@@ -275,9 +294,13 @@ const commentTheme = EditorView.theme({
     lineHeight: "1",
     cursor: "pointer",
   },
-  ".cm-view-comment-add:focus-visible": { outline: "1px solid var(--ring)" },
+  ".cm-view-comment-add:focus-visible": { outline: "var(--size-hairline) solid var(--ring)" },
   ".cm-view-comment-bar": { display: "block", alignSelf: "stretch", width: "var(--size-tab-indicator)", marginLeft: "auto", background: "var(--primary)" },
   ".cm-view-comment": {
+    position: "sticky",
+    left: "var(--cm-view-comment-left, 0)",
+    boxSizing: "border-box",
+    width: "var(--cm-view-comment-width, 100%)",
     padding: "var(--spacing-xs) var(--spacing-md) var(--spacing-xs) var(--spacing-xl)",
     fontFamily: "var(--font-sans)",
     fontSize: "var(--text-body)",
