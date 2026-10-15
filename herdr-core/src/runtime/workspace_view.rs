@@ -443,7 +443,7 @@ impl Runtime {
         if let Some(store) = self.workspace_views.as_mut() {
             let entry = store.views.entry(&key.0, &key.1);
             let changed = entry.tool != Some(Tool::Memory);
-            entry.tool = Some(Tool::Memory);
+            entry.set_tool(Some(Tool::Memory));
             store.call_lane(key);
             if changed {
                 self.persist_workspace_views();
@@ -478,7 +478,7 @@ impl Runtime {
         };
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.tool, entry.tree);
-        entry.tool = Some(Tool::Files);
+        entry.set_tool(Some(Tool::Files));
         if intent == AreaIntent::RevealFolder {
             entry.tree = true;
         }
@@ -564,7 +564,7 @@ impl Runtime {
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
         if let Some(tool) = tool {
-            entry.tool = tool;
+            entry.set_tool(tool);
         }
         if let Some(lens) = lens {
             entry.work.lens = lens;
@@ -585,7 +585,7 @@ impl Runtime {
         }
         // A reveal is the tree's: the files tool with the tree on.
         if payload.reveal.is_some() {
-            entry.tool = Some(Tool::Files);
+            entry.set_tool(Some(Tool::Files));
             entry.tree = true;
         }
         if let Some(width) = payload.lane_width {
@@ -933,6 +933,7 @@ impl Runtime {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
             tool: view.tool,
+            last_tool: view.last_tool,
             work: view.work,
             pinned: view.pinned,
             tree: view.tree,

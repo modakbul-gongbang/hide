@@ -70,7 +70,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘E closes the lane that shows, and again brings it back on Files, the tool a closed lane opens to (B20).
+    // ⌘E closes the lane that shows, and again brings it back on Files, the tool it last showed (B20).
     await page.keyboard.press(chord("toggle_lane"));
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await page.keyboard.press(chord("toggle_lane"));

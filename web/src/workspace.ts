@@ -23,6 +23,8 @@ export type WorkspaceView = {
   path: string;
   /** The tool the lane shows, or null while the lane is closed. */
   tool: Tool | null;
+  /** The tool the lane last showed, kept while it is closed; null when it never showed one. */
+  last_tool: Tool | null;
   /** The Work tool's basis and scope. */
   work: WorkView;
   /** Whether the lane is pinned beside Agent Views rather than drawn over it (D-03). */
