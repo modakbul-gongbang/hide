@@ -407,7 +407,7 @@ Connection recovery resumes the current canonical projection; it does not mark a
 The disclosure chevron sits at the right edge of a Workspace row.
 The left edge holds the checkout-kind icon, title, and checkout badges.
 The representative status moves into the trailing agent summary chip immediately before the chevron.
-A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo (the pane header alone does; PRD agent-mark-quiet).
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status and title and draw no provider logo unless the operator's agent logo view mode shows it or an ⌥ hold peeks at it (the pane header always does; PRD agent-mark-quiet, PRD agent-logo-view-mode).
 A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
 Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
 A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
@@ -416,7 +416,7 @@ Collapsing does not change the selected pane, tab, agent read state, running pro
 `collapsed_checkout_ids` persists across launches.
 The web shell starts every checkout open and keeps explicit collapses in `session_collapsed_checkout_ids`, changed by `checkout_agents_toggle` and the admitted `focus_checkout` event.
 The older `expanded_checkout_ids` and `collapsed_checkout_ids` records do not determine web checkout disclosure.
-Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab line at a segment's head appears only when the tab holds at least two recognized agent panes and has a sidebar root.
+Inside an open checkout, actual tabs group complete root subtrees as segments of one list: every root stands on one status axis, a guide per tab marks the boundary, and the tab line at a segment's head appears only when the tab has a sidebar root and either holds at least two recognized agent panes or carries a manual name.
 The glyph's count describes physical agents in that tab, independently of root ownership or child disclosure; raised groups and sleeping sessions retain their existing positions.
 Tab names use the core's explicit manual-name and stable-number metadata rather than an automatic task label, and no tab fold is saved.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.

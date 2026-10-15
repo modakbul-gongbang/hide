@@ -196,7 +196,7 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
     await expect.poll(resizeCount).toBeGreaterThan(before);
     const resizeAfterRelease = await stableCount(resizeCount) - before;
     expect(resizeAfterRelease).toBe(panesShown);
-    await expect.poll(() => saved(run.env.HIDE_STATE_DIR!).workspaces.find((entry) => entry.path === checkout)).toMatchObject({ tool: "files", pinned: true, tree: false, lane_width: 488 });
+    await expect.poll(() => saved(run.env.HIDE_STATE_DIR!).workspaces.find((entry) => entry.path === checkout)).toMatchObject({ tool: "files", pinned: true, tree: true, lane_width: 488 });
     await page.reload();
     await expect(workspace).toHaveAttribute("data-lane-mode", "docked");
     await expect(divider).toHaveAttribute("aria-valuenow", "488");
@@ -284,8 +284,8 @@ test("the lane comes and goes over the terminals without a resize, the pin and a
     }
     if (dir) fs.writeFileSync(path.join(dir, "lane-echo.json"), JSON.stringify({ identity, pins, divider: { resizeDuringDrag: 0, resizeAfterRelease, panesShown, restoredLaneWidth: 488 }, transitions: { actions: transitionActions, originalSession, newViewRequests: newViews - beforeNewViews, terminalElementsRetained: true, drivenChanges, drivenDrag }, load: spawnSync("uptime", { encoding: "utf8" }).stdout.trim(), workload: "two visible shell panes; idle cat and driven line every 8ms in measured pane; 20 markers per idle, driven, driven-change and driven-drag phase; native captures at action states, no continuous blank-frame recording, baseline or speed claim", idle, driven }, null, 2));
     if (dir) {
-      await page.locator("[data-lane-more]").click();
-      await page.locator('[data-lane-menu-item="tree"]').click();
+      // Closing the lane left the tree on, so its rows are already there.
+      await expect(page.locator("[data-lane-tree]")).toBeVisible();
       await page.locator(`[data-explorer-row$="/${longName}"]`).click();
       await expect(page.locator("[data-view-tab-bar]")).toContainText(longName);
       for (const theme of ["dark", "light"] as const) {

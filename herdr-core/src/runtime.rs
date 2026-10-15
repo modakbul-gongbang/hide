@@ -1888,6 +1888,10 @@ impl Runtime {
                         "ui_state.color_theme_unknown",
                         "The stored color theme was not recognized; Hide was used",
                     ),
+                    persistence::UnrecognizedField::AgentLogoMode => (
+                        "ui_state.agent_logo_mode_unknown",
+                        "The stored agent logo mode was not recognized; hidden was used",
+                    ),
                 })
                 .collect(),
             persistence::LoadDisposition::Missing => vec![(

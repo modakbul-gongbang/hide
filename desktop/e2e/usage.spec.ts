@@ -7,7 +7,7 @@ import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { usageShim } from "../../web/e2e/usage-fixture";
 import { fitWindow, isolate, launchShell, screenshot, test } from "./fixture";
 
-test("three usage chips, Help and Settings fit the minimum native window in English and Korean", async () => {
+test("three usage chips, View, Help and Settings fit the minimum native window in English and Korean", async () => {
   const herdr = await startHerdr();
   const run = isolate(herdr, "usage");
   const usage = usageShim();
@@ -69,7 +69,8 @@ test("three usage chips, Help and Settings fit the minimum native window in Engl
           return box.left >= bounds.left && box.right <= bounds.right && box.top >= bounds.top && box.bottom <= bounds.bottom;
         });
       });
-      expect(boxes).toHaveLength(5);
+      // Three chips, View, Help and Settings.
+      expect(boxes).toHaveLength(6);
       expect(boxes.every(Boolean)).toBe(true);
       await capture(`usage-footer-${language}-electron`);
       await chips.first().click();

@@ -3506,7 +3506,7 @@ function buildMobile(tokens, root) {
     return frame(id, 'New agent', {width: 32, height: 32, cornerRadius: PILL, fill: '$--secondary', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-i`, 'plus', {size: 18, fill: FG})]);
   }
   const INSET = 16 + XS + 14 + XS;
-  // A list row has no provider logo (PRD agent-mark-quiet B12): its lines start under the title, after the status mark alone. The detail head keeps the logo and INSET.
+  // A list row has no provider logo in the default hidden agent logo view mode (PRD agent-mark-quiet B12; the shown mode is drawn in code only): its lines start under the title, after the status mark alone. The detail head keeps the logo and INSET.
   const LIST_INSET = 16 + XS;
   function sectionLabel(id, label, count) {
     return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, height: 32, padding: [SP.md, SP.lg, 2, SP.lg]}, [
