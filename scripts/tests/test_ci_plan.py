@@ -53,6 +53,12 @@ class Selection(unittest.TestCase):
         self.assertIn("herdr-core", plan("hided/src/core.rs")["rust_packages"])
         self.assertTrue({"web-e2e", "windows-e2e"} <= set(plan("desktop/src/main/wirePath.ts")["lanes"]))
         self.assertTrue({"checks", "web-e2e"} <= set(plan("design/tokens.json")["lanes"]))
+        # A guide a test reads is more than documentation.
+        self.assertEqual(plan("docs/UI_BEHAVIOR.md")["lanes"], ["policy", "checks"])
+        guide = plan("docs/AI_PROVIDERS.md")
+        self.assertEqual(guide["lanes"], ["policy", "rust"])
+        self.assertEqual(guide["rust_packages"], ["hide-agent-adapter"])
+        self.assertEqual(plan("web/src/assets/agents/manifest.json")["rust_packages"], ["herdr-core", "hide-agent-adapter"])
 
     def test_a_web_display_change_skips_windows_and_desktop(self):
         result = plan("web/src/components/ui/button.tsx", "web/src/Overview.tsx")

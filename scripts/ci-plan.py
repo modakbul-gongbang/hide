@@ -115,6 +115,12 @@ READERS = (
     ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "windows-e2e"}, set()),
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
     ("design/tokens.json", {"checks", "web-e2e"}, set()),
+    # web/src/shortcutsDoc.test.ts checks the guide's chord table.
+    ("docs/UI_BEHAVIOR.md", {"checks"}, set()),
+    # hide-agent-adapter's contract test checks the usage coverage table in
+    # the guide and the logo manifest the shell bundles.
+    ("docs/AI_PROVIDERS.md", {"rust"}, {"hide-agent-adapter"}),
+    ("web/src/assets/agents/manifest.json", {"rust"}, {"hide-agent-adapter"}),
     # The contracts a test holds the code to; the code does not read them.
     # herdr-core's memory_hook test and hide-agent-adapter's contract test
     # read the WebSocket schema. The web shell's types are generated from it
