@@ -143,8 +143,9 @@ jobs:
             sudo apt-get install -y "./desktop/out/release/hide-v${HIDE_VERSION}-linux-x64.deb"
             app=/opt/hide
             # A new terminal's `hide` is the CLI, the app menu has the window, and no sandbox step was asked of anyone.
-            test "$(readlink -f "$(command -v hide)")" = /opt/hide/resources/hide
-            grep -qx 'Exec=/opt/hide/hide %U' /usr/share/applications/hide.desktop
+            cli="$(command -v hide || true)"
+            [ -n "$cli" ] && [ "$(readlink -f "$cli")" = /opt/hide/resources/hide ] || { echo "::error::a new terminal's hide is '$cli', not the CLI"; ls -l /usr/bin/hide /etc/alternatives/hide || true; exit 1; }
+            grep -qx 'Exec=/opt/hide/hide %U' /usr/share/applications/hide.desktop || { echo "::error::the menu entry does not open /opt/hide/hide"; dpkg -L hide | grep -v '^/opt/hide/' || true; cat /usr/share/applications/hide.desktop || true; exit 1; }
             stat -c '%a %U' /opt/hide/chrome-sandbox
           fi
           test -x "$app/resources/hide${{ matrix.system == 'windows' && '.exe' || '' }}"
@@ -158,7 +159,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/w" -w /w fedora:42 bash -euo pipefail -c '
             dnf install -y --setopt=install_weak_deps=False nodejs "/w/desktop/out/release/hide-v'"$HIDE_VERSION"'-linux-x64.rpm"
-            test "$(readlink -f "$(command -v hide)")" = /opt/hide/resources/hide
+            cli="$(command -v hide || true)"
+            [ -n "$cli" ] && [ "$(readlink -f "$cli")" = /opt/hide/resources/hide ] || { echo "::error::hide in a new terminal is [$cli], not the CLI"; exit 1; }
             test -f /usr/share/applications/hide.desktop
             node desktop/scripts/smoke-package.mjs /opt/hide
           '
@@ -243,7 +245,9 @@ jobs:
             desktop/test-results
           if-no-files-found: ignore
       - name: Keep the package
-        # Exactly the system's release files (installers.mjs leaves nothing else there).
+        # Exactly the system's release files (installers.mjs leaves nothing else there); kept
+        # from a failed run too, so a package that did not install can be looked at.
+        if: ${{ !cancelled() && hashFiles('desktop/out/release/*') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: hide-package-${{ matrix.system }}
