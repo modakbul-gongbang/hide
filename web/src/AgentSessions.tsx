@@ -1,7 +1,8 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, FlagIcon, GitBranchIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
-import { HideMark } from "./AgentMark";
+import { AgentRowMark } from "./AgentRowMark";
+import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
 import { forkLabel, markTone } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
@@ -180,7 +181,7 @@ const SessionRow = memo(function SessionRow({ row, family, model, actions, open,
           aria-expanded={open ?? undefined} aria-label={[agent.identity_label, forkLabel(t, agent), agentProductName(agent.agent_kind), statusText(t, agent.status_code), hideAiWords(t, agent.hide_ai)].filter(Boolean).join(", ")} title={[agent.identity_label, agentProductName(agent.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
           {/* Unfinished Idle work wears ◐ in the mark's place (B31); the line says what is left. */}
-          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}{agent.hide_ai ? <HideMark className="size-(--size-agent-badge-compact)" /> : null}
+          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentRowMark kind={agent.agent_kind} hideAi={agent.hide_ai ? "card" : null} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
           <AgentForkMark agent={agent} />
         </button>
@@ -218,7 +219,7 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
           aria-current={selected ? "true" : undefined} aria-expanded={open ?? undefined}
           aria-label={[child.identity_label, forkLabel(t, child), agentProductName(child.agent_kind), statusText(t, child.status_code), child.state.branch_badge].filter(Boolean).join(", ")} title={[child.identity_label, agentProductName(child.agent_kind)].filter(Boolean).join("\n")}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-          <StatusMark symbol={child.symbol} className={markTone(child)} />
+          <StatusMark symbol={child.symbol} className={markTone(child)} /><AgentRowMark kind={child.agent_kind} />
           <span className={cn("min-w-0 truncate text-caption", titleTone)}>{child.identity_label}</span>
           <AgentForkMark agent={child} />
         </button>
@@ -270,7 +271,7 @@ function TreeMoreRow({ line, onShowAll }: { line: Extract<SidebarTreeLine, { kin
  * B31: the ask for Needs You, else the core's line; a block's line is its cause.
  */
 function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
-  const indent = owl ? DETAIL_INDENT_OWL : DETAIL_INDENT;
+  const indent = detailIndent(useAgentLogosShown() || owl);
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
   if (ask) return <div className={cn(indent, "flex min-w-0 text-micro")} data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
@@ -286,12 +287,16 @@ function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
  * glyph and mono text distinguish it from progress; the tooltip retains its path.
  */
 const DETAIL_INDENT = "pl-[calc(var(--size-agent-mark)+var(--spacing-xs))]";
-/** A Hide AI root row also draws the owl before its title. */
-const DETAIL_INDENT_OWL = "pl-[calc(var(--size-agent-mark)+var(--size-agent-badge-compact)+2*var(--spacing-xs))]";
+/** A row that draws a mark before its title (the logo, or a Hide AI root's owl) indents its detail lines past it too. */
+const DETAIL_INDENT_MARKED = "pl-[calc(var(--size-agent-mark)+var(--size-agent-badge-compact)+2*var(--spacing-xs))]";
+
+function detailIndent(marked: boolean): string {
+  return marked ? DETAIL_INDENT_MARKED : DETAIL_INDENT;
+}
 
 function BranchLine({ agent, branch }: { agent: AgentRow; branch: string }) {
   const path = useShellStore((state) => checkoutPathOfPane(state.rest, agent.pane_id));
-  return <div className={cn(DETAIL_INDENT, "flex min-w-0 items-center gap-xs text-micro text-muted-foreground")}>
+  return <div className={cn(detailIndent(useAgentLogosShown()), "flex min-w-0 items-center gap-xs text-micro text-muted-foreground")}>
     <GitBranchIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
     <span className="min-w-0 truncate font-mono" data-session-branch={agent.pane_id} title={[branch, path].filter(Boolean).join("\n")}>{branch}</span>
   </div>;

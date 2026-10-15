@@ -2518,6 +2518,34 @@ impl ThemePreference {
     }
 }
 
+/// Whether the sidebar, the Sessions list and the tab bar draw an agent's
+/// provider logo before its title (PRD agent-logo-view-mode D-02). Hidden is the
+/// quiet default, so an update never changes a screen on its own (D-03).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLogoMode {
+    Shown,
+    #[default]
+    Hidden,
+}
+
+impl AgentLogoMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shown => "shown",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "shown" => Some(Self::Shown),
+            "hidden" => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+}
+
 /// The palette every window draws in (Settings > Appearance > Color theme),
 /// independent of the Mode above: Hide is the landing page's Owl Field
 /// colors, Neutral the grey chrome. Hide is the default, including for a store
@@ -3221,6 +3249,9 @@ pub struct UiStateSnapshot {
     /// The web shell's mode (Light, Dark or System).
     #[serde(default)]
     pub theme: ThemePreference,
+    /// Whether list rows and tabs draw the agent's logo (`agent_logo_mode_set`).
+    #[serde(default)]
+    pub agent_logo_mode: AgentLogoMode,
     /// The palette every window draws in; `color_theme_set` owns it.
     #[serde(default)]
     pub color_theme: ColorTheme,
@@ -3875,6 +3906,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            agent_logo_mode: AgentLogoMode::Hidden,
             color_theme: ColorTheme::Hide,
             interface_language: None,
             usage: Default::default(),
@@ -6349,6 +6381,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "screen_intro", &intros);
         checked.insert("screen_intro");
+
+        let logo_modes = [AgentLogoMode::Shown, AgentLogoMode::Hidden];
+        for variant in logo_modes {
+            match variant {
+                AgentLogoMode::Shown | AgentLogoMode::Hidden => {}
+            }
+        }
+        assert_wire(&contract, "agent_logo_mode", &logo_modes);
+        checked.insert("agent_logo_mode");
 
         let kit_availability = [
             hide_kit::Availability::Available,

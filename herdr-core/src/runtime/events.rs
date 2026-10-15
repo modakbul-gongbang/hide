@@ -1303,6 +1303,11 @@ pub(super) struct ThemeSetPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AgentLogoModeSetPayload {
+    pub(super) mode: crate::model::AgentLogoMode,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ColorThemeSetPayload {
     pub(super) color_theme: crate::model::ColorTheme,
 }
@@ -1477,6 +1482,7 @@ pub(super) enum Event {
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
+    AgentLogoModeSet(AgentLogoModeSetPayload),
     ColorThemeSet(ColorThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
     UsagePinSet(UsagePinSetPayload),
@@ -1718,6 +1724,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "agent_logo_mode_set" => decode!(AgentLogoModeSetPayload, AgentLogoModeSet),
         "color_theme_set" => decode!(ColorThemeSetPayload, ColorThemeSet),
         "usage_pin_set" => decode!(UsagePinSetPayload, UsagePinSet),
         "usage_hidden_set" => decode!(UsageHiddenSetPayload, UsageHiddenSet),
@@ -3812,6 +3819,14 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
+            Event::AgentLogoModeSet(payload) => {
+                if self.snapshot.ui_state.agent_logo_mode == payload.mode {
+                    return false;
+                }
+                self.snapshot.ui_state.agent_logo_mode = payload.mode;
+                self.persist_ui_state();
+                true
+            }
             Event::ColorThemeSet(payload) => {
                 if self.snapshot.ui_state.color_theme == payload.color_theme {
                     return false;
@@ -4008,6 +4023,8 @@ impl Runtime {
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
+                    // `agent_logo_mode_set` owns the logo mode the same way.
+                    agent_logo_mode: current.agent_logo_mode,
                     // `color_theme_set` owns the color theme the same way.
                     color_theme: current.color_theme,
                     interface_language: current.interface_language,

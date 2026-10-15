@@ -50,6 +50,16 @@ async function exactlyOnce(sent: Map<string, number>, kind: string, expected: nu
   expect(sent.get(kind) ?? 0).toBe(expected);
 }
 
+/**
+ * `boxes` of what must not move during a hold, plus the title's line (y, height)
+ * only: a hold also draws the agent logo left of the title (agent-logo-view-mode
+ * B13), so the title moves right while its line, the row and the fold slot stay.
+ */
+async function held(locators: Locator[], title: Locator): Promise<(string | null)[]> {
+  const box = await title.boundingBox();
+  return [...(await boxes(locators)), box ? [box.y, box.height].map(Math.round).join(",") : null];
+}
+
 /** The boxes of what must not move while a keycap shows, rounded to the device pixel. */
 async function boxes(locators: Locator[]): Promise<(string | null)[]> {
   return Promise.all(
@@ -202,13 +212,14 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     const rows = page.locator("nav[data-sidebar] [data-pane]");
     await expect(rows).toHaveCount(2);
     const firstRow = rows.first();
-    const kept = [firstRow, firstRow.locator("[data-agent-title]"), firstRow.locator("[data-fold-slot]"), rows.nth(1)];
-    const rowsBefore = await boxes(kept);
+    const kept = [firstRow, firstRow.locator("[data-fold-slot]"), rows.nth(1)];
+    const title = firstRow.locator("[data-agent-title]");
+    const rowsBefore = await held(kept, title);
     await page.keyboard.down("Alt");
     const rowCaps = page.locator("nav[data-sidebar] [data-keycap]");
     await expect(rowCaps).toHaveCount(2);
     await expect(rowCaps).toHaveText(["1", "2"]);
-    expect(await boxes(kept)).toEqual(rowsBefore);
+    expect(await held(kept, title)).toEqual(rowsBefore);
     await capture(page, "digit-hints-agents-dark", source);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
