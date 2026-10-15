@@ -57,6 +57,15 @@ export function generate(root = process.cwd()) {
         hideDark.push(`  ${name}: ${color(token.hide.value)};`);
       }
       mapped.push(`  --color-${name.slice(2)}: var(${name});`);
+      if (name === '--background') {
+        // Each color theme's background in the current mode, whatever theme the
+        // page is in: the swatch beside each choice in Settings > Appearance.
+        // Derived here so it can never disagree with the background it shows.
+        const hide = token.hide ?? token;
+        light.push(`  --swatch-neutral: ${color(token.light)};`, `  --swatch-hide: ${color(hide.light)};`);
+        dark.push(`  --swatch-neutral: ${color(token.value)};`, `  --swatch-hide: ${color(hide.value)};`);
+        mapped.push('  --color-swatch-neutral: var(--swatch-neutral);', '  --color-swatch-hide: var(--swatch-hide);');
+      }
     } else if (token.type === 'alias') {
       if (!tokens[token.value]) throw new Error(`${name} aliases unknown ${token.value}`);
       if (token.hide !== undefined) throw new Error(`${name} is an alias; it takes its Hide value from ${token.value}`);

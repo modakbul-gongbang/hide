@@ -29,6 +29,8 @@
 
 @theme inline {
   --color-background: var(--background);
+  --color-swatch-neutral: var(--swatch-neutral);
+  --color-swatch-hide: var(--swatch-hide);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -316,6 +318,8 @@
 :root,
 .light {
   --background: #ffffff;
+  --swatch-neutral: #ffffff;
+  --swatch-hide: #f6f8f8;
   --foreground: #18181b;
   --card: #f4f4f5;
   --card-foreground: var(--foreground);
@@ -392,6 +396,8 @@
 
 .dark {
   --background: #101112;
+  --swatch-neutral: #101112;
+  --swatch-hide: #0d191b;
   --foreground: #f4f4f6;
   --card: #1d1f21;
   --card-foreground: var(--foreground);

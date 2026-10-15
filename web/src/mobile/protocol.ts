@@ -100,8 +100,11 @@ export type ServerFrame =
   | { type: "paired"; credential: string; phone_id: string; name: string }
   | { type: "hello"; mac_name: string | null; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
   | { type: "meta"; push_mode: PushMode; other_phones: number }
-  /** `interface_language` is the core's explicit choice as stored (en, ko, zh-CN, ja), or null while the phone follows its own language. */
-  | { type: "agents"; groups: AgentGroup[]; interface_language: string | null }
+  /**
+   * `interface_language` is the core's explicit choice as stored (en, ko, zh-CN, ja), or null while the phone follows its own language.
+   * `color_theme` is the operator's palette (`hide`, `neutral`); the phone keeps its own light or dark.
+   */
+  | { type: "agents"; groups: AgentGroup[]; interface_language: string | null; color_theme: string | null }
   | { type: "rows"; device_id: string; pane_id: string; state: RowsState; text?: string; lines?: number; more?: boolean }
   | {
       type: "conversation";
