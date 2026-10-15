@@ -407,6 +407,13 @@ impl Runtime {
 
     pub(super) fn apply_view_comment(&mut self, payload: ViewCommentPayload) -> bool {
         let key = (payload.workspace.device_id, payload.workspace.path);
+        // A refused add's screenshot was staged for it alone.
+        let staged = match &payload.action {
+            CommentAction::Add {
+                shot: Some(shot), ..
+            } if crate::view_feedback::shot_name(&shot.name) => Some(shot.clone()),
+            _ => None,
+        };
         match self.change_view_comment(&key, payload.action) {
             Ok(changed) => {
                 if changed {
@@ -415,6 +422,14 @@ impl Runtime {
                 changed
             }
             Err((kind, message)) => {
+                if let Some(shot) = staged {
+                    self.queue_removal(
+                        &shot.node,
+                        FeedbackCall::RemoveShots {
+                            names: vec![shot.name],
+                        },
+                    );
+                }
                 self.set_error(kind, message, false);
                 true
             }
@@ -572,6 +587,25 @@ impl Runtime {
                 if deleted_key != *key || comment.id != comment_id {
                     self.view_feedback.deleted = Some((deleted_key, index, comment));
                     return Ok(false);
+                }
+                // Undo keeps the caps an add keeps: a View that filled up
+                // since the delete takes it back no more than a new one.
+                let view_full = self.view_layout_of(key).is_some_and(|layout| {
+                    layout.displays().any(|display| {
+                        comment.on(display)
+                            && self.feedback_of(key).is_some_and(|feedback| {
+                                feedback.on(display).count() >= COMMENTS_PER_VIEW
+                            })
+                    })
+                });
+                if view_full {
+                    self.release_shots(std::slice::from_ref(&comment));
+                    return Err((
+                        "view_comment.full",
+                        format!(
+                            "This view has {COMMENTS_PER_VIEW} comments. Send or delete some to add more."
+                        ),
+                    ));
                 }
                 let feedback = self.feedback_mut(key);
                 if feedback.comments.len() >= COMMENTS_PER_CHECKOUT {
@@ -2424,6 +2458,73 @@ mod tests {
             1
         );
         drop(guard);
+        drop(worker);
+    }
+
+    #[test]
+    fn undo_into_a_view_that_filled_since_the_delete_is_refused_and_lets_its_screenshot_go() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, worker, state) = send_fixture(root.path());
+        let shots = hide_kit::layout::view_feedback_shots(&state);
+        hide_platform::fs::private::create_dir_all(&shots).unwrap();
+        std::fs::write(shots.join(SHOT), b"\x89PNG fixture").unwrap();
+        let mut guard = runtime.lock().unwrap();
+        let view = opened_view(&mut guard);
+        comment(&mut guard, &view, "with a screenshot", true);
+        for index in 1..COMMENTS_PER_VIEW {
+            comment(&mut guard, &view, &format!("note {index}"), false);
+        }
+        let first = guard.feedback_of(&key()).unwrap().comments[0].id.clone();
+        let change = |id: &str, action: &str| -> ViewCommentPayload {
+            serde_json::from_value(json!({
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": CHECKOUT},
+                "action": action, "comment_id": id,
+            }))
+            .unwrap()
+        };
+        guard.apply_view_comment(change(&first, "delete"));
+        comment(&mut guard, &view, "the fiftieth again", false);
+        guard.apply_view_comment(change(&first, "undo"));
+        assert_eq!(
+            guard
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("view_comment.full")
+        );
+        assert_eq!(
+            guard.feedback_of(&key()).unwrap().comments.len(),
+            COMMENTS_PER_VIEW
+        );
+        drop(guard);
+        let shot = shots.join(SHOT);
+        super::super::tests::wait_for("the screenshot to be removed", || !shot.exists());
+        drop(worker);
+    }
+
+    #[test]
+    fn a_refused_adds_staged_screenshot_is_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, worker, state) = send_fixture(root.path());
+        let shots = hide_kit::layout::view_feedback_shots(&state);
+        hide_platform::fs::private::create_dir_all(&shots).unwrap();
+        let shot = shots.join(SHOT);
+        std::fs::write(&shot, b"\x89PNG fixture").unwrap();
+        {
+            let mut guard = runtime.lock().unwrap();
+            let view = opened_view(&mut guard);
+            for index in 0..COMMENTS_PER_VIEW {
+                comment(&mut guard, &view, &format!("note {index}"), false);
+            }
+            assert!(comment(&mut guard, &view, "one too many", true));
+            assert_eq!(
+                guard.feedback_of(&key()).unwrap().comments.len(),
+                COMMENTS_PER_VIEW
+            );
+        }
+        super::super::tests::wait_for("the screenshot to be removed", || !shot.exists());
         drop(worker);
     }
 }
