@@ -43,17 +43,20 @@ def identity(run):
     for line in (run / "identity.txt").read_text().splitlines():
         key, separator, value = line.partition("=")
         if separator and key.isidentifier():
-            values[key] = value
+            values[key] = value.strip()
         elif "load average" in line:
             values["load"] = line.strip()
     return values
 
 
 def driver_sha256():
-    """One hash over the measurement's own files, so a trend can tell when the driver changed."""
+    """One hash over the files that measure, so a trend can tell when the driver changed.
+
+    This judge is left out: it reads and reports, and a change to its table is
+    not a new series."""
     digest = hashlib.sha256()
     for path in sorted(HERE.iterdir()):
-        if path.is_file() and path.suffix in (".sh", ".mjs", ".py", ".rs"):
+        if path.is_file() and path.suffix in (".sh", ".mjs", ".py", ".rs") and path.name != Path(__file__).name:
             digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     return digest.hexdigest()
 
@@ -142,6 +145,10 @@ def mib(kb):
     return "-" if kb is None else f"{kb / 1024:.1f} MiB"
 
 
+def percent(value):
+    return "-" if value is None else f"{value:.1f}%"
+
+
 def table(record):
     fixture, echo_row, idle = record["fixture"] or {}, record["echo"] or {}, record["idle"] or {}
     ident = record["identity"]
@@ -180,13 +187,13 @@ def table(record):
         "",
         "| Idle, one-second samples | n | hided CPU median | p95 | hided tree RSS max | hided alone RSS max |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
-        f"| before any churn | {idle.get('samples', '-')} | {idle.get('hided_cpu_median_percent', '-')}% | "
-        f"{idle.get('hided_cpu_p95_percent', '-')}% | {mib(idle.get('hided_rss_max_kb'))} | {mib(idle.get('hided_self_rss_max_kb'))} |",
+        f"| before any churn | {idle.get('samples', '-')} | {percent(idle.get('hided_cpu_median_percent'))} | "
+        f"{percent(idle.get('hided_cpu_p95_percent'))} | {mib(idle.get('hided_rss_max_kb'))} | {mib(idle.get('hided_self_rss_max_kb'))} |",
         "",
         f"Memory, settled then after topology: hided {mib(settled.get('hided_rss_kb'))} then {mib(after.get('hided_rss_kb'))}, "
         f"Chrome tree {mib(settled.get('chrome_tree_rss_kb'))} then {mib(after.get('chrome_tree_rss_kb'))}.",
         "",
-        f"Frame window: not covered on the hosted runner; {record['frames']['reason']}.",
+        f"Frame window: not covered by this lane; {record['frames']['reason']}.",
         "",
         "<details><summary>The run's record</summary>", "", "```json", json.dumps(record, indent=2), "```", "", "</details>", "",
     ]
