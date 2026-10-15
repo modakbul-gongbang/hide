@@ -21,7 +21,7 @@
 //
 // macOS uses the isolated packaged-app e2e lane instead.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -197,6 +197,18 @@ try {
     }
   }
 
+  /**
+   * Why a daemon `hide connect` started ended before it answered: `hide
+   * connect` sends its stderr nowhere, so the bundled daemon runs once more
+   * on its own, bounded, and its stderr and the newest log lines are named.
+   */
+  function whyDaemonEnded() {
+    const alone = spawnSync(bundled("hided"), [], { env: isolated, encoding: "utf8", timeout: 5_000 });
+    const ended = alone.error ? alone.error.message : alone.signal ? `still running after 5 s (${alone.signal})` : `exit ${alone.status}`;
+    const lines = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").slice(-5).join("\n") : "(no log)";
+    return `hided alone: ${ended}; stderr: ${alone.stderr?.trim() || "(none)"}\nnewest log lines:\n${lines}`;
+  }
+
   /** A GET to the daemon, its failure named by the path asked. */
   const get = (origin, route) =>
     fetch(`${origin}${route}`, { signal: AbortSignal.timeout(10_000) }).catch((error) => {
@@ -316,7 +328,7 @@ try {
     connected = hide(["connect"]);
     if (connected.ok === true) daemonPids.add(connected.pid);
     check("hide connect starts the bundled daemon", () => {
-      if (connected.ok !== true) throw new Error(JSON.stringify(connected));
+      if (connected.ok !== true) throw new Error(`${JSON.stringify(connected)}${connected.reason === "start_failed" ? `\n${whyDaemonEnded()}` : ""}`);
       return `pid ${connected.pid}, port ${connected.port}`;
     });
     await kitInstalled(0, "held");
