@@ -58,7 +58,8 @@ pub const GUIDANCE_SOURCE_NAME: &str = "hide-guidance";
 /// version 3 stopped writing Cursor's `subagentStart`, `subagentStop` and
 /// `stop`, which only fed a count Cursor no longer reports (issue 940).
 /// Version 4 prepares Cursor's PowerShell input before starting the helper.
-pub const GUIDANCE_VERSION: u32 = 4;
+/// Version 5 selects the file tools for the guardrails.
+pub const GUIDANCE_VERSION: u32 = 5;
 
 /// The one line every guidance hook adds after the shared instruction, so an
 /// agent that Hide cannot place in a Workspace still learns where the usage
@@ -149,15 +150,23 @@ impl GuidanceAgent {
     fn slots(self) -> &'static [Slot] {
         const CURSOR: &[Slot] = &[
             Slot::new(HookEvent::SessionStart, "sessionStart", None),
-            Slot::new(HookEvent::PreToolUse, "preToolUse", Some("Shell")),
+            // Cursor 2026.10.14 sends an edit as `Write`.
+            Slot::new(
+                HookEvent::PreToolUse,
+                "preToolUse",
+                Some("Shell|Read|Write|Delete"),
+            ),
         ];
         const GROK: &[Slot] = &[
             Slot::new(HookEvent::SessionStart, "SessionStart", None),
-            // `Bash` is Grok's documented alias of `run_terminal_command`.
+            // `Bash` is Grok's documented alias of `run_terminal_command`;
+            // `Read`, `Edit` and `Write` select its file tools on both routes.
             Slot::new(
                 HookEvent::PreToolUse,
                 "PreToolUse",
-                Some("Bash|ask_user_question|exit_plan_mode"),
+                Some(
+                    "Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write",
+                ),
             ),
             Slot::new(HookEvent::SubagentStart, "SubagentStart", None),
             Slot::new(HookEvent::SubagentStop, "SubagentStop", None),

@@ -17,6 +17,8 @@ mod agent_sleep;
 mod agents_settings_remote;
 #[path = "tests/appearance.rs"]
 mod appearance;
+#[path = "tests/backlog.rs"]
+mod backlog;
 #[path = "tests/birth_cwd.rs"]
 mod birth_cwd;
 #[path = "tests/control_order.rs"]
@@ -29,6 +31,8 @@ mod device_kit;
 mod device_worktrees;
 #[path = "tests/devices.rs"]
 mod devices;
+#[path = "tests/disk_sweep.rs"]
+mod disk_sweep;
 #[path = "tests/documents.rs"]
 mod documents;
 #[path = "tests/editor_preview.rs"]
@@ -41,6 +45,7 @@ mod factory_screen;
 mod first_run;
 #[path = "tests/github_reads.rs"]
 mod github_reads;
+mod guardrails;
 #[path = "tests/home.rs"]
 mod home;
 #[path = "tests/inbound.rs"]
@@ -64,8 +69,6 @@ mod node_issues;
 #[path = "tests/operator_focus.rs"]
 mod operator_focus;
 mod pane_geometry;
-#[path = "tests/project_sessions.rs"]
-mod project_sessions;
 #[path = "tests/project_settings.rs"]
 mod project_settings;
 #[path = "tests/projects.rs"]
@@ -468,6 +471,7 @@ pub(super) fn runtime() -> Runtime {
         local_issues_path: None,
         effects_held: false,
         machine_name: None,
+        account_state_folder: false,
     };
     let mut runtime = Runtime::new(
         options,

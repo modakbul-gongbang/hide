@@ -5,7 +5,8 @@
 // shows as pending until the snapshot says it landed. The sheet is the shell:
 // each page is its own module under `settings/`.
 
-import { BellIcon, GaugeIcon, BotIcon, createLucideIcon, InfoIcon, KeyboardIcon, MonitorSmartphoneIcon, SlidersHorizontalIcon, SmartphoneIcon, SparklesIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BellIcon, GaugeIcon, BotIcon, InfoIcon, KeyboardIcon, MonitorSmartphoneIcon, SlidersHorizontalIcon, SmartphoneIcon, SparklesIcon, XIcon, type LucideIcon } from "lucide-react";
+import { GithubIcon } from "./components/github-icon";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -34,16 +35,6 @@ export function SettingsGate({ actions }: { actions: Actions }) {
   const overlay = useUiStore((s) => s.overlay);
   return overlay === "settings" ? <SettingsSheet actions={actions} /> : overlay === "project_settings" ? <ProjectSettingsSheet actions={actions} /> : null;
 }
-
-/**
- * The GitHub page's mark: Lucide's own `github` outline, which Lucide 1.0
- * dropped with every brand icon, kept so the list draws the approved board's
- * glyph at the same stroke as its neighbours.
- */
-const GithubIcon = createLucideIcon("github", [
-  ["path", { d: "M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4", key: "tonef" }],
-  ["path", { d: "M9 18c-4.51 2-5-2-7-2", key: "9comsn" }],
-]);
 
 /** Each page's mark in the list. */
 const TAB_ICONS: Record<SettingsTab, LucideIcon> = {

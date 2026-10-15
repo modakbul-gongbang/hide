@@ -14,6 +14,17 @@ pub(super) struct Pending {
     patch: settings::Patch,
 }
 
+impl Pending {
+    fn payload(&self) -> SetPayload {
+        SetPayload {
+            device_id: self.record.device_id.clone(),
+            root: self.record.root.clone(),
+            request_id: self.request_id.clone(),
+            patch: self.patch.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SetPayload {
@@ -95,20 +106,30 @@ impl Runtime {
             return false;
         }
         let result = (|| {
-            if self.project_settings_pending.contains_key(&id) {
+            if self.project_settings_pending.contains_key(&id)
+                || self.guardrails.awaiting.contains_key(&id)
+            {
                 return Err("project_settings_busy");
             }
             if !self.snapshot.ui_state.project_settings.contains_key(&id)
                 && self.snapshot.ui_state.project_settings.len()
                     + self.project_settings_pending.len()
+                    + self.guardrails.awaiting.len()
                     >= settings::LIMIT
             {
                 return Err("project_settings_limit");
             }
             let workspace = self.settings_workspace(&payload.device_id, &payload.root)?;
+            let git_rules = payload.patch.guardrails.as_ref().is_some_and(|rules| {
+                rules.worktree_folder
+                    || rules.base_branch
+                    || rules.agent_merge
+                    || rules.git_commands
+            });
             if !workspace.is_git
                 && (payload.patch.base_branch.is_some()
-                    || payload.patch.new_work == Some(NewWorkLocation::Worktree))
+                    || payload.patch.new_work == Some(NewWorkLocation::Worktree)
+                    || git_rules)
             {
                 return Err("project_settings_not_git");
             }
@@ -125,6 +146,21 @@ impl Runtime {
                 .cloned()
                 .unwrap_or_else(|| ProjectSettings::new(&payload.device_id, &payload.root))
                 .patched(payload.patch.clone())?;
+            // The base branch protection guards a branch the project names:
+            // the one chosen, or the remote's default for Auto (B17).
+            if (payload.patch.guardrails.is_some() || payload.patch.base_branch.is_some())
+                && record.rules().is_some_and(|rules| rules.base_branch)
+                && workspace.default_branch.is_none()
+                && settings::base_choice(
+                    &BTreeMap::from([(id.clone(), record.clone())]),
+                    &self.snapshot.ui_state.project_base_branches,
+                    &payload.device_id,
+                    &payload.root,
+                )
+                .is_none()
+            {
+                return Err("project_settings_base_unknown");
+            }
             if self
                 .snapshot
                 .ui_state
@@ -193,28 +229,47 @@ impl Runtime {
                     self.settings_write_status(&id, &payload, WriteState::Saved, None);
                     return true;
                 }
-                self.project_settings_pending.insert(
-                    id.clone(),
-                    Pending {
-                        record,
-                        request_id: payload.request_id.clone(),
-                        patch: payload.patch.clone(),
-                    },
-                );
+                let pending = Pending {
+                    record,
+                    request_id: payload.request_id.clone(),
+                    patch: payload.patch.clone(),
+                };
                 self.settings_write_status(&id, &payload, WriteState::Pending, None);
-                if let Err(detail) = self.write_ui_state() {
-                    self.push_diagnostic("project_settings.save_failed", detail);
-                    self.project_settings_pending.remove(&id);
-                    self.settings_write_status(
-                        &id,
-                        &payload,
-                        WriteState::Failed,
-                        Some("project_settings_save_failed"),
-                    );
+                if self.moves_guardrail_policy(&id, &pending.record) {
+                    self.await_guardrail_delivery(id, pending);
+                } else {
+                    self.save_project_settings(id, pending);
                 }
                 true
             }
         }
+    }
+
+    /// Hands the record to the coalesced state writer; its save settles it.
+    pub(super) fn save_project_settings(&mut self, id: String, pending: Pending) {
+        self.project_settings_pending.insert(id.clone(), pending);
+        if let Err(detail) = self.write_ui_state() {
+            self.push_diagnostic("project_settings.save_failed", detail);
+            if let Some(pending) = self.project_settings_pending.remove(&id) {
+                self.settle_project_settings(
+                    &id,
+                    &pending,
+                    WriteState::Failed,
+                    Some("project_settings_save_failed"),
+                );
+            }
+            self.refresh_guardrail_policies();
+        }
+    }
+
+    pub(super) fn settle_project_settings(
+        &mut self,
+        id: &str,
+        pending: &Pending,
+        state: WriteState,
+        error: Option<&str>,
+    ) {
+        self.settings_write_status(id, &pending.payload(), state, error);
     }
 
     fn settings_write_status(
@@ -308,31 +363,21 @@ impl Runtime {
                     .ui_state
                     .project_settings
                     .insert(id.clone(), pending.record.clone());
-                self.settings_write_status(
-                    &id,
-                    &SetPayload {
-                        device_id: pending.record.device_id.clone(),
-                        root: pending.record.root.clone(),
-                        request_id: pending.request_id.clone(),
-                        patch: pending.patch.clone(),
-                    },
-                    WriteState::Saved,
-                    None,
-                );
+                self.settle_project_settings(&id, &pending, WriteState::Saved, None);
                 self.project_settings_changed(before.as_ref(), &pending.record);
             } else {
-                self.settings_write_status(
+                self.settle_project_settings(
                     &id,
-                    &SetPayload {
-                        device_id: pending.record.device_id.clone(),
-                        root: pending.record.root.clone(),
-                        request_id: pending.request_id.clone(),
-                        patch: pending.patch.clone(),
-                    },
+                    &pending,
                     WriteState::Failed,
                     Some("project_settings_save_failed"),
                 );
             }
+        }
+        // A failed save may leave its machine holding a policy the
+        // confirmed record no longer says.
+        if changed && !success {
+            self.refresh_guardrail_policies();
         }
         changed
     }
@@ -365,7 +410,7 @@ impl Runtime {
                 .saturating_add(1)
                 .max(unix_milliseconds());
             self.links_work.connection_epochs.insert(id, epoch);
-            self.invalidate_session_issue_repository(&after.device_id, &after.root);
+            self.invalidate_backlog_repository(&after.device_id, &after.root);
             // The one search slot spans repository targets. Keep its running
             // worker bounded, but refuse its old answer and queued old intent.
             self.github_search.pending = None;

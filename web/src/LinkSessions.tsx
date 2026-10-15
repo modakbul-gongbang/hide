@@ -159,7 +159,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   const gone = line.file === "missing";
   const span = spanText(line.started_at_unix_ms, line.ended_at_unix_ms);
   const asked = live?.kind === "question" ? rowLine(live.agent)?.text : null;
-  const view = () => actions.openOverview(project.device_id, project.id, { session: { id: line.id, request: line.request } });
+  const view = () => actions.openSessionConversation({ device_id: line.device_id, agent: line.agent, session_id: line.id });
   const resumeLine = () => {
     const provider = resumeProvider(line.agent);
     if (!checkout || !provider) return;
@@ -359,7 +359,7 @@ function ParentLine({ parent, project, actions }: { parent: NonNullable<SessionL
     <button
       type="button"
       className="inline-flex items-center gap-xs self-start rounded-xs text-caption text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-      onClick={() => actions.openOverview(project.device_id, project.id, { session: { id: parent.session_id, request: null } })}
+      onClick={() => actions.openSessionConversation({ device_id: project.device_id, agent: parent.agent, session_id: parent.session_id })}
       data-link-parent={parent.session_id}
     >
       {text}

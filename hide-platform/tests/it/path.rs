@@ -132,3 +132,25 @@ fn a_relative_spelling_converts_only_to_names_this_system_can_hold() {
         }
     }
 }
+
+#[test]
+fn a_shell_word_on_a_drive_mount_names_that_drive() {
+    for (word, native) in [
+        ("/c/work/x/.env", Some(r"C:\work\x\.env")),
+        ("/d", Some(r"D:\")),
+        ("/c/", Some(r"C:\")),
+        ("/cygdrive/e/repo", Some(r"E:\repo")),
+        ("/C/x", Some(r"C:\x")),
+        ("/cygdrive/c", Some(r"C:\")),
+        ("/cygdrive/", None),
+        ("//server/share", None),
+        ("/cygdrive", None),
+        ("/usr/bin", None),
+        ("/tmp/x", None),
+        ("c/x", None),
+        ("C:/x", None),
+        ("/1/x", None),
+    ] {
+        assert_eq!(path::shell_drive_path(word).as_deref(), native, "{word}");
+    }
+}

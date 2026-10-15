@@ -83,8 +83,8 @@ pub const CREATED_AFTER_MS: u64 = 30_000;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectFacts {
     /// `hide_project::project_id` of the device and root: the record's key
-    /// for the project, and the key the Sessions tab's Copied history is
-    /// stored under.
+    /// for the project, and the key its Copied history days are stored under
+    /// in the old session search file.
     pub key: String,
     pub device_id: String,
     /// The project's row id, which the summary is published under.

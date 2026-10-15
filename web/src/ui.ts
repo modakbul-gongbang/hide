@@ -7,8 +7,6 @@ import type { ProjectSettingsTarget } from "./projectSettings";
 import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
-import { NO_GRAPH_FILTER, type GraphFilter } from "./agentGraph";
-import { NO_FILTER, type IssueFilter } from "./projectBoard";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
@@ -20,13 +18,6 @@ export type { ViewFocusRequest } from "./viewLayout";
 
 /** What the Workspace screen draws of the lane now, which the rail, the chords and the close shortcut read. */
 export type DrawnLane = { mode: LaneMode; tool: Tool | null };
-
-export type SidebarMode = "agents" | "projects";
-
-/** The sidebar's tabs, left to right, and the order the switch walks; Projects is first and the
- * default (PRD sidebar-shell D-03). The Explorer is not one of them: it lives in the right
- * panel where the core's `right_panel_section` says it does (D-13). */
-export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects"];
 
 /**
  * A close the operator is being asked about. The sheet holds only what is
@@ -53,7 +44,7 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" } | { kind: "factory"; place: FactoryPlace };
+export type Screen = { kind: "main"; deviceId?: string } | { kind: "workspace" } | { kind: "factory"; place: FactoryPlace };
 
 /** The Factory screen's tabs, left to right; it opens on 내 차례 (PRD software-factory-ui B7). */
 export type FactoryTab = "line" | "board" | "graph" | "settings";
@@ -86,78 +77,50 @@ export type FactoryPlace = {
 export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column: null, cancelled: false, task: null, focus: null, create: false };
 
 /**
- * How All projects is looked at: every Project's tasks, every agent, or the
- * list of Projects (PRD task-agents-views D-01). A Project's Overview has its
- * own tiles instead (`OverviewLens`).
+ * The Overview's tabs, left to right (PRD overview-device-tasks D-03, D-29):
+ * the device's tasks, its backlog, its projects, and Usage at the end.
  */
-export type MainView = "requests" | "tasks" | "agents" | "projects" | "usage";
+export type MainView = "tasks" | "backlog" | "projects" | "usage";
 
-/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its sessions. */
-export type OverviewTab = "requests" | "agents" | "issues" | "sessions";
+export const MAIN_VIEWS: readonly MainView[] = ["tasks", "backlog", "projects", "usage"];
+
+/** The Tasks chips (B11). */
+export type TaskFilter = "all" | "needs_you" | "working";
+
+/** The panel open beside an Overview tab: a task's record (B16), a backlog item (B31) or a project (B57). */
+export type OverviewPanel =
+  | { kind: "task"; root: string; /** The root's device, when the card came from another device's dashed entry (B14). */ from?: string; /** A member whose record opens in place of the root's (B59). */ focus?: string }
+  | { kind: "record"; session: import("./snapshot").WorkSession }
+  | { kind: "item"; workspaceId: string; taskKey: string }
+  | { kind: "project"; workspaceId: string };
 
 /**
- * The request view's own state (PRD overview-request-view B3, B6): the rows
- * expanded, by pane id, the ones whose full request is shown past twenty
- * lines, and whether the resting group is unfolded.
+ * The Overview's page state (PRD overview-device-tasks): the device shown, the
+ * project the Tasks and backlog tabs are filtered to, the open panel, and each
+ * tab's own filters. Every value it draws is the core's; nothing here is stored.
  */
-export type RequestLens = { open: readonly string[]; full: readonly string[]; resting: boolean };
-
-export const NO_REQUEST_LENS: RequestLens = { open: [], full: [], resting: false };
-
-/** The session `View conversation` or a parent line opens on the Sessions tab, and the request it scrolls to once (PRD link-graph B11). */
-export type SessionTarget = { id: string; request: string | null };
-
-/**
- * How a Project's Overview is looked at, the screen's own page state (D-04,
- * D-17, agents-graph-view D-22): the tile, the Issues mode, the selected box,
- * the graph's folds opened (by `foldId`) and its filter, and the issue card an
- * issue chip asked for. It rides on the
- * screen, so Recent Panels brings a Project's Overview back exactly as it was
- * left (B11); every other way in starts from `entryLens`. Nothing here is
- * stored.
- */
-export type OverviewLens = {
-  tab: OverviewTab;
-  tasksMode: TasksMode;
-  /** The checkout whose box is selected in the Agents graph, or null. */
-  box: string | null;
-  /** The Agents graph's opened fold lines, by `foldId`. */
-  folds: readonly string[];
-  /** The Agents graph's status chips, search and device (B29). */
-  graph: GraphFilter;
-  /** The issue card to bring into view on the Issues tab. */
-  focusTask: string | null;
-  /** The issue whose panel is open beside the Issues board, by task key (PRD overview-lenses-issues D-08). */
-  panel: string | null;
-  /** The Issues filter (B21). */
-  filter: IssueFilter;
-  /** The request view's rows and fold (PRD overview-request-view). */
-  requests: RequestLens;
-  /** The session the Sessions tab opens on arrival, or null. */
-  session: SessionTarget | null;
+export type OverviewPlace = {
+  /** The device the Overview shows; null follows the rail's front device (D-02, D-17). */
+  deviceId: string | null;
+  /** Tasks and backlog show this project alone (B5); cleared when the device changes. */
+  projectId: string | null;
+  panel: OverviewPanel | null;
+  taskFilter: TaskFilter;
+  taskQuery: string;
+  backlogQuery: string;
+  backlogLabels: readonly string[];
+  /** The Projects rows stand by disk size (B52). */
+  bySize: boolean;
+  /** Folds the operator opened, by key (`rest:<project>`, `cleanup:<project>`, `more:<project>`, `quiet`). */
+  open: readonly string[];
 };
+
+export const OVERVIEW_ENTRY: OverviewPlace = { deviceId: null, projectId: null, panel: null, taskFilter: "all", taskQuery: "", backlogQuery: "", backlogLabels: [], bySize: false, open: [] };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
 export function toggledFold(folds: readonly string[], fold: string): string[] {
   return folds.includes(fold) ? folds.filter((open) => open !== fold) : [...folds, fold];
 }
-
-/**
- * Where every way into a Project's Overview lands: the Agents graph with the
- * given box selected and no filter. The Issues mode is the page's, the one All projects'
- * Tasks shows too (task-agents-views D-10).
- */
-export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, requests: NO_REQUEST_LENS, session: null };
-}
-
-/**
- * How the Tasks view draws its tasks: the stage columns, one row per task
- * grouped by stage, or the tasks that wait on one another laid out left to
- * right (PRD task-agents-views D-02). Like the view it belongs to the page,
- * so another scope keeps it (B9).
- */
-export type TasksMode = "board" | "list" | "dependencies";
 
 export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings" | "project_settings";
 
@@ -175,8 +138,6 @@ export type Notice = {
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
-  /** A new issue, in the named project's source to begin with; the dialog can move it to another project. */
-  | { kind: "new_issue"; workspaceId: string }
   /** Work started from an issue: a worktree named for it, its agent and first prompt. */
   | { kind: "start_issue"; workspaceId: string; taskKey: string }
   /** A pull request linked to an issue of its project's source (PRD overview-lenses-prs B10, B11). */
@@ -235,20 +196,18 @@ type UiStore = {
   screen: Screen | null;
   /** Overview is a shell layer; opening it leaves the Workspace mounted. */
   overviewOpen: boolean;
-  overviewProjectId: string | null;
-  overviewLens: OverviewLens;
-  overviewRequests: RequestLens;
+  overview: OverviewPlace;
   overviewReturnFocus: HTMLElement | null;
+  /** ⌘⇧M's input (PRD overview-device-tasks B37-B42), and where the keyboard goes back to when it closes. */
+  quickAdd: { returnFocus: HTMLElement | null } | null;
   searchReturnFocus: HTMLElement | null;
   setOverviewOpen: (open: boolean) => void;
-  setOverviewProject: (projectId: string | null, lens?: OverviewLens) => void;
-  /** All projects' view; the page keeps it while the operator visits a Project. */
+  /** Changes the Overview's page state; a new device clears the project filter and the panel (B5). */
+  setOverview: (patch: Partial<OverviewPlace>) => void;
+  /** The Overview's tab; the page keeps it between openings. */
   mainView: MainView;
-  /** All projects' Tasks mode. */
-  tasksMode: TasksMode;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
-  sidebarMode: SidebarMode;
   sidebarFocus: number;
   /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
   raisedOpen: readonly string[];
@@ -298,6 +257,8 @@ type UiStore = {
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
   sessionWorkTarget: import("./snapshot").WorkSession | null;
+  /** The records a child was opened from, nearest last: `← <parent>` goes back one (B20). */
+  sessionWorkTrail: readonly import("./snapshot").WorkSession[];
   /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
   sessionRecordWords: boolean;
   /**
@@ -334,22 +295,15 @@ type UiStore = {
    * closes these itself as it consumes.
    */
   tooltips: (() => void)[];
-  /** A way into a screen; Home from another screen opens its Agents graph. */
+  /** A way into a screen. */
   setScreen: (screen: Screen) => void;
   /** Changes the Factory screen's page state; a no-op off the Factory screen. */
   setFactoryPlace: (patch: Partial<FactoryPlace>) => void;
   /** A screen brought back as it was left (Recent Panels): Home keeps the view it had. */
   restoreScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
-  /** The Main request view's lens rides on its screen for Recent Panels. */
-  setMainRequestLens: (patch: Partial<RequestLens>) => void;
-  setTasksMode: (mode: TasksMode) => void;
-  /** Changes the shared Overview scope lens in place. */
-  setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
-  setSidebarMode: (mode: SidebarMode) => void;
   setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
-  toggleSidebarMode: () => void;
   toggleRaised: (group: string) => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
@@ -379,7 +333,7 @@ type UiStore = {
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
-  setSessionWorkTarget: (target: import("./snapshot").WorkSession | null) => void;
+  setSessionWorkTarget: (target: import("./snapshot").WorkSession | null, trail?: readonly import("./snapshot").WorkSession[]) => void;
   setSessionRecordWords: (on: boolean) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
@@ -396,17 +350,18 @@ type UiStore = {
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
   overviewOpen: false,
-  overviewProjectId: null,
-  overviewLens: entryLens(null, "board"),
-  overviewRequests: NO_REQUEST_LENS,
+  overview: OVERVIEW_ENTRY,
   overviewReturnFocus: null,
+  quickAdd: null,
   searchReturnFocus: null,
   setOverviewOpen: (overviewOpen) => set({ overviewOpen }),
-  setOverviewProject: (overviewProjectId, lens) => set({ overviewProjectId, overviewLens: lens ?? entryLens(null, get().tasksMode) }),
-  mainView: "agents",
-  tasksMode: "board",
+  setOverview: (patch) => {
+    const current = get().overview;
+    const moved = patch.deviceId !== undefined && patch.deviceId !== current.deviceId;
+    set({ overview: { ...current, ...(moved ? { projectId: null, panel: null, open: [] } : {}), ...patch } });
+  },
+  mainView: "tasks",
   relation: null,
-  sidebarMode: "projects",
   sidebarFocus: 0,
   raisedOpen: [],
   secretaryStart: null,
@@ -432,6 +387,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   notice: null,
   workspaceDialog: null,
   sessionWorkTarget: null,
+  sessionWorkTrail: [],
   sessionRecordWords: false,
   watchedTask: null,
   focusWhenListed: null,
@@ -444,39 +400,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
   setFactoryPlace: (patch) => set((state) => (state.screen?.kind === "factory" ? { screen: { kind: "factory", place: { ...state.screen.place, ...patch } } } : {})),
-  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "agents" } : { screen, opening: null, overviewOpen: false })),
+  setScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),
-  setMainRequestLens: (patch) => {
-    if (get().overviewOpen) {
-      set({ overviewRequests: { ...get().overviewRequests, ...patch } });
-      return;
-    }
-    const screen = get().screen;
-    if (screen?.kind !== "main") return;
-    set({ screen: { ...screen, requests: { ...(screen.requests ?? NO_REQUEST_LENS), ...patch } } });
-  },
-  setTasksMode: (tasksMode) => set({ tasksMode }),
-  // A lens change is a new screen value, so Recent Panels records the
-  // Overview as it now is; the open request stays, since nothing moved away.
-  // An Issues mode chosen here is the page's as well.
-  setLens: (patch) => {
-    if (get().overviewOpen || (get().screen?.kind === "main" && get().overviewProjectId !== null)) {
-      set({ overviewLens: { ...get().overviewLens, ...patch }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
-      return;
-    }
-
-  },
   setRelation: (relation) => set({ relation }),
-  setSidebarMode: (sidebarMode) => {
-    if (sidebarMode === "agents") console.info("sidebar.mode.retired", { mode: sidebarMode });
-    set({ sidebarMode: "projects" });
-  },
   setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
-  toggleSidebarMode: () => {
-    const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
-    set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
-  },
   toggleRaised: (group) => {
     const open = get().raisedOpen;
     set({ raisedOpen: open.includes(group) ? open.filter((row) => row !== group) : [...open, group] });
@@ -515,7 +443,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
-  setSessionWorkTarget: (sessionWorkTarget) => set({ sessionWorkTarget }),
+  setSessionWorkTarget: (sessionWorkTarget, trail = []) => set({ sessionWorkTarget, sessionWorkTrail: sessionWorkTarget ? trail : [] }),
   setSessionRecordWords: (sessionRecordWords) => set({ sessionRecordWords }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),

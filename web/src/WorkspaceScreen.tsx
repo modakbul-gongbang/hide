@@ -277,7 +277,7 @@ function WorkspaceTitleBar({ checkout, view, actions }: { checkout: Checkout; vi
                   type="button"
                   className="min-w-0 max-w-(--size-recent-location-max) shrink truncate rounded-xs px-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
                   data-workspace-project={project.id}
-                  onClick={() => actions.openOverview(project.device_id, project.id)}
+                  onClick={() => actions.openProjectTasks(project.device_id, project.id)}
                 >
                   {project.label}
                 </button>

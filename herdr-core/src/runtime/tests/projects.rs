@@ -655,13 +655,13 @@ fn worktree_rows_sort_main_then_open_then_commit_time() {
     );
 }
 
-/// A web Overview names its project for measuring: every checkout of it and
-/// the shared Git directory join the disk request, the project reads as
-/// measuring until the reader answers, then carries the total. A project that
-/// is not a local Git project is refused, and an older client's empty payload
-/// still means "measure the right panel's checkout again".
+/// The Projects tab measures a Git project whole: every checkout of it and
+/// the shared Git directory are one request on the sweep, the project reads
+/// as measuring until the reader answers, then carries the total and its
+/// layers. A checkout that fails later keeps its last size beside the
+/// reason (B55), and a project on a device the core dials is never asked.
 #[test]
-fn a_named_project_overview_measures_its_whole_disk() {
+fn the_projects_tab_measures_a_git_project_whole() {
     use crate::model::{
         DiskUsageSnapshot, ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot,
     };
@@ -694,9 +694,10 @@ fn a_named_project_overview_measures_its_whole_disk() {
         },
         0,
     );
-    let measure = |payload: serde_json::Value| {
+    let watch = |ids: &[&str]| {
         serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": payload
+            "schema_version": SCHEMA_VERSION, "kind": "disk_watch",
+            "payload": {"workspace_ids": ids}
         }))
         .unwrap()
     };
@@ -711,10 +712,13 @@ fn a_named_project_overview_measures_its_whole_disk() {
             .disk
             .clone()
     };
-    assert!(runtime.disk_request().paths.is_empty(), "nothing asked yet");
+    assert!(
+        runtime.disk_sweep_request(None).paths.is_empty(),
+        "nothing asked yet"
+    );
 
-    assert!(runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-1"}))));
-    let request = runtime.disk_request();
+    assert!(runtime.dispatch_json(&watch(&["workspace-2", "workspace-1"])));
+    let request = runtime.disk_sweep_request(None);
     assert_eq!(
         request.paths,
         [
@@ -723,13 +727,18 @@ fn a_named_project_overview_measures_its_whole_disk() {
             PathBuf::from("/repo.worktrees/feature"),
         ]
     );
-    assert!(disk_of(&runtime, "workspace-1").measuring);
-
     assert_eq!(request.shared_git, [PathBuf::from("/repo/.git")]);
+    assert!(disk_of(&runtime, "workspace-1").measuring);
+    assert!(
+        runtime.disk_sweep_request(Some("mini")).paths.is_empty(),
+        "a dialed device is not measured"
+    );
+    assert!(disk_of(&runtime, "workspace-2").is_empty());
 
     let usage = |path: &str, bytes: u64| DiskUsageSnapshot {
         path: Some(path.to_owned()),
         total_bytes: Some(bytes),
+        measured_at_unix_ms: Some(unix_milliseconds()),
         ..DiskUsageSnapshot::default()
     };
     // A checkout row carries its layers; the shared Git directory does not.
@@ -750,11 +759,15 @@ fn a_named_project_overview_measures_its_whole_disk() {
             ..usage(path, cache + deps + other + source)
         }
     };
-    assert!(runtime.ingest_disk_usage(vec![
-        layered("/repo", 60, 10, 5, 25),
-        layered("/repo.worktrees/feature", 12, 3, 0, 5),
-        usage("/repo/.git", 3),
-    ]));
+    assert!(runtime.ingest_swept_disk(
+        None,
+        vec![
+            layered("/repo", 60, 10, 5, 25),
+            layered("/repo.worktrees/feature", 12, 3, 0, 5),
+            usage("/repo/.git", 3),
+        ],
+        true,
+    ));
     let disk = disk_of(&runtime, "workspace-1");
     assert_eq!(disk.total_bytes, Some(123));
     assert!(!disk.measuring);
@@ -770,41 +783,23 @@ fn a_named_project_overview_measures_its_whole_disk() {
         }),
         "the layers are the checkouts' sums and add up to the total"
     );
+    assert!(
+        runtime.disk_sweep_request(None).paths.is_empty(),
+        "the sweep is done"
+    );
 
-    // One checkout that cannot be measured leaves the total absent and the
-    // free space, the subtotal and the measured layers in place.
+    // The lane card's read of one checkout that cannot be measured keeps the
+    // project's last size beside the reason.
     let mut failed = usage("/repo.worktrees/feature", 0);
     failed.total_bytes = None;
     failed.unavailable_reason = Some("Measurement exceeded its limit".into());
-    failed.volume_free_bytes = Some(7);
-    assert!(runtime.ingest_disk_usage(vec![
-        layered("/repo", 60, 10, 5, 25),
-        failed,
-        usage("/repo/.git", 3),
-    ]));
+    assert!(runtime.ingest_disk_usage(vec![failed]));
     let disk = disk_of(&runtime, "workspace-1");
-    assert_eq!(disk.total_bytes, None);
-    assert_eq!(disk.confirmed_bytes, Some(103));
-    assert_eq!(disk.free_bytes, Some(7));
+    assert_eq!(disk.total_bytes, Some(123));
     assert_eq!(
-        disk.layers.as_ref().map(|layers| layers.build_cache),
-        Some(60)
+        disk.unavailable_reason.as_deref(),
+        Some("Measurement exceeded its limit")
     );
-
-    let generation = runtime.disk_request().generation;
-    assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-2"}))));
-    assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "gone"}))));
-    assert_eq!(
-        runtime.disk_request().generation,
-        generation,
-        "a refusal measures nothing"
-    );
-    assert!(disk_of(&runtime, "workspace-2").is_empty());
-
-    for payload in [serde_json::json!({}), serde_json::Value::Null] {
-        assert!(runtime.dispatch_json(&measure(payload)));
-    }
-    assert_eq!(runtime.disk_request().generation, generation + 2);
 }
 
 #[test]
@@ -3764,6 +3759,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 local_issues_path: None,
                 effects_held: false,
                 machine_name: None,
+                account_state_folder: false,
             },
             environment::EnvironmentReport {
                 statuses: vec![],

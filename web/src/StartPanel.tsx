@@ -121,7 +121,7 @@ function StartPanel({ actions }: { actions: Actions }) {
   const overSettings = useStartPanel((s) => s.overSettings);
   const preset = useStartPanel((s) => s.preset);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const frontProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const frontProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overview.projectId : null);
   const overviewProjectId = preset?.projectId ?? frontProjectId;
   const targets = useMemo(() => startTargets(rest, screen, t, overSettings, overviewProjectId), [rest, screen, t, overSettings, overviewProjectId]);
   const target = resolveTarget(targets, chosen);

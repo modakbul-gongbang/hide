@@ -73,12 +73,6 @@ impl ConversationCheckpoint {
         }
     }
 
-    /// The same position, saying whether the session had more to read.
-    pub(crate) fn with_more(mut self, more: bool) -> Self {
-        self.has_more = more;
-        self
-    }
-
     /// The session creation time and last-message digest
     /// [`Self::at_message`] recorded; `None` from an older checkpoint.
     pub(crate) fn message_witness(&self) -> Option<(u64, u64)> {
@@ -95,24 +89,6 @@ impl ConversationCheckpoint {
     }
     pub fn has_more(&self) -> bool {
         self.has_more
-    }
-
-    pub(crate) fn is_native(&self) -> bool {
-        self.native.is_some()
-    }
-
-    pub(crate) fn native_matches(&self, confirmed: &crate::ConfirmedLabelSession) -> Result<bool> {
-        let native = self
-            .native
-            .as_ref()
-            .ok_or_else(|| SessionError::Checkpoint("cursor_checkpoint_missing".into()))?;
-        native.matches_owner(
-            confirmed
-                .native_session_id
-                .as_deref()
-                .ok_or_else(|| SessionError::Checkpoint("cursor_session_id_unconfirmed".into()))?,
-            &confirmed.incarnation,
-        )
     }
 }
 
@@ -307,16 +283,6 @@ impl ConversationCursor {
         let file = crate::open_session_file(path)
             .map_err(|error| SessionError::io("open", path, error))?;
         self.read_file_with_budget(agent, path, &file, budget)
-    }
-
-    /// Search uses one nonblocking, regular-file descriptor for all reads.
-    pub(crate) fn read_file(
-        &mut self,
-        agent: Agent,
-        path: &Path,
-        file: &File,
-    ) -> Result<ParsedSession> {
-        self.read_file_with_budget(agent, path, file, crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
     }
 
     fn read_file_with_budget(

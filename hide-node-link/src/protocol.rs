@@ -123,7 +123,17 @@ use crate::error::HostError;
 /// recipient's machine (PRD view-opener-feedback D-16). An older helper would
 /// refuse it as unknown, so a Send to its agents could never carry a
 /// screenshot; it is refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 33;
+/// 34: `guardrail_policy` writes the project guardrails' policy the agent
+/// hooks of the node's account read (PRD agent-guardrails D-11). A node on 33
+/// would refuse it as unknown, and a protection saved for a project there
+/// would not reach its agents, so it is refused at Hello and reinstalled.
+/// 35: `session_work_turn` answers the one turn a backlog item came from and
+/// replaces `session_work_context`, whose issue templates fed the removed AI
+/// issue draft, and a disk row carries its volume's size. The session search
+/// index reads (`session_index_read`, `session_stamps`) and the `search`
+/// reader feature left with the Conversation history screen. A helper on 34
+/// does not know the new call and is upgraded.
+pub const PROTOCOL_VERSION: u32 = 35;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -326,6 +336,18 @@ pub enum Call {
     /// Whether the node's account has Hide's agent hooks in place, read from
     /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
     HookDiagnosis,
+    /// Replaces the project guardrails' policy file under the node's home
+    /// with `policy`, the projects of this machine with a protection on
+    /// (`hide_agent_hooks::guardrails::write_policy`); answers `null` once
+    /// the file is in place. A `sequence` below the last one this node
+    /// applied leaves the newer file alone and is answered
+    /// `{"superseded_by": <that sequence>}`: a write that outlived its
+    /// caller's wait, or a caller whose sequence fell behind (another core,
+    /// a clock set back), which writes again above it.
+    GuardrailPolicy {
+        policy: hide_agent_hooks::guardrails::Policy,
+        sequence: u64,
+    },
     /// Every worktree Git registers for the repository at `root`, the main
     /// one first (`worktrees::Registered`).
     WorktreesRegistered {
@@ -519,11 +541,10 @@ pub enum Call {
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
     },
-    /// The one original turn and bounded checkout issue templates used by
-    /// the operator's editable issue preview. No other turn is returned.
-    SessionWorkContext {
+    /// The one original turn a backlog item came from, for its panel's
+    /// origin and the Start prompt. No other turn is returned.
+    SessionWorkTurn {
         request: hide_session::label_transcript::WorkTurnRequest,
-        checkout_path: String,
     },
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
@@ -557,24 +578,6 @@ pub enum Call {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkpoint: Option<hide_session::usage::Checkpoint>,
-    },
-    /// One bounded read of a session file for the core's search index, on
-    /// from what the index saved (`hide_session::search_read::read_step`);
-    /// the answer is a `hide_session::search::IndexStep`.
-    SessionIndexRead {
-        agent: hide_session::Agent,
-        path: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<hide_session::SessionReadScope>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        saved: Option<hide_session::search::SavedFile>,
-    },
-    /// Each session file's current stamp, `null` for one gone or
-    /// unreadable, at most `hide_session::search::STAMP_LIMIT` paths.
-    SessionStamps {
-        paths: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scopes: Option<Vec<Option<hide_session::SessionReadScope>>>,
     },
     /// The agent sessions the node holds for `project`, newest first, at most
     /// `hide_session::SESSION_DISCOVERY_LIMIT` files visited
@@ -777,6 +780,7 @@ impl Call {
             | Self::WorktreeRemovalCheck { .. }
             | Self::Kit { .. }
             | Self::HookDiagnosis
+            | Self::GuardrailPolicy { .. }
             | Self::WorktreesRegistered { .. }
             | Self::IgnoredRepository { .. }
             | Self::ProjectCreate { .. }
@@ -799,14 +803,12 @@ impl Call {
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
             | Self::LabelTranscript { .. }
-            | Self::SessionWorkContext { .. }
+            | Self::SessionWorkTurn { .. }
             | Self::SessionActivity { .. }
             | Self::LinkFiles { .. }
             | Self::LinkRead { .. }
             | Self::UsageFiles { .. }
             | Self::UsageRead { .. }
-            | Self::SessionIndexRead { .. }
-            | Self::SessionStamps { .. }
             | Self::ProjectSessions { .. }
             | Self::GitWatch { .. }
             | Self::SessionStat { .. }

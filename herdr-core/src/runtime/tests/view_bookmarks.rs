@@ -1550,6 +1550,7 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
     runtime.snapshot.navigator.focused_device_id = Some(device.to_owned());
     let entry = runtime

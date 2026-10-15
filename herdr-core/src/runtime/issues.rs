@@ -743,11 +743,6 @@ impl Runtime {
         self.refresh_device_pull_requests(node, root);
     }
 
-    pub(super) fn next_issue_work_id(&mut self) -> u64 {
-        self.next_issue_work_id = self.next_issue_work_id.wrapping_add(1).max(1);
-        self.next_issue_work_id
-    }
-
     /// Runs `work` on its own thread and hands its answer to `ingest` under
     /// the lock; `Err` when there is no worker to run it on (a core built
     /// without one, as the tests build it).
@@ -843,109 +838,6 @@ impl Runtime {
         true
     }
 
-    pub(super) fn settle_issue_create(&mut self, id: u64, result: Result<String, String>) -> bool {
-        let Some(slot) = self
-            .snapshot
-            .issue_work
-            .create
-            .as_mut()
-            .filter(|slot| slot.id == id)
-        else {
-            return false;
-        };
-        match result {
-            Ok(key) => {
-                slot.phase = "ready".into();
-                slot.task_key = Some(key);
-                slot.message = None;
-            }
-            Err(message) => {
-                slot.phase = "failed".into();
-                slot.message = Some(message.clone());
-                self.push_diagnostic("issue_create.failed", message);
-            }
-        }
-        true
-    }
-
-    /// `issue_create`: a new issue in the project's source. A Local one is
-    /// in the store at once and written by the coordinator; a GitHub one is
-    /// `gh issue create` on a worker.
-    pub(super) fn create_issue(&mut self, payload: IssueCreatePayload) -> bool {
-        if payload.missed.is_some() {
-            return self.create_missed_issue(payload);
-        }
-        let Some((node, workspace)) = self.issue_project(&payload.workspace_id) else {
-            self.set_error(
-                "issue_create.unknown_project",
-                "A new issue needs a project on this Mac or a linked machine",
-                false,
-            );
-            return true;
-        };
-        if self
-            .snapshot
-            .issue_work
-            .create
-            .as_ref()
-            .is_some_and(|slot| slot.phase == "working")
-        {
-            self.set_error(
-                "issue_create.busy",
-                "Another issue is still being created",
-                true,
-            );
-            return true;
-        }
-        let id = self.next_issue_work_id();
-        self.snapshot.issue_work.create = Some(crate::model::IssueCreateSnapshot {
-            id,
-            workspace_id: workspace.id.clone(),
-            phase: "working".into(),
-            task_key: None,
-            message: None,
-        });
-        let checked = crate::local_issues::validated_title(&payload.title).and_then(|title| {
-            crate::local_issues::validated_body(&payload.body).map(|body| (title, body))
-        });
-        let (title, body) = match checked {
-            Ok(checked) => checked,
-            Err(message) => return self.settle_issue_create(id, Err(message)),
-        };
-        crate::diagnostic!(serde_json::json!({
-            "component": "issues", "kind": "issue_create.requested",
-            "id": id, "project": workspace.path, "node": node,
-        }));
-        match self.project_source_kind(&workspace) {
-            crate::tasks::SourceKind::Local => {
-                let created = self
-                    .create_local_issue(node.as_deref(), &workspace.path, &title, &body)
-                    .map(|number| crate::tasks::local_key(&workspace.path, number));
-                self.settle_issue_create(id, created);
-                true
-            }
-            crate::tasks::SourceKind::Github => {
-                let place = match self.github_place(node.as_deref(), &workspace.path) {
-                    Ok(place) => place,
-                    Err(message) => return self.settle_issue_create(id, Err(message)),
-                };
-                let project_path = workspace.path.clone();
-                let own = self.own_node();
-                let spawned = self.spawn_issue_worker(
-                    "issue-create",
-                    move || crate::github::create_issue(own.as_ref(), &place, &title, &body),
-                    move |runtime, result| {
-                        runtime.ingest_created_issue(id, node.as_deref(), &project_path, result)
-                    },
-                );
-                if let Err(message) = spawned {
-                    return self.settle_issue_create(id, Err(message));
-                }
-                true
-            }
-        }
-    }
-
     /// A Local issue made in the store for `project_path` on `node` (this
     /// machine's for `None`), saved off the lock, and on the project's board
     /// at once; the store checks the title and body.
@@ -967,22 +859,6 @@ impl Runtime {
         self.persist_local_issues();
         self.refresh_issue_rows(node);
         Ok(number)
-    }
-
-    pub(crate) fn ingest_created_issue(
-        &mut self,
-        id: u64,
-        node: Option<&str>,
-        project_path: &str,
-        result: Result<crate::issues::IssueSnapshot, String>,
-    ) -> bool {
-        let issue = match result {
-            Ok(issue) => issue,
-            Err(message) => return self.settle_issue_create(id, Err(message)),
-        };
-        let key = crate::tasks::github_key(&issue.reference);
-        self.remember_created_issue(node, project_path, issue);
-        self.settle_issue_create(id, Ok(key))
     }
 
     /// A GitHub issue Hide just made shows at once, in this machine's
@@ -1010,6 +886,36 @@ impl Runtime {
                 .retain(|known| known.reference != issue.reference);
             project.issues.issues.insert(0, issue);
             project.issues.issues.truncate(ISSUE_LIMIT);
+        }
+        match node {
+            None => self.refresh_pull_requests(project_path),
+            Some(node) => self.reread_node_github(node, project_path),
+        }
+        self.refresh_issue_rows(node);
+    }
+
+    /// An issue the backlog closed (`되돌리기`) leaves the open list at once;
+    /// the next read confirms it.
+    pub(super) fn forget_created_issue(
+        &mut self,
+        node: Option<&str>,
+        project_path: &str,
+        reference: &crate::issues::IssueReference,
+    ) {
+        let github = match node {
+            None => Some(&mut self.github),
+            Some(node) => self.device_github.get_mut(node),
+        };
+        if let Some(project) = github.and_then(|github| {
+            github
+                .projects
+                .iter_mut()
+                .find(|project| project.root_path == project_path)
+        }) {
+            project
+                .issues
+                .issues
+                .retain(|known| known.reference != *reference);
         }
         match node {
             None => self.refresh_pull_requests(project_path),
@@ -1123,10 +1029,7 @@ impl Runtime {
             }
             let node = on_node.then_some(workspace.device_id.as_str());
             let repository = match self.github_place(node, &workspace.path) {
-                Ok(
-                    crate::github::Where::Repository(repository)
-                    | crate::github::Where::DeviceRepository { repository, .. },
-                ) => Some(repository),
+                Ok(crate::github::Where::Repository(repository)) => Some(repository),
                 Ok(crate::github::Where::Checkout(_)) => workspace.home_issues.repository.clone(),
                 Err(_) => None,
             }

@@ -9,7 +9,7 @@ import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
-test("@platform session work records, drafts, ended work and search render in both themes in a narrow native lane", async () => {
+test("@platform session work records, missed lines, ended work and search render in both themes in a narrow native lane", async () => {
   test.setTimeout(240_000);
   const herdr = await startHerdr();
   const github = workFixture(herdr);
@@ -46,9 +46,11 @@ test("@platform session work records, drafts, ended work and search render in bo
     await setFixtureLifecycle(herdr, herdr.panes[0], "working");
     await expect(root).toContainText(NEXT_GOAL, { timeout: 45_000 });
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
-    await expect(record.locator('[data-record-task]')).toHaveCount(3, { timeout: 45_000 });
+    // The parent's two tasks; the child's is in its own record, behind its row (B20).
+    await expect(record.locator('[data-record-task]')).toHaveCount(2, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
-    await record.locator(`[data-record-child="${child}"] > summary`).click();
+    // The child is a row of the parent's record (B20); the capture keeps the parent in front.
+    await expect(record.locator(`[data-record-child="${child}"]`)).toBeVisible();
     const fixtureIdentity = { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8" }).trim(), home: run.env.HOME, state: run.env.HIDE_STATE_DIR, socket: herdr.socket, daemon: run.daemonPid(), parent: herdr.panes[0], child, provider: "scripted", github: "scripted" };
     for (const theme of ["light", "dark"] as const) {
       await page.locator('[data-open-settings]').click();
@@ -67,10 +69,9 @@ test("@platform session work records, drafts, ended work and search render in bo
       await missed.hover();
       await missed.getByRole("button", { name: "되돌리기", exact: true }).click();
       await expect(missed).toHaveAttribute("data-missed-status", "open");
-      await missed.locator('[data-missed-issue]').click();
-      await expect(page.locator('[data-new-issue-title]')).toHaveValue("한국어 요청 줄바꿈 확인", { timeout: 30_000 });
-      await captureElectronWindow(app, `record-issue-draft-${theme}`, facts);
-      await page.locator('[data-new-issue]').getByRole("button", { name: "취소", exact: true }).click();
+      // An open line offers 백로그로 and 무시, with no drafted form (PRD overview-device-tasks B43).
+      await expect(missed.locator("[data-missed-backlog-add]")).toBeVisible();
+      await captureElectronWindow(app, `record-missed-open-${theme}`, facts);
       await page.keyboard.press(chord("search", "electron"));
       await page.locator('[data-palette-input]').fill(NEXT_GOAL);
       await expect(page.locator('[data-palette-group="sessions"]')).toContainText(NEXT_GOAL, { timeout: 30_000 });
@@ -84,9 +85,10 @@ test("@platform session work records, drafts, ended work and search render in bo
       await page.locator('[data-ai-agent-summary="true"]').click();
       await page.keyboard.press("Escape");
       await expect(record.locator('[data-record-task]')).toHaveCount(0);
-      await expect(record.locator('[data-record-request]')).toHaveCount(3);
+      // The parent's two requests; the child's is in its own record, behind its row.
+      await expect(record.locator('[data-record-request]')).toHaveCount(2);
       await expect(record.getByRole('heading', { level: 2 })).toHaveText('Claude');
-      await expect(record.locator('[data-record-child] > summary')).toContainText('Claude');
+      await expect(record.locator('[data-record-child]')).toContainText('Claude');
       // Only the child's pull request names its maker; the session's own say nothing.
       await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
       await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);

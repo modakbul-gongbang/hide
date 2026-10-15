@@ -26,10 +26,11 @@ const inWorkspace = {
   workspace_view: { checkout_id: "app-main" },
 } as unknown as SnapshotRest;
 
-// UI_BEHAVIOR.md, Usage: "Full history opens Overview's global Usage tab, not a per-project ledger."
+// UI_BEHAVIOR.md, Usage: full history opens the device Overview's Usage tab with no project chosen.
 async function clickHistory(rest: SnapshotRest | null) {
   useShellStore.setState({ connection: "live", usage: { nodes: [node] }, rest });
-  useUiStore.setState({ screen: { kind: "workspace" }, overviewOpen: false, overviewProjectId: "app", mainView: "agents" });
+  useUiStore.setState({ screen: { kind: "workspace" }, overviewOpen: false, mainView: "tasks" });
+  useUiStore.getState().setOverview({ projectId: "app" });
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -44,12 +45,12 @@ it("opens Overview's Usage tab over the workspace from the popover's History", a
   try {
     await vi.waitFor(() => expect(useUiStore.getState().overviewOpen).toBe(true));
     const ui = useUiStore.getState();
-    expect([ui.screen?.kind, ui.mainView, ui.overviewProjectId]).toEqual(["workspace", "usage", null]);
+    expect([ui.screen?.kind, ui.mainView, ui.overview.projectId]).toEqual(["workspace", "usage", null]);
     expect(document.querySelector("[data-usage-popover]")).toBeNull();
   } finally { await act(async () => root.unmount()); }
 });
 
-it("opens Home on its Usage tab when no checkout is in front", async () => {
+it("opens the Overview page on its Usage tab when no checkout is in front", async () => {
   const root = await clickHistory(null);
   try {
     await vi.waitFor(() => expect(useUiStore.getState().screen?.kind).toBe("main"));

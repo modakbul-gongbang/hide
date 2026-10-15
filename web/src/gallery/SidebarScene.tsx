@@ -12,7 +12,7 @@ import { Sidebar } from "../sidebar";
 import { TitleRow } from "../TitleRow";
 import { SettingsGate } from "../SettingsSheet";
 import { useShellStore } from "../store";
-import { entryLens, useUiStore } from "../ui";
+import { OVERVIEW_ENTRY, useUiStore } from "../ui";
 import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, sidebarStatusAxisScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
 
 /** What one scene document shows; every value comes from its query string. */
@@ -72,7 +72,7 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
   }, [scene, width, rail, axis]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: axis ? { kind: "workspace" } : { kind: "main" }, overviewProjectId: "hide", overviewLens: entryLens(null, "board"), overviewOpen: false });
+    useUiStore.setState({ screen: axis ? { kind: "workspace" } : { kind: "main" }, overview: { ...OVERVIEW_ENTRY, projectId: "hide" }, overviewOpen: false });
   }, [front, axis]);
 
   useLayoutEffect(() => {

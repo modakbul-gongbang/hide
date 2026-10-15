@@ -2,10 +2,10 @@
 mod cleanup;
 pub(crate) use cleanup::cleanup_facts;
 mod close;
-mod graph;
 pub(crate) mod lineage;
 mod relations;
 pub mod scope;
+pub mod tasks;
 use super::axes::*;
 use super::turn::*;
 use crate::model::SidebarAgentSnapshot;

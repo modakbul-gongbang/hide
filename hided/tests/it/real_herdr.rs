@@ -71,6 +71,7 @@ fn daemon_env(root: &Path, herdr: &PrivateHerdr) -> Env {
         herdr_bin_path: Some(herdr.bin.clone()),
         state_dir: root.join("state"),
         legacy_state_dir: None,
+        account_state_folder: false,
         keep_alive: true,
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),

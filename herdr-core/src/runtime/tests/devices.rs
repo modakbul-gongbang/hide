@@ -256,6 +256,7 @@ pub(super) fn runtime_with_home() -> Runtime {
         local_issues_path: None,
         effects_held: false,
         machine_name: None,
+        account_state_folder: false,
     };
     let mut runtime = Runtime::new(
         options,

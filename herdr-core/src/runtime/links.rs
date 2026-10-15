@@ -147,6 +147,7 @@ pub(crate) fn spawn_worker(
     let mut guard = runtime.lock().map_err(|_| "runtime lock poisoned")?;
     guard.links_work.client = Some(worker.client());
     guard.feed_links();
+    guard.restore_pending_backlog();
     Ok(worker)
 }
 

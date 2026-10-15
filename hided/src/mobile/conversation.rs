@@ -210,8 +210,7 @@ impl NativeProof {
             return Ok(None);
         }
         let confirmed = Self::confirm(home, source, path)?;
-        let stamp =
-            hide_session::search_read::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
+        let stamp = hide_session::stamp::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
         Ok(Some(Self {
             home: home.to_path_buf(),
             source: source.clone(),
@@ -227,8 +226,7 @@ impl NativeProof {
                 "label_session_read_changed".to_owned(),
             ));
         }
-        let stamp =
-            hide_session::search_read::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
+        let stamp = hide_session::stamp::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
         Ok(Self {
             confirmed,
             stamp,

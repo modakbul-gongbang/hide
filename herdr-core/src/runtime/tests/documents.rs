@@ -915,6 +915,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
             session: Some(session.clone()),
             files: RemoteFileListSnapshot::idle(),
             catalog: Default::default(),
+            unreachable_since_unix_ms: None,
         });
         runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
         runtime.snapshot.navigator.focused_workspace_id = None;
@@ -1301,6 +1302,7 @@ fn studio_connecting(runtime: &mut Runtime) {
             state: "ready".to_owned(),
             ..Default::default()
         },
+        unreachable_since_unix_ms: None,
     });
     runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
 }

@@ -117,10 +117,10 @@ export function frontTitle(devices: readonly Device[] | undefined, frontId: stri
   return { name: machineName(devices, id, t), note: id !== own ? t("devices.remote") : null };
 }
 
-/** What the sidebar's list shows: the front device's Projects or Agents tab, or the way to reconnect a device that cannot be read. */
-export type SidebarBody = "disconnected" | "projects" | "agents";
+/** What the sidebar's list shows: the front device's Projects, or the way to reconnect a device that cannot be read. */
+export type SidebarBody = "disconnected" | "projects";
 
-/** Which list fills the sidebar (B8): the device's name and the way to reconnect while it is not connected, else the tab the operator chose. */
-export function sidebarBody(rest: SnapshotRest | null, mode: "projects" | "agents"): SidebarBody {
-  return deviceConnected(rest, frontDeviceId(rest)) ? mode : "disconnected";
+/** Which list fills the sidebar (B8): the device's name and the way to reconnect while it is not connected, else its Projects. */
+export function sidebarBody(rest: SnapshotRest | null): SidebarBody {
+  return deviceConnected(rest, frontDeviceId(rest)) ? "projects" : "disconnected";
 }

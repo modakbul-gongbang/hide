@@ -3,8 +3,7 @@
 // (`dials_in`), and its projects reach the window in the MacBook's session as
 // the core's node projection draws them, with an issue source, a size the core
 // measured on the node and a merged worktree to clean up. The `node-project`
-// scene draws it and `ProjectOverview.node.test.tsx` asserts on the same
-// shape. Every name is example data.
+// scene draws it. Every name is example data.
 
 import type { DiskCleanup, ProjectTasks, SnapshotRest, Task, Workspace } from "../snapshot";
 import { coreMoveRest, NODE_DEVICE } from "./coreMoveSceneData";

@@ -11,7 +11,8 @@ import { Hint } from "./components/ui/tooltip";
 import { deviceConnected } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MemorySettings, useMemoryProject } from "./MemoryTab";
-import { projectBaseBranch, projectIssueSource, projectSettings, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
+import { guardPartOf, ProjectGuardrails, pathRefusalKey, type GuardPart } from "./ProjectGuardrails";
+import { guardedBase, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, refusedForGood, unguardedAgents, type Guardrails, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
 import { issueSourceChoices } from "./settings";
 import { catalogWorkspaces } from "./snapshot";
 import { useShellStore } from "./store";
@@ -35,7 +36,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
   const workspace = current ?? lastWorkspace.current;
   const available = live && current !== null && deviceConnected(rest, target.deviceId);
   const [page, setPage] = useState<Page>(initialPage);
-  const [intent, setIntent] = useState<{ id: string; field: keyof ProjectSettingsPatch; patch: ProjectSettingsPatch; state: "pending" | "saved" | "failed" } | null>(null);
+  const [intent, setIntent] = useState<{ id: string; field: keyof ProjectSettingsPatch; part?: GuardPart; patch: ProjectSettingsPatch; state: "pending" | "saved" | "failed" } | null>(null);
   const { record, write } = projectSettings(rest, target, intent?.id);
   const waiting = useRef(false);
   const pending = write?.state === "pending" || (intent !== null && intent.state === "pending" && write?.request_id !== intent.id);
@@ -46,25 +47,29 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
       setIntent((current) => current && current.state !== state ? { ...current, state } : current);
     }
   }, [write, intent?.id]);
-  const blocked = !available || pending || (record !== null && record.version !== 1);
+  const blocked = !available || pending || !readableSettings(record);
   const previous = useRef<HTMLElement | null>(useUiStore.getState().projectSettingsReturnFocus);
   const close = () => useUiStore.getState().closeOverlay("project_settings");
-  const save = (field: keyof ProjectSettingsPatch, patch: ProjectSettingsPatch) => {
+  const save = (field: keyof ProjectSettingsPatch, patch: ProjectSettingsPatch, part?: GuardPart) => {
     if (blocked || waiting.current) return;
     const id = crypto.randomUUID();
     waiting.current = true;
     const sent = actions.setProjectSettings(target, patch, id);
     if (!sent) waiting.current = false;
-    setIntent({ id, field, patch, state: sent ? "pending" : "failed" });
+    setIntent({ id, field, part, patch, state: sent ? "pending" : "failed" });
   };
-  const stateFor = (field: keyof ProjectSettingsPatch): ReactNode => {
-    const retry = intent?.field === field ? intent : write?.patch?.[field] !== undefined ? { id: write.request_id, patch: write.patch } : null;
+  const guardrails = projectGuardrails(record);
+  // A receipt read back without its intent (the dialog reopened) is shown beside the control it moved.
+  const receiptPart = (patch: ProjectSettingsPatch | undefined) => patch?.guardrails ? guardPartOf(patch.guardrails, guardrails) : undefined;
+  const stateFor = (field: keyof ProjectSettingsPatch, part?: GuardPart): ReactNode => {
+    const retry = intent?.field === field ? intent.part === part ? intent : null
+      : write?.patch?.[field] !== undefined && receiptPart(write.patch) === part ? { id: write.request_id, patch: write.patch } : null;
     if (!retry) return null;
     const state = write?.request_id === retry.id ? write.state : intent?.state ?? "pending";
     return <div className="flex flex-wrap items-center gap-sm" aria-live="polite">
       <Status tone={state === "failed" ? "error" : state === "pending" ? "pending" : "ok"}>{t(`projectSettings.${state === "failed" ? "failed" : state === "pending" ? "pending" : "saved"}`)}</Status>
       {state === "failed" ? <Note tone="error">{t(settingsErrorKey(write?.error))}</Note> : null}
-      {state === "failed" ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, patch: retry.patch, state: actions.setProjectSettings(target, retry.patch, retry.id) ? "pending" : "failed" })}>{t("projectSettings.retry")}</Button> : null}
+      {state === "failed" && !refusedForGood(write?.error) ? <Button size="sm" variant="ghost" disabled={!available} onClick={() => setIntent({ id: retry.id, field, part, patch: retry.patch, state: actions.setProjectSettings(target, retry.patch, retry.id) ? "pending" : "failed" })}>{t("projectSettings.retry")}</Button> : null}
     </div>;
   };
   useMemoryProject(actions, available ? current.id : null);
@@ -119,7 +124,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
           <TabsContent value={page} className="min-h-0 overflow-y-auto overflow-x-hidden px-xl pb-xl" data-project-settings-page={page}>
             <div className="flex min-w-0 flex-col gap-lg">
               {!available ? <Note tone="warn">{t("projectSettings.unavailable")} <Button variant="ghost" size="sm" disabled={!live} onClick={() => { const device = rest?.navigator?.devices?.find((row) => row.id === target.deviceId); if (device?.kind === "remote") actions.retryDevice(target.deviceId); else actions.refreshProjectOverview(target.workspaceId); }}>{t("projectSettings.retry")}</Button></Note> : null}
-              {record && record.version !== 1 ? <Note tone="warn">{t("projectSettings.newerVersion")}</Note> : null}
+              {!readableSettings(record) ? <Note tone="warn">{t("projectSettings.newerVersion")}</Note> : null}
               {page === "connections" ? <>
                 <Group title={t("projectSettings.repository")} note={t("projectSettings.repositoryNote")}>
                   <Row label={t("projectSettings.repository")} detail={<>{workspace?.is_git ? <Value>{confirmedRepository ?? detected ?? t("projectSettings.repositoryMissing")}</Value> : <Note>{t("projectSettings.folder")}</Note>}{stateFor("repository")}</>}>
@@ -155,7 +160,10 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
                     <Select value={baseValue} disabled={blocked || !workspace?.is_git} onValueChange={(value) => save("base_branch", { base_branch: value === "auto" ? { mode: "auto" } : { mode: "branch", branch: value.slice("branch:".length) } })}><SelectTrigger aria-label={t("projectSettings.base")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">{t("projectSettings.automatic")}{base.branch ? ` · ${base.branch}` : ""}</SelectItem>{branches.map((branch) => <SelectItem key={branch} value={`branch:${branch}`}>{branch}</SelectItem>)}</SelectContent></Select>
                   </Row>
                 </Group>
-                <Group title={t("projectSettings.protection")}><Row label={t("projectSettings.protection")} detail={<Note>{t("projectSettings.protectionNote")}</Note>}><Status tone="muted">{t("projectSettings.unsupported")}</Status></Row><Row label={t("projectSettings.fileBlocking")} detail={<Note>{t("projectSettings.fileBlockingNote")}</Note>}><Status tone="muted">{t("projectSettings.unsupported")}</Status></Row></Group>
+                <ProjectGuardrails rules={guardrails} isGit={workspace?.is_git ?? false} base={workspace ? guardedBase(rest, workspace, record) : null} disabled={blocked}
+                  unguarded={unguardedAgents(rest?.navigator?.devices?.find((device) => device.id === target.deviceId)?.kit?.agents)}
+                  save={(part, rules: Guardrails) => save("guardrails", { guardrails: rules }, part)} stateFor={(part) => stateFor("guardrails", part)}
+                  onOpenAgents={() => { close(); actions.openSettings("agents"); }} />
               </> : null}
               {page === "memory" ? <Group title={t("projectSettings.memory")}>
                 <Row label={t("projectSettings.memory")} detail={<Note>{t("projectSettings.memoryNote")}</Note>}>
@@ -180,6 +188,9 @@ function settingsErrorKey(code: string | null | undefined) {
     case "project_settings_not_git": return "projectSettings.folder" as const;
     case "project_settings_limit": case "project_settings_link_limit": return "projectSettings.errorLimit" as const;
     case "project_settings_device_unavailable": case "project_settings_project_unavailable": case "project_settings_project_missing": return "projectSettings.unavailable" as const;
+    case "project_settings_paths_limit": case "project_settings_path_too_long": case "project_settings_path_duplicate": case "project_settings_path_invalid": return pathRefusalKey(code);
+    case "project_settings_base_unknown": return "projectSettings.errorBaseUnknown" as const;
+    case "project_settings_policy_failed": return "projectSettings.errorPolicy" as const;
     default: return "projectSettings.errorSave" as const;
   }
 }

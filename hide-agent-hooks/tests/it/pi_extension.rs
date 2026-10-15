@@ -58,6 +58,8 @@ fn behaves_as_the_host_runs_it(file: &PluginFile, agent: &str) {
             crate_dir().join("tests/pi-extension/helper.mjs"),
         )
         .env("HIDE_EXTENSION_HELPER_LOG", dir.path().join("calls.jsonl"))
+        // The guardrails policy is read from HOME, which the test writes.
+        .env("HOME", dir.path())
         .env(
             "HIDE_EXTENSION_HELPER_ANSWERS",
             dir.path().join("answers.json"),

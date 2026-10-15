@@ -69,10 +69,6 @@ pub struct RowState {
     pub branch_badge: Option<String>,
     pub bucket: &'static str,
     pub attention_rank: u8,
-    pub graph_rank: u8,
-    pub graph_chip: &'static str,
-    pub graph_resting: bool,
-    pub edge: &'static str,
     pub search_tone: &'static str,
     pub subtree: &'static str,
     pub link: &'static str,
@@ -283,30 +279,6 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "done" => 2,
             "working" => 3,
             _ => 4,
-        },
-        graph_rank: if asking || bucket == "turn" {
-            0
-        } else if bucket == "working" {
-            1
-        } else if waits_on_children {
-            2
-        } else {
-            3
-        },
-        graph_chip: match bucket {
-            "turn" => "turn",
-            "resting" => "resting",
-            _ => "working",
-        },
-        graph_resting: !asking && bucket != "turn" && bucket != "working" && !waits_on_children,
-        edge: if asking {
-            "ask"
-        } else if activity == "working" {
-            "flow"
-        } else if waits_on_children {
-            "wait"
-        } else {
-            "rest"
         },
         search_tone: match chip_kind {
             "warning" => "attention",
@@ -1079,7 +1051,6 @@ mod row_tests {
         let state = row_state(&agent);
         assert!(!state.attention);
         assert_eq!(state.bucket, "resting");
-        assert_eq!(state.graph_rank, 0);
         assert_eq!(state.subtree, "waiting");
         assert_eq!(state.search_tone, "attention");
         assert_eq!(
@@ -1111,7 +1082,7 @@ mod row_tests {
     }
 
     #[test]
-    fn waiting_root_keeps_distinct_row_chip_and_graph_decisions() {
+    fn waiting_root_keeps_distinct_row_and_chip_decisions() {
         let mut agent = row();
         agent.group = "working".into();
         agent.activity = "stopped".into();
@@ -1123,8 +1094,6 @@ mod row_tests {
         assert_eq!(state.chip_tone.kind, "subtle");
         assert_eq!(state.search_tone, "muted");
         assert_eq!(state.bucket, "delegating");
-        assert_eq!(state.edge, "wait");
-        assert_eq!(state.graph_rank, 2);
         assert_eq!(state.link, "working");
         assert!(state.working);
         assert!(!state.title_emphasized);

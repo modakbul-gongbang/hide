@@ -2,7 +2,6 @@
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
 Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, the Software Factory's judgments (see [The Factory's judgments](#the-factorys-judgments)), and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
-The Sessions missed-work preview is another consumer, owned by `herdr-core/src/ai.rs` and `runtime/session_work.rs`.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -17,11 +16,6 @@ No feature type lives in the crate, and no provider detail leaks out of it.
 The session label requests use `context_label.v10`, retaining nullable goals at both boundaries; the existing END request adds a work judgment: new, continued or no assigned work, at most three short missed items (a problem found outside the assigned task or a proposed follow-up nobody has taken), resolved item ids and one output-task choice.
 There is no additional call per turn, and requests from periods with summaries Off or failed judgments are never backfilled by the provider.
 END waits for a known ledger context instead of treating missing parent authority or open work as empty.
-
-An explicit `이슈로` press submits the separate `session_issue_draft` feature, whose schema requires an editable title and body.
-The caller redacts the missed text, original witnessed request and assistant answer, and repository templates before submission; it caps the input and answer and owns cancellation and generation fencing.
-Its provider runs in the same read-only boundary as other features, cannot create an issue or wake an agent, and only the operator's later Create invokes GitHub.
-An unavailable provider, authentication or usage allowance keeps an editable title-only preview with an empty body and a reason.
 
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 
@@ -395,7 +389,7 @@ The price worker is joined on shutdown, and diagnostics contain fixed codes and 
 
 ## Counting Hide AI's own usage
 
-Hide AI's background calls (agent summaries, Memory, Factory judgments, issue drafts and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
+Hide AI's background calls (agent summaries, Memory, Factory judgments, pull request summaries and worktree names) run through the provider CLIs without leaving a session file, so the historical readers above never see them.
 Each router built for one of those features carries an `AiUsageSink`, and the router tells it once per attempt that reached a provider.
 The Settings probe has no sink: it asks a CLI whether it is ready and is not a feature call.
 An agent pane that Hide starts (a Factory worker, a Memory promotion) is a native session, so its own transcript already counts it and the sink never hears of it.

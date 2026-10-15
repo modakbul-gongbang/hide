@@ -178,7 +178,7 @@ pub(super) fn measure_worktrees(
 /// back yet.
 pub(super) fn project_disk(
     project: Option<&crate::model::ProjectWorktreesSnapshot>,
-    named: bool,
+    (measuring, queued): (bool, bool),
 ) -> crate::model::ProjectDiskSnapshot {
     let total_bytes = project.and_then(|project| project.disk_total_bytes);
     let unavailable_reason = project.and_then(|project| project.disk_unavailable_reason.clone());
@@ -189,6 +189,14 @@ pub(super) fn project_disk(
             .map(|worktree| &worktree.disk)
             .chain(std::iter::once(&project.shared_git_disk))
             .find_map(|disk| disk.volume_free_bytes)
+    });
+    let volume_total_bytes = project.and_then(|project| {
+        project
+            .worktrees
+            .iter()
+            .map(|worktree| &worktree.disk)
+            .chain(std::iter::once(&project.shared_git_disk))
+            .find_map(|disk| disk.volume_total_bytes)
     });
     // The layers of every checkout that was measured: one that could not be
     // read leaves the subtotal, not the whole breakdown.
@@ -212,10 +220,12 @@ pub(super) fn project_disk(
         any.then_some(sum)
     });
     crate::model::ProjectDiskSnapshot {
-        measuring: named && total_bytes.is_none() && unavailable_reason.is_none(),
+        measuring,
+        queued,
         total_bytes,
         unavailable_reason,
         free_bytes,
+        volume_total_bytes,
         confirmed_bytes: project.and_then(|project| project.disk_confirmed_bytes),
         layers,
     }
@@ -478,6 +488,8 @@ impl Runtime {
         );
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
+        // A project the Projects tab watched before Git listed it is measured now.
+        self.advance_disk_sweep(None);
         self.refresh_worktree_projection();
         // A HEAD the reader moved decides again which pull request a checkout
         // holds, and what hangs off that (its issues, its request rows).
@@ -727,9 +739,9 @@ impl Runtime {
             ..Default::default()
         };
         self.cleanup = Some(review.clone());
-        // The sizes the sheet shows come from the reader the facts line uses;
-        // reviewing again measures again.
-        self.measure_project_disk(workspace_id);
+        // The sizes the sheet shows come from the Projects tab's sweep;
+        // reviewing again measures that project first.
+        self.measure_disk_first(node.as_deref(), &input.repository_root.clone());
         let root = input.repository_root.clone();
         let started = self
             .cleanup_place(node.as_deref(), &root)
@@ -935,6 +947,17 @@ impl Runtime {
             });
         }
 
+        let disk_marks: HashMap<String, (bool, bool)> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .map(|workspace| {
+                let marks = self.disk_sweep_marks(None, &workspace.path);
+                (workspace.path.clone(), marks)
+            })
+            .collect();
         let link_summaries = self
             .snapshot
             .link_summaries
@@ -964,8 +987,16 @@ impl Runtime {
                 std::slice::from_mut(workspace),
                 &self.snapshot.navigator.agents,
             );
-            let named = self.disk_project.as_deref() == Some(workspace.path.as_str());
-            workspace.disk = project_disk(self.worktree_catalog.project(&workspace.path), named);
+            let marks = disk_marks.get(&workspace.path).copied().unwrap_or_default();
+            workspace.disk = match workspace.is_git {
+                true => project_disk(self.worktree_catalog.project(&workspace.path), marks),
+                false => super::disk_sweep::folder_disk(
+                    &self.disk_usage,
+                    &workspace.path,
+                    marks.0,
+                    marks.1,
+                ),
+            };
             workspace.cleanup = self
                 .cleanup
                 .as_ref()
@@ -2565,6 +2596,9 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        if let Some((device_id, path)) = &registered {
+            self.forget_project_guardrails(device_id, path);
+        }
         let asleep = crate::project_context::asleep_fold_key(workspace_id);
         self.snapshot
             .ui_state
@@ -2910,7 +2944,7 @@ impl Runtime {
 
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
         let mut shared_git = Vec::new();
-        let mut paths = if self.snapshot.ui_state.right_panel_visible
+        let paths = if self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
                 RightPanelSection::Overview
@@ -2938,78 +2972,11 @@ impl Runtime {
         } else {
             Vec::new()
         };
-        // The project a web Overview named is measured beside the right
-        // panel's; the reader lets the deepest root own its subtree and
-        // counts each inode once, so a path both ask for is one measurement.
-        if let Some(project) = self
-            .disk_project
-            .as_deref()
-            .and_then(|path| self.worktree_catalog.project(path))
-        {
-            paths.extend(project.worktrees.iter().map(|w| PathBuf::from(&w.path)));
-            if let Some(shared) = project.shared_git_path.as_ref().map(PathBuf::from) {
-                shared_git.push(shared.clone());
-                paths.push(shared);
-            }
-            paths.sort();
-            paths.dedup();
-            shared_git.sort();
-            shared_git.dedup();
-        }
         crate::disk::DiskRequest {
             paths,
             shared_git,
             generation: self.disk_generation,
         }
-    }
-
-    /// Names the local Git project a web Overview shows for measuring, for
-    /// every window of the daemon, and measures it again. A project that is
-    /// not a local Git project here has no size to measure; the refusal is a
-    /// diagnostic, and the Overview simply draws no size.
-    pub(super) fn measure_project_disk(&mut self, workspace_id: &str) -> bool {
-        // A Git project of a node that dials this core is measured on its
-        // own machine, through its link (PRD core-host-node-remote-core B13).
-        let inbound = self.snapshot.status.remote.iter().find_map(|status| {
-            let workspace = status
-                .session
-                .as_ref()?
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.id == workspace_id && workspace.is_git)?;
-            self.link_origin(&status.target_id)
-                .is_some_and(LinkOrigin::reports_own_facts)
-                .then(|| (status.target_id.clone(), workspace.path.clone()))
-        });
-        if let Some((device, path)) = inbound {
-            self.device_disk_project.insert(device.clone(), path);
-            self.disk_generation = self.disk_generation.wrapping_add(1);
-            self.refresh_device_catalog(&device);
-            return true;
-        }
-        let Some(path) = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| {
-                workspace.id == workspace_id
-                    && workspace.remote_target_id.is_none()
-                    && workspace.is_git
-            })
-            .map(|workspace| workspace.path.clone())
-        else {
-            crate::diagnostic!(serde_json::json!({
-                "component": "disk",
-                "kind": "project_measure.not_local_git",
-                "workspace_id": workspace_id,
-            }));
-            return false;
-        };
-        self.disk_project = Some(path);
-        self.disk_generation = self.disk_generation.wrapping_add(1);
-        self.refresh_worktree_projection();
-        true
     }
 
     /// The repositories of node `device_id` read for GitHub, as (root,
@@ -3266,7 +3233,6 @@ impl Runtime {
         {
             roots.push(workspace.path.clone());
         }
-        roots.extend(self.device_disk_project.get(device_id).cloned());
         let mut paths = Vec::new();
         let mut shared_git = Vec::new();
         if let Some(listed) = self.device_worktrees.get(device_id) {
@@ -3299,19 +3265,18 @@ impl Runtime {
         if !self
             .link_origin(device_id)
             .is_some_and(LinkOrigin::reports_own_facts)
-            || self.device_disk.get(device_id) == Some(&disk)
+            || !self.merge_device_disk(device_id, disk)
         {
             return false;
         }
-        self.device_disk.insert(device_id.to_owned(), disk);
         self.refresh_device_catalog(device_id)
     }
 
+    /// The lane card's rows, laid over the Projects tab's by path.
     pub fn ingest_disk_usage(&mut self, disk: Vec<crate::model::DiskUsageSnapshot>) -> bool {
-        if self.disk_usage == disk {
+        if !self.merge_local_disk(disk) {
             return false;
         }
-        self.disk_usage = disk;
         self.refresh_worktree_projection();
         true
     }

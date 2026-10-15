@@ -454,17 +454,18 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
     ]);
   }
 
-  // Home as MainScreen.tsx draws it: the title line (Home and the device name),
-  // the view tabs, then B27 or B28 in the middle.
+  // The device Overview as Overview.tsx and MainScreen.tsx draw it (PRD
+  // overview-device-tasks): the title line (Overview and the device), the
+  // Tasks, Backlog, Projects and Usage tabs, then B27 or B28 in the middle.
   function homeMain(p, {projects}) {
     projects = projects === true || (Array.isArray(projects) && projects.length > 0);
-    return F(p, 'Home', {width: W - RAIL - SIDEBAR, height: H, layout: 'vertical'}, [
+    return F(p, 'Overview', {width: W - RAIL - SIDEBAR, height: H, layout: 'vertical'}, [
       F(`${p}-hdr`, 'Title line', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', padding: ['$--spacing-sm', '$--spacing-lg'], height: 48, ...hairline}, [
         F(`${p}-h1`, 'Title', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'end'}, [
-          T(`${p}-h1t`, 'Home', {size: 'headline', weight: '600'}), T(`${p}-h1d`, 'This Mac', {fill: '$--muted-foreground'}),
+          T(`${p}-h1t`, 'Overview', {size: 'headline', weight: '600'}), T(`${p}-h1d`, 'This Mac', {fill: '$--muted-foreground'}),
         ]),
       ]),
-      F(`${p}-tabsrow`, 'Views', {width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-lg']}, [screenTabs(`${p}-tabs`, ['Agents', 'Tasks', 'Projects'], 0)]),
+      F(`${p}-tabsrow`, 'Views', {width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-lg']}, [screenTabs(`${p}-tabs`, ['Tasks', 'Backlog', 'Projects', 'Usage'], 0)]),
       projects
         ? centered(`${p}-c`, 'No agents are running.', 'Start an agent', K().start)
         : centered(`${p}-c`, 'Add a project to start an agent.', 'Add project', K().add),

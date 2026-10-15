@@ -352,14 +352,13 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             );
         }
     }
-    // Cursor's accepted reader contract includes conversation/search, while
+    // Cursor's accepted reader contract includes its conversation, while
     // its native records provide no title, Memory, link or structured turn.
     let features = device.link.reader_features().unwrap();
     for feature in [
         ReaderFeature::Identity,
         ReaderFeature::Labels,
         ReaderFeature::Conversation,
-        ReaderFeature::Search,
         ReaderFeature::Activity,
     ] {
         assert!(features.supports("cursor", feature), "cursor: {feature:?}");
@@ -519,21 +518,6 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
             )
             .unwrap();
             assert!(text.contains("요청 보기를 만들어줘"));
-            let indexed: hide_session::search::IndexStep = call_as(
-                device.link.as_ref(),
-                Call::SessionIndexRead {
-                    scope: None,
-                    agent,
-                    path: candidate.path.clone(),
-                    saved: None,
-                },
-                TIMEOUT,
-            )
-            .unwrap();
-            assert!(
-                matches!(indexed, hide_session::search::IndexStep::Read { messages, .. }
-                if messages.iter().any(|message| message.text.contains("요청 보기를 만들어줘")))
-            );
         }
     }
     for provider in ["pi", "omp", "grok", "cursor"] {
@@ -906,6 +890,56 @@ fn the_core_s_own_node_and_a_device_link_answer_alike() {
         changes.contains("a.txt") && changes.contains("-one") && changes.contains("+two"),
         "{changes}"
     );
+}
+
+#[test]
+fn a_published_guardrail_policy_is_what_the_devices_hooks_read() {
+    use hide_agent_hooks::guardrails::{Policy, ProjectPolicy, Rules, read_policy};
+    let device = Device::start();
+    let policy = Policy::new(vec![ProjectPolicy {
+        root: device.project.to_str().unwrap().to_owned(),
+        base: Some("main".to_owned()),
+        rules: Rules {
+            files: true,
+            ..Rules::default()
+        },
+    }]);
+    let answer: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy: policy.clone(),
+            sequence: 10,
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(answer, Value::Null);
+    assert_eq!(read_policy(&device.home), Ok(policy.clone()));
+    // A later publication replaces it whole.
+    let none = Policy::new(Vec::new());
+    let _: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy: none.clone(),
+            sequence: 11,
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(read_policy(&device.home), Ok(none.clone()));
+    // A write that outlived its caller's wait does not land over a newer one,
+    // and says which sequence the node holds.
+    let late: Value = call_as(
+        &*device.link,
+        Call::GuardrailPolicy {
+            policy,
+            sequence: 10,
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(late, serde_json::json!({ "superseded_by": 11 }));
+    assert_eq!(read_policy(&device.home), Ok(none));
 }
 
 #[test]

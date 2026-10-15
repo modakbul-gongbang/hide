@@ -225,6 +225,10 @@ pub struct Env {
     /// hide-home-layout D-05). `None` when HIDE_STATE_DIR or XDG_STATE_HOME
     /// chose another folder, which is never moved.
     pub legacy_state_dir: Option<PathBuf>,
+    /// `state_dir` is the folder this account's hide picks with no
+    /// HIDE_STATE_DIR: `~/.hide/state`, or `$XDG_STATE_HOME/hide` where that
+    /// is set. Only a core there writes this machine's guardrails policy.
+    pub account_state_folder: bool,
     pub keep_alive: bool,
     pub vite_origin: Option<String>,
     pub bind: SocketAddr,
@@ -383,11 +387,11 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
             kind: "empty",
         });
     }
-    let state_dir = hide_kit::layout::state_dir(
-        &home,
-        hide_state_dir.as_deref(),
-        read(XDG_STATE_HOME).as_deref(),
-    );
+    let xdg_state_home = read(XDG_STATE_HOME);
+    let state_dir =
+        hide_kit::layout::state_dir(&home, hide_state_dir.as_deref(), xdg_state_home.as_deref());
+    let account_state_folder =
+        state_dir == hide_kit::layout::state_dir(&home, None, xdg_state_home.as_deref());
     // Judged by the folder, not by which variable named it: `hide connect`
     // hands the daemon it starts the default folder through HIDE_STATE_DIR.
     // Only a Mac ever had the old folder.
@@ -511,6 +515,7 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
         herdr_bin_path,
         state_dir,
         legacy_state_dir,
+        account_state_folder,
         keep_alive,
         vite_origin,
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
@@ -777,6 +782,51 @@ mod tests {
         ] {
             let env = from_map(&[("HOME", "/Users/example"), relocated]).unwrap();
             assert_eq!(env.legacy_state_dir, None, "{relocated:?}");
+        }
+        // The account's own folder, named or not, writes the hooks' policy;
+        // a relocated one does not.
+        for (vars, own) in [
+            (&[("HOME", "/Users/example")][..], true),
+            (
+                &[("HOME", "/Users/example"), ("XDG_STATE_HOME", "/xdg")][..],
+                true,
+            ),
+            (
+                &[
+                    ("HOME", "/Users/example"),
+                    ("HIDE_STATE_DIR", "/Users/example/.hide/state"),
+                ][..],
+                true,
+            ),
+            (
+                &[
+                    ("HOME", "/Users/example"),
+                    ("XDG_STATE_HOME", "/xdg"),
+                    ("HIDE_STATE_DIR", "/xdg/hide"),
+                ][..],
+                true,
+            ),
+            (
+                &[
+                    ("HOME", "/Users/example"),
+                    ("HIDE_STATE_DIR", "/isolated/state"),
+                ][..],
+                false,
+            ),
+            (
+                &[
+                    ("HOME", "/Users/example"),
+                    ("XDG_STATE_HOME", "/xdg"),
+                    ("HIDE_STATE_DIR", "/Users/example/.hide/state"),
+                ][..],
+                false,
+            ),
+        ] {
+            assert_eq!(
+                from_map(vars).unwrap().account_state_folder,
+                own,
+                "{vars:?}"
+            );
         }
         assert_eq!(
             from_map(&[("HOME", "/Users/example"), ("XDG_STATE_HOME", "/xdg")])

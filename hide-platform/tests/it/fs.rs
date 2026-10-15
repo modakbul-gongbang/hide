@@ -1439,6 +1439,13 @@ fn a_folder_is_known_to_tell_case_apart_or_not_by_asking_the_folder() {
     }
     assert_eq!(names(&holding), ["Readme.md"]);
     assert!(fs::read_dir(&named).unwrap().next().is_none());
+    // Asked to write nothing, the empty folder has no answer.
+    assert_eq!(
+        identity::case_sensitive_by_entries(&holding).unwrap(),
+        Some(really_case_sensitive(&holding))
+    );
+    assert_eq!(identity::case_sensitive_by_entries(&named).unwrap(), None);
+    assert!(fs::read_dir(&named).unwrap().next().is_none());
 }
 
 // ---- own and regular files -----------------------------------------------
@@ -1602,8 +1609,11 @@ fn a_link_to_a_folder_is_measured_as_itself_and_is_not_a_folder() {
 #[test]
 fn the_volume_a_folder_is_on_has_room_and_a_missing_one_has_no_answer() {
     let outer = folder();
-    assert!(space::free_bytes(outer.path()).unwrap() > 0);
+    let free = space::free_bytes(outer.path()).unwrap();
+    assert!(free > 0);
+    assert!(space::total_bytes(outer.path()).unwrap() >= free);
     assert!(space::free_bytes(&outer.path().join("missing")).is_err());
+    assert!(space::total_bytes(&outer.path().join("missing")).is_err());
 }
 
 #[test]

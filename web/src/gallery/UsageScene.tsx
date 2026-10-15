@@ -12,7 +12,7 @@ import { Sidebar } from "../sidebar";
 import { TitleRow } from "../TitleRow";
 import { SettingsGate } from "../SettingsSheet";
 import { useShellStore } from "../store";
-import { useUiStore } from "../ui";
+import { OVERVIEW_ENTRY, useUiStore } from "../ui";
 import { hasLimits } from "../usage";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
 
@@ -59,9 +59,9 @@ export function UsageScene({ params }: { params: URLSearchParams }) {
     if (["full", "not-started", "expired"].includes(state)) usage.pinned.push({ agent: "claude", window: "five_hour" });
     useShellStore.setState({ connection: "live", usage: { nodes: [params.has("history") ? ledgerScene({ node: "local", agents, history: null }, params.get("history") ?? "reference") : { node: "local", agents, history: null }] }, rest: { ...scene.rest, ui_state: { ...scene.rest.ui_state, usage, sidebar_width: Number(params.get("width") ?? "292") } }, agents: scene.agents });
     if (params.get("surface") === "history-year") useUiStore.setState({ screen: { kind: "main" } });
-    else if (params.get("surface") === "overview") useUiStore.setState({ screen: { kind: "main" }, mainView: "usage", overviewProjectId: null });
+    else if (params.get("surface") === "overview") useUiStore.setState({ screen: { kind: "main" }, mainView: "usage", overview: OVERVIEW_ENTRY });
     else if (params.get("surface") !== "footer") useUiStore.getState().openSettings("usage");
-    else useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, mainView: "agents" });
+    else useUiStore.setState({ screen: { kind: "main" }, mainView: "tasks" });
     const root = document.documentElement;
     root.classList.toggle("dark", params.get("theme") !== "light");
     root.classList.toggle("light", params.get("theme") === "light");

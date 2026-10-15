@@ -135,13 +135,15 @@ pub const ISSUE_LIST_PROJECT_FIELDS: &str =
 
 /// A fresh creation-ordered read, including closed issues. A search index's
 /// absence is not proof that an interrupted create did not reach GitHub.
+/// `viewerDidAuthor` keeps an issue someone else filed with the same title
+/// from being adopted as the one Hide made.
 pub fn issue_attempt_query(repository: &str) -> Option<String> {
     if !is_repository(repository) {
         return None;
     }
     let (owner, name) = repository.split_once('/')?;
     Some(format!(
-        "query=query HideSessionIssueAttempts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ issues(first:100,states:[OPEN,CLOSED],orderBy:{{field:CREATED_AT,direction:DESC}}) {{ nodes {{ number title url state createdAt }} pageInfo {{ hasNextPage }} }} }} }}"
+        "query=query HideSessionIssueAttempts {{ repository(owner:\"{owner}\",name:\"{name}\") {{ issues(first:100,states:[OPEN,CLOSED],orderBy:{{field:CREATED_AT,direction:DESC}}) {{ nodes {{ number title url state createdAt viewerDidAuthor }} pageInfo {{ hasNextPage }} }} }} }}"
     ))
 }
 
@@ -357,6 +359,10 @@ pub fn is_number(argument: &str) -> bool {
 /// and the writes (docs/ARCHITECTURE.md), a new issue with a title and a
 /// body, a pull request's body, and the Work tab's two, a merge and a branch
 /// update, each conditioned on the head commit the operator was shown.
+/// What a project's GitHub read asks of its repository: its name, the id a
+/// rename keeps, and whether it is public (`공개`, PRD overview-device-tasks D-35).
+pub const REPOSITORY_FIELDS: &str = "nameWithOwner,id,visibility";
+
 pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
         || matches!(
@@ -381,10 +387,17 @@ pub fn allowed(arguments: &[&str]) -> bool {
         || is_pr_write(arguments)
         || arguments == VIEWER_LOGIN
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
-        || arguments == ["repo", "view", "--json", "nameWithOwner,id"]
+        || arguments == ["repo", "view", "--json", REPOSITORY_FIELDS]
         || (arguments.len() == 6
             && arguments[..3] == ["issue", "create", "--title"]
             && arguments[4] == "--body")
+        // The backlog's 되돌리기 closes the one issue it made (PRD
+        // overview-device-tasks D-21), in the repository it named.
+        || matches!(
+            arguments,
+            ["issue", "close", number, "--repo", repository]
+                if is_number(number) && is_repository(repository)
+        )
         || (arguments.len() == 5
             && arguments[..2] == ["pr", "edit"]
             && is_number(arguments[2])

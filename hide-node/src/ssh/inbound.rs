@@ -245,17 +245,21 @@ mod tests {
     }
 
     /// A node on 27, the protocol of a build without the node's dial (one
-    /// from main before NodeLink 28), is refused at its Hello and its link
-    /// closed, so it is reinstalled rather than sent calls it does not know.
-    /// The number is written out: were the bump lost, both would say 27.
+    /// from main before NodeLink 28), or on 32, a build that still answers
+    /// `session_work_context` rather than `session_work_turn`, is refused at
+    /// its Hello and its link closed, so it is reinstalled rather than sent
+    /// calls it does not know. The numbers are written out: were the bump
+    /// lost, the current one would match.
     #[test]
     fn a_node_on_an_older_protocol_is_refused_and_its_link_closed() {
-        let (core, node) = node_answering(27, "node-a");
-        let refused = establish(inbound("node-a"), core, None, None)
-            .err()
-            .expect("an older node is refused");
-        assert!(refused.contains("protocol 27"), "{refused}");
-        assert!(node.join().unwrap(), "the refused link was not closed");
+        for older in [27, 32] {
+            let (core, node) = node_answering(older, "node-a");
+            let refused = establish(inbound("node-a"), core, None, None)
+                .err()
+                .expect("an older node is refused");
+            assert!(refused.contains(&format!("protocol {older}")), "{refused}");
+            assert!(node.join().unwrap(), "the refused link was not closed");
+        }
     }
 
     /// A node whose Hello names another machine than it dialed as is

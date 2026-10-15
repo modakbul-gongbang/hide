@@ -690,6 +690,7 @@ pub(crate) mod tests {
                 }),
                 files: herdr_core::RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),
+                unreachable_since_unix_ms: None,
             });
         snapshot
     }

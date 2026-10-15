@@ -102,23 +102,6 @@ impl Runtime {
         self.persist_current_ui_state();
     }
 
-    /// What the core's own English text (an error, a wait line) calls a
-    /// device: its registered name, or for the core's own machine the name
-    /// that machine gives itself, since a sentence the core writes cannot
-    /// carry the shell's translated "This Mac". An unlisted id is named as
-    /// itself.
-    pub(super) fn device_name(&self, device_id: &str) -> String {
-        let device = self
-            .snapshot
-            .navigator
-            .devices
-            .iter()
-            .find(|device| device.id == device_id);
-        device
-            .and_then(|device| device.label.clone().or_else(|| device.machine_name.clone()))
-            .unwrap_or_else(|| device_id.to_owned())
-    }
-
     /// Whether `device_id` is already the device in front.
     pub(super) fn device_in_front(&self, device_id: &str) -> bool {
         self.snapshot
@@ -176,6 +159,7 @@ impl Runtime {
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
                 catalog: Default::default(),
+                unreachable_since_unix_ms: Some(unix_milliseconds()),
             });
         }
         let started = (|| {
@@ -316,7 +300,7 @@ impl Runtime {
         self.device_machine_ids.remove(device_id);
         self.device_ports.remove(device_id);
         self.device_disk.remove(device_id);
-        self.device_disk_project.remove(device_id);
+        self.forget_disk_sweep(device_id);
         self.device_github.remove(device_id);
         self.device_github_reads
             .retain(|(device, _), _| device != device_id);

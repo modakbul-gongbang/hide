@@ -17,14 +17,12 @@ import { LinkSessions } from "./LinkSessions";
 import { renderMarkdown } from "./mobile/markdown";
 import { boardProjects } from "./navigation";
 import { bodyOutline, bodyPreview, confirmHolds, defaultMethod, fileOpen, mergeWhy, primaryAction, splitFiles, type Confirmed, type PrimaryAction } from "./prCardModel";
-import { PrLinks } from "./PrLinks";
+import { linkHandlers, PrLinks, type LinkHandlers } from "./PrLinks";
 import { GROUP_TONE, ReasonLine } from "./prReason";
 import { checksWord, reviewWord } from "./prMark";
 import { findPrEntry, opensCard, type PrEntry } from "./prWork";
 import { catalogWorkspaces, frontCheckout, type LinkPanel, type PrCard, type PrMergeMethod, type PullRequest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import type { LensHandlers } from "./OverviewLenses";
-import { lensHandlers } from "./OverviewLenses";
 import { staleness } from "./prMark";
 import { useUiStore } from "./ui";
 import { useRequestViewDemand } from "./requestViewDemand";
@@ -34,8 +32,6 @@ import { useRequestViewDemand } from "./requestViewDemand";
 // reason and the buttons are drawn from the list's own values, so they stand
 // while the card reads its body, files and review threads; each of those is a
 // part with its own placeholder, failure and retry.
-
-const NO_HANDLERS = (actions: Actions): LensHandlers => lensHandlers(actions, { openIssue: () => undefined, toggleFold: () => undefined });
 
 /** The project a View's Workspace belongs to, and its pull request `number`. */
 function useCardTarget(workspace: { device_id: string; path: string }, number: number) {
@@ -74,7 +70,7 @@ export function PrCardView({ workspace, number, actions }: { workspace: { device
     actions.openLinks(projectId, { kind: "pr", number });
     return () => actions.closeLinks();
   }, [actions, projectId, number]);
-  const handlers = useMemo(() => NO_HANDLERS(actions), [actions]);
+  const handlers = useMemo(() => linkHandlers(actions), [actions]);
   if (!project) return <p className="p-lg text-caption text-muted-foreground" data-pr-card-missing={number}>{t("work.card.unlisted", { number })}</p>;
   const panel: LinkPanel | null = record && record.workspace_id === project.id && record.target.kind === "pr" && record.target.number === number ? record : null;
   return (
@@ -324,7 +320,7 @@ function FileRow({ file, onOpen }: { file: NonNullable<PrCard["files"]>[number];
 
 // --- sessions and links ----------------------------------------------------------------
 
-function Sessions({ project, pr, entry, panel, handlers, actions, number }: { project: Workspace; pr: PullRequest | null; entry: PrEntry | null; panel: LinkPanel | null; handlers: LensHandlers; actions: Actions; number: number }) {
+function Sessions({ project, pr, entry, panel, handlers, actions, number }: { project: Workspace; pr: PullRequest | null; entry: PrEntry | null; panel: LinkPanel | null; handlers: LinkHandlers; actions: Actions; number: number }) {
   const { t } = useInterfaceTranslation();
   const [linking, setLinking] = useState(false);
   const holder: LinkPanel = panel ?? { workspace_id: project.id, target: { kind: "pr", number }, loading: true, failure: null, pr: null, prs: [], sessions: [], total: 0 };

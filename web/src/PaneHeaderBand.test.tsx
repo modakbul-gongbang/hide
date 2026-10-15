@@ -6,7 +6,7 @@ import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { RELATION_ANSWER_TIMEOUT_MS } from "./lineage";
-import { PaneHeaderBand, PanePrChip } from "./PaneHeaderBand";
+import { PaneHeaderBand, PanePrChip, PaneRecordButton } from "./PaneHeaderBand";
 import type { AgentPullRequest, AgentRow, PaneHeader, PaneFocusRequest, PrState, SnapshotRest, Workspace } from "./snapshot";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { useShellStore } from "./store";
@@ -333,5 +333,26 @@ it("leaves a header alone when a snapshot section it does not draw moves, and re
     const before = draws.parent!;
     await act(async () => useShellStore.setState({ agents: agents.map((row) => row.pane_id === "parent" ? { ...row, lineage_child_pane_ids: row.lineage_child_pane_ids!.slice(0, 2) } : row) }));
     expect(draws.parent).toBeGreaterThan(before);
+  } finally { await act(async () => root.unmount()); }
+});
+
+// PRD overview-device-tasks B22: the record button still names the agent the
+// way the plain head does; only what a press does is added.
+it("names the pane's title and agent product on its record button", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  initializeInterfaceI18n("en");
+  const agent = legacyAgentRow({ id: "a", pane_id: "pane-1", identity_label: "Fix the login", agent_kind: "claude", session_id: "s-1", device_id: "local" });
+  useShellStore.setState({ agents: [agent], rest: { status: { pane_focus_request: null } } as SnapshotRest });
+  const actions = createActions(() => true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => root.render(<TooltipProvider><PaneRecordButton paneId="pane-1" title="Fix the login" product="Claude Code" actions={actions} plain={<span data-plain="true" />}>Fix the login</PaneRecordButton></TooltipProvider>));
+  try {
+    const button = container.querySelector<HTMLButtonElement>("[data-pane-record]")!;
+    const name = button.getAttribute("aria-label") ?? "";
+    expect(name).toContain("Fix the login");
+    expect(name).toContain("Claude Code");
+    expect(container.querySelector("[data-plain]")).toBeNull();
   } finally { await act(async () => root.unmount()); }
 });

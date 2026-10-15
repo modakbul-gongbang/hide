@@ -8,6 +8,7 @@ mod bell_intake;
 mod claude_subagent_counts;
 mod codex_trust;
 mod grok_cursor_hooks;
+mod guardrails;
 mod guidance_hook;
 mod hook_deadline;
 mod letter_origin;

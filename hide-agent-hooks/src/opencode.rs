@@ -3,8 +3,8 @@
 //! script file of Hide's is (`crate::plugin`).
 //!
 //! It asks the helper (`hide-agent-hooks opencode <operation>`) on each root
-//! prompt, each shell or `question` tool call and each change of a subagent's
-//! state.
+//! prompt, each shell or `question` tool call, each file tool call while a
+//! project guardrail is on, and each change of a subagent's state.
 
 use crate::plugin::PluginFile;
 
@@ -16,7 +16,7 @@ pub const PLUGIN: PluginFile = PluginFile {
     agent: "OpenCode",
     noun: "plugin",
     source_name: "hide-opencode-plugin",
-    version: 1,
+    version: 2,
     config: &[".config", "opencode"],
     folder: "plugins",
     file_name: "hide.js",

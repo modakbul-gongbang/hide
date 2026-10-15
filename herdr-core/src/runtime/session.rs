@@ -1276,13 +1276,21 @@ impl Runtime {
             })
         });
         if !focused_checkout_exists && self.snapshot.ui_state.focused_checkout_id.is_none() {
-            self.snapshot.navigator.focused_checkout_id = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.checkouts.iter())
-                .find(|checkout| checkout.exists)
+            // The catalog's first checkout, passing over one whose folder
+            // the node found gone: a restored pane's row stays while its
+            // folder is missing, and with no activity its place in the order
+            // is its id's, so the window would open on it by chance.
+            let starts = || {
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .filter(|checkout| checkout.exists)
+            };
+            self.snapshot.navigator.focused_checkout_id = starts()
+                .find(|checkout| !self.catalog_paths.gone(&checkout.path))
+                .or_else(|| starts().next())
                 .map(|checkout| checkout.id.clone());
         }
         let focused = self
@@ -2007,9 +2015,13 @@ impl Runtime {
         let mut observed_session = None;
         match fetched {
             Ok(session) => {
-                if status.state != "connected" || status.message.is_some() {
+                if status.state != "connected"
+                    || status.message.is_some()
+                    || status.unreachable_since_unix_ms.is_some()
+                {
                     status.state = "connected".to_owned();
                     status.message = None;
+                    status.unreachable_since_unix_ms = None;
                     changed = true;
                 }
                 if status.files.root_path.as_deref().is_some_and(|root_path| {
@@ -2042,6 +2054,12 @@ impl Runtime {
                 {
                     status.state = error.state().to_owned();
                     status.message = Some(error.message().to_owned());
+                    changed = true;
+                }
+                // The first failure after an answer starts the clock; a
+                // failure that only changes its reason keeps it.
+                if status.unreachable_since_unix_ms.is_none() {
+                    status.unreachable_since_unix_ms = Some(unix_milliseconds());
                     changed = true;
                 }
             }

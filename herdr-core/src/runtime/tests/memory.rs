@@ -192,7 +192,6 @@ fn memory_opens_for_a_project_without_its_sessions_and_closes() {
     let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
 
     assert!(runtime.open_project_memory(Some(workspace.clone())));
-    assert!(runtime.snapshot.project_sessions.is_none());
     let project = opened(&runtime).expect("Memory is open");
     assert_eq!(project.workspace_id, workspace);
     assert_eq!(project.unavailable, None);
@@ -667,6 +666,7 @@ fn a_registered_device_project_keeps_its_memory_scope_while_the_link_is_down() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
 
     assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));

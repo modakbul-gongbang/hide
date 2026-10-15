@@ -153,6 +153,11 @@ fn run_coordinator(
     let mut disk_reader = context
         .machine()
         .map(|node| crate::disk::DiskReader::new(Arc::clone(node)));
+    // The Projects tab's sweep measures one project at a time on its own
+    // reader, so the lane card's measurement never waits behind it.
+    let mut sweep_reader = context
+        .machine()
+        .map(|node| crate::disk::DiskReader::new(Arc::clone(node)));
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.
@@ -496,6 +501,19 @@ fn run_coordinator(
                 };
                 if let Some(disk) = reader.read_if_due(request)
                     && !publish_disk_usage(&context, disk)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            if let Some(reader) = sweep_reader.as_mut() {
+                let Some(request) = read_sweep_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some((disk, whole)) = reader.poll(request)
+                    && !publish_swept_disk(&context, disk, whole)
                 {
                     stop_subscription(&mut subscription);
                     return;
@@ -1834,6 +1852,40 @@ fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRe
     };
     drop(runtime);
     Some(request)
+}
+
+fn read_sweep_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.disk_sweep_request(sweep_node(context));
+    drop(runtime);
+    Some(request)
+}
+
+/// The machine a sweep is keyed by: `None` for this one.
+fn sweep_node(context: &SessionSyncContext) -> Option<&str> {
+    match &context.target {
+        SessionSyncTarget::Local { .. } => None,
+        SessionSyncTarget::Remote { target_id, .. } => Some(target_id),
+    }
+}
+
+fn publish_swept_disk(
+    context: &SessionSyncContext,
+    disk: Vec<crate::model::DiskUsageSnapshot>,
+    whole: bool,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_swept_disk(sweep_node(context), disk, whole),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
 }
 
 /// What the provider probe should ask, and any choice waiting to be written.

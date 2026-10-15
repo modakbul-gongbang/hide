@@ -150,6 +150,10 @@ fn read_limited(
         .paths
         .first()
         .and_then(|path| volume_free_bytes(path));
+    let total = request
+        .paths
+        .first()
+        .and_then(|path| space::total_bytes(path).ok());
     let mut result = Vec::new();
     for root in &roots {
         let layered = !request.shared_git.contains(root);
@@ -157,6 +161,7 @@ fn read_limited(
         let row = DiskUsage {
             measured_at_unix_ms: measured_at,
             volume_free_bytes: free,
+            volume_total_bytes: total,
             ..row
         };
         finished(&row);
@@ -649,6 +654,7 @@ mod tests {
             ..Default::default()
         });
         assert!(rows[0].volume_free_bytes.is_some_and(|free| free > 0));
+        assert!(rows[0].volume_total_bytes >= rows[0].volume_free_bytes);
     }
 
     #[test]

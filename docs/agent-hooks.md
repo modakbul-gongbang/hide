@@ -34,10 +34,10 @@ Entries belonging to other tools are counted before and after, and a regression 
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either: a session's record is read only while Herdr reports that session for the pane, so a session that ends needs no event to be forgotten.
-`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input|request_user_input_async` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode|Edit|Write|MultiEdit|NotebookEdit|Read` in Claude Code and `Bash|request_user_input|request_user_input_async|apply_patch|Edit|Write` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read): the shell, the native questions, and the file tools the [project guardrails](#project-guardrails) judge; a search never starts the helper.
 Codex matches a tool by its whole name: with a hook on `request_user_input` alone, the async question tool of 0.162.1 never reached the helper (measured 2026-10-15 in an isolated `CODEX_HOME`), so each question tool is named.
-An entry of Hide's whose matcher differs from the one written today reads Outdated at its own version, so the next kit pass rewrites it and records its Codex trust, with no version bump for the other agents.
-The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
+An entry of Hide's whose matcher differs from the one written today reads Outdated at its own version, so the next kit pass rewrites it and records its Codex trust.
+The version-eight marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
 Already-running sessions pick up the changed hooks when restarted.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command (in Claude Code's Windows entry, inside its `args`).
@@ -301,8 +301,65 @@ Inside a Grok or Cursor session Claude Code's hook says nothing at all and that 
 Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDecision = "deny"` with `permissionDecisionReason`; every other path prints nothing and exits 0, and the whole entry runs inside `catch_unwind`, so a defect allows the call rather than refusing an ordinary one; a failed owner handshake in the environment ends the outer hook with 0 as well, since exit 2 from a pre-tool hook would refuse the call.
 
 Each refusal appends one JSON line (pane id, agent kind, shape, runtime; never the command text, and the same file holds the `daemon.unreachable` lines) to `~/.hide/agent-hooks/spawn-guard.log` (private, capped at 256 KiB with one rotation) and echoes it on standard error, where a hook run by hand shows it.
-The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included) costs one process start; a path containing `herdr` pays one JSON parse and the lexer as well (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
+The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included) costs one process start and the [project guardrails](#project-guardrails)' policy read; a path containing `herdr` pays one JSON parse and the lexer as well (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
 `hide-agent-hooks/tests/it/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
+
+## Project guardrails
+
+The pre-tool hook also refuses what a project's protections name, the four switches of Project Settings > Working style ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#project-settings), PRD agent-guardrails).
+They are protections, not a security boundary: they stop the ordinary tool calls and shell words below, and a write a script, `sed -i`, `bash -c`, `$(...)`, an alias or an MCP server makes is not seen (D-18).
+
+The core publishes one policy file per machine, `~/.hide/agent-hooks/guardrails.json` (`hide_agent_hooks::guardrails::policy_path`), naming each project of that machine with a protection on: its main worktree root, the base branch the operator chose (none for Auto, which reads `origin/HEAD`), its four switches, the merge option and its protected paths.
+This Mac's file is written by its own node and a connected device's by that device's node, through `Call::GuardrailPolicy` ([ARCHITECTURE.md](ARCHITECTURE.md#project-guardrails)); a saved switch shows Saved only after that machine has the new file, and every daemon start and device connection writes the file again from the current settings, empty when nothing is on.
+The hook reads that file and the repository's own Git files on the machine the agent runs on and asks the daemon nothing, so a saved change applies from the agent's next tool call without a restart.
+A project removed from Hide loses its protections, and a project turns them on again only from Project Settings.
+
+What each protection refuses, in any checkout of the project and in any agent session there, a Herdr pane or not (B22): outside a pane the hooks and scripts run the guardrails and nothing else.
+
+- Guard working folders: `git switch`, and a `git checkout` or `gh pr checkout` that changes branch, in the project's original checkout; a file tool's write into another checkout of the same repository than the one the agent works in.
+- Guard the base branch: a file tool's write, `git commit`, `merge` (a fast-forward too), `rebase`, `cherry-pick`, `revert`, `am` and `pull` (each but its `--abort`, `--quit` or `--skip` forms, and `pull --ff-only`, which takes only the remote's own commits) in a checkout that has the base branch checked out, and a `git push` whose destination is the base branch (`--all`, `--mirror`, an explicit refspec, a pattern refspec such as `refs/heads/*:refs/heads/*`, or the current branch); with its merge option, `gh pr merge` as well (`-R` and `--repo` read as the option they are).
+- Block risky Git commands: `git push --force` or `--mirror` without a lease and `--no-verify` on a push or commit, always; `git reset --hard`, `git checkout -- <path>`, `git checkout <tree> -- <path>` or `-f`, `git restore` of the worktree and `git switch -f`, only while the checkout has uncommitted changes to tracked files, and `git clean -f` only while it has untracked ones (`git -c core.fsmonitor=false --no-optional-locks status --porcelain`, the one Git process the guardrails start, once per checkout and call, with a 2 second budget, no `GIT_*` variable of the hook's and no fsmonitor command the repository configures, since the hook runs with the operator's rights).
+- Guard files: a file tool's read or write of a path on the project's list, and a shell call that names one as a word or a redirect target; `.env.*` leaves out `.env.example` and `.env.sample` unless the list names them too.
+  A word with a space in it that is text, the value of an option that takes text in `git`, `gh`, an interpreter, a search or a stream editor (`-m`, `--message`, `--title`, `--body`, `-c`, `-e` and their `=` forms, never another program's `touch -m` or `curl -c`), what `echo` or `printf` prints, or the pattern or script `grep`, `rg`, `sed`, `awk` or `jq` takes first, is read as a path only when it names something that is there; any other such word is a path, which `cp`, `touch` or `tee -a` may be about to make.
+  Programs are known by their exact file name, so one spelled otherwise (`python3.12`, `sudo git`) has its text read as a path, which refuses a protected name rather than letting one through.
+  The list holds at most 32 entries of at most 200 characters, each a gitignore pattern relative to the checkout or a `~/` path under the account's home, which the agent's own project lists wherever a `cd` in the line went; the default is `.env`, `.env.*`, `*.pem`, `*.key` and `~/.ssh/`.
+  The first 512 candidate words of one shell call are checked; past them the words go unchecked, the `git` and `gh` commands after them are still judged, and one `guard.word_limit` line per ten minutes says so.
+
+A plain folder project takes only Guard files.
+`git checkout <word>` reads `<word>` as Git does: a local branch of that name first, then a path that is there, then a commit; anything after `--` is paths.
+A repository nested in a checkout, a submodule or a clone, is a folder of the checkout around it, so its files take that checkout's protections and no protection locks an agent out of it; a `git` or `gh` command run there works on the nested repository, which no protection guards; only a project whose own repository cannot be read refuses, and then only a write or a `git` command a protection that is on needs the repository for.
+Paths are compared after links are followed, and with or without case as the folder compares names, judged from the entries the folder already holds so the hook writes nothing there, and taken as ignoring case when no entry tells (B24).
+A `cd` or `pushd` earlier in a shell line moves where the commands after it run (a bare `cd` goes home), and `git -C <dir>` moves one command; the line is read as the [spawn guard](#the-spawn-guard) reads it, a POSIX shell's words one simple command at a time with quotes, heredoc bodies and comments set aside.
+A PowerShell command's backslash path (`.\.env`, `C:\repo`) is therefore not resolved: on Windows the file tools and the `git` and `gh` commands that name no backslash path are guarded, and the rest is the gap [INSTALL.md](INSTALL.md#what-each-system-supports) records.
+In Git Bash, the shell Claude Code runs on Windows, a backslash path is read as that shell runs it: quoted (`git -C 'C:\repo'`) it is the path, unquoted its backslashes are escapes, there and in the hook alike; a drive mount (`/c/work/...`, `/cygdrive/c/...`) is the drive's path (`hide_platform::path::shell_drive_path`).
+
+The refusal reaches the agent in English, in its runtime's deny shape, and names the protection, what the call did and what to do instead: `Not run: the "Guard files" protection is on for this project in Hide. This call reads or changes a path on the project's protected list. Ask the operator ...`.
+Each refusal appends one `guard.refused` line (rule, whether a fact was unread, runtime, pane; never the command, its paths or a file's contents) to `~/.hide/agent-hooks/spawn-guard.log`, and the operator's screen shows nothing for it.
+
+How it fails (D-27):
+
+- A fact a protection that is on needs cannot be read (the checkout's repository, its branch, the base branch, whether it has changes): the call is refused and the reason says which fact; with no base branch to read (Auto, and no `origin/HEAD`), the reason asks the operator to choose one in Project Settings.
+- The policy file is missing, unreadable, corrupt or of another version: the call runs, and one `policy.unreadable` line with its cause is appended to the same log, throttled to one per ten minutes through the delivery diagnostics' store (cause `guardrails`).
+- The hook panics, or the payload does not arrive within 0.5 seconds, while some project has a protection on: the call runs, and one `guard.failed` line with its cause (`panic`, `payload_deadline`) is appended, throttled the same way (cause `guardrails_failed`).
+  A hook the runtime kills at its own timeout leaves no line, since the process is gone, and the call takes that runtime's default.
+- A payload past the helper's 256 KiB read is judged by the tool name and the paths that arrived, a patch's file lines included; a shell command cut short is not judged.
+
+The payload each runtime sends, observed on the versions Hide installs into (`hide_agent_hooks::guardrails::payload`):
+
+| Runtime | Reads | Writes | Shell |
+|---|---|---|---|
+| Claude Code 2.1.300 | `Read` | `Edit`, `Write`, `MultiEdit`, `NotebookEdit` (`file_path`, `notebook_path`) | `Bash` |
+| Codex 0.162.1 | no read tool; the shell words only | `apply_patch` (the patch's file lines) | `Bash` |
+| Cursor 2026.10.14 | `Read` | `Write`, an edit included, and `Delete` (`file_path`) | `Shell` |
+| Grok 1.0.52 | `read_file`, `Read` | `search_replace`, `write`, `Edit`, `Write` | `Bash` |
+| OpenCode 1.18.30 | `read` | `edit`, `write`, `apply_patch`, `multiedit` (`filePath`, `patchText`) | `bash` |
+| Pi 1.0.4, omp 18.7.0 | `read` | `edit`, `write` (`path`) | `bash` |
+
+A key another version renames reads as no path, and the call runs.
+Claude Code's and Codex's hooks select the file tools from matcher version eight (`hide-subagents@8`) and Grok's and Cursor's from `hide-guidance@5`; OpenCode's plugin (version 2) and the Pi and omp extension (version 4) send a file tool to the helper only while some project of the machine has a protection on, read again when the policy file changes, so a machine with none starts no helper for a file tool (B27); a missing or unreadable policy sends the call in a Herdr pane, where the helper records why, and starts nothing outside one.
+A session outside a pane, or an agent started in another agent's shell, says so (`guard_only`), and the helper then runs the guardrails alone, whatever pane variables the shell inherited.
+A command hook pays one policy read per call and parses the payload only when some protection is on ([PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-guardrails-on-a-pre-tool-call)).
+`hide-agent-hooks/src/guardrails/tests.rs` holds each runtime's payload and each protection's table tests.
 
 ## OpenCode: Hide's plugin
 
@@ -321,6 +378,8 @@ Inside one it uses three hooks, each calling `hide-agent-hooks opencode <start|p
 - `event` confirms letters once `message.part.updated` reports Hide's part stored, and counts subagents: a `session.created` with a parent is a child, `session.status` busy and idle move it between working and done, and a root that goes idle while a child still runs in the background keeps it counted (OpenCode's `session.status` list is read then).
   The counts go to the pane's counter file and to Herdr as the Claude Code and Codex hooks report theirs.
 - `tool.execute.before` sends a `bash` call whose command mentions `herdr` or `HERDR_BIN_PATH` to the spawn guard and every `question` call to the Factory question guard (runtime `opencode`), and throws the deny reason; OpenCode hands a thrown error to the model as the tool's error, so the model reads the same reason Claude Code's model does.
+  While some project of the machine has a protection on, every `bash` call and the file tools `read`, `edit`, `write`, `apply_patch` and `multiedit` go to the helper too, with only the arguments that name a file (`filePath`, a patch's `*** ` lines), for the [project guardrails](#project-guardrails).
+  The plugin reads the policy file again only when its modification time or size changes, so a machine with every protection off starts no helper for them (PRD agent-guardrails B27).
   Any other tool call never reaches the helper.
 
 Each hook has a budget: 1.85 seconds for a prompt (the Claude Code prompt hook's), 2.5 seconds for a tool call (the spawn guard's), 2 seconds for a confirmation or a count and 8 seconds for the one guidance read at load.
@@ -362,6 +421,7 @@ Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagen
   Its `details` carry a fresh id per attempt, because omp can prepare one submission more than once and keeps only the attempt it delivers.
 - `message_end` confirms the letters once the host has written Hide's message and then the reply after it, and only for the attempt it wrote; a turn that ends before any reply leaves them pending for the next prompt or `hide inbox`, and a confirmation Hide did not take is made again when the letter rides the next prompt.
 - `tool_call` sends a `bash` call whose command mentions `herdr` or `HERDR_BIN_PATH` to the spawn guard and, in omp, every `ask` call to the Factory question guard (runtime `omp`, with the pane's root session also for a subagent's call), and returns `{block: true, reason}`, which the host hands to the model as the tool's result.
+  While some project of the machine has a protection on, every `bash` call and the `read`, `edit` and `write` tools (their `path`) go to the helper too, gated on the policy file as OpenCode's plugin is, for the [project guardrails](#project-guardrails).
   Pi has no question tool, so its Factory question is the Hide command's alone.
 - In omp, `before_subagent_spawn` counts a subagent as working from its dispatch (its spawn key is the subagent's id), and that subagent's own `agent_start` and `agent_end` move it between working and done; the counts go to Herdr as the other hooks report theirs, zero when the session starts and again at each turn's end.
 
@@ -426,7 +486,7 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The agent hook, for the agents below marked as done; for OpenCode this piece is Hide's plugin, and for Pi and omp Hide's extension, which carry the guidance with the rest ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
   It is one entry per event the agent's documentation names, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event <event>`.
-  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@4` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, of `@2`, or of `@3`, is Hide's own and replaced by the next pass.
+  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@5` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, of `@2`, `@3`, or of `@4`, whose `PreToolUse` matchers did not select the file tools, is Hide's own and replaced by the next pass.
   Version 4 prepares Cursor's Windows payload before starting the helper; the next pass replaces version 3's lazy PowerShell pipe too.
   Where the session start adds context (Cursor), its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
   It prints no Memory index, because a Memory receipt is read back only from a session Hide reads it from: Claude Code's, Codex's, Pi's and omp's files and OpenCode's database.
@@ -463,7 +523,7 @@ Grok and Cursor each document a hook that can refuse a shell call and that sees 
 Cursor declares no subagent count: Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only when its agent server asks for them, and a Task subagent run (issue 911) never produced one, so the count stayed 0 for a pane that had run a subagent.
 Its chat store does keep each subagent as a store of its own, in the parent's folder under `~/.cursor/chats`, with `subagentInfo` (`parentAgentId`, `toolCallId`, `typeName`), and the parent's graph holds the Task call and its tool result; a finished subagent could be counted from those, but nothing in a subagent's store says it is still running, so Hide shows no count rather than a zero it cannot stand behind (design principle 10).
 The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented projection with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero, and no screen draws it; the spawn guard and the guidance keep their own hooks.
-Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode`; `Bash` is Grok's alias of `run_terminal_command`), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart` and `preToolUse` (matcher `Shell`).
+Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode|Read|Edit|Write|read_file|search_replace|write`; `Bash` is Grok's alias of `run_terminal_command`, and the file tools are there for the [project guardrails](#project-guardrails)), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart` and `preToolUse` (matcher `Shell|Read|Write|Delete`).
 Grok's `SessionStart` does not fire for a subagent, so it is where the pane's count starts over and the pane first reports itself instrumented.
 
 Grok's file is Hide's own, `~/.grok/hooks/hide.json`, beside Herdr's and Orca's files in that folder (`{"hooks": {"<Event>": [{"matcher"?, "hooks": [{"type": "command", "command", "timeout"}]}]}}`, seconds); a switch-off deletes the file and nothing else there.

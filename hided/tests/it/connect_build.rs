@@ -62,6 +62,15 @@ fn wait_gone(pid: i32) -> bool {
     !alive(pid)
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_file(path: &Path) -> bool {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !path.is_file() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    path.is_file()
+}
+
 /// The first line of the daemon's log that names `kind`. The log is written
 /// on its own thread, after the daemon has answered.
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
@@ -388,7 +397,13 @@ fn a_relocated_state_folder_moves_nothing() {
     assert!(output.status.success(), "{line}");
     assert_eq!(state_pid(&xdg_state), line["pid"].as_i64().unwrap());
     assert!(legacy.join("core-state.json").is_file());
-    assert!(!home.join(".hide").exists());
+    // XDG_STATE_HOME names the account's own folder, so its core writes the
+    // agent hooks' policy, which the hooks read under ~/.hide wherever the
+    // state lives (PRD agent-guardrails D-11); nothing else goes there.
+    let policy = home.join(".hide/agent-hooks/guardrails.json");
+    assert!(wait_file(&policy), "the hooks' policy is written");
+    let made: Vec<_> = walk(&home.join(".hide"));
+    assert_eq!(made, vec![policy], "only the hooks' policy under ~/.hide");
     let _ = isolated(&cli, &home, &xdg_state).arg("stop").status();
     assert!(wait_gone(line["pid"].as_i64().unwrap() as i32));
 }
@@ -461,4 +476,19 @@ fn a_silent_process_holding_the_old_folders_lock_keeps_it_from_moving() {
     );
     assert!(legacy.join("core-state.json").is_file());
     assert!(!home.join(".hide/state").exists());
+}
+
+/// Every file under `dir`, sorted.
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
 }

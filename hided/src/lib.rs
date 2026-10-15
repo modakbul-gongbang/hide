@@ -325,8 +325,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "node": node.as_str(),
             "files": converted.files,
             "projects": converted.projects,
-            "search_rows": converted.search_rows,
-            "search_rows_dropped": converted.search_rows_dropped,
+            "retention_rows": converted.retention_rows,
         });
         if let Err(error) =
             herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)
@@ -402,6 +401,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         // amendment 3).
         effects_held: !move_gate.is_open(),
         machine_name: host_name(),
+        account_state_folder: env.account_state_folder,
     };
     let effects_held = options.effects_held;
     let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
@@ -517,6 +517,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         demand: Arc::new(demand::ObservationDemand::default()),
         start_demand,
         request_view_demand: Arc::new(demand::ObservationDemand::default()),
+        origin_holds: Arc::new(demand::OriginHolds::default()),
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,

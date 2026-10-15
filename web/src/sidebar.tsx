@@ -84,7 +84,6 @@ function herdrRowLabel(state: string | null, t: TFunction<"translation">): strin
 export function Sidebar({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const herdrState = useShellStore((s) => s.herdrState);
-  const mode = "projects" as const;
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
   // The row speaks for this machine's Herdr, so it is not shown over a
   // selected SSH device's lists; that device's state is on the canvas.
@@ -92,7 +91,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const status = remote ? null : herdrRowLabel(herdrState, t);
   // The rail is shown unless the operator hid it (quick device-rail-badges B1, B6).
   const rail = useShellStore((s) => railShown(s.rest));
-  const body = useShellStore((s) => sidebarBody(s.rest, mode));
+  const body = useShellStore((s) => sidebarBody(s.rest));
   useSecretaryStart(actions);
   // The switch has no chord of its own until the operator binds one (issue 170).
   const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
@@ -118,10 +117,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!visible || !focusRequest || body === "disconnected") return;
     const frame = requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-sidebar="${mode}"] [data-sidebar-content] [aria-current="page"], [data-sidebar="${mode}"] [data-sidebar-content] button`)?.focus();
+      document.querySelector<HTMLElement>(`[data-sidebar] [data-sidebar-content] [aria-current="page"], [data-sidebar] [data-sidebar-content] button`)?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [visible, mode, body, focusRequest]);
+  }, [visible, body, focusRequest]);
   if (!visible) return null;
   const land = (current: number, landed: number) => {
     const send = sidebarWidthToSend(storedWidth ?? current, landed);
@@ -147,7 +146,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             ? undefined
             : ({ "--sidebar-width": `${preview}px`, "--sidebar-total": "calc(var(--sidebar-width) + var(--sidebar-rail))" } as CSSProperties)
         }
-        data-sidebar={mode}
+        data-sidebar="projects"
         data-sidebar-rail={rail ? "device" : "none"}
       >
         {/* The rail is the sidebar's full-height left column, the device's header and lists beside it (quick device-rail-slack). */}
@@ -1663,7 +1662,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           popover: hasChildren && depth >= 2 ? {
             agents: context.agents,
             onOpenChild: (id, label) => context.actions.followRelation(agent.pane_id, id, label),
-            onGraph: () => context.actions.openAgentsOverview(),
+            onTask: () => context.actions.openPaneTask(agent.pane_id),
           } : null,
         };
         return (

@@ -212,6 +212,7 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
+        unreachable_since_unix_ms: None,
     });
 
     let local = runtime

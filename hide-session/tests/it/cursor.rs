@@ -265,11 +265,7 @@ fn labels_archive_and_search_share_native_graph_and_checkpoint_ownership() {
         );
         return;
     }
-    use hide_session::{
-        Agent, SessionReadScope, label_transcript,
-        search::{IndexStep, SearchIndex},
-        search_read,
-    };
+    use hide_session::{Agent, SessionReadScope, label_transcript};
     let fixture = Fixture::new();
     let scope = SessionReadScope {
         id: ID.to_owned(),
@@ -354,67 +350,17 @@ fn labels_archive_and_search_share_native_graph_and_checkpoint_ownership() {
     let mut invalid = serde_json::to_value(dto.events[0].clone()).unwrap();
     invalid["role"] = json!("foreign");
     assert!(serde_json::from_value::<hide_session::ConversationEvent>(invalid).is_err());
-    let mut index = SearchIndex::open(&fixture.home.path().join("search.db")).unwrap();
-    let (step, reads) = search_read::read_step_confirmed(
-        fixture.home.path(),
-        None,
-        Agent::Cursor,
-        &fixture.path,
-        Some(&scope),
-    )
-    .unwrap();
-    assert!(
-        reads.cursor_bytes > 0
-            && reads.cursor_bytes <= hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES
-    );
-    index
-        .apply("project", ID, fixture.path.to_str().unwrap(), 0, step)
-        .unwrap();
-    let saved = index.saved("project", ID).unwrap().unwrap();
-    let (idle, _) = search_read::read_step_confirmed(
-        fixture.home.path(),
-        Some(&saved),
-        Agent::Cursor,
-        &fixture.path,
-        Some(&scope),
-    )
-    .unwrap();
-    assert!(matches!(idle, IndexStep::Done));
-    fixture.root("append");
-    let (step, _) = search_read::read_step_confirmed(
-        fixture.home.path(),
-        Some(&saved),
-        Agent::Cursor,
-        &fixture.path,
-        Some(&scope),
-    )
-    .unwrap();
-    match step {
-        IndexStep::Read {
-            reset, messages, ..
-        } => {
-            assert!(!reset);
-            assert_eq!(
-                messages
-                    .iter()
-                    .map(|message| message.text.as_str())
-                    .collect::<Vec<_>>(),
-                ["Later answer"]
-            );
-        }
-        other => panic!("unexpected step: {other:?}"),
-    }
     let wrong = SessionReadScope {
         id: "other".into(),
         ..scope
     };
     assert!(
-        search_read::read_step_confirmed(
+        hide_session::read_conversation(
             fixture.home.path(),
-            None,
             Agent::Cursor,
             &fixture.path,
-            Some(&wrong)
+            &wrong,
+            None
         )
         .is_err()
     );

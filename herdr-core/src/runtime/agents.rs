@@ -1886,7 +1886,7 @@ impl Runtime {
             if !self.ai_settings.as_ref().is_some_and(|settings| {
                 settings.enabled && settings.chosen && settings.agent_summary
             }) {
-                self.cancel_session_issue_draft();
+                self.drop_missed_backlog();
             }
             self.drop_pr_summaries_if_inactive();
             self.refresh_background_ai();
@@ -2377,6 +2377,8 @@ impl Runtime {
         // Every registration change is persisted here, which is when a Home's
         // links follow it (PRD home-device-rail D-06).
         self.request_home_link_syncs();
+        // ...and when a machine's protections follow it (PRD agent-guardrails B11).
+        self.refresh_guardrail_policies();
         if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }
