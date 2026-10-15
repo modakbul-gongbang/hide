@@ -107,6 +107,14 @@ fn program(word: &str) -> String {
     }
 }
 
+/// The programs whose text options below take prose, a pattern or a script:
+/// Git and the forges' CLIs, the interpreters' `-c` and `-e`, and a search's
+/// or a stream editor's `-e`. Another program's `-m` or `-c` may make a file
+/// (`touch -m`, `curl -c`).
+const TEXT_PROGRAMS: &[&str] = &[
+    "git", "gh", "glab", "python", "python3", "node", "deno", "bun", "perl", "ruby", "sh", "bash",
+    "zsh", "fish", "grep", "egrep", "fgrep", "rg", "sed", "awk", "jq",
+];
 /// Options whose value is text: a message, a title, a body, a script.
 const TEXT_OPTIONS: &[&str] = &[
     "-m",
@@ -150,8 +158,8 @@ const VALUE_OPTIONS: &[&str] = &[
     "--file",
     "--regexp",
     "--threads",
-    "--arg",
-    "--argjson",
+    "-v",
+    "-F",
 ];
 
 /// Whether word `at` of a command, or its `--name=value` value when `value`,
@@ -160,9 +168,14 @@ const VALUE_OPTIONS: &[&str] = &[
 /// a search or a stream editor takes first. Any other word may name a file
 /// about to be made, so it is read as a path.
 fn text_word(program: &str, words: &[String], at: usize, value: bool) -> bool {
+    // The program word itself is a path, spaces and all.
+    if at == 0 {
+        return false;
+    }
     let text_option = |option: &str| {
-        TEXT_OPTIONS.contains(&option)
-            || short(option).is_some_and(|letters| letters.ends_with(TEXT_LETTERS))
+        TEXT_PROGRAMS.contains(&program)
+            && (TEXT_OPTIONS.contains(&option)
+                || short(option).is_some_and(|letters| letters.ends_with(TEXT_LETTERS)))
     };
     if value {
         return words[at]
