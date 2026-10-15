@@ -1062,6 +1062,14 @@ fn a_memo_from_missed_work_marks_its_line_and_undo_opens_it_again() {
     let missed = &store.ledger_record(&session()).unwrap().missed[0];
     assert_eq!(missed.status, MissedStatus::Backlog);
     assert_eq!(missed.backlog_key.as_deref(), Some(key.as_str()));
+    let LedgerAnswer::Keys(keys) = store.ledger_call(LedgerCall::MissedKeys).unwrap() else {
+        panic!("expected the missed lines' items")
+    };
+    assert_eq!(
+        keys,
+        std::slice::from_ref(&key),
+        "the backlog row's flag names the memo"
+    );
     assert!(
         store
             .ledger_call(LedgerCall::BacklogLocal {
@@ -1088,6 +1096,10 @@ fn a_memo_from_missed_work_marks_its_line_and_undo_opens_it_again() {
     let missed = &store.ledger_record(&session()).unwrap().missed[0];
     assert_eq!(missed.status, MissedStatus::Open);
     assert_eq!(missed.backlog_key, None);
+    let LedgerAnswer::Keys(keys) = store.ledger_call(LedgerCall::MissedKeys).unwrap() else {
+        panic!("expected the missed lines' items")
+    };
+    assert!(keys.is_empty(), "an undone item is no longer flagged");
 }
 
 /// A typed item whose create was not confirmed is offered after a restart;

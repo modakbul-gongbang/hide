@@ -44,6 +44,7 @@ pub(super) struct BacklogWork {
     waiting: HashMap<String, VecDeque<String>>,
     undo_generation: u64,
     origin_generation: u64,
+    missed_keys_generation: u64,
 }
 
 /// `backlog_add`.
@@ -218,6 +219,7 @@ impl Runtime {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.missed_mark_failed","intent":intent,"code":code}));
                 }
                 runtime.feed_links();
+                runtime.refresh_missed_keys();
                 true
             },
         );
@@ -407,6 +409,7 @@ impl Runtime {
                 }
                 if job.missed.is_some() {
                     self.feed_links();
+                    self.refresh_missed_keys();
                 }
             }
             Err(failure) => {
@@ -430,12 +433,46 @@ impl Runtime {
         true
     }
 
+    /// The backlog items missed lines made, read again after one is made or
+    /// undone and at start, so the backlog row's flag follows the ledger.
+    pub(super) fn refresh_missed_keys(&mut self) {
+        let Some(client) = self.links_work.client.clone() else {
+            return;
+        };
+        self.backlog_work.missed_keys_generation += 1;
+        let generation = self.backlog_work.missed_keys_generation;
+        let spawned = self.spawn_issue_worker(
+            "backlog-missed-keys",
+            move || client.call(LedgerCall::MissedKeys),
+            move |runtime, answer| match answer {
+                // A later read is on its way; this one may predate its change.
+                _ if runtime.backlog_work.missed_keys_generation != generation => false,
+                Ok(LedgerAnswer::Keys(keys)) => {
+                    let changed = runtime.snapshot.issue_work.missed_keys != keys;
+                    runtime.snapshot.issue_work.missed_keys = keys;
+                    changed
+                }
+                Ok(_) => false,
+                Err(code) => {
+                    crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.missed_keys_failed","code":code}));
+                    false
+                }
+            },
+        );
+        if let Err(code) = spawned {
+            crate::diagnostic!(
+                serde_json::json!({"component":"backlog","kind":"backlog.missed_keys_failed","code":code})
+            );
+        }
+    }
+
     /// Typed items whose create was never confirmed come back after a
     /// restart as failed rows, so `다시 시도` still finds what they made.
     pub(super) fn restore_pending_backlog(&mut self) {
         let Some(client) = self.links_work.client.clone() else {
             return;
         };
+        self.refresh_missed_keys();
         let spawned = self.spawn_issue_worker(
             "backlog-restore",
             move || client.call(LedgerCall::PendingBacklog),
@@ -614,6 +651,7 @@ impl Runtime {
                     crate::diagnostic!(serde_json::json!({"component":"backlog","kind":"backlog.release_failed","code":code}));
                 }
                 runtime.feed_links();
+                runtime.refresh_missed_keys();
                 true
             },
         );

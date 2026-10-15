@@ -115,7 +115,13 @@ pub enum LedgerCall {
     BacklogOrigin {
         backlog_key: String,
     },
+    /// Every backlog item a missed line made, newest first, at most
+    /// `MISSED_KEYS_LIMIT`.
+    MissedKeys,
 }
+
+/// The backlog item keys `MissedKeys` answers; the backlog shows far fewer.
+pub const MISSED_KEYS_LIMIT: usize = 1024;
 
 #[derive(Debug)]
 pub enum LedgerAnswer {
@@ -124,6 +130,7 @@ pub enum LedgerAnswer {
     Saved,
     Pending(Vec<PendingBacklog>),
     Origin(Option<Box<BacklogOrigin>>),
+    Keys(Vec<String>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

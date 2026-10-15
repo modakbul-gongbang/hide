@@ -3422,6 +3422,10 @@ pub struct IssueWorkSnapshot {
     /// (B31, B33).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<BacklogOriginSnapshot>,
+    /// Every backlog item key a missed line made, newest first, for the
+    /// backlog row's flag (B27).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missed_keys: Vec<String>,
 }
 
 /// One backlog item made from the backlog's input, the quick add or a

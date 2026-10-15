@@ -559,6 +559,18 @@ impl LinkStore {
                 };
                 LedgerAnswer::Origin(origin)
             }
+            LedgerCall::MissedKeys => {
+                let mut statement = tx
+                    .prepare("SELECT backlog_key FROM ledger_missed WHERE backlog_key IS NOT NULL GROUP BY backlog_key ORDER BY MAX(at) DESC LIMIT ?1")
+                    .map_err(failed)?;
+                let keys = statement
+                    .query_map(params![MISSED_KEYS_LIMIT as i64], |r| r.get(0))
+                    .map_err(failed)?
+                    .collect::<Result<Vec<String>, _>>()
+                    .map_err(failed)?;
+                drop(statement);
+                LedgerAnswer::Keys(keys)
+            }
         };
         tx.commit().map_err(failed)?;
         Ok(answer)
