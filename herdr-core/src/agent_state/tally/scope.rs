@@ -932,17 +932,23 @@ impl Cache {
             let device_scope = device_scopes
                 .get_mut(device.id)
                 .expect("device scope inserted");
-            device_scope.listed = physical
-                .iter()
-                .enumerate()
-                .map(|(index, a)| Listed {
-                    pane_id: a.pane_id.clone(),
-                    device_id: device.id.into(),
-                    device_label: device.label.map(str::to_owned),
-                    remote: device_index > 0,
-                    index,
-                })
-                .collect();
+            // Every row the device has, a home-owned one included: this is the
+            // pool search, links and tabs find an agent in, not a list (B5).
+            device_scope.listed = if device.connected {
+                device.agents.as_slice()
+            } else {
+                &[]
+            }
+            .iter()
+            .enumerate()
+            .map(|(index, a)| Listed {
+                pane_id: a.pane_id.clone(),
+                device_id: device.id.into(),
+                device_label: device.label.map(str::to_owned),
+                remote: device_index > 0,
+                index,
+            })
+            .collect();
             overall_listed.extend(device_scope.listed.iter().cloned());
             device_scope.places_live = device.connected;
             device_scope.relations = super::relations::project(&device.projects, &device.agents);

@@ -1015,5 +1015,13 @@ fn a_home_owned_row_is_listed_only_while_the_operator_has_something_to_do() {
             runtime.snapshot.navigator.agents[1].hide_ai.is_some(),
             "{case}: the row stays in the agent data for search and links"
         );
+        assert!(
+            runtime.snapshot.navigator.devices[0]
+                .agent_scope
+                .listed
+                .iter()
+                .any(|entry| entry.pane_id == "child"),
+            "{case}: the pool search, links and tabs find agents in still has it"
+        );
     }
 }

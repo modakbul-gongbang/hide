@@ -1,6 +1,6 @@
 // What Hide AI started, told from what the operator started, on a real core
 // through an isolated pinned Herdr, hided and browser (PRD hide-ai-origin-mark
-// B1, B2, B5, B12, B13). The fixture is a scratch repository with no remote;
+// B5, B12, B13; PRD hide-ai-work-home B1, B3, B20). The fixture is a scratch repository with no remote;
 // the ledger is seeded in the daemon's own state folder while it is down, the
 // way a Memory promotion's spawn leaves it, and never an operator's.
 
@@ -83,27 +83,27 @@ async function seed(stack: Stack, task: { kind: string; target: string } | null)
   });
 }
 
-test("the checkouts Hide AI made gather under one head with their task, and a branch named like Hide AI's stays the operator's", async ({ page }) => {
+test("an agent Hide AI started for a home leaves the project tree with no head, and a branch named like Hide AI's stays the operator's", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const stack = await start();
   try {
     await open(page, stack.daemon);
     const project = page.locator("[data-project]", { hasText: "scratch" });
     await expect(project.locator("[data-checkout-row]").first()).toBeVisible({ timeout: 20_000 });
-    // Before Hide AI's record exists, every checkout is the operator's and no head is drawn (B5).
-    await expect(page.locator("[data-hide-ai-group]")).toHaveCount(0);
+    // Before Hide AI's record exists, every checkout is the operator's and its agent is drawn (B5).
+    await expect(project.locator("[data-checkout-row]", { hasText: "hide-memory-m43" })).toHaveCount(1);
+    await expect(page.locator(`[data-pane="${stack.hideAiPane}"]`)).toHaveCount(1);
 
     await seed(stack, { kind: "memory_promote", target: "m43" });
     await open(page, stack.daemon);
-    const group = page.locator("[data-hide-ai-group]");
-    await expect(group).toBeVisible({ timeout: 30_000 });
-    await expect(group.locator("[data-hide-ai-count]")).toHaveText("1");
-    await expect(group.locator("[data-checkout-row]")).toHaveCount(1);
-    await expect(group.locator("[data-agent-task]")).toHaveText("Promote Memory · m43");
-    await expect(group.locator("[data-pane] [data-hide-mark], [data-pane] [data-agent-mark]")).toHaveCount(0);
-    // The operator's checkouts, the lookalike branch included, stay above the head.
+    // The head is gone, and so is the agent's row: its home, the Memory tab, shows its work (B1).
+    await expect(page.locator(`[data-pane="${stack.hideAiPane}"]`)).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator("[data-hide-ai-group]")).toHaveCount(0);
+    // Nothing of the operator's is in the checkout Hide AI made and it is not in front, so the tree does not draw it (B3).
+    await expect(project.locator("[data-checkout-row]", { hasText: "hide-memory-m43" })).toHaveCount(0);
+    // The operator's checkouts, the lookalike branch included, and the operator's agent stay.
     await expect(project.locator("[data-checkout-row]", { hasText: "hide-memory-m9-by-hand" })).toHaveCount(1);
-    await expect(group.locator("[data-checkout-row]", { hasText: "hide-memory-m9-by-hand" })).toHaveCount(0);
+    await expect(page.locator(`[data-pane="${stack.operatorPane}"]`)).toHaveCount(1);
     await expect(page.locator(`[data-pane="${stack.operatorPane}"] [data-agent-task]`)).toHaveCount(0);
   } finally {
     stack.daemon.stop();
@@ -111,19 +111,24 @@ test("the checkouts Hide AI made gather under one head with their task, and a br
   }
 });
 
-test("a start whose record names no task says Hide AI alone, and it all holds across a restart of hided", async ({ page }) => {
+test("a start whose kind this build has no home for stays an operator's row naming its task, and it all holds across a restart of hided", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const stack = await start();
   try {
+    // A record with no task, or one a newer build wrote, loads with the rest of the ledger (B20).
     await seed(stack, null);
     await open(page, stack.daemon);
-    const group = page.locator("[data-hide-ai-group]");
-    await expect(group.locator("[data-agent-task]")).toHaveText("Hide AI", { timeout: 30_000 });
+    const row = page.locator(`[data-pane="${stack.hideAiPane}"]`);
+    await expect(row.locator("[data-agent-task]")).toHaveText("Hide AI", { timeout: 30_000 });
 
-    stack.daemon = await stack.daemon.restart();
+    stack.daemon = await stack.daemon.restart((dir) => {
+      const file = path.join(dir, "delivery-ledger.json");
+      const session = sessionOf(stack.herdr, stack.hideAiPane);
+      fs.writeFileSync(file, ledgerOf(stack.daemon.node, [{ pane: stack.hideAiPane, session, path: stack.hideAiPath, branch: "hide-memory-m43-fixture", task: { kind: "future_kind", target: "m43" } }]), { mode: 0o600 });
+    });
     await open(page, stack.daemon);
-    await expect(group.locator("[data-hide-ai-count]")).toHaveText("1", { timeout: 30_000 });
-    await expect(group.locator("[data-agent-task]")).toHaveText("Hide AI");
+    await expect(row.locator("[data-agent-task]")).toHaveText("future_kind · m43", { timeout: 30_000 });
+    await expect(page.locator("[data-hide-ai-group]")).toHaveCount(0);
   } finally {
     stack.daemon.stop();
     stack.herdr.stop();

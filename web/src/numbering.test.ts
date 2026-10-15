@@ -175,7 +175,7 @@ it("numbers a plain-folder row even when its project expansion is false", () => 
   expect(numberedTarget("agents", 1, {rest, agents: [parent]})).toBe("folder-pane");
 });
 
-it("numbers a project's checkouts in the order the sidebar draws them: the operator's first, then what Hide AI made", () => {
+it("numbers a project's checkouts in the order the sidebar draws them, with no group of its own for what Hide AI made", () => {
   const rows = ["main", "hide", "feature"].map((id) => agent(`${id}-pane`));
   const checkout = (id: string, row: AgentRow) => {
     const root = { pane_id: row.pane_id, occurrence: 0, depth: 0, descendants: 0 };
@@ -185,5 +185,5 @@ it("numbers a project's checkouts in the order the sidebar draws them: the opera
   const checkouts = ["main", "hide", "feature"].map((id, index) => checkout(id, rows[index]!));
   const project = { id: "p", device_id: "local", is_git: true, expanded: true, pinned: false, checkouts, agent_scope: emptyScope(), inactive_checkouts: { expanded: false, checkout_ids: [] } } as unknown as Workspace;
   const rest = { navigator: { focused_device_id: "local", workspaces: [project], devices: [{ id: "local", kind: "local", agent_scope: emptyScope() }], hide_ai_checkouts: [{ device_id: "local", path: "/repo/hide", task: null }] }, status: { remote: [] } } as unknown as SnapshotRest;
-  expect([...numberedAgents(agentListOrder({ rest, agents: rows }))]).toEqual([[1, "main-pane"], [2, "feature-pane"], [3, "hide-pane"]]);
+  expect([...numberedAgents(agentListOrder({ rest, agents: rows }))]).toEqual([[1, "main-pane"], [2, "hide-pane"], [3, "feature-pane"]]);
 });

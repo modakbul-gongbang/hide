@@ -4,7 +4,7 @@
 // it to the checkouts a project draws. Nothing here reads a branch name.
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
-import type { Checkout, HideAi, HideAiCheckout, HideAiTask, Workspace } from "./snapshot";
+import { catalogWorkspaces, type AgentRow, type Checkout, type HideAi, type HideAiCheckout, type HideAiTask, type HomeTurn, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The task kinds the catalogs name; a kind of another build shows as its code (LOCALIZATION.md). */
 const TASK_KEYS: Record<string, MessageKey> = {
@@ -24,11 +24,17 @@ export function originLine(t: TFunction<"translation">, hideAi: HideAi): string 
   return taskLine(t, hideAi.task) ?? t("hideAi.name");
 }
 
-/** Hide AI's part of a row's accessible name (D-09): the name and the task, so a screen reader hears who started it. */
+/** What the home waits for, in words (`PR #924 리뷰`, `CI 실패`); the core decides the turn and the screen only words it (PRD hide-ai-work-home D-14). */
+export function homeTurnLine(t: TFunction<"translation">, turn: HomeTurn): string {
+  return turn.kind === "pr_review" ? t("hideAi.turn.pr_review", { number: turn.pr_number }) : t("hideAi.turn.ci_failed");
+}
+
+/** Hide AI's part of a row's accessible name (D-09, B12): the name, the task and the turn, so a screen reader hears who started it and what waits. */
 export function hideAiWords(t: TFunction<"translation">, hideAi: HideAi | undefined): string | null {
   if (!hideAi) return null;
   const task = taskLine(t, hideAi.task);
-  return task ? `${t("hideAi.name")} · ${task}` : t("hideAi.name");
+  const turn = hideAi.turn ? homeTurnLine(t, hideAi.turn) : null;
+  return [t("hideAi.name"), task, turn].filter(Boolean).join(" · ");
 }
 
 /** The place line of a row Hide AI started: the project and the task in the branch's place (`herdr-ide › Memory 올리기 · m72`). */
@@ -42,13 +48,22 @@ export function hideAiCheckoutOf(listed: readonly HideAiCheckout[] | undefined, 
 }
 
 /**
- * A project's drawn checkouts split by who made them (D-03, D-06): the
- * operator's stay where they were, and Hide AI's gather behind them. The
- * group exists only while it has a checkout (D-08).
+ * Whether a project's tree draws `checkout`. One Hide AI made is drawn only
+ * while it is the front checkout or an operator-owned agent works in it, so
+ * a promotion's worktree never crowds the tree (PRD hide-ai-work-home D-17,
+ * B3); its agent row is never in a tree, the core leaves it out. `holdsAgent`
+ * is whether the checkout's tree has any row, and every row in it is the
+ * operator's.
  */
-export function splitByOrigin(listed: readonly HideAiCheckout[] | undefined, workspace: Pick<Workspace, "device_id">, checkouts: readonly Checkout[]): { operator: Checkout[]; hideAi: Checkout[] } {
-  const operator: Checkout[] = [];
-  const hideAi: Checkout[] = [];
-  for (const checkout of checkouts) (hideAiCheckoutOf(listed, workspace, checkout) ? hideAi : operator).push(checkout);
-  return { operator, hideAi };
+export function drawnInTree(listed: readonly HideAiCheckout[] | undefined, workspace: Pick<Workspace, "device_id">, checkout: Pick<Checkout, "path">, front: boolean, holdsAgent: boolean): boolean {
+  return front || holdsAgent || !hideAiCheckoutOf(listed, workspace, checkout);
+}
+
+/** Where a Needs You row its home owns opens: the Memory tab of its Project, expanded on its attempt's row (B11); null when the core has not named them. */
+export function homeOpening(rest: SnapshotRest | null, agent: Pick<AgentRow, "hide_ai"> | undefined): { deviceId: string; workspaceId: string; number: number } | null {
+  const hideAi = agent?.hide_ai;
+  const card = /^m(\d+)$/.exec(hideAi?.task?.target ?? "");
+  if (hideAi?.home !== "memory" || !hideAi.workspace_id || !card) return null;
+  const workspace = catalogWorkspaces(rest).find((row) => row.id === hideAi.workspace_id);
+  return workspace ? { deviceId: workspace.device_id, workspaceId: workspace.id, number: Number(card[1]) } : null;
 }

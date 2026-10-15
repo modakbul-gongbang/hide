@@ -96,7 +96,7 @@ export function useAgentNotifications(actions: Actions) {
       // The tag is `<device id>|<pane id>`; the pane id names the agent wherever it runs.
       const tag = id.slice(AGENT_NOTICE_PREFIX.length);
       const paneId = tag.slice(tag.indexOf("|") + 1);
-      if (paneId) actions.openAgent(paneId);
+      if (paneId) actions.openListedAgent(paneId);
     });
   }, [bridge, actions]);
 }
