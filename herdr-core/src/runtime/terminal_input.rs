@@ -88,6 +88,9 @@ struct InputRequest {
     laid_out: bool,
     /// The pane this pending request's keys wait for (`InputRequestSnapshot`).
     held_for: Option<String>,
+    /// When it opened, about when its first key was typed; none for a
+    /// creation refused before it reached Herdr.
+    opened: Option<Instant>,
 }
 
 impl InputRequest {
@@ -113,7 +116,7 @@ impl InputRequests {
     /// still pending is discarded. An id already naming another creation is
     /// that client's newer request, so the old row leaves rather than keep
     /// pointing keys at the old pane.
-    pub(super) fn open(&mut self, request_id: &str, origin: InputOrigin) {
+    pub(super) fn open(&mut self, request_id: &str, origin: InputOrigin, now: Instant) {
         if !valid_request_id(request_id) {
             report_invalid_request_id(request_id);
             return;
@@ -135,6 +138,7 @@ impl InputRequests {
             state: InputRequestState::Pending,
             laid_out: false,
             held_for: None,
+            opened: Some(now),
         });
         self.controls.push(TerminalControl::RequestOpen {
             request: request_id.to_owned(),
@@ -212,11 +216,19 @@ impl InputRequests {
 
     /// Whether the request `origin` opened still waits, held for `pane_id`.
     pub(super) fn waits_for(&self, origin: &InputOrigin, pane_id: &str) -> bool {
-        self.requests.iter().any(|request| {
-            &request.origin == origin
-                && request.state == InputRequestState::Pending
-                && request.held_for.as_deref() == Some(pane_id)
-        })
+        self.waiting(origin, pane_id).is_some()
+    }
+
+    /// When the request `origin` opened, while it waits held for `pane_id`.
+    fn waiting(&self, origin: &InputOrigin, pane_id: &str) -> Option<Instant> {
+        self.requests
+            .iter()
+            .find(|request| {
+                &request.origin == origin
+                    && request.state == InputRequestState::Pending
+                    && request.held_for.as_deref() == Some(pane_id)
+            })
+            .and_then(|request| request.opened)
     }
 
     /// The node discarded what it held for `request_id` at its own cap: the
@@ -254,6 +266,7 @@ impl InputRequests {
             state: InputRequestState::Discarded,
             laid_out: false,
             held_for: None,
+            opened: None,
         });
         self.controls.push(TerminalControl::RequestDiscard {
             request: request_id.to_owned(),
@@ -348,16 +361,19 @@ impl InputRequests {
     }
 }
 
-/// How long a new shell pane's keys wait for its shell to read them. Inside
-/// the age a held key is still written at (`HELD_INPUT_MAX_AGE_MS`, counted
-/// from when it was typed, before Herdr's answer), so a wait that runs out
-/// still writes what was typed while it ran.
+/// How long after its request opened a new shell pane's keys wait for its
+/// shell to read them. The node writes a held key only within
+/// `HELD_INPUT_MAX_AGE_MS` of receiving it, and the first key arrives about
+/// when the request opens, so the wait ends, every read in it included,
+/// with a second to spare: a wait that runs out still writes every key.
 const SHELL_READING_WAIT: Duration = Duration::from_secs(2);
-const _: () = assert!(SHELL_READING_WAIT.as_millis() < HELD_INPUT_MAX_AGE_MS as u128);
+const _: () = assert!(SHELL_READING_WAIT.as_millis() + 1_000 <= HELD_INPUT_MAX_AGE_MS as u128);
 /// Between two reads of the shell: also the longest a key waits after its
 /// shell reads.
 const SHELL_READING_POLL: Duration = Duration::from_millis(50);
-const SHELL_READ_TIMEOUT: Duration = Duration::from_secs(2);
+/// The longest one read of Herdr or of the node takes, cut to what is left
+/// of the wait.
+const SHELL_READ_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// What ended a new shell pane's wait for its shell to read keys; each ends
 /// with the keys written to the pane.
@@ -369,7 +385,8 @@ pub(super) enum ShellWait {
     /// editor, or startup files still running): the keys go into the
     /// terminal as it is, as they did before the wait.
     Timeout,
-    /// The pane's shell could not be read; the keys go in as they are.
+    /// The wait ran out while the pane's shell could not be read (its last
+    /// read's failure); the keys go in as they are.
     Unreadable(String),
 }
 
@@ -402,45 +419,50 @@ fn shell_reads_keys(
     connector: &dyn ApiConnector,
     node: &dyn NodeLink,
     pane_id: &str,
+    timeout: Duration,
 ) -> Result<bool, String> {
     let params = wire::pane_process_info_params(pane_id)?;
-    let group = request_with_connector(connector, "pane.process_info", params, SHELL_READ_TIMEOUT)
+    let group = request_with_connector(connector, "pane.process_info", params, timeout)
         .map_err(|error| format!("pane.process_info failed: {error}"))
         .and_then(wire::pane_process_group)?;
     // A pane whose shell Herdr has not named yet is still starting.
     let Some(shell) = group.shell_pid else {
         return Ok(false);
     };
-    let input = crate::node_access::call_as::<LineInput>(
-        node,
-        Call::LineInput { pid: shell },
-        SHELL_READ_TIMEOUT,
-    )
-    .map_err(|error| format!("the shell's terminal could not be read: {error}"))?;
+    let input =
+        crate::node_access::call_as::<LineInput>(node, Call::LineInput { pid: shell }, timeout)
+            .map_err(|error| format!("the shell's terminal could not be read: {error}"))?;
     Ok(reads_keys(&group, input))
 }
 
-/// Waits, within `wait`, until the shell of `pane_id` reads keys itself;
-/// `None` once `still_waiting` says nothing waits for it any more.
+/// Waits until `deadline` for the shell of `pane_id` to read keys itself,
+/// cutting every read to what is left; a read that fails is read again, as
+/// a shell Herdr has only just started can fail one. `None` once
+/// `still_waiting` says nothing waits for it any more (a pane that closed
+/// discards its request).
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_for_shell_reading(
     connector: &dyn ApiConnector,
     node: &dyn NodeLink,
     pane_id: &str,
-    wait: Duration,
+    deadline: Instant,
     still_waiting: impl Fn() -> bool,
 ) -> Option<ShellWait> {
-    let deadline = Instant::now() + wait;
+    let mut failure = None;
     loop {
         if !still_waiting() {
             return None;
         }
-        match shell_reads_keys(connector, node, pane_id) {
-            Ok(true) => return Some(ShellWait::Reading),
-            Ok(false) if Instant::now() >= deadline => return Some(ShellWait::Timeout),
-            Ok(false) => thread::sleep(SHELL_READING_POLL),
-            Err(message) => return Some(ShellWait::Unreadable(message)),
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Some(failure.map_or(ShellWait::Timeout, ShellWait::Unreadable));
         }
+        match shell_reads_keys(connector, node, pane_id, left.min(SHELL_READ_TIMEOUT)) {
+            Ok(true) => return Some(ShellWait::Reading),
+            Ok(false) => failure = None,
+            Err(message) => failure = Some(message),
+        }
+        thread::sleep(SHELL_READING_POLL.min(deadline.saturating_duration_since(Instant::now())));
     }
 }
 
@@ -469,7 +491,9 @@ impl super::Runtime {
             .map(|operation| operation.id);
         let before = self.input_requests.snapshot();
         match task {
-            Some(id) => self.input_requests.open(request_id, InputOrigin::Task(id)),
+            Some(id) => self
+                .input_requests
+                .open(request_id, InputOrigin::Task(id), Instant::now()),
             None => {
                 self.input_requests.refuse_unopened(request_id);
             }
@@ -499,10 +523,11 @@ impl super::Runtime {
             return self.resolve_input_request(origin, pane_id);
         };
         self.input_requests.hold_for(origin, pane_id);
-        if !self.input_requests.waits_for(origin, pane_id) {
+        let Some(opened) = self.input_requests.waiting(origin, pane_id) else {
             return;
-        }
+        };
         self.sync_input_requests();
+        let deadline = opened + SHELL_READING_WAIT;
         let started = Instant::now();
         let worker_origin = origin.clone();
         let pane = pane_id.to_owned();
@@ -520,7 +545,7 @@ impl super::Runtime {
                     live.api_connector.as_ref(),
                     live.node.as_ref(),
                     &pane,
-                    SHELL_READING_WAIT,
+                    deadline,
                     still_waiting,
                 ) else {
                     return;
@@ -601,7 +626,7 @@ mod tests {
     #[test]
     fn a_request_tells_the_node_when_it_opens_and_which_pane_answers_it() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::Split("op-1".to_owned()));
+        requests.open("r1", InputOrigin::Split("op-1".to_owned()), Instant::now());
         assert!(requests.resolve(&InputOrigin::Split("op-1".to_owned()), "w1:p2"));
         assert_eq!(
             controls(&mut requests),
@@ -620,7 +645,7 @@ mod tests {
     #[test]
     fn a_failed_creation_is_discarded_and_answers_nothing_later() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::TabCreate(7));
+        requests.open("r1", InputOrigin::TabCreate(7), Instant::now());
         assert!(requests.discard(&InputOrigin::TabCreate(7), "refused"));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
         assert!(!requests.resolve(&InputOrigin::TabCreate(7), "w1:p9"));
@@ -646,7 +671,7 @@ mod tests {
     fn an_id_a_client_cannot_name_opens_no_row() {
         let mut requests = InputRequests::default();
         let long = "r".repeat(REQUEST_ID_LIMIT + 1);
-        requests.open(&long, InputOrigin::TabCreate(1));
+        requests.open(&long, InputOrigin::TabCreate(1), Instant::now());
         assert!(!requests.refuse_unopened("has space"));
         assert!(requests.snapshot().is_empty());
         assert!(controls(&mut requests).is_empty());
@@ -655,9 +680,9 @@ mod tests {
     #[test]
     fn a_reused_id_follows_the_newer_creation() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::TabCreate(1));
+        requests.open("r1", InputOrigin::TabCreate(1), Instant::now());
         requests.resolve(&InputOrigin::TabCreate(1), "w1:p2");
-        requests.open("r1", InputOrigin::Split("op-9".to_owned()));
+        requests.open("r1", InputOrigin::Split("op-9".to_owned()), Instant::now());
         assert_eq!(
             requests.origin_of("r1"),
             Some(InputOrigin::Split("op-9".to_owned()))
@@ -668,7 +693,7 @@ mod tests {
     #[test]
     fn a_request_whose_pane_left_the_layouts_reaches_no_pane_that_reuses_its_id() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::TabCreate(1));
+        requests.open("r1", InputOrigin::TabCreate(1), Instant::now());
         requests.resolve(&InputOrigin::TabCreate(1), "w1:p2");
         // Not laid out yet: the pane has not arrived, it is not gone.
         assert!(!requests.follow_panes(|_| false, |_| false));
@@ -688,7 +713,7 @@ mod tests {
     #[test]
     fn a_request_whose_pane_is_closing_reaches_no_pane() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::TabCreate(1));
+        requests.open("r1", InputOrigin::TabCreate(1), Instant::now());
         requests.resolve(&InputOrigin::TabCreate(1), "w1:p2");
         assert!(requests.follow_panes(|_| true, |pane| pane == "w1:p2"));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
@@ -698,7 +723,7 @@ mod tests {
     fn keys_waiting_for_a_pane_that_closes_or_leaves_reach_no_pane() {
         let origin = InputOrigin::Split("op-1".to_owned());
         let mut requests = InputRequests::default();
-        requests.open("r1", origin.clone());
+        requests.open("r1", origin.clone(), Instant::now());
         requests.hold_for(&origin, "w1:p2");
         assert!(requests.waits_for(&origin, "w1:p2"));
         // Herdr named the pane and has not laid it out: it has not arrived.
@@ -709,7 +734,7 @@ mod tests {
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
         assert!(!requests.waits_for(&origin, "w1:p2"));
 
-        requests.open("r2", InputOrigin::TabCreate(2));
+        requests.open("r2", InputOrigin::TabCreate(2), Instant::now());
         requests.hold_for(&InputOrigin::TabCreate(2), "w1:p3");
         assert!(requests.follow_panes(|_| true, |pane| pane == "w1:p3"));
         assert_eq!(requests.state_of("r2"), Some(InputRequestState::Discarded));
@@ -806,11 +831,31 @@ mod tests {
             &herdr.connector(),
             &node,
             "w1:p2",
-            Duration::from_secs(60),
+            Instant::now() + Duration::from_secs(60),
             || true,
         );
         assert_eq!(outcome, Some(ShellWait::Reading));
         assert_eq!(node.reads(), 3, "it waited through both canonical reads");
+    }
+
+    /// A shell Herdr has only just started can fail a read; the wait reads
+    /// it again rather than writing the keys into its line mode.
+    #[test]
+    fn a_failed_read_is_read_again_within_the_wait() {
+        let herdr = shell_pane("shell-wait-retry");
+        let node = Terminal::answering(vec![
+            Err("controls no terminal".to_owned()),
+            Ok(LineInput::Keys),
+        ]);
+        let outcome = wait_for_shell_reading(
+            &herdr.connector(),
+            &node,
+            "w1:p2",
+            Instant::now() + Duration::from_secs(60),
+            || true,
+        );
+        assert_eq!(outcome, Some(ShellWait::Reading));
+        assert_eq!(node.reads(), 2);
     }
 
     /// A shell with no line editor never leaves canonical mode: the wait
@@ -819,23 +864,30 @@ mod tests {
     fn a_shell_that_never_reads_ends_the_wait_at_its_bound() {
         let herdr = shell_pane("shell-wait-timeout");
         let node = Terminal::answering(vec![Ok(LineInput::Lines { limit: 1024 })]);
-        let outcome =
-            wait_for_shell_reading(&herdr.connector(), &node, "w1:p2", Duration::ZERO, || true);
+        // The bound is the subject: a short one keeps the test short.
+        let outcome = wait_for_shell_reading(
+            &herdr.connector(),
+            &node,
+            "w1:p2",
+            Instant::now() + Duration::from_millis(150),
+            || true,
+        );
         assert_eq!(outcome, Some(ShellWait::Timeout));
+        assert!(node.reads() >= 1, "the shell was read before the bound");
     }
 
     #[test]
-    fn a_terminal_that_cannot_be_read_ends_the_wait_with_its_reason() {
+    fn a_terminal_that_is_never_read_ends_the_wait_at_its_bound_with_its_reason() {
         let herdr = shell_pane("shell-wait-unreadable");
         let node = Terminal::answering(vec![Err("link down".to_owned())]);
         let Some(ShellWait::Unreadable(reason)) = wait_for_shell_reading(
             &herdr.connector(),
             &node,
             "w1:p2",
-            Duration::from_secs(60),
+            Instant::now() + Duration::from_millis(150),
             || true,
         ) else {
-            panic!("an unreadable terminal ends the wait");
+            panic!("an unreadable terminal ends the wait as unreadable");
         };
         assert!(reason.contains("link down"), "{reason}");
     }
@@ -848,7 +900,7 @@ mod tests {
             &herdr.connector(),
             &node,
             "w1:p2",
-            Duration::from_secs(60),
+            Instant::now() + Duration::from_secs(60),
             || false,
         );
         assert_eq!(outcome, None);
@@ -860,7 +912,11 @@ mod tests {
     fn requests_are_bounded_and_an_evicted_pending_one_is_discarded() {
         let mut requests = InputRequests::default();
         for index in 0..=INPUT_REQUEST_LIMIT {
-            requests.open(&format!("r{index}"), InputOrigin::TabCreate(index as u64));
+            requests.open(
+                &format!("r{index}"),
+                InputOrigin::TabCreate(index as u64),
+                Instant::now(),
+            );
         }
         assert_eq!(requests.snapshot().len(), INPUT_REQUEST_LIMIT);
         assert_eq!(requests.state_of("r0"), None);
@@ -875,7 +931,7 @@ mod tests {
     #[test]
     fn a_request_the_node_gave_up_on_ends_its_row() {
         let mut requests = InputRequests::default();
-        requests.open("r1", InputOrigin::TabCreate(1));
+        requests.open("r1", InputOrigin::TabCreate(1), Instant::now());
         assert!(requests.discarded_by_node("r1"));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
         assert!(!requests.discarded_by_node("r1"));

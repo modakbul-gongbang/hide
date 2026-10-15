@@ -870,6 +870,7 @@ impl Runtime {
             self.input_requests.open(
                 request_id,
                 super::terminal_input::InputOrigin::Split(id.clone()),
+                std::time::Instant::now(),
             );
             self.sync_input_requests();
         }

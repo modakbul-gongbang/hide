@@ -1623,6 +1623,7 @@ fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
         runtime.input_requests.open(
             request_id,
             super::terminal_input::InputOrigin::Fork(source.into()),
+            std::time::Instant::now(),
         );
         runtime.sync_input_requests();
     }
