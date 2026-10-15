@@ -18,6 +18,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showProjectRow, showTool } from "./wire";
 import { chord } from "./chords";
+import { composeKorean } from "./ime";
 import { onDisk, quietFor, unchangedForFrames } from "./wait";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
@@ -310,19 +311,6 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
 
 /** Three hundred numbered lines, so a view can scroll and each line is findable. */
 const LONG = Array.from({ length: 300 }, (_, index) => `line ${String(index + 1).padStart(3, "0")}`).join("\n") + "\n";
-
-/** Composes Korean text through the browser's IME path, one syllable at a time, then commits it. */
-async function composeKorean(page: Page, steps: string[][]): Promise<void> {
-  const cdp = await page.context().newCDPSession(page);
-  try {
-    for (const syllable of steps) {
-      for (const marked of syllable) await cdp.send("Input.imeSetComposition", { text: marked, selectionStart: marked.length, selectionEnd: marked.length });
-      await cdp.send("Input.insertText", { text: syllable.at(-1) ?? "" });
-    }
-  } finally {
-    await cdp.detach();
-  }
-}
 
 // @platform: Korean composed through the browser's input-method path, and a save refused by file mode.
 test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", { tag: "@platform" }, async ({ page }) => {

@@ -21,13 +21,16 @@ export const LINE_END = new Uint8Array([0x05]);
  */
 export type TerminalKey = { kind: "bytes"; bytes: Uint8Array } | { kind: "copy" } | { kind: "paste" };
 
-type KeyEventLike = Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "metaKey" | "ctrlKey" | "altKey" | "isComposing">;
+type KeyEventLike = Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "metaKey" | "ctrlKey" | "altKey" | "isComposing"> & Partial<Pick<KeyboardEvent, "keyCode">>;
 
 function presses(event: KeyEventLike, chord: Chord): boolean {
   return event.code === chord.code && event.metaKey === !!chord.meta && event.ctrlKey === !!chord.ctrl && event.shiftKey === !!chord.shift && event.altKey === !!chord.alt;
 }
 
-export function terminalKey(event: KeyEventLike, system: KeySystem, selection: boolean, composing = event.isComposing): TerminalKey | null {
+// 229 is the key an input method is still processing; Chromium can report it
+// with `isComposing` false (a Windows IME's key="Process"), and xterm reads it
+// the same way.
+export function terminalKey(event: KeyEventLike, system: KeySystem, selection: boolean, composing = event.isComposing || event.keyCode === 229): TerminalKey | null {
   if (composing) return null;
   const bytes = (value: Uint8Array): TerminalKey => ({ kind: "bytes", bytes: value });
   const chord = !event.ctrlKey && !event.altKey;
