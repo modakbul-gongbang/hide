@@ -1,4 +1,4 @@
-// hide-opencode-plugin@2 sha256=c70175ebf390207fcb9cf90a07f9cee550c0d09151c44c1972300da9553aba83
+// hide-opencode-plugin@2 sha256=2ae7e7070ce5614fb1d3228e86e1283adc2c61339a7887ca1f2e2492de467472
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -31,23 +31,29 @@ const PENDING_AGE_MS = 10 * 60 * 1000;
 
 // The project guardrails' policy, which Hide's core writes for this machine (`guardrails::policy_path`). A tool
 // call reaches the helper for them only while some project has a protection on, read again when the file changes,
-// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27). A file that is missing or
-// unreadable lets the helper read it and record why.
+// so a machine with none starts no helper for a file tool (PRD agent-guardrails B27).
 const POLICY = path.join(homedir(), ".hide", "agent-hooks", "guardrails.json");
 const FILE_TOOLS = new Set(["read", "edit", "write", "apply_patch", "multiedit"]);
 // The arguments that name a file; the rest of a write (its content) is not sent.
 const PATH_ARGS = ["filePath", "path", "file_path"];
-const policy = { mtimeMs: -1, size: -1, on: true };
+const policy = { mtimeMs: -1, size: -1, on: null };
 
-function guardrailsOn() {
+/** Whether a tool call asks the helper for the guardrails. A policy that is missing or unreadable (`on` is null)
+ * does in a Herdr pane, where the helper records why; a session outside one starts no helper for it. */
+function guardrailsOn(state) {
+  const on = policyOn();
+  return on ?? !state.guardOnly;
+}
+
+function policyOn() {
   let stat;
   try {
     stat = statSync(POLICY);
   } catch {
-    return true;
+    return null;
   }
   if (stat.mtimeMs === policy.mtimeMs && stat.size === policy.size) return policy.on;
-  let on = true;
+  let on = null;
   try {
     const read = JSON.parse(readFileSync(POLICY, "utf8"));
     if (read?.version === 1 && Array.isArray(read.projects)) {
@@ -385,11 +391,11 @@ async function onTool(state, sessionID, directory, input, output) {
     // start an agent through Herdr.
     if (typeof command !== "string") return null;
     const launch = !state.guardOnly && (command.includes("herdr") || command.includes("HERDR_BIN_PATH"));
-    if (!launch && !guardrailsOn()) return null;
+    if (!launch && !guardrailsOn(state)) return null;
     const workdir = output.args.workdir;
     request = { session_id: sessionID, tool, command, cwd: typeof workdir === "string" && workdir ? workdir : directory };
   } else if (FILE_TOOLS.has(tool)) {
-    if (!guardrailsOn()) return null;
+    if (!guardrailsOn(state)) return null;
     request = { session_id: sessionID, tool, args: fileArgs(output?.args), cwd: directory };
   } else if (tool === "question" && !state.guardOnly) {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
@@ -397,7 +403,8 @@ async function onTool(state, sessionID, directory, input, output) {
   } else {
     return null;
   }
-  const answer = await helper(state, "tool", request, TOOL_BUDGET_MS);
+  // A guard-only session asks for the guardrails alone, whatever pane its shell inherited.
+  const answer = await helper(state, "tool", state.guardOnly ? { ...request, guard_only: true } : request, TOOL_BUDGET_MS);
   return typeof answer?.deny === "string" && answer.deny ? answer.deny : null;
 }
 

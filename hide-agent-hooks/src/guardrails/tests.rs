@@ -521,6 +521,9 @@ fn protected_files_are_refused_to_tools_and_shell_words() {
     for command in [
         "cat .env",
         "cat < .env",
+        // A new file named with a space is a path, not prose.
+        "cp a.txt 'my cert.pem'",
+        "touch 'a b.key'",
         "echo x >> .env.local",
         "docker run --env-file=.env image",
         "cd src && cat ../.env",
@@ -537,6 +540,8 @@ fn protected_files_are_refused_to_tools_and_shell_words() {
         // Prose that ends like a protected name is not a path.
         "git commit -m 'remove api.key'",
         "gh pr create --title 'rotate server.pem' --body x",
+        "echo 'renew the server.pem'",
+        "rg 'load the api.key' src",
     ] {
         assert_eq!(fixture.shell(repo, command), None, "{command}");
     }
@@ -604,6 +609,19 @@ fn a_repository_that_cannot_be_read_refuses_what_needs_it() {
         Some(Rule::WorktreeFolder),
         "a write from another checkout into the one around it"
     );
+    // A git command in a clone nested in the checkout works on that clone,
+    // which no protection guards, though its files stay the checkout's.
+    let clone = fixture.repo.join("clone");
+    std::fs::create_dir_all(&clone).unwrap();
+    git(&clone, &["init", "-q", "-b", "main"]);
+    assert_eq!(fixture.shell(&clone, "git switch -c y"), None);
+    assert_eq!(
+        fixture.shell(&fixture.repo, "git -C clone switch -c y"),
+        None
+    );
+    assert_eq!(fixture.write(&clone, &clone.join("x.rs")), None);
+    std::fs::write(clone.join(".env"), "x").unwrap();
+    assert_eq!(fixture.read(&clone, ".env"), Some(Rule::Files));
     // A project whose own repository cannot be read refuses only what a
     // protection needs the repository for.
     let broken = fixture.home.join("broken");

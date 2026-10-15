@@ -58,10 +58,11 @@ pub(super) fn shell(
             .iter()
             .filter(|(command, _)| *command == index)
             .map(|(_, target)| target);
-        for (word, target) in words
+        for (at, word, target) in words
             .iter()
-            .map(|word| (word, false))
-            .chain(targets.map(|target| (target, true)))
+            .enumerate()
+            .map(|(at, word)| (Some(at), word, false))
+            .chain(targets.map(|target| (None, target, true)))
         {
             for candidate in path_words(word) {
                 if checked >= WORD_LIMIT {
@@ -69,11 +70,13 @@ pub(super) fn shell(
                     break;
                 }
                 let path = absolute(&facts.home, &dir, Path::new(candidate));
-                // A word with a space in it is prose (a commit message, a
-                // title) unless it names something that is there, or a
-                // redirect writes it.
+                // A word with a space in it that is text (a commit message,
+                // a title, a pattern) is prose unless it names something
+                // that is there; anywhere else it is a path, which `cp` or
+                // `touch` may be about to make.
                 if !target
                     && candidate.chars().any(char::is_whitespace)
+                    && at.is_some_and(|at| text_word(&program, words, at))
                     && std::fs::symlink_metadata(&path).is_err()
                 {
                     continue;
@@ -107,6 +110,26 @@ fn program(word: &str) -> String {
 /// The parts of a word that may name a path: the word, and the value of a
 /// `--name=value` or `NAME=value` word. A word still holding an expansion
 /// (`$HOME`, `$(...)`, a backtick) is not read, since its path is unknown.
+/// Whether word `at` of a command is text rather than a path: an option's
+/// value (`-m`, `--title`), what `echo` and `printf` print, or the pattern or
+/// script a search or a stream editor takes first.
+fn text_word(program: &str, words: &[String], at: usize) -> bool {
+    let Some(before) = at.checked_sub(1).and_then(|before| words.get(before)) else {
+        return false;
+    };
+    if before.starts_with('-') && before != "-" && before != "--" && !before.contains('=') {
+        return true;
+    }
+    match program {
+        "echo" | "printf" => true,
+        "grep" | "egrep" | "fgrep" | "rg" | "sed" | "awk" | "jq" => words[1..]
+            .iter()
+            .position(|word| !word.starts_with('-'))
+            .is_some_and(|first| first + 1 == at),
+        _ => false,
+    }
+}
+
 fn path_words(word: &str) -> Vec<&str> {
     let readable = |candidate: &&str| {
         !candidate.is_empty()
@@ -156,6 +179,9 @@ enum Where<'f> {
 
 fn place<'f>(facts: &Facts<'f>, dir: &Path) -> Where<'f> {
     let found: Place = facts.locate(dir);
+    if found.nested {
+        return Where::Outside;
+    }
     match (found.project(facts), found.place) {
         (Some(project), Located::In(checkout)) if checkout.git() => Where::Git(Target {
             checkout,

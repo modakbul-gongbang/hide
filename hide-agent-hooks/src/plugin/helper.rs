@@ -64,6 +64,10 @@ struct Input {
     /// The version of the script that asks; Pi's and omp's extension sends it,
     /// and one this build does not write is answered with nothing (B13).
     version: Option<u32>,
+    /// The script only guards this session: it runs outside a Herdr pane, or
+    /// is an agent started in another agent's shell, which a pane variable
+    /// it inherited does not make the pane's own (PRD agent-guardrails B22).
+    guard_only: bool,
 }
 
 /// The agent a script speaks for: its adapter row and the runtime id the
@@ -312,7 +316,7 @@ fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
     if let Some(reason) = guardrails::refusal_for(home, runtime, pane.as_deref(), call) {
         return json!({ "deny": reason });
     }
-    let Some(pane) = pane else {
+    let Some(pane) = pane.filter(|_| !input.guard_only) else {
         return json!({});
     };
     let Some(program) = workspace_context::cli_program() else {

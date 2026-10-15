@@ -168,6 +168,13 @@ test("outside a Herdr pane or in another agent's shell the extension only guards
     const launch = { ...sample("tool_call.bash").event, input: { command: "herdr agent start x --kind claude" } };
     assert.equal(await host.emit("tool_call", launch, context("tool_call.bash")), undefined);
   }
+  // A missing or unreadable policy starts no helper outside a pane either.
+  for (const write of [() => policy(null), () => writeFileSync(path.join(homedir(), ".hide", "agent-hooks", "guardrails.json"), "{")]) {
+    write();
+    const host = await extension({});
+    const read = { ...sample("tool_call.bash").event, toolName: "read", input: { path: ".env" } };
+    assert.equal(await host.emit("tool_call", read, context("tool_call.bash")), undefined);
+  }
   await sleep(100);
   assert.deepEqual(calls(), []);
   policy({ files: true, paths: [".env"] });

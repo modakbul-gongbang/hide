@@ -98,6 +98,13 @@ test("outside a Herdr pane the plugin only guards a protected project's tools", 
     await hooks["tool.execute.before"]({ tool: "read", sessionID: "ses_a" }, { args: { filePath: ".env" } });
     await hooks["tool.execute.before"]({ tool: "question", sessionID: "ses_a" }, { args: {} });
   }
+  // A missing or unreadable policy starts no helper outside a pane either.
+  for (const write of [() => policy(null), () => writeFileSync(path.join(homedir(), ".hide", "agent-hooks", "guardrails.json"), "{")]) {
+    write();
+    const hooks = await plugin({});
+    await hooks["tool.execute.before"]({ tool: "read", sessionID: "ses_a" }, { args: { filePath: ".env" } });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_a" }, { args: { command: "cat .env" } });
+  }
   await sleep(100);
   assert.deepEqual(calls(), []);
   policy({ files: true, paths: [".env"] });

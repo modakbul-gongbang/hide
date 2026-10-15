@@ -68,6 +68,10 @@ pub(super) enum Located {
 pub(super) struct Place {
     pub place: Located,
     project: Option<usize>,
+    /// Inside a repository nested in the checkout (a submodule or a clone):
+    /// a folder of that checkout for its files, while a git command there
+    /// works on the nested repository, which no protection guards.
+    pub nested: bool,
 }
 
 pub(super) struct Project<'a> {
@@ -164,9 +168,12 @@ impl<'a> Facts<'a> {
         // A repository nested in a project's checkout, a submodule or a clone,
         // is a folder of the checkout around it; so is one whose `.git` the
         // reader refuses, such as a submodule's, which has no `commondir`.
-        let enclosing = |holder: &Path| match holder.parent() {
-            Some(parent) => self.read(path, parent),
-            None => self.folder(under),
+        let enclosing = |holder: &Path| Place {
+            nested: true,
+            ..match holder.parent() {
+                Some(parent) => self.read(path, parent),
+                None => self.folder(under),
+            }
         };
         match hide_project::git::discover_checked(existing) {
             Ok(Some(repository)) => {
@@ -187,6 +194,7 @@ impl<'a> Facts<'a> {
                         main_root,
                     }),
                     project: Some(project),
+                    nested: false,
                 }
             }
             Ok(None) => self.folder(under),
@@ -213,6 +221,7 @@ impl<'a> Facts<'a> {
             return Place {
                 place: Located::Outside,
                 project: None,
+                nested: false,
             };
         };
         let root = self.roots[index].clone().unwrap_or_default();
@@ -224,6 +233,7 @@ impl<'a> Facts<'a> {
                 common_dir: None,
             }),
             project: Some(index),
+            nested: false,
         }
     }
 
@@ -232,10 +242,12 @@ impl<'a> Facts<'a> {
             Some(index) => Place {
                 place: Located::Unreadable,
                 project: Some(index),
+                nested: false,
             },
             None => Place {
                 place: Located::Outside,
                 project: None,
+                nested: false,
             },
         }
     }
