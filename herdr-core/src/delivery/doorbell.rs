@@ -1427,10 +1427,17 @@ mod tests {
         })
         .1;
         assert!(kinds(&rung).is_empty(), "the mark stays gone: {rung:?}");
+        // The press types nothing itself: the pass rings through the
+        // doorbell's own line, naming the unregistered sender by its runtime
+        // as a ring at rest does, and the letter keeps that line.
         let typed = bell.typed();
         assert_eq!(typed.len(), 1);
-        assert_eq!(typed[0]["text"], "🔔 sender 보고: private · hide inbox");
+        assert_eq!(typed[0]["text"], "🔔 Codex 보고: private · hide inbox");
         assert_eq!(typed[0]["keys"], json!(["enter"]));
+        assert_eq!(
+            bell.line().as_deref(),
+            Some("🔔 Codex 보고: private · hide inbox")
+        );
         assert_eq!(bell.attempts(), 1);
     }
 
