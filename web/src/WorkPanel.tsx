@@ -17,8 +17,8 @@ import { useRequestViewDemand } from "./requestViewDemand";
 
 // The Work tool (PRD work-tab-pr-lens B1-B5, B41-B43): one panel holding the
 // project's Sessions and its PRs behind one switch and one scope chip. It does
-// not depend on where the shell puts it, so the Tools column can host it
-// today and another frame later; its count is `workCount.ts`.
+// not depend on where the shell puts it (the right lane's third tool; its
+// count is the rail icon's badge, `workCount.ts`).
 
 const NO_WORK = { lens: "sessions", only_checkout: false } as const;
 
