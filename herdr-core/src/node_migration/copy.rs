@@ -23,7 +23,7 @@ use hide_platform::path::RelPath;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{AI_SETTINGS, MARKER_FILE, MOVES_WITH_CORE, Refusal};
+use super::{AI_SETTINGS, MARKER_FILE, MOVES_WITH_CORE, Refusal, SESSION_SEARCH};
 
 /// The most files a copy may hold (the Factory's files folder is the only
 /// one that grows with use); a folder past it is refused, not truncated.
@@ -118,7 +118,9 @@ pub fn stage(state_dir: &Path, staging: &Path, ai_settings: &Path) -> Result<Man
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(refuse(&from, error)),
         };
-        if metadata.is_dir() {
+        if *name == SESSION_SEARCH && metadata.is_file() {
+            stage_retention(&from, &to)?;
+        } else if metadata.is_dir() {
             copy_folder(&from, &to)?;
         } else if !metadata.is_file() {
             return Err(refuse(&from, "is neither a file nor a folder"));
@@ -144,6 +146,56 @@ pub fn stage(state_dir: &Path, staging: &Path, ai_settings: &Path) -> Result<Man
         Err(error) => return Err(refuse(ai_settings, error)),
     }
     digest(staging)
+}
+
+/// The old session search file as a move carries it: its `policy` table
+/// alone, each project's record retention (PRD overview-device-tasks D-20),
+/// so the conversation copies it once held stay behind. A file without the
+/// table, or with no row in it, is not carried, which is the default for
+/// every project on the new machine too. The file is only read.
+fn stage_retention(from: &Path, to: &Path) -> Result<(), Refusal> {
+    let source = rusqlite::Connection::open_with_flags(
+        from,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| refuse(from, error))?;
+    let has_table: bool = source
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| refuse(from, error))?;
+    if !has_table {
+        return Ok(());
+    }
+    let rows = source
+        .prepare("SELECT project, days FROM policy")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| refuse(from, error))?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut copy = rusqlite::Connection::open(to).map_err(|error| refuse(to, error))?;
+    let tx = copy.transaction().map_err(|error| refuse(to, error))?;
+    tx.execute_batch("CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);")
+        .map_err(|error| refuse(to, error))?;
+    for (project, days) in &rows {
+        tx.execute(
+            "INSERT INTO policy VALUES(?1, ?2)",
+            rusqlite::params![project, days],
+        )
+        .map_err(|error| refuse(to, error))?;
+    }
+    tx.commit().map_err(|error| refuse(to, error))?;
+    drop(copy);
+    hide_platform::fs::private::restrict_to_owner(to).map_err(|error| refuse(to, error))
 }
 
 /// A store's consistent copy, its write-ahead log folded in.
@@ -624,7 +676,16 @@ mod tests {
         // of the file would miss.
         std::mem::forget(store);
         std::fs::write(dir.path().join("hided.json"), "{}").unwrap();
-        std::fs::write(dir.path().join("session-search.sqlite3"), "index").unwrap();
+        let search = rusqlite::Connection::open(dir.path().join("session-search.sqlite3")).unwrap();
+        search
+            .execute_batch(
+                "CREATE TABLE policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);
+                 INSERT INTO policy VALUES('p', 30);
+                 CREATE TABLE messages(id INTEGER PRIMARY KEY, body TEXT);
+                 INSERT INTO messages VALUES(1, 'a copied conversation');",
+            )
+            .unwrap();
+        drop(search);
         dir
     }
 
@@ -684,6 +745,47 @@ mod tests {
         }
     }
 
+    /// The old session search file travels as its record retention alone
+    /// (PRD overview-device-tasks D-20): the copy holds the `policy` rows
+    /// and none of the conversations, the source file is only read, and a
+    /// file with no retention to carry is not carried.
+    #[test]
+    fn the_old_search_file_moves_as_its_record_retention_only() {
+        let source = folder();
+        let search = source.path().join("session-search.sqlite3");
+        let before = std::fs::read(&search).unwrap();
+        let staging = source.path().join("move-staging/i1");
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
+        assert_eq!(
+            std::fs::read(&search).unwrap(),
+            before,
+            "the source is only read"
+        );
+        let copy = rusqlite::Connection::open(staging.join("session-search.sqlite3")).unwrap();
+        let tables: Vec<String> = copy
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(tables, ["policy"]);
+        let days: i64 = copy
+            .query_row("SELECT days FROM policy WHERE project='p'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(days, 30);
+        check_loadable(&staging).unwrap();
+
+        rusqlite::Connection::open(&search)
+            .unwrap()
+            .execute_batch("DELETE FROM policy;")
+            .unwrap();
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
+        assert!(!staging.join("session-search.sqlite3").exists());
+    }
+
     #[test]
     fn a_copy_belongs_only_to_the_node_its_marker_names() {
         let copy = folder();
@@ -711,7 +813,8 @@ mod tests {
                 "factory-files/a.prd",
                 "labels.json",
                 "links.sqlite3",
-                "node.json"
+                "node.json",
+                "session-search.sqlite3"
             ]
         );
         let copy = rusqlite::Connection::open(staging.join("links.sqlite3")).unwrap();
@@ -831,7 +934,7 @@ mod tests {
         let target = tempfile::tempdir().unwrap();
         place(&staging, target.path(), &settings(target.path())).unwrap();
         // What the core started on the copy rebuilt.
-        std::fs::write(target.path().join("session-search.sqlite3"), "index").unwrap();
+        std::fs::write(target.path().join("github-snapshot.json"), "{}").unwrap();
         unplace(target.path(), &staging, &settings(target.path())).unwrap();
         assert!(brain_present(target.path()).is_empty());
         assert_eq!(digest(&staging).unwrap(), manifest);

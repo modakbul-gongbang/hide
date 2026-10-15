@@ -44,7 +44,7 @@ const WORKSPACE_VIEWS: &str = "workspace-views.json";
 const LABELS: &str = "labels.json";
 const DELIVERY_LEDGER: &str = "delivery-ledger.json";
 const PROJECT_MEMORY: &str = hide_memory::DATABASE_FILE;
-const SESSION_SEARCH: &str = "session-search.sqlite3";
+pub(crate) const SESSION_SEARCH: &str = "session-search.sqlite3";
 const LINKS: &str = "links.sqlite3";
 const LOCAL_ISSUES: &str = "local-issues.json";
 const FACTORY: &str = "factory.sqlite3";
@@ -55,8 +55,10 @@ pub const MOVE_STAGING: &str = "move-staging";
 /// The brain state a core move copies to the core's new machine (PRD
 /// core-host-node-move Q8): each store `KEYS` names, except what the new
 /// machine rebuilds ([`REBUILT_AFTER_MOVE`]), and the stores that name no
-/// machine but belong to the core (the Factory, phone pairing). `node.json`
-/// is last: a folder holds a marker only once everything it names is there.
+/// machine but belong to the core (the Factory, phone pairing). The old
+/// session search file travels as its record retention alone
+/// (`copy::stage`). `node.json` is last: a folder holds a marker only once
+/// everything it names is there.
 pub const MOVES_WITH_CORE: &[&str] = &[
     CORE_STATE,
     WORKSPACE_VIEWS,
@@ -66,6 +68,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     hide_kit::layout::USAGE_STORE,
     LOCAL_ISSUES,
     PROJECT_MEMORY,
+    SESSION_SEARCH,
     FACTORY,
     "factory.v1.sqlite3",
     "factory-files",
@@ -74,11 +77,9 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     MARKER_FILE,
 ];
 
-/// Stores a core move does not copy: the GitHub snapshot, which the new core
-/// rebuilds from what its nodes report, and the old session search file,
-/// whose Copied history days stay behind, so the new core keeps records for
-/// the default period.
-pub const REBUILT_AFTER_MOVE: &[&str] = &[SESSION_SEARCH, "github-snapshot.json"];
+/// The store a core move does not copy: the GitHub snapshot, which the new
+/// core rebuilds from what its nodes report.
+pub const REBUILT_AFTER_MOVE: &[&str] = &["github-snapshot.json"];
 
 /// How one machine-bound key is kept pointing at the right machine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -593,7 +594,7 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         SESSION_SEARCH,
         "policy.project",
         Mechanism::Rewritten,
-        Moves::Stays,
+        Moves::Whole,
     ),
     (
         LINKS,
@@ -712,7 +713,10 @@ pub struct Outcome {
 /// keeps it and the old row is dropped as stale. A file without the table,
 /// or with nothing under an old id, is only read, so a converted install
 /// never takes its write lock again. Answers the rows moved and dropped.
-fn rekey_retention(path: &Path, pairs: &[(String, String)]) -> Result<(usize, usize), String> {
+pub(crate) fn rekey_retention(
+    path: &Path,
+    pairs: &[(String, String)],
+) -> Result<(usize, usize), String> {
     let failed = |error: rusqlite::Error| error.to_string();
     let mut db =
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
