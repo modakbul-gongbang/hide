@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { SnapshotRest, Workspace } from "./snapshot";
-import { projectBaseBranch, projectIssueSource, projectSettings, settingsTarget } from "./projectSettings";
+import type { KitAgent, KitPiece, SnapshotRest, Workspace } from "./snapshot";
+import { DEFAULT_GUARD_PATHS, guardedBase, guardPathRefusal, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, settingsTarget, unguardedAgents } from "./projectSettings";
 
 const project = { id: "display-id", device_id: "local", path: "/project", label: "project", branches: ["main", "develop"], default_branch: "main" } as Workspace;
 const snapshot = () => ({ ui_state: {
@@ -50,4 +50,48 @@ describe("confirmed scoped project settings", () => {
     expect(projectSettings(rest, settingsTarget(project), "active").write?.state).toBe("pending");
   });
 
+});
+
+describe("project guardrails", () => {
+  it("reads a version 1 record with every protection off and a newer one as unreadable (B30)", () => {
+    const record = { version: 1, device_id: "local", root: "/project" };
+    expect(projectGuardrails(record)).toEqual({ worktree_folder: false, base_branch: false, agent_merge: false, git_commands: false, files: false, paths: [".env", ".env.*", "*.pem", "*.key", "~/.ssh/"] });
+    expect(readableSettings(record)).toBe(true);
+    expect(readableSettings({ ...record, version: 2 })).toBe(true);
+    expect(readableSettings({ ...record, version: 3 })).toBe(false);
+    expect(readableSettings(null)).toBe(true);
+  });
+
+  it("refuses a path past the list's limits before it is sent (B16)", () => {
+    expect(guardPathRefusal(DEFAULT_GUARD_PATHS, ".aws/")).toBeNull();
+    expect(guardPathRefusal(DEFAULT_GUARD_PATHS, ".env")).toBe("project_settings_path_duplicate");
+    expect(guardPathRefusal([], "a".repeat(200))).toBeNull();
+    expect(guardPathRefusal([], "a".repeat(201))).toBe("project_settings_path_too_long");
+    expect(guardPathRefusal(Array.from({ length: 31 }, (_, n) => `p${n}`), "last")).toBeNull();
+    expect(guardPathRefusal(Array.from({ length: 32 }, (_, n) => `p${n}`), "one-more")).toBe("project_settings_paths_limit");
+    expect(guardPathRefusal([], "  ")).toBe("project_settings_path_invalid");
+  });
+
+  it("guards the chosen base branch, or the remote's default for Auto, and none when the project names none (B17)", () => {
+    const rest = snapshot();
+    const record = (base_branch?: { mode: "auto" } | { mode: "branch"; branch: string }) => ({ version: 2, device_id: "local", root: "/project", base_branch });
+    expect(guardedBase(rest, project, record({ mode: "branch", branch: "develop" }))).toBe("develop");
+    expect(guardedBase(rest, project, record({ mode: "auto" }))).toBe("main");
+    expect(guardedBase(rest, project, record())).toBe("develop");
+    expect(guardedBase({} as SnapshotRest, { ...project, default_branch: null } as Workspace, record({ mode: "auto" }))).toBeNull();
+  });
+
+  it("names the installed agents whose Hide hook is not in place, Codex's untrusted one included (B25)", () => {
+    const installed: KitPiece = { state: "installed", reason: null, location: null };
+    const agent = (id: string, label: string, over: Partial<KitAgent> = {}): KitAgent => ({ id, label, availability: "available", enabled: true, chosen: true, skill: installed, hook: installed, doc_url: "", ...over });
+    expect(unguardedAgents([agent("claude-code", "Claude Code"), agent("codex", "Codex")])).toEqual([]);
+    const names = unguardedAgents([
+      agent("claude-code", "Claude Code"),
+      agent("codex", "Codex", { hook: { state: "failed", reason: "Codex has not trusted Hide's hook", location: null } }),
+      agent("cursor", "Cursor", { enabled: false }),
+      agent("grok", "Grok", { availability: "not_installed", enabled: false, chosen: false }),
+      agent("pi", "Pi", { availability: "unsupported_system" }),
+    ]).map((row) => row.id);
+    expect(names).toEqual(["codex", "cursor"]);
+  });
 });

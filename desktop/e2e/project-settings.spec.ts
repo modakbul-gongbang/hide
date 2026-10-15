@@ -70,7 +70,13 @@ process.exit(4);
     await sheet.getByRole("button", { name: "Try again" }).click();
     await expect(connection).toContainText("Detect automatically");
     await sheet.getByRole("tab", { name: "Working style" }).click();
-    await expect(sheet).toContainText("Unsupported");
+    // A protection is Saved once this machine's hooks can read it (PRD agent-guardrails B3, B31).
+    const guardrails = path.join(run.env.HOME!, ".hide", "agent-hooks", "guardrails.json");
+    const guarded = () => (JSON.parse(fs.readFileSync(guardrails, "utf8")) as { projects: { root: string; rules: { files: boolean; paths: string[] } }[] }).projects;
+    await expect.poll(() => guarded()).toEqual([]);
+    await sheet.getByRole("switch", { name: "Guard files", exact: true }).click();
+    await expect(sheet.locator('[data-project-guard="files"]')).toContainText("Saved");
+    expect(guarded().map((project) => [project.root, project.rules.files, project.rules.paths])).toEqual([[repo, true, [".env", ".env.*", "*.pem", "*.key", "~/.ssh/"]]]);
     const location = sheet.getByRole("combobox", { name: "Start new work in" });
     await expect(location).toContainText("Existing checkout");
     // A real atomic-replacement failure, confined to this fixture's state file.
