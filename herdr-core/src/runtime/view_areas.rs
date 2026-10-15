@@ -576,19 +576,14 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Err(LayoutError::UnknownArea(key.1.clone()));
         };
-        let reserved = store
+        // Displays are the checkout's budget, a reserved operator layout
+        // included; areas are each layout's own, which its tree enforces.
+        let reserved_displays = store
             .view_transaction
             .as_ref()
             .filter(|(owner, _)| owner == key)
-            .and_then(|(_, layout)| layout.as_ref());
-        let reserved_counts = reserved
-            .map(|layout| {
-                (
-                    layout.display_count(),
-                    crate::workspace_views::WorkspaceView::occupied_areas(layout),
-                )
-            })
-            .unwrap_or_default();
+            .and_then(|(_, layout)| layout.as_ref())
+            .map_or(0, Layout::display_count);
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.layout.clone();
         entry.layout.next_id = entry.next_view_identity();
@@ -604,19 +599,10 @@ impl Runtime {
             entry.layout = before.clone();
         }
         let displays =
-            entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_counts.0;
-        let areas = entry
-            .layouts()
-            .map(crate::workspace_views::WorkspaceView::occupied_areas)
-            .sum::<usize>()
-            + reserved_counts.1;
-        if displays > MAX_VIEW_DISPLAYS || areas > MAX_VIEW_AREAS {
+            entry.layouts().map(Layout::display_count).sum::<usize>() + reserved_displays;
+        if displays > MAX_VIEW_DISPLAYS {
             entry.layout = before;
-            return Err(if displays > MAX_VIEW_DISPLAYS {
-                LayoutError::DisplayLimit
-            } else {
-                LayoutError::AreaLimit
-            });
+            return Err(LayoutError::DisplayLimit);
         }
         entry.view_next_id = entry.next_view_identity();
         if changed {
@@ -640,17 +626,11 @@ impl Runtime {
     ) -> bool {
         let pending = self.pending_view_placements(key);
         let displays = self.all_view_layouts(key).map(Layout::display_count).sum();
-        let areas = self
-            .all_view_layouts(key)
-            .map(crate::workspace_views::WorkspaceView::occupied_areas)
-            .sum::<usize>();
         let Some(layout) = self.view_layout_of(key) else {
             return true;
         };
         let base = layout.active_area();
-        let refusal = if layout.display_count() == 0 && areas >= MAX_VIEW_AREAS {
-            Some(LayoutError::AreaLimit.into())
-        } else if beside {
+        let refusal = if beside {
             match BESIDE_ORDER
                 .iter()
                 .find_map(|edge| layout.neighbour(&base.id, *edge))
@@ -666,7 +646,6 @@ impl Runtime {
                 }
                 Some(_) => display_limit(displays, pending),
                 None if base.displays.is_empty() => display_limit(displays, pending),
-                None if areas >= MAX_VIEW_AREAS => Some(LayoutError::AreaLimit.into()),
                 None => match layout.can_split(&base.id, Edge::Right) {
                     Err(error) => Some(error.into()),
                     Ok(()) => display_limit(displays, pending),

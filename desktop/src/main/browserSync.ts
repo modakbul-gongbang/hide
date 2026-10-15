@@ -9,8 +9,10 @@ import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
 export const MAX_SYNCED_DISPLAYS = 64;
 export const MAX_RETAINED_DISPLAYS = 16_384;
-/** Positive areas across at most 256 Workspaces, each with at most six View areas. */
-export const MAX_AUTHORIZED_SCOPES = 1_536;
+/** Positive areas across at most 256 Workspaces: each Agent tab has its own
+ * View areas and every area but an empty front one holds a display, so a
+ * Workspace has at most one per display plus that empty one. */
+export const MAX_AUTHORIZED_SCOPES = 256 * (MAX_SYNCED_DISPLAYS + 1);
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;
 /** Popup windows open at once across every page; a page asking for one more is refused. */

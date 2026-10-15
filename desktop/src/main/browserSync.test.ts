@@ -78,7 +78,7 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   });
 
   it("bounds positive scopes without dropping or inferring authority", () => {
-    expect(MAX_AUTHORIZED_SCOPES).toBe(1536);
+    expect(MAX_AUTHORIZED_SCOPES).toBe(16_640);
     const authorized_scopes = Array.from({ length: MAX_AUTHORIZED_SCOPES }, (_, i) => ({ workspace, area_id: `a${i}`, incarnation: i }));
     expect(parseSync({ ...sync, authorized_scopes })?.authorized_scopes).toEqual(authorized_scopes);
     expect(parseSync({ ...sync, authorized_scopes: [...authorized_scopes, { workspace, area_id: "one-too-many", incarnation: 1 }] })).toBeNull();

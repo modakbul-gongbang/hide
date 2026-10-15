@@ -725,16 +725,13 @@ impl Runtime {
                     .iter()
                     .any(|key| key.0 == view.device_id && key.1 == view.path)
             }) {
-                let occupied = view
-                    .layouts()
-                    .map(workspace_views::WorkspaceView::occupied_areas)
-                    .sum::<usize>();
+                // The projected layout's empty area can always take a page,
+                // since each tab's areas are its own; a parked empty one owns
+                // no area.
                 for area in view
                     .layouts()
                     .filter(|layout| {
-                        layout.display_count() > 0
-                            || (std::ptr::eq(*layout, &view.layout)
-                                && occupied < crate::view_layout::MAX_VIEW_AREAS)
+                        layout.display_count() > 0 || std::ptr::eq(*layout, &view.layout)
                     })
                     .flat_map(|layout| layout.areas())
                 {

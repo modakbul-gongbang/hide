@@ -255,7 +255,7 @@ impl LayoutError {
             Self::UnknownArea(id) => format!("View area {id} is not in this Workspace"),
             Self::UnknownSplit(id) => format!("Divider {id} is not in this Workspace"),
             Self::AreaLimit => format!(
-                "This Workspace already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
+                "This tab already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
             ),
             Self::DepthLimit => format!(
                 "This view area is already split {MAX_SPLIT_DEPTH} levels deep. Split another area instead."

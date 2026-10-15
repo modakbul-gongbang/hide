@@ -229,6 +229,38 @@ fn empty_agent_presentations_do_not_consume_view_areas() {
     assert!(strip(&runtime, &directory).is_empty());
 }
 
+/// The reported case: six tabs each showing a page held the checkout's six
+/// View areas, so a seventh tab could open nothing. Each tab's areas are its
+/// own; only the 64 views are the checkout's.
+#[test]
+fn a_seventh_tab_opens_a_page_while_six_tabs_show_pages() {
+    let (mut runtime, checkout_id, directory) = setup("areas-per-tab");
+    let tabs = (1..=7).map(|n| format!("w-order:t{n}")).collect::<Vec<_>>();
+    let ids = tabs.iter().map(String::as_str).collect::<Vec<_>>();
+    for (index, tab) in tabs.iter().enumerate() {
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &ids,
+            &ids,
+            tab,
+        )));
+        runtime.sync_workspace_view();
+        dispatch_focus_tab(&mut runtime, &checkout_id, tab);
+        let url = format!("https://example.test/{index}");
+        runtime.dispatch_json(&explorer_event(
+            "browser_open",
+            serde_json::json!({
+                "url": url,
+                "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+            }),
+        ));
+        runtime.sync_workspace_view();
+        assert_eq!(runtime.snapshot.status.last_error, None, "{tab} opens");
+        assert_eq!(strip(&runtime, &directory), [url]);
+    }
+    assert_eq!(held(&runtime, &directory), 7);
+}
+
 #[test]
 fn background_open_preserves_operator_preview_and_layout() {
     let (mut runtime, checkout_id, directory) = setup("preview-isolation");
