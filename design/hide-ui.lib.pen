@@ -33527,6 +33527,17 @@
               }
             },
             {
+              "id": "lane-rail-memory",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "Memory",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "brain"
+                }
+              }
+            },
+            {
               "id": "lane-rail-files",
               "type": "ref",
               "ref": "lane-tool",
@@ -33545,17 +33556,6 @@
               "descendants": {
                 "lane-tool-glyph": {
                   "icon": "file-diff"
-                }
-              }
-            },
-            {
-              "id": "lane-rail-memory",
-              "type": "ref",
-              "ref": "lane-tool",
-              "name": "Memory",
-              "descendants": {
-                "lane-tool-glyph": {
-                  "icon": "brain"
                 }
               }
             },
@@ -33902,6 +33902,45 @@
                 },
                 {
                   "type": "frame",
+                  "id": "lane-l-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-l-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-l-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
                   "id": "lane-l-rail-files-cell",
                   "name": "Files pressed",
                   "children": [
@@ -33968,45 +34007,6 @@
                           "enabled": true
                         },
                         "lane-rail-changes/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-l-rail-memory-cell",
-                  "name": "Memory pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-l-rail-memory-cap",
-                      "name": "Memory pressed",
-                      "content": "Memory pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-l-rail-memory",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Memory pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-memory": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-memory/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
@@ -34800,6 +34800,45 @@
                 },
                 {
                   "type": "frame",
+                  "id": "lane-d-rail-memory-cell",
+                  "name": "Memory pressed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lane-d-rail-memory-cap",
+                      "name": "Memory pressed",
+                      "content": "Memory pressed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "lane-d-rail-memory",
+                      "type": "ref",
+                      "ref": "lane-rail",
+                      "name": "Memory pressed",
+                      "height": 260,
+                      "descendants": {
+                        "lane-rail-memory": {
+                          "fill": "$--secondary"
+                        },
+                        "lane-rail-memory/lane-tool-bar": {
+                          "enabled": true
+                        },
+                        "lane-rail-memory/lane-tool-glyph": {
+                          "fill": "$--foreground"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "start",
+                  "width": "fit_content"
+                },
+                {
+                  "type": "frame",
                   "id": "lane-d-rail-files-cell",
                   "name": "Files pressed",
                   "children": [
@@ -34866,45 +34905,6 @@
                           "enabled": true
                         },
                         "lane-rail-changes/lane-tool-glyph": {
-                          "fill": "$--foreground"
-                        }
-                      }
-                    }
-                  ],
-                  "layout": "vertical",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "start",
-                  "width": "fit_content"
-                },
-                {
-                  "type": "frame",
-                  "id": "lane-d-rail-memory-cell",
-                  "name": "Memory pressed",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "lane-d-rail-memory-cap",
-                      "name": "Memory pressed",
-                      "content": "Memory pressed",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-micro",
-                      "fontWeight": "600"
-                    },
-                    {
-                      "id": "lane-d-rail-memory",
-                      "type": "ref",
-                      "ref": "lane-rail",
-                      "name": "Memory pressed",
-                      "height": 260,
-                      "descendants": {
-                        "lane-rail-memory": {
-                          "fill": "$--secondary"
-                        },
-                        "lane-rail-memory/lane-tool-bar": {
-                          "enabled": true
-                        },
-                        "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
