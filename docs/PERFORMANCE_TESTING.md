@@ -191,8 +191,8 @@ Regression owners are `hide-agent-hooks/tests/it/spawn_guard.rs` (nothing spawne
 ## The guardrails on a pre-tool call
 
 The project guardrails run in the same helper, before the spawn guard, on every shell call and, from matcher version eight, on every file tool call of Claude Code, Codex, Grok and Cursor (PRD agent-guardrails B27, [agent-hooks.md](agent-hooks.md#project-guardrails)); a file call that started no helper before now starts one.
-Per input they add one read of the policy file (at most 4 MiB, a few hundred bytes in practice) and, when no project of the machine has a protection on, nothing more: no JSON parse of the payload, no Git read, no child.
-With a protection on, the call pays one JSON parse, the shell lexer for a shell call, and reads of the repository's own files (`hide_project::git`, no process) for each path it names; only a command that would discard changes starts `git status`, owned through `hide_platform::process` with a 2 second budget and a 4 KiB output cap.
+Per input they add one read of the policy file (at most 8 MiB, a few hundred bytes in practice), in any agent session, a Herdr pane or not, and, when no project of the machine has a protection on, nothing more: no JSON parse of the payload, no Git read, no child.
+With a protection on, the call pays one JSON parse, the shell lexer for a shell call, and reads of the repository's own files (`hide_project::git`, no process) for each path it names; only a command that would discard changes starts `git --no-optional-locks status`, once per checkout and call, owned through `hide_platform::process` with a 2 second budget and a 4 KiB output cap; at most 512 words of one shell call are matched against the protected paths.
 OpenCode's plugin and the Pi and omp extension read the policy in their own process, again when its file changes, and start no helper for a file tool while nothing is on.
 The guardrails keep no state, run no timer or worker and publish nothing; the retained data is the shared refusal log and one `policy.unreadable` line per ten minutes.
 

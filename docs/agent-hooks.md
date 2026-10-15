@@ -271,26 +271,33 @@ This Mac's file is written by its own node and a connected device's by that devi
 The hook reads that file and the repository's own Git files on the machine the agent runs on and asks the daemon nothing, so a saved change applies from the agent's next tool call without a restart.
 A project removed from Hide loses its protections, and a project turns them on again only from Project Settings.
 
-What each protection refuses, inside a Herdr pane, in any checkout of the project:
+What each protection refuses, in any checkout of the project and in any agent session there, a Herdr pane or not (B22): outside a pane the hooks and scripts run the guardrails and nothing else.
 
 - Guard working folders: `git switch`, and a `git checkout` or `gh pr checkout` that changes branch, in the project's original checkout; a file tool's write into another checkout of the same repository than the one the agent works in.
-- Guard the base branch: a file tool's write, `git commit`, `merge`, `cherry-pick`, `revert`, `am` and `pull` (each but its `--abort`, `--quit`, `--skip` or `--ff-only` forms) in a checkout that has the base branch checked out, and a `git push` whose destination is the base branch (`--all`, `--mirror`, an explicit refspec or the current branch); with its merge option, `gh pr merge` as well.
-- Block risky Git commands: `git push --force` without a lease and `--no-verify` on a push or commit, always; `git reset --hard`, `git checkout -- <path>` or `-f`, `git restore` of the worktree, `git clean -f` and `git switch -f`, only while the checkout has uncommitted or untracked changes (`git status --porcelain`, the one Git process the guardrails start, with a 2 second budget).
-- Guard files: a file tool's read or write of a path on the project's list, and a shell call that names one as a word or a redirect target; `.env.*` leaves out `.env.example` and `.env.sample`.
-  The list holds at most 32 entries of at most 200 bytes, each a gitignore pattern relative to the checkout or a `~/` path under the account's home; the default is `.env`, `.env.*`, `*.pem`, `*.key` and `~/.ssh/`, and the first 512 words of one shell call are checked.
+- Guard the base branch: a file tool's write, `git commit`, `merge` (a fast-forward too), `rebase`, `cherry-pick`, `revert`, `am` and `pull` (each but its `--abort`, `--quit` or `--skip` forms, and `pull --ff-only`, which takes only the remote's own commits) in a checkout that has the base branch checked out, and a `git push` whose destination is the base branch (`--all`, `--mirror`, an explicit refspec, a pattern refspec such as `refs/heads/*:refs/heads/*`, or the current branch); with its merge option, `gh pr merge` as well (`-R` and `--repo` read as the option they are).
+- Block risky Git commands: `git push --force` or `--mirror` without a lease and `--no-verify` on a push or commit, always; `git reset --hard`, `git checkout -- <path>`, `git checkout <tree> -- <path>` or `-f`, `git restore` of the worktree and `git switch -f`, only while the checkout has uncommitted changes to tracked files, and `git clean -f` only while it has untracked ones (`git --no-optional-locks status --porcelain`, the one Git process the guardrails start, once per checkout and call, with a 2 second budget).
+- Guard files: a file tool's read or write of a path on the project's list, and a shell call that names one as a word or a redirect target; `.env.*` leaves out `.env.example` and `.env.sample` unless the list names them too.
+  A word with a space in it, a commit message or a title, is read as a path only when it names something that is there.
+  The list holds at most 32 entries of at most 200 characters, each a gitignore pattern relative to the checkout or a `~/` path under the account's home, which the agent's own project lists wherever a `cd` in the line went; the default is `.env`, `.env.*`, `*.pem`, `*.key` and `~/.ssh/`.
+  The first 512 candidate words of one shell call are checked; past them the words go unchecked, the `git` and `gh` commands after them are still judged, and one `guard.word_limit` line per ten minutes says so.
 
 A plain folder project takes only Guard files.
-Paths are compared after links are followed and in the case the filesystem stores, so a project root matches on a filesystem that ignores case (B24).
-A `cd` or `pushd` earlier in a shell line moves where the commands after it run, and `git -C <dir>` moves one command; the line is read as the [spawn guard](#the-spawn-guard) reads it, one simple command at a time with quotes, heredoc bodies and comments set aside.
+`git checkout <word>` reads `<word>` as Git does: a local branch of that name first, then a path that is there, then a commit; anything after `--` is paths.
+A repository nested in a checkout, a submodule or a clone, is a folder of the checkout around it, so its files take that checkout's protections and no protection locks an agent out of it; only a project whose own repository cannot be read refuses, and then only a write or a `git` command a protection that is on needs the repository for.
+Paths are compared after links are followed, and with or without case as the folder compares names, judged from the entries the folder already holds so the hook writes nothing there, and taken as ignoring case when no entry tells (B24).
+A `cd` or `pushd` earlier in a shell line moves where the commands after it run (a bare `cd` goes home), and `git -C <dir>` moves one command; the line is read as the [spawn guard](#the-spawn-guard) reads it, a POSIX shell's words one simple command at a time with quotes, heredoc bodies and comments set aside.
+A PowerShell command's backslash path (`.\.env`, `C:\repo`) is therefore not resolved: on Windows the file tools and the `git` and `gh` commands that name no backslash path are guarded, and the rest is the gap [INSTALL.md](INSTALL.md#what-each-system-supports) records.
 
 The refusal reaches the agent in English, in its runtime's deny shape, and names the protection, what the call did and what to do instead: `Not run: the "Guard files" protection is on for this project in Hide. This call reads or changes a path on the project's protected list. Ask the operator ...`.
 Each refusal appends one `guard.refused` line (rule, whether a fact was unread, runtime, pane; never the command, its paths or a file's contents) to `~/.hide/agent-hooks/spawn-guard.log`, and the operator's screen shows nothing for it.
 
 How it fails (D-27):
 
-- A fact a protection that is on needs cannot be read (the checkout's repository, its branch, the base branch, whether it has changes): the call is refused and the reason says which fact.
+- A fact a protection that is on needs cannot be read (the checkout's repository, its branch, the base branch, whether it has changes): the call is refused and the reason says which fact; with no base branch to read (Auto, and no `origin/HEAD`), the reason asks the operator to choose one in Project Settings.
 - The policy file is missing, unreadable, corrupt or of another version: the call runs, and one `policy.unreadable` line with its cause is appended to the same log, throttled to one per ten minutes through the delivery diagnostics' store (cause `guardrails`).
-- A panic or a hook timeout is the runtime's own default for a failed hook, which the guardrails leave alone.
+- The hook panics, or the payload does not arrive within 0.5 seconds, while some project has a protection on: the call runs, and one `guard.failed` line with its cause (`panic`, `payload_deadline`) is appended, throttled the same way (cause `guardrails_failed`).
+  A hook the runtime kills at its own timeout leaves no line, since the process is gone, and the call takes that runtime's default.
+- A payload past the helper's 256 KiB read is judged by the tool name and the paths that arrived, a patch's file lines included; a shell command cut short is not judged.
 
 The payload each runtime sends, observed on the versions Hide installs into (`hide_agent_hooks::guardrails::payload`):
 
