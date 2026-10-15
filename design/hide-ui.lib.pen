@@ -15972,7 +15972,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "v9 C: one quiet 28pt identity. Direct-child badge opens the shared list. One overlaid band: connection/sleep, own demand, raised child, own task. Working is a thin blue line. No child row or relationship sheet; terminal geometry stays fixed. Letters waiting: while letters wait on the pane for a possible draft, one pill after the title is the button: the envelope, the count from two letters and 지금 전달; it sits above the composer.",
+          "content": "v9 C: one quiet 28pt identity. Direct-child badge opens the shared list. One overlaid band: connection/sleep, own demand, raised child, own task. Working is a thin blue line. No child row or relationship sheet; terminal geometry stays fixed. Letters waiting: while letters wait on the pane for a possible draft, one pill after the title is the button, on the popover fill with a hairline edge so it stands out on a focused or unfocused header: the envelope, the count from two letters and 지금 전달; it sits above the composer.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -16061,7 +16061,7 @@
                   "name": "Letters waiting",
                   "enabled": false,
                   "height": 20,
-                  "fill": "$--secondary",
+                  "fill": "$--popover",
                   "cornerRadius": "$--radius-xs",
                   "gap": "$--spacing-xs",
                   "padding": [
@@ -16101,7 +16101,10 @@
                       "fontSize": "$--text-caption",
                       "fontWeight": "normal"
                     }
-                  ]
+                  ],
+                  "stroke": "$--border",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner"
                 },
                 {
                   "id": "c9QF3",
