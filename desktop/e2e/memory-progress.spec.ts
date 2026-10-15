@@ -52,8 +52,10 @@ test("Memory progress expands whole rows and follows the live promotion agent th
     await showTool(page, "memory");
     await page.locator('[data-memory-switch="off"]').click();
     await expect(page.locator('[data-memory="on"]')).toBeVisible({ timeout: 30_000 });
-    seedReconciliation(run);
+    seedReconciliation(run, "acme/memory-fixture");
     await page.reload();
+    await expect(page.locator('[data-workspace-screen]')).toBeVisible();
+    await expect(page.locator('[data-connection]')).toHaveCount(0);
     await showTool(page, "memory");
     const tab = page.locator('[data-lane="memory"]');
     const quiet = tab.locator('[data-memory-pr-group="72"]');

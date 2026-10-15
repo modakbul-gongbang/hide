@@ -100,10 +100,10 @@ export async function showTool(page: Page, tool: LaneTool): Promise<void> {
   await expect(page.locator(`aside[data-lane="${tool}"]`)).toBeVisible();
 }
 
-/** Shows or hides Files or Work from the Workspace path's menu (B20). */
-export async function chooseLane(page: Page, tool: "files" | "work"): Promise<void> {
+/** Shows or hides the right lane from the Workspace path's menu (B20). */
+export async function chooseLane(page: Page): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator(`[data-menu-item="${tool}"]`).click();
+  await page.locator('[data-menu-item="lane"]').click();
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
 }
 

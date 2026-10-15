@@ -1,3 +1,4 @@
+import { projectSettingsCatalogs, projectSettingsEnglish } from "./resources/projectSettings";
 import { usageCatalogs, usageEnglish } from "./resources/usage";
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { agentSessionsCatalogs, agentSessionsEnglish } from "./resources/agentSessions";
@@ -73,6 +74,7 @@ export const english = {
   ...factoryEnglish,
   ...firstRunEnglish,
   ...memoryEnglish,
+  ...projectSettingsEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -116,6 +118,7 @@ export const catalogs = {
     ...factoryCatalogs.ko,
     ...firstRunCatalogs.ko,
     ...memoryCatalogs.ko,
+    ...projectSettingsCatalogs.ko,
   },
   "zh-CN": {
     ...sessionWorkCatalogs["zh-CN"],
@@ -154,6 +157,7 @@ export const catalogs = {
     ...factoryCatalogs["zh-CN"],
     ...firstRunCatalogs["zh-CN"],
     ...memoryCatalogs["zh-CN"],
+    ...projectSettingsCatalogs["zh-CN"],
   },
   ja: {
     ...sessionWorkCatalogs.ja,
@@ -192,5 +196,6 @@ export const catalogs = {
     ...factoryCatalogs.ja,
     ...firstRunCatalogs.ja,
     ...memoryCatalogs.ja,
+    ...projectSettingsCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;

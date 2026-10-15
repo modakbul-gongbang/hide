@@ -756,6 +756,7 @@ fn search_event(request_id: &str, query: &str) -> Vec<u8> {
 fn searching(runtime: &mut Runtime, run: u64, request_id: &str, query: &str) {
     runtime.github_search.runs = run;
     runtime.github_search.active = Some(crate::runtime::issues::ActiveSearch {
+        invalidated: false,
         run,
         request: crate::runtime::issues::SearchRequest {
             request_id: request_id.into(),

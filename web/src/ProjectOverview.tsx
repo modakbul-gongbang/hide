@@ -23,6 +23,7 @@ import { readsHere } from "./devices";
 import { ProjectSessions } from "./ProjectSessions";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
+import { settingsTarget } from "./projectSettings";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
@@ -144,6 +145,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <OverviewTitleRow
           name={project.label}
+          openSettings={(returnFocus) => useUiStore.getState().openProjectSettings(settingsTarget(project), returnFocus)}
           path={project.path}
           remoteDevice={device && device.kind === "remote" ? device.label : null}
           onAllProjects={() => setProject(null)}

@@ -1,5 +1,6 @@
 import { projectCheckout } from "./projects";
 import { deviceConnected, readsHere } from "./devices";
+import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
@@ -412,10 +413,14 @@ export function createActions(send: DispatchFn) {
     setWorkspaceView({ tool: null });
   };
 
-  /** A rail icon, ⌘⇧B or ⌘E (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
+  /** A rail icon (B2, B20): the tool showing closes the lane, otherwise the lane opens on it. */
   const toggleTool = (tool: Tool) => (laneUpWith(tool) ? closeLane() : showTool(tool));
-  const toggleFileViews = () => toggleTool("files");
-  const toggleTools = () => toggleTool("work");
+  /** ⌘E and the path's menu (B20): the lane closes while it shows, and otherwise comes back on the tool it holds, Files when it holds none. */
+  const toggleLane = () => {
+    const { mode } = ui().drawnLane;
+    if (mode !== "closed" && mode !== "hidden") return closeLane();
+    showTool(workspaceViewOf(rest())?.tool ?? "files");
+  };
 
   /**
    * The tree button or ⌘⇧E (B9, B11): with the files tool on screen the tree
@@ -1425,8 +1430,8 @@ export function createActions(send: DispatchFn) {
     /** A session link retains repository identity even when its maker moved projects. */
     openSessionPullRequest(pull: {workspace_id: string | null; url: string; number: number}) {
       const projects = catalogWorkspaces(rest());
-      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.url === pull.url))
-        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.url === pull.url));
+      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)))
+        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.number === pull.number && sameGithubPullRequest(pr.url, pull.url)));
       if (project) this.openPrCard(project.id, pull.number);
       else this.openLink(pull.url, false);
     },
@@ -1556,6 +1561,18 @@ export function createActions(send: DispatchFn) {
      */
     memoryOpen(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "memory_open", payload: { workspace_id: workspaceId } });
+    },
+
+    setProjectSettings(target: import("./projectSettings").ProjectSettingsTarget, patch: import("./projectSettings").ProjectSettingsPatch, requestId: string) {
+      return dispatch({ schema_version: 2, kind: "project_settings_set", payload: { device_id: target.deviceId, root: target.root, request_id: requestId, patch } });
+    },
+
+    openProjectMemory(deviceId: string, workspaceId: string) {
+      const workspace = catalogWorkspaces(rest()).find((row) => row.id === workspaceId && row.device_id === deviceId);
+      const checkout = workspace && deviceConnected(rest(), deviceId) ? projectCheckout(workspace, rest()?.ui_state?.recent_checkouts) : null;
+      if (!checkout) return false;
+      beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId, tool: "memory" });
+      return dispatch({ schema_version: 2, kind: "project_memory_navigate", payload: { device_id: deviceId, workspace_id: workspaceId, checkout_id: checkout.id, request_id: crypto.randomUUID() } });
     },
 
     /** Shows one card of the opened Project in full; null folds it. */
@@ -1691,6 +1708,7 @@ export function createActions(send: DispatchFn) {
 
     /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
     createWorktree(request: {
+      requestId?: string;
       deviceId: string;
       repositoryRoot: string;
       branch: string;
@@ -1705,6 +1723,7 @@ export function createActions(send: DispatchFn) {
         schema_version: 2,
         kind: "create_worktree",
         payload: {
+          ...(request.requestId ? { request_id: request.requestId } : {}),
           device_id: request.deviceId,
           repository_root: request.repositoryRoot,
           branch: request.branch,
@@ -2223,13 +2242,12 @@ export function createActions(send: DispatchFn) {
 
     showSidebarMode,
 
-    toggleFileViews,
     toggleTool,
     toggleFileTree,
     closeLane,
     setLanePinned,
 
-    toggleTools,
+    toggleLane,
 
     setWorkspaceView,
 

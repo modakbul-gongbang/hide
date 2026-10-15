@@ -109,6 +109,7 @@ describe("row menus", () => {
   it("draws a project's menu in the board's order, the file manager only on the desktop (B1)", () => {
     const project = workspace({ checkouts: [primary(), checkout()] });
     expect(drawn(projectMenu(project, desktop))).toEqual([
+      "Project settings",
       "New worktree…",
       "New tab in main ⌘T",
       "─",
@@ -118,7 +119,7 @@ describe("row menus", () => {
       "Pin",
       "Remove project…",
     ]);
-    expect(drawn(projectMenu(project, browser))).toEqual(["New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(drawn(projectMenu(project, browser))).toEqual(["Project settings", "New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
     expect(projectMenu(workspace({ pinned: true, checkouts: [primary()] }), desktop).find((item) => item.id === "unpin")?.label).toBe("Unpin");
     expect(projectMenu(workspace({ is_git: false, checkouts: [primary({ is_primary: false })] }), desktop).find((item) => item.id === "new_worktree")?.unavailable).toMatch(/not a Git/);
   });
@@ -258,7 +259,7 @@ describe("row menus", () => {
   it("puts a folder's own checkout items after its project items, past a separator", () => {
     const folder = primary({ is_primary: false, branch: null });
     const menu = folderMenu(workspace({ is_git: false, checkouts: [folder] }), folder, desktop);
-    expect(drawn(menu)).toEqual(["New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
+    expect(drawn(menu)).toEqual(["Project settings", "New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
     const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false, state: "pending" as const };
     expect(drawn(folderMenu(workspace({ checkouts: [folder] }), { ...folder, pull_request: pr }, browser)).slice(-4)).toEqual(["─", "Open", "Open pull request #7", "Set purpose…"]);
   });

@@ -7497,6 +7497,8 @@
                 {
                   "type": "frame",
                   "id": "idn-blocked",
+                  "x": 0,
+                  "y": 0,
                   "name": "Blocked",
                   "enabled": false,
                   "width": 12,
@@ -7506,25 +7508,27 @@
                     {
                       "type": "path",
                       "id": "idn-blocked-shape",
-                      "name": "Triangle with notch",
                       "x": 0,
                       "y": 0,
-                      "width": 12,
-                      "height": 12,
+                      "name": "Triangle with notch",
+                      "geometry": "M6 1.2l5.4 9.4-10.8 0z m-0.6 3.6l0 2.8 1.2 0 0-2.8z m0 3.6l0 1 1.2 0 0-1z",
                       "viewBox": [
                         0,
                         0,
                         12,
                         12
                       ],
-                      "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
-                      "fill": "$--warning"
+                      "fill": "$--warning",
+                      "width": 12,
+                      "height": 12
                     }
                   ]
                 },
                 {
                   "type": "frame",
                   "id": "idn-stopped",
+                  "x": 0,
+                  "y": 0,
                   "name": "Stopped",
                   "enabled": false,
                   "width": 12,
@@ -13369,6 +13373,8 @@
                 {
                   "type": "frame",
                   "id": "project-asleep",
+                  "x": 0,
+                  "y": 0,
                   "name": "Asleep",
                   "enabled": false,
                   "height": 16,
@@ -13400,6 +13406,8 @@
                 {
                   "type": "frame",
                   "id": "project-actions",
+                  "x": 0,
+                  "y": 0,
                   "name": "Row actions",
                   "enabled": false,
                   "gap": "$--spacing-xxs",
@@ -13415,6 +13423,22 @@
                       "descendants": {
                         "ZIZFR": {
                           "icon": "plus",
+                          "fill": "$--subtle-foreground",
+                          "width": 12,
+                          "height": 12
+                        }
+                      }
+                    },
+                    {
+                      "id": "PqZFm",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Project settings",
+                      "width": 24,
+                      "height": 24,
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "settings",
                           "fill": "$--subtle-foreground",
                           "width": 12,
                           "height": 12
@@ -13551,11 +13575,11 @@
               "name": "Row / No agents",
               "width": "fill_container",
               "descendants": {
-                "project-status": {
-                  "enabled": false
-                },
                 "JkPyX": {
                   "fontWeight": "400"
+                },
+                "project-status": {
+                  "enabled": false
                 }
               }
             }
@@ -13708,14 +13732,14 @@
               "name": "Row / Hover",
               "fill": "$--accent",
               "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-down"
-                },
                 "project-status": {
                   "enabled": false
                 },
                 "project-actions": {
                   "enabled": true
+                },
+                "iBYjj": {
+                  "icon": "chevron-down"
                 }
               }
             }
@@ -13749,14 +13773,14 @@
               "strokeWidth": 1,
               "strokeAlignment": "inner",
               "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-down"
-                },
                 "project-status": {
                   "enabled": false
                 },
                 "project-actions": {
                   "enabled": true
+                },
+                "iBYjj": {
+                  "icon": "chevron-down"
                 }
               }
             }
@@ -13788,9 +13812,6 @@
               "name": "Row / Menu open",
               "fill": "$--accent",
               "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-down"
-                },
                 "project-status": {
                   "enabled": false
                 },
@@ -13799,6 +13820,9 @@
                 },
                 "project-action-more": {
                   "fill": "$--secondary"
+                },
+                "iBYjj": {
+                  "icon": "chevron-down"
                 }
               }
             }
@@ -16166,6 +16190,8 @@
                     {
                       "type": "frame",
                       "id": "sar-blocked",
+                      "x": 0,
+                      "y": 0,
                       "name": "Blocked",
                       "enabled": false,
                       "width": 12,
@@ -16175,25 +16201,27 @@
                         {
                           "type": "path",
                           "id": "sar-blocked-shape",
-                          "name": "Triangle with notch",
                           "x": 0,
                           "y": 0,
-                          "width": 12,
-                          "height": 12,
+                          "name": "Triangle with notch",
+                          "geometry": "M6 1.2l5.4 9.4-10.8 0z m-0.6 3.6l0 2.8 1.2 0 0-2.8z m0 3.6l0 1 1.2 0 0-1z",
                           "viewBox": [
                             0,
                             0,
                             12,
                             12
                           ],
-                          "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
-                          "fill": "$--warning"
+                          "fill": "$--warning",
+                          "width": 12,
+                          "height": 12
                         }
                       ]
                     },
                     {
                       "type": "frame",
                       "id": "sar-stopped",
+                      "x": 0,
+                      "y": 0,
                       "name": "Stopped",
                       "enabled": false,
                       "width": 12,
@@ -32031,13 +32059,15 @@
                 {
                   "type": "text",
                   "id": "usage-chip-window",
+                  "x": 0,
+                  "y": 0,
                   "name": "5h",
-                  "content": "5h",
+                  "enabled": false,
                   "fill": "$--muted-foreground",
+                  "content": "5h",
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-micro",
-                  "fontWeight": "600",
-                  "enabled": false
+                  "fontWeight": "600"
                 },
                 {
                   "type": "text",
@@ -32084,7 +32114,10 @@
                     {
                       "type": "frame",
                       "id": "usage-row-mark",
+                      "x": 0,
+                      "y": 0,
                       "name": "Provider mark",
+                      "enabled": false,
                       "width": 16,
                       "height": 16,
                       "fill": {
@@ -32093,8 +32126,7 @@
                         "url": "../web/src/assets/agent-claude.png",
                         "mode": "contain"
                       },
-                      "cornerRadius": "$--radius-xs",
-                      "enabled": false
+                      "cornerRadius": "$--radius-xs"
                     },
                     {
                       "type": "text",
@@ -33490,10 +33522,7 @@
               "name": "Files",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "file"
-                },
-                "lane-tool-label": {
-                  "content": "Files"
+                  "icon": "files"
                 }
               }
             },
@@ -33504,10 +33533,7 @@
               "name": "Changes",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "git-branch"
-                },
-                "lane-tool-label": {
-                  "content": "Changes"
+                  "icon": "file-diff"
                 }
               }
             },
@@ -33518,10 +33544,7 @@
               "name": "Work",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "message-square"
-                },
-                "lane-tool-label": {
-                  "content": "Work"
+                  "icon": "messages-square"
                 }
               }
             },
@@ -33532,10 +33555,7 @@
               "name": "Memory",
               "descendants": {
                 "lane-tool-glyph": {
-                  "icon": "book-open"
-                },
-                "lane-tool-label": {
-                  "content": "Memory"
+                  "icon": "brain"
                 }
               }
             },
@@ -33606,16 +33626,6 @@
               "icon": "file",
               "library": "lucide",
               "fill": "$--muted-foreground"
-            },
-            {
-              "type": "text",
-              "id": "lane-tool-label",
-              "name": "Files",
-              "content": "Files",
-              "fill": "$--muted-foreground",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "400"
             },
             {
               "type": "frame",
@@ -33881,10 +33891,6 @@
                         },
                         "lane-rail-files/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-files/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -33924,10 +33930,6 @@
                         },
                         "lane-rail-changes/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-changes/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -33945,8 +33947,8 @@
                     {
                       "type": "text",
                       "id": "lane-l-rail-work-cap",
-                      "name": "Work pressed · 3 to act on",
-                      "content": "Work pressed · 3 to act on",
+                      "name": "Work pressed",
+                      "content": "Work pressed",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
@@ -33956,7 +33958,7 @@
                       "id": "lane-l-rail-work",
                       "type": "ref",
                       "ref": "lane-rail",
-                      "name": "Work pressed · 3 to act on",
+                      "name": "Work pressed",
                       "height": 260,
                       "descendants": {
                         "lane-rail-work": {
@@ -33967,18 +33969,6 @@
                         },
                         "lane-rail-work/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-work/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500",
-                          "content": "Work"
-                        },
-                        "lane-rail-work/lane-tool-badge": {
-                          "enabled": true,
-                          "fill": "$--warning"
-                        },
-                        "lane-rail-work/lane-tool-badge-t": {
-                          "content": "3"
                         }
                       }
                     }
@@ -34018,10 +34008,6 @@
                         },
                         "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-memory/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34803,10 +34789,6 @@
                         },
                         "lane-rail-files/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-files/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34846,10 +34828,6 @@
                         },
                         "lane-rail-changes/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-changes/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -34867,8 +34845,8 @@
                     {
                       "type": "text",
                       "id": "lane-d-rail-work-cap",
-                      "name": "Work pressed · 3 to act on",
-                      "content": "Work pressed · 3 to act on",
+                      "name": "Work pressed",
+                      "content": "Work pressed",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
@@ -34878,7 +34856,7 @@
                       "id": "lane-d-rail-work",
                       "type": "ref",
                       "ref": "lane-rail",
-                      "name": "Work pressed · 3 to act on",
+                      "name": "Work pressed",
                       "height": 260,
                       "descendants": {
                         "lane-rail-work": {
@@ -34889,18 +34867,6 @@
                         },
                         "lane-rail-work/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-work/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500",
-                          "content": "Work"
-                        },
-                        "lane-rail-work/lane-tool-badge": {
-                          "enabled": true,
-                          "fill": "$--warning"
-                        },
-                        "lane-rail-work/lane-tool-badge-t": {
-                          "content": "3"
                         }
                       }
                     }
@@ -34940,10 +34906,6 @@
                         },
                         "lane-rail-memory/lane-tool-glyph": {
                           "fill": "$--foreground"
-                        },
-                        "lane-rail-memory/lane-tool-label": {
-                          "fill": "$--foreground",
-                          "fontWeight": "500"
                         }
                       }
                     }
@@ -60696,6 +60658,10 @@
     "--size-usage-year": {
       "type": "number",
       "value": 800
+    },
+    "--size-project-settings-sheet-h": {
+      "type": "number",
+      "value": 640
     },
     "--size-usage-bar-plot": {
       "type": "number",

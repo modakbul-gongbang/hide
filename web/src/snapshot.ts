@@ -1,4 +1,5 @@
 import type { AgentScope } from "./agentScope";
+import type { ProjectSettings, ProjectSettingsWrite } from "./projectSettings";
 // The parts of the core's `rest` section the web shell reads, typed as the
 // core serializes them (herdr-core/src/model.rs), plus the pure selectors that
 // resolve the operator's focused checkout, its visible tab and that tab's
@@ -1565,6 +1566,8 @@ export type MemoryRow = {
     /** The agent putting it in the repository, while it runs; `pane_id` is null once the agent ended. */
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
+    /** Original repository-qualified target; unknown on legacy attempts. */
+    pr_url?: string | null;
     target_path: string | null;
     /** Why GitHub could not say whether an `unconfirmed` attempt's pull request came, when it said. */
     github_failure: GithubFailureCategory | null;
@@ -1616,6 +1619,8 @@ export type ProjectMemory = {
   /** The card just forgotten, offered back with Undo. */
   forgotten: number | null;
   pending_action: MemoryAction | null;
+  preparing_hooks?: boolean;
+  action_failure?: MemoryAction | null;
   expanded: MemoryCard | null;
   search: { query: string; numbers: number[] } | null;
 };
@@ -1836,6 +1841,9 @@ export type SnapshotRest = {
     agent_sleep_after_hours?: number | null;
     /** Each local project's chosen issue source (`github` or `local`) by path; absent is the default. */
     project_issue_sources?: Record<string, string>;
+    project_base_branches?: Record<string, string>;
+    project_settings?: Record<string, ProjectSettings>;
+    project_settings_writes?: Record<string, ProjectSettingsWrite & { device_id: string; root: string }>;
     issue_settings?: IssueSettings;
     agent_start?: AgentStartChoice;
     /** The checkouts last brought to the front, newest first, up to ten (PRD cmdk-recent). */

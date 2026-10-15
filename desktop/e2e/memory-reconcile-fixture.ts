@@ -3,10 +3,11 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { Isolated } from "./fixture";
 
-export function seedReconciliation(run: Isolated): void {
+export function seedReconciliation(run: Isolated, repository: string): void {
   execFileSync("python3", ["-c", String.raw`
 import json, sqlite3, sys
 db=sqlite3.connect(sys.argv[1], timeout=5)
+repository=sys.argv[2]
 project=db.execute('SELECT id FROM projects').fetchone()[0]
 now=1791849600000
 db.execute('UPDATE projects SET enabled=1,disclosure_version=3,next_number=11 WHERE id=?',(project,))
@@ -23,7 +24,7 @@ for number,authority in [(2,'card_newer'),(3,'ask'),(4,'outdated'),(8,'card_newe
   if number==4: comparison['document']='docs/architecture/repository-ownership-and-session-verification-guide.md'
   db.execute('INSERT INTO card_comparisons(item_id,revision,data) VALUES(?,1,?)',('fixture-m'+str(number),json.dumps(comparison)))
 for number in [9,10]:
-  db.execute('INSERT INTO card_promotions(item_id,state,revision,attempt,branch,pr_number,target_path,started_at_ms,updated_at_ms) VALUES(?,\'pr_open\',1,1,\'fixture-shared-pr\',72,\'AGENTS.md\',?,?)',('fixture-m'+str(number),now,now))
+  db.execute('INSERT INTO card_promotions(item_id,state,revision,attempt,branch,pr_number,repository,target_path,started_at_ms,updated_at_ms) VALUES(?,\'pr_open\',1,1,\'fixture-shared-pr\',72,?,\'AGENTS.md\',?,?)',('fixture-m'+str(number),repository,now,now))
 db.commit()
-`, path.join(run.env.HIDE_STATE_DIR!, "project-memory.sqlite3")], { encoding: "utf8", timeout: 10_000 });
+`, path.join(run.env.HIDE_STATE_DIR!, "project-memory.sqlite3"), repository], { encoding: "utf8", timeout: 10_000 });
 }

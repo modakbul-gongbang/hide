@@ -70,10 +70,12 @@ test("History opens a scoped patch, then updates after editing the original file
     await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘E opens the lane on Sessions and again closes it (B20).
-    await page.keyboard.press(chord("toggle_explorer"));
-    await expect(page.locator('[data-lane="work"]')).toBeVisible();
-    await page.keyboard.press(chord("toggle_explorer"));
+    // ⌘E closes the lane that shows, and again brings it back on Files, the tool a closed lane opens to (B20).
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
+    await page.keyboard.press(chord("toggle_lane"));
+    await expect(page.locator('[data-lane="files"]')).toBeVisible();
+    await page.keyboard.press(chord("toggle_lane"));
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
     await showExplorer(page);
 

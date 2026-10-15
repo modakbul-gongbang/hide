@@ -95,6 +95,9 @@ pub struct ProjectFacts {
     pub repository: Option<String>,
     /// GitHub's id of that repository, which a rename keeps.
     pub repository_id: Option<String>,
+    /// Changes on an accepted repository connection edit,
+    /// including an A-to-B-to-A edit between worker observations.
+    pub connection_epoch: u64,
     /// The project's checkouts now, with their branches.
     pub worktrees: Vec<WorktreeFact>,
     /// The pull requests `gh pr list` answered, with their issues.

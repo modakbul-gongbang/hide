@@ -18,6 +18,7 @@ import { entryBox } from "./agentGraph";
 import { hideAiPlace } from "./hideAiOrigin";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type HideAi, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
+import type { Tool } from "./workspace";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: MessageKey }[] = [
@@ -370,7 +371,7 @@ export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "wo
 }
 
 /** What All projects, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
-export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null; workspaceId?: string; expanded?: boolean } | { paneId: string };
+export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null; workspaceId?: string; expanded?: boolean; tool?: Tool } | { paneId: string };
 
 /**
  * A Workspace or agent asked for and not yet in front. The screen changes
@@ -388,6 +389,10 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   const front = frontCheckout(rest);
   if (!front) return false;
   if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
+  if (target.tool !== undefined) {
+    const view = rest?.workspace_view;
+    if (!view || view.tool !== target.tool || view.device_id !== target.deviceId || view.path !== front.path) return false;
+  }
   if (target.expanded !== undefined && !(rest?.ui_state?.session_collapsed_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;
   // A device project with no Herdr workspace yet gets one at its folder, under a new id.

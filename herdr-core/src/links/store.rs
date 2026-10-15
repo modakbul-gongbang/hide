@@ -24,7 +24,7 @@ use std::time::Duration;
 #[path = "ledger_store.rs"]
 mod ledger;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE projects(key TEXT PRIMARY KEY, device TEXT NOT NULL, root TEXT NOT NULL,
@@ -207,6 +207,11 @@ impl LinkStore {
             return Err(OpenFailure::Corrupt);
         }
         migrate(&connection)?;
+        // Observations before a stopped writer cannot prove which connection
+        // an unobserved historical session started under.
+        connection
+            .execute("DELETE FROM ledger_project_connections", [])
+            .map_err(classify)?;
         Ok(Self { connection })
     }
 
@@ -308,7 +313,7 @@ impl LinkStore {
                 params![new, to, old],
             )
             .map_err(|error| format!("moving project {old} to {new} failed: {error}"))?;
-            for table in ["prs", "worktrees"] {
+            for table in ["prs", "worktrees", "ledger_project_connections"] {
                 tx.execute(
                     &format!("UPDATE {table} SET project=?1 WHERE project=?2"),
                     params![new, old],
@@ -401,6 +406,11 @@ impl LinkStore {
             ],
         )
         .map_err(failed)?;
+        // A repository observation can prove ownership only for sessions
+        // started after that connection was known. A later historical file
+        // must not inherit today's repository from its cwd.
+        tx.execute("INSERT INTO ledger_project_connections(project,repository,since_at,epoch) VALUES(?1,?2,?3,?4) ON CONFLICT(project) DO UPDATE SET since_at=CASE WHEN repository IS NOT excluded.repository OR epoch!=excluded.epoch THEN excluded.since_at ELSE since_at END,repository=excluded.repository,epoch=excluded.epoch",
+            params![project.key,project.repository.as_deref().map(str::to_ascii_lowercase),now as i64,project.connection_epoch as i64]).map_err(failed)?;
         for worktree in &project.worktrees {
             let Some(branch) = worktree.branch.as_deref() else {
                 continue;
@@ -508,11 +518,24 @@ impl LinkStore {
     /// One file's read: its facts join the session it names, and the cursor
     /// moves to where the read stopped. `stamp` is recorded only once the
     /// file has been read to its end, so a partly read file is read again.
+    #[cfg(test)]
     pub fn apply_answer(
         &mut self,
         device: &str,
         answer: &ReadAnswer,
         stamp: &str,
+    ) -> Result<(), String> {
+        self.apply_answer_observed(device, answer, stamp, Some(u64::MAX))
+    }
+
+    /// Only a current project observation may certify a native birth, and
+    /// that birth must precede the node read that witnessed it.
+    pub fn apply_answer_observed(
+        &mut self,
+        device: &str,
+        answer: &ReadAnswer,
+        stamp: &str,
+        origin_before: Option<u64>,
     ) -> Result<(), String> {
         let tx = self.connection.transaction().map_err(failed)?;
         let path = answer.path.as_str();
@@ -574,6 +597,7 @@ impl LinkStore {
             )
             .map_err(failed)?;
         }
+        let seen_session = previous.as_ref().and_then(|row| row.session.clone());
         let previous = previous.filter(|_| continuing);
         // A Codex file names its session only in its first record: a later
         // read of it belongs to the session the cursor recorded.
@@ -607,6 +631,20 @@ impl LinkStore {
             }
             upsert_session(&tx, device, agent, id, path, facts)?;
             if !facts.subagent {
+                ledger::capture_session_origin(
+                    &tx,
+                    &crate::links::ledger::SessionIdentity {
+                        device_id: device.into(),
+                        agent: agent.into(),
+                        session_id: id.into(),
+                    },
+                    facts.cwd.as_deref(),
+                    facts.first_at_unix_ms.filter(|at| {
+                        !continuing
+                            && seen_session.as_deref() != Some(id)
+                            && origin_before.is_some_and(|before| *at < before)
+                    }),
+                )?;
                 ledger::apply_reader(&tx, device, agent, id, facts)?;
             }
             for (index, span) in facts.spans.iter().enumerate() {
@@ -951,6 +989,7 @@ impl LinkStore {
                 "ledger_turns",
                 "ledger_outputs",
                 "ledger_issue_attempts",
+                "ledger_session_origins",
             ] {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE device=?1 AND agent=?2 AND id=?3"),
@@ -1840,10 +1879,11 @@ fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     }
     if version < SCHEMA_VERSION {
         let initial = if version == 0 { SCHEMA } else { "" };
+        let work_ledger = if version < 2 { ledger::SCHEMA } else { "" };
         connection
             .execute_batch(&format!(
-                "BEGIN IMMEDIATE; {initial} {} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
-                ledger::SCHEMA
+                "BEGIN IMMEDIATE; {initial} {work_ledger} {} PRAGMA user_version={SCHEMA_VERSION}; COMMIT;",
+                ledger::ORIGIN_SCHEMA
             ))
             .map_err(|error| {
                 let _ = connection.execute_batch("ROLLBACK");
