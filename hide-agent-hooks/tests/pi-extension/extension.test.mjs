@@ -329,11 +329,11 @@ test("a headless run and an unsaved session take no letters", async () => {
 });
 
 test("a session file counts when it is absolute on either system, and not when it is relative", async () => {
-  // Windows names its session files `C:\Users\...` or `\\server\share\...`; the check is on the string, so it holds on every system.
+  // Windows names its session files `C:\...` or `\\server\share\...`; the check is on the string, so it holds on every system.
   const absolute = [
-    "/home/fixture/.pi/agent/sessions/a.jsonl",
-    "C:\\Users\\fixture\\.pi\\agent\\sessions\\a.jsonl",
-    "c:/Users/fixture/.pi/agent/sessions/a.jsonl",
+    "/sessions/fixture/a.jsonl",
+    "C:\\sessions\\fixture\\a.jsonl",
+    "c:/sessions/fixture/a.jsonl",
     "\\\\server\\share\\a.jsonl",
   ];
   for (const sessionFile of absolute) {
