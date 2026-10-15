@@ -96,3 +96,56 @@ test("an agent's View wears its mark, and the operator's line comment reaches th
     herdr.stop();
   }
 });
+
+test("an area dragged on an image reaches its agent with a screenshot of that area", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    // Both suites run from their package folder, one below the repository.
+    fs.copyFileSync(path.resolve("..", "assets", "pet-theme", "default", "assets", "sleeping.png"), path.join(herdr.root, "fixture", "mock.png"));
+    const pane = herdr.panes[0]!;
+    daemon = await startHided(herdr, "view-feedback-image");
+    const agent = await agentPane(herdr, daemon.stateDir, pane);
+    const hide = async (args: string[]) => {
+      const answer = await agent(args);
+      expect(answer.status, answer.out).toBe(0);
+      return answer.out;
+    };
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await showTool(page, "files");
+    await page.locator("[data-lane-pin]").click();
+    await hide(["file", "open", "mock.png"]);
+    await expect(front(page).locator("[data-view-opener]")).toHaveAttribute("data-view-opener", pane);
+
+    // B13: Comment draws the image's page; a drag over it opens the note for that area.
+    await page.locator("[data-view-comment-mode]").click();
+    const sheet = page.locator("[data-view-region-page]");
+    const box = (await sheet.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.6, { steps: 4 });
+    await page.mouse.up();
+    const field = page.locator("[data-view-note-field]");
+    await expect(field).toBeFocused();
+    await field.fill("Crop the owl tighter.");
+    await page.keyboard.press("ControlOrMeta+Enter");
+    await expect(page.locator('[data-view-region-pin="1"]')).toBeVisible();
+    await expect(front(page).locator("[data-view-comments]")).toHaveText("1");
+
+    // B25, B31: Send gives the agent the image, the area and a screenshot of it on its machine.
+    const row = page.locator("[data-view-feedback-row]");
+    await row.locator('[data-view-feedback-send-main="default"]').click();
+    await expect(row).toHaveAttribute("data-view-feedback-state", "sent");
+    const inbox = await hide(["inbox"]);
+    expect(inbox).toContain("mock.png");
+    expect(inbox).toContain("Crop the owl tighter.");
+    const shot = /Screenshot: (\S+\.png)/.exec(inbox)?.[1];
+    expect(shot, inbox).toBeTruthy();
+    expect(fs.readFileSync(shot!).subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});

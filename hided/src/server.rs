@@ -1170,6 +1170,9 @@ async fn screen_loop(
                                 }
                                 spawn_device_listing(&state, event, device_frames_tx.clone(), slot.flatten());
                             }
+                            Ok(ClientAction::CommentShot(event)) => {
+                                spawn_comment_shot(&state, event, device_frames_tx.clone());
+                            }
                             outcome => {
                                 let replies = match outcome {
                                     Ok(ClientAction::Replies(frames)) => frames,
@@ -1864,6 +1867,8 @@ enum ClientAction {
     DeviceListing(Value),
     /// Comment mode on a browser View, answered when its page is ready.
     BrowserComment(Value),
+    /// An image or PDF comment whose crop is staged off the socket loop.
+    CommentShot(Value),
     Replies(Vec<Message>),
 }
 
@@ -2019,7 +2024,7 @@ fn handle_client_text(
         // An image or PDF comment's crop, which the screen made: staged
         // here, and only its name goes on to the core (D-23).
         Some("view_comment") if event.pointer("/payload/shot_png").is_some() => {
-            stage_comment_shot(state, &mut event)?;
+            return Ok(ClientAction::CommentShot(event));
         }
         Some("browser_comment") => {
             if !renderer {
@@ -2074,7 +2079,41 @@ fn handle_client_text(
 
 /// Replaces a `view_comment` add's `shot_png` (base64) with the staged
 /// screenshot's node and name.
-fn stage_comment_shot(state: &AppState, event: &mut Value) -> Result<(), String> {
+/// Stages a comment's crop on a blocking task (a decode of up to 16 MiB, a
+/// staging scan and an fsync), then hands the comment to the core; the
+/// screen's loop goes on meanwhile. A refusal reaches that screen as an error.
+fn spawn_comment_shot(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+    let attachments = Arc::clone(&state.attachments);
+    let core = Arc::clone(&state.core);
+    let boundary = Arc::clone(&state.boundary);
+    let roots = Arc::clone(&state.roots);
+    tokio::spawn(async move {
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut event = event;
+            stage_comment_shot(&attachments, core.node().as_str(), &mut event)?;
+            if let Some(reply) = admit_event(&boundary, &mut event, || roots_current(&roots)) {
+                return Ok(Some(reply.to_string()));
+            }
+            let bytes =
+                serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+            core.dispatch(bytes).map(|()| None)
+        })
+        .await
+        .unwrap_or_else(|error| Err(format!("comment screenshot failed: {error}")));
+        let frame = match outcome {
+            Ok(None) => return,
+            Ok(Some(reply)) => reply,
+            Err(error) => json!({"type": "error", "payload": {}, "message": error}).to_string(),
+        };
+        let _ = frames.send(frame).await;
+    });
+}
+
+fn stage_comment_shot(
+    attachments: &crate::attachments::Attachments,
+    node: &str,
+    event: &mut Value,
+) -> Result<(), String> {
     use base64::Engine;
     let payload = event
         .get_mut("payload")
@@ -2090,11 +2129,8 @@ fn stage_comment_shot(state: &AppState, event: &mut Value) -> Result<(), String>
     let png = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|_| "view_comment.shot_png is not base64".to_owned())?;
-    let name = state.attachments.stage_view_shot(&png)?;
-    payload.insert(
-        "shot".to_owned(),
-        json!({"node": state.core.node().as_str(), "name": name}),
-    );
+    let name = attachments.stage_view_shot(&png)?;
+    payload.insert("shot".to_owned(), json!({"node": node, "name": name}));
     Ok(())
 }
 
