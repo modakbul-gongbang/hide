@@ -35,6 +35,7 @@ pub mod herdr_contract;
 pub mod issues;
 mod kit;
 mod labels;
+mod latest_file;
 pub mod links;
 pub mod live;
 pub mod local_issues;
