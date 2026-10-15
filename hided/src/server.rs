@@ -2145,7 +2145,9 @@ fn spawn_feedback(
             let outcome = tokio::task::spawn_blocking(move || {
                 let FeedbackJob { mut event, png } = job;
                 match png {
-                    Some(png) => stage_page_shot(&attachments, core.node().as_str(), &mut event, &png),
+                    Some(png) => {
+                        stage_page_shot(&attachments, core.node().as_str(), &mut event, &png)
+                    }
                     None if event.pointer("/payload/shot_png").is_some() => {
                         stage_comment_shot(&attachments, core.node().as_str(), &mut event)?
                     }

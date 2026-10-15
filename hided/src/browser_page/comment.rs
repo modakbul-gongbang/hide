@@ -521,7 +521,11 @@ async fn capture(page: &mut Page, world: i64, rect: &Value) -> Option<Vec<u8>> {
         json!({"expression": "__hideComment.shot(true)", "contextId": world, "awaitPromise": true, "returnByValue": true}),
     )
     .await;
-    let png = if hidden.is_ok() { shot(page, rect).await } else { None };
+    let png = if hidden.is_ok() {
+        shot(page, rect).await
+    } else {
+        None
+    };
     let _ = call(
         page,
         "Runtime.evaluate",
