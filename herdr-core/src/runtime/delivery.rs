@@ -695,7 +695,7 @@ impl Runtime {
             agent
                 .task
                 .as_ref()
-                .is_some_and(|task| task.kind.home().is_none())
+                .is_none_or(|task| task.kind.home().is_none())
                 && !self
                     .hide_started
                     .agents
@@ -706,7 +706,7 @@ impl Runtime {
                 "component": "coordination",
                 "kind": "hide_ai.task_kind_unknown",
                 "agent_id": agent.agent_id,
-                "task_kind": agent.task.as_ref().map(|task| task.kind.as_str()),
+                "task_kind": agent.task.as_ref().map(|task| task.kind.as_str().chars().take(64).collect::<String>()),
             }));
         }
         self.hide_started = started;

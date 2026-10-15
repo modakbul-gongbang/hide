@@ -675,6 +675,8 @@ fn track_promotions(
         unseen: Vec::new(),
     };
     if !MemoryStore::exists(database) {
+        // No store holds no attempt, so no row keeps a turn from an earlier one.
+        outcome.homes = Some(HashMap::new());
         return Ok(outcome);
     }
     let now = super::memory::now_ms();
@@ -952,25 +954,17 @@ fn track_promotions(
         outcome.running |= state == PromotionState::Running;
     }
     let mut retiring = retire_plan(carried, settled.into_iter().chain(converging), &held);
-    let mut due = retiring.keys().cloned().collect::<Vec<_>>();
-    due.sort_by(|a, b| (&a.project_id, &a.branch).cmp(&(&b.project_id, &b.branch)));
-    for retire in due.into_iter().take(RETIRE_PER_CHECK) {
-        let Some((connector, link)) = reach.get(&retire.node) else {
-            // Written once while the machine is away, not on every check.
-            if retiring.insert(retire.clone(), true) == Some(false) {
-                crate::diagnostic!(json!({
-                    "component": "memory",
-                    "kind": "promotion.worktree_retired",
-                    "project_id": retire.project_id,
-                    "branch": retire.branch,
-                    "outcome": "kept",
-                    "reason": "the machine that holds the Project cannot be reached",
-                }));
+    let due = retire_due(&mut retiring, |node| reach.contains_key(node));
+    for retire in due {
+        let (connector, link) = &reach[&retire.node];
+        let noticed = retiring[&retire];
+        match retire_attempt(connector.as_ref(), link.as_ref(), &retire, noticed) {
+            Retired::Failed => {
+                retiring.insert(retire, true);
             }
-            continue;
-        };
-        if retire_attempt(connector.as_ref(), link.as_ref(), &retire) != Retired::Failed {
-            retiring.remove(&retire);
+            Retired::Done | Retired::Kept => {
+                retiring.remove(&retire);
+            }
         }
     }
     outcome.followed |= !retiring.is_empty();
@@ -1265,6 +1259,36 @@ fn retire_plan(
     plan
 }
 
+/// The attempts to retire in this check, at most `RETIRE_PER_CHECK`: one not
+/// tried yet goes before one that already failed, and a machine that is away
+/// holds no slot, so a backlog of refusals or an absent device never starves
+/// the rest (engineering principle 15). The absence is written once.
+fn retire_due(
+    retiring: &mut HashMap<Retire, bool>,
+    reachable: impl Fn(&NodeId) -> bool,
+) -> Vec<Retire> {
+    let mut due = Vec::new();
+    for (retire, noticed) in retiring.iter_mut() {
+        if reachable(&retire.node) {
+            due.push(retire.clone());
+        } else if !std::mem::replace(noticed, true) {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotion.worktree_retired",
+                "project_id": retire.project_id,
+                "branch": retire.branch,
+                "outcome": "kept",
+                "reason": "the machine that holds the Project cannot be reached",
+            }));
+        }
+    }
+    due.sort_by(|a, b| {
+        (retiring[a], &a.project_id, &a.branch).cmp(&(retiring[b], &b.project_id, &b.branch))
+    });
+    due.truncate(RETIRE_PER_CHECK);
+    due
+}
+
 /// What retiring a settled attempt came to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Retired {
@@ -1291,15 +1315,18 @@ fn retire_attempt(
     connector: &dyn hide_herdr_client::ApiConnector,
     node: &dyn crate::node_access::NodeLink,
     retire: &Retire,
+    noticed: bool,
 ) -> Retired {
     use hide_node_link::git::GitCommand;
     use hide_node_link::protocol::Call;
     const NODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
     let repo = retire.root.as_str();
+    let mut at = None;
     let result = (|| -> Result<(Retired, &'static str), String> {
         let Some(path) = worktree_path(connector, repo, &retire.branch)? else {
             return Ok((Retired::Done, "gone"));
         };
+        at = Some(path.clone());
         // The branch checked out in the Project's own folder is the
         // operator's, never an attempt's worktree.
         if path.trim_end_matches('/') == repo.trim_end_matches('/') {
@@ -1402,14 +1429,18 @@ fn retire_attempt(
         Ok((retired, reason)) => (*retired, "kept", Some((*reason).to_owned())),
         Err(reason) => (Retired::Failed, "failed", Some(reason.clone())),
     };
-    crate::diagnostic!(json!({
-        "component": "memory",
-        "kind": "promotion.worktree_retired",
-        "project_id": retire.project_id,
-        "branch": retire.branch,
-        "outcome": outcome,
-        "reason": reason,
-    }));
+    // A refusal that repeats is written once, not on every check.
+    if retired != Retired::Failed || !noticed {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "promotion.worktree_retired",
+            "project_id": retire.project_id,
+            "branch": retire.branch,
+            "path": at,
+            "outcome": outcome,
+            "reason": reason,
+        }));
+    }
     retired
 }
 
@@ -2708,7 +2739,8 @@ mod tests {
             retire_attempt(
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
-                &retire
+                &retire,
+                false
             ),
             Retired::Done
         );
@@ -2749,7 +2781,7 @@ mod tests {
             let retire = retire_of(&branch(7, 1));
             for _ in 0..2 {
                 assert_eq!(
-                    retire_attempt(&herdr.connector(), &machine, &retire),
+                    retire_attempt(&herdr.connector(), &machine, &retire, false),
                     Retired::Kept,
                     "{case}"
                 );
@@ -2768,6 +2800,40 @@ mod tests {
         }
     }
 
+    /// A machine that is away holds no slot, and an attempt not tried yet goes
+    /// before one that already failed, so neither starves the rest.
+    #[test]
+    fn retiring_never_starves_behind_an_absent_machine_or_earlier_failures() {
+        let at = |node: &str, project: &str, branch: &str| Retire {
+            node: NodeId::parse(node).unwrap(),
+            project_id: project.into(),
+            root: "/r".into(),
+            branch: branch.into(),
+        };
+        let mut retiring = HashMap::new();
+        for index in 0..RETIRE_PER_CHECK + 4 {
+            retiring.insert(at("away", "a", &format!("hide-memory-m{index}")), false);
+        }
+        retiring.insert(at("here", "a", "failed-before"), true);
+        retiring.insert(at("here", "b", "fresh"), false);
+        let due = retire_due(&mut retiring, |node| {
+            node == &NodeId::parse("here").unwrap()
+        });
+        assert_eq!(
+            due.iter()
+                .map(|retire| retire.branch.as_str())
+                .collect::<Vec<_>>(),
+            ["fresh", "failed-before"]
+        );
+        assert!(
+            retiring
+                .iter()
+                .filter(|(retire, _)| retire.node == NodeId::parse("away").unwrap())
+                .all(|(_, noticed)| *noticed),
+            "the absence is noticed once"
+        );
+    }
+
     /// B19: a worktree already gone is a finished retire, so one asked again
     /// after an upgrade or a restart converges.
     #[test]
@@ -2778,7 +2844,8 @@ mod tests {
             retire_attempt(
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
-                &retire_of(&branch(7, 1))
+                &retire_of(&branch(7, 1)),
+                false
             ),
             Retired::Done
         );
@@ -2796,7 +2863,8 @@ mod tests {
             retire_attempt(
                 &herdr.connector(),
                 &Machine(Arc::clone(&repository)),
-                &retire_of(&branch(7, 1))
+                &retire_of(&branch(7, 1)),
+                false
             ),
             Retired::Kept
         );
@@ -2821,7 +2889,8 @@ mod tests {
             retire_attempt(
                 &Down,
                 &Machine(Arc::clone(&repository)),
-                &retire_of(&branch(7, 1))
+                &retire_of(&branch(7, 1)),
+                false
             ),
             Retired::Failed
         );
