@@ -11,7 +11,7 @@ test('the staged gate carries screen modules and logo registries, ignoring unsta
   const scripts = path.join(root, 'scripts');
   fs.mkdirSync(scripts);
   fs.copyFileSync(new URL('../check-design-contract.mjs', import.meta.url), path.join(scripts, 'check-design-contract.mjs'));
-  for (const name of ['check-pen', 'check-pen-gallery', 'check-web-tokens']) {
+  for (const name of ['check-pen', 'check-pen-gallery', 'check-web-tokens', 'check-token-contrast']) {
     fs.writeFileSync(path.join(scripts, `${name}.mjs`), 'process.exitCode = 0;\n');
   }
   fs.writeFileSync(path.join(scripts, 'check-hide-screens.mjs'), "import {value} from './pen-screens.mjs';\nif (value !== 'staged') throw new Error('wrong screen source');\n");

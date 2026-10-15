@@ -52,6 +52,7 @@ Browser QA should simulate GitHub responses at that external boundary for ready,
 
 The brand line, approved owl mark, palette and voice come from [BRAND.md](../docs/BRAND.md).
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
+`assets/hide-icon-blinking.svg` is an unchanged copy of `design/brand/hide-icon-blinking.svg`, the animated app icon, and `assets/hide-icon.svg` is the same file with its `<animateTransform>` elements removed, which leaves the resting pose.
 The page presents hide as an agent development environment in four pillars: multi-agent, multi-device, Hide AI and Software Factory, followed by the Herdr relationship.
 Each pillar's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md).
 The Factory is marked Coming soon until a public release carries it.
@@ -61,6 +62,7 @@ Supported agents are named in text; third-party agent marks stay inside the app,
 `site.js` runs the one-time scroll reveals, the hero owl's peeking and the sidebar panel's group changes.
 `factory.js` plays a scripted Factory line: Tasks move from Intake to Merged, and each question goes where the mode table in [factory.md](../docs/factory.md#factory-ai-the-observer) sends it (Direct, Together, Delegate), so a permission always reaches the desk and a risky-path merge goes to Factory AI only in Delegate.
 The three repeating animations sit in different sections, each runs only while it is on screen and the tab is visible, and under `prefers-reduced-motion` each shows one still frame.
+The header icon's blink is SMIL inside an `<img>`, which a hidden tab does not paint; under `prefers-reduced-motion` a `<picture>` source shows `hide-icon.svg` instead.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
 Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md), with sample counts and boundaries beside the figures.
@@ -70,7 +72,7 @@ The site has its own small CSS scale and brand palette; it does not consume or r
 `assets/hide-workspace.webp` and `assets/hide-factory.webp` are renders of the design library, not captures of a running app.
 The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page; the Factory render is the Line sheet of that file with its text switched to the app's English catalog (`web/src/i18n/resources/`) and the example Tasks translated.
 Both were built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
-`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, and the mark stays the unchanged `hide-mark.png` in the header and favicon.
+`assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, the header shows the blinking app icon and the favicon stays the unchanged `hide-mark.png`.
 `owl-peek.svg` is the `owl-agents` owl traced into vector parts (ears, body, wings, face) and animated by CSS keyframes inside the file, so it plays as a plain `<img>` with no player script.
 Its field spans the window's width with the screenshot's top edge 200 units down, and the owl hides behind straight edges measured on `hide-workspace.webp`: it pops up over the window's top edge, leans out from behind the Sessions panel and rises from behind the sidebar's project box, looks at one place each time, and ducks back.
 A new screenshot moves those edges, so the edge positions in the file are measured again with it.

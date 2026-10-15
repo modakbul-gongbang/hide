@@ -65,6 +65,8 @@ type PhoneState = {
   otherPhones: number;
   /** The core's explicit language as the last `agents` frame carried it; null before the first frame and while unset. */
   interfaceLanguage: string | null;
+  /** The operator's color theme as the last `agents` frame carried it; null before the first frame (drawn as Hide). */
+  colorTheme: string | null;
   pushMode: PushMode;
   notifications: Notifications;
   vapidKey: string | null;
@@ -95,6 +97,7 @@ const initial: PhoneState = {
   macName: "",
   otherPhones: 0,
   interfaceLanguage: null,
+  colorTheme: null,
   pushMode: "off",
   notifications: "unasked",
   vapidKey: null,
@@ -138,7 +141,7 @@ export function applyFrame(frame: ServerFrame): void {
       patch({ pushMode: frame.push_mode, otherPhones: frame.other_phones });
       return;
     case "agents":
-      patch({ groups: frame.groups, interfaceLanguage: frame.interface_language });
+      patch({ groups: frame.groups, interfaceLanguage: frame.interface_language, colorTheme: frame.color_theme });
       return;
     case "sleep_result":
       if (state.sleepAction?.requestId === frame.request_id && state.sleepAction?.sleepId === frame.sleep_id) {
