@@ -2277,12 +2277,14 @@ export function createActions(send: DispatchFn) {
     /**
      * A pane head's record button (PRD overview-device-tasks B22, B23): the
      * lane shows that session's record, or goes back to the Sessions list
-     * when it already does. The keyboard stays in the pane's terminal.
+     * when it already does. "Already does" is what the lane draws, read from
+     * the record itself: the core's lens can still be on its way, and a
+     * project with no pull request draws Sessions whatever lens it keeps.
+     * The keyboard stays in the pane's terminal.
      */
     togglePaneRecord(session: import("./snapshot").WorkSession) {
-      const shown = ui().sessionWorkTarget;
-      const onSessions = workspaceViewOf(rest())?.work?.lens === "sessions";
-      if (shown && workKey(shown) === workKey(session) && laneUpWith("work") && onSessions) return this.closeSessionRecord();
+      const drawn = ui().drawnRecord;
+      if (drawn && workKey(drawn) === workKey(session) && laneUpWith("work")) return this.closeSessionRecord();
       this.openSessionRecord(session);
     },
     closeSessionRecord() {

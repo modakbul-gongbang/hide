@@ -64,6 +64,15 @@ export function LaneSessionRecord({ actions, target }: { actions: Actions; targe
     onRead: () => actions.openSessionRecord(target),
     onLeave: () => actions.closeSessionRecord(),
   }), [actions, target, trail]);
+  // The pane head's button reads what is drawn here, so a press decides on
+  // the record the operator sees, not on a lens the core has yet to echo.
+  useLayoutEffect(() => {
+    const ui = useUiStore.getState();
+    ui.setDrawnRecord(target);
+    return () => {
+      if (useUiStore.getState().drawnRecord === target) ui.setDrawnRecord(null);
+    };
+  }, [target]);
   return <SessionRecord actions={actions} target={target} frame={frame} />;
 }
 
