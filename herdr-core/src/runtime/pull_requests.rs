@@ -1155,14 +1155,16 @@ impl Runtime {
             return;
         };
         self.pr_summaries_asked.insert(asked);
-        let (node, gate) = (self.own_node(), self.usage_gate());
+        let (node, gate, usage) = (self.own_node(), self.usage_gate(), self.ai_usage());
         let subject = format!("{workspace_id}#{number}");
         let (answered, asked_head) = (workspace_id.to_owned(), head.clone());
         let head_for_failure = head.clone();
         let spawned = self.spawn_issue_worker(
             "pr-summary",
             move || {
-                crate::ai::summarize_pull_request(&node, &settings, &gate, &subject, &head, &input)
+                crate::ai::summarize_pull_request(
+                    &node, &settings, &gate, &usage, &subject, &head, &input,
+                )
             },
             move |runtime, answer| {
                 runtime.ingest_pr_summary(&answered, number, &asked_head, answer)

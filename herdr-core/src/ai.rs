@@ -772,6 +772,7 @@ pub(crate) fn summarize_pull_request(
     node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
     gate: &Arc<UsageLimits>,
+    usage: &Arc<dyn AiUsageSink>,
     subject: &str,
     head: &str,
     input: &PrSummaryInput,
@@ -810,7 +811,7 @@ pub(crate) fn summarize_pull_request(
         schema_version: "1".into(),
         pick: None,
     };
-    let answer = labels_router(node, settings, gate)
+    let answer = labels_router(node, settings, gate, usage)
         .execute(&request, &hide_ai::CancelToken::new())
         .map_err(|error| error.class().to_owned())?;
     answer
