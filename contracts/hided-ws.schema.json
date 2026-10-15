@@ -688,6 +688,17 @@
       "additionalProperties": false,
       "properties": { "language": { "$ref": "#/$defs/interfaceLanguage" } }
     },
+    "agentLogoMode": {
+      "description": "Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.",
+      "enum": ["shown", "hidden"]
+    },
+    "agentLogoModeSetPayload": {
+      "description": "Payload of agent_logo_mode_set. This event alone edits the core preference; ui_state_update never changes it, and a mode the event does not name is refused and changes nothing.",
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": { "mode": { "$ref": "#/$defs/agentLogoMode" } }
+    },
     "closeReason": {
       "type": "string",
       "enum": ["invalid_token", "origin_not_allowed", "schema_mismatch", "client_limit"]

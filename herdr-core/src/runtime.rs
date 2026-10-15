@@ -1854,6 +1854,10 @@ impl Runtime {
                 "ui_state.theme_unknown",
                 "The stored theme was not recognized; Dark was used",
             )),
+            persistence::LoadDisposition::UnknownAgentLogoMode => Some((
+                "ui_state.agent_logo_mode_unknown",
+                "The stored agent logo mode was not recognized; hidden was used",
+            )),
             persistence::LoadDisposition::Missing => Some((
                 "ui_state.missing",
                 "UI state was not found; safe defaults were loaded",

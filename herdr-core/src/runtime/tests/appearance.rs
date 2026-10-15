@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::model::ThemePreference;
+use crate::model::{AgentLogoMode, ThemePreference};
 
 pub(super) fn runtime_at(path: &std::path::Path) -> Runtime {
     Runtime::new(
@@ -133,6 +133,128 @@ fn a_ui_state_update_carries_the_theme_through() {
     .unwrap();
     assert!(runtime.dispatch_json(&update));
     assert_eq!(runtime.snapshot().ui_state.theme, ThemePreference::Light);
+}
+
+fn agent_logo_mode_set(mode: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "agent_logo_mode_set",
+        "payload": {"mode": mode}
+    }))
+    .expect("agent logo mode event")
+}
+
+/// B4, D-03: a first run and a store written before the mode existed hide the logos.
+#[test]
+fn a_store_without_an_agent_logo_mode_hides_the_logos() {
+    let (_state, path) = state_path("logo-default");
+    let mut runtime = runtime_at(&path);
+    assert_eq!(
+        runtime.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Hidden
+    );
+    assert!(runtime.dispatch_json(&theme_set("light")));
+    drop(runtime);
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored.as_object_mut().unwrap().remove("agent_logo_mode");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    let restarted = runtime_at(&path);
+    assert_eq!(
+        restarted.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Hidden
+    );
+    assert!(restarted.snapshot().status.diagnostics.is_empty());
+}
+
+/// B9, B10, D-07: one event changes the mode, a repeat is no change, and a restart keeps it.
+#[test]
+fn agent_logo_mode_set_changes_the_mode_and_a_restart_keeps_it() {
+    let (_state, path) = state_path("logo-roundtrip");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&agent_logo_mode_set("shown")));
+    assert_eq!(
+        runtime.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Shown
+    );
+    assert!(
+        !runtime.dispatch_json(&agent_logo_mode_set("shown")),
+        "the same mode again is no change"
+    );
+    assert_eq!(
+        serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["agent_logo_mode"],
+        "shown",
+        "the snapshot the shell draws from carries the mode"
+    );
+    drop(runtime);
+    let mut restarted = runtime_at(&path);
+    assert_eq!(
+        restarted.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Shown
+    );
+    assert!(restarted.dispatch_json(&agent_logo_mode_set("hidden")));
+    drop(restarted);
+    assert_eq!(
+        runtime_at(&path).snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Hidden
+    );
+}
+
+/// B20: a stored value this build does not know hides the logos and is only a diagnostic.
+#[test]
+fn an_unknown_stored_agent_logo_mode_hides_the_logos_with_a_diagnostic() {
+    let (_state, path) = state_path("logo-unknown");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.dispatch_json(&agent_logo_mode_set("shown")));
+    drop(runtime);
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored["agent_logo_mode"] = serde_json::json!("beside");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let runtime = runtime_at(&path);
+    assert_eq!(
+        runtime.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Hidden
+    );
+    assert!(
+        runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .any(|entry| entry.kind == "ui_state.agent_logo_mode_unknown"),
+        "the fallback is logged"
+    );
+    assert!(runtime.snapshot().status.last_error.is_none());
+}
+
+/// B20: a mode the event does not name is refused and the mode stays.
+#[test]
+fn an_unknown_agent_logo_mode_event_is_refused_and_changes_nothing() {
+    let mut runtime = runtime();
+    assert!(runtime.dispatch_json(&agent_logo_mode_set("shown")));
+    runtime.dispatch_json(&agent_logo_mode_set("beside"));
+    assert_eq!(
+        runtime.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Shown
+    );
+}
+
+/// A shared UI-state save, even one carrying a stale mode, does not change the mode.
+#[test]
+fn a_ui_state_update_never_changes_the_agent_logo_mode() {
+    let mut runtime = runtime();
+    assert!(runtime.dispatch_json(&agent_logo_mode_set("shown")));
+    let update = ui_state_update(
+        &runtime,
+        serde_json::json!({"font_size": 14, "agent_logo_mode": "hidden"}),
+    );
+    assert!(runtime.dispatch_json(&update));
+    assert_eq!(
+        runtime.snapshot().ui_state.agent_logo_mode,
+        AgentLogoMode::Shown
+    );
 }
 
 /// The web's `ui_state_update`: the whole current state with `patch` over it.

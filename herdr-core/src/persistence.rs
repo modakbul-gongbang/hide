@@ -5,8 +5,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, ThemePreference,
-    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
+    AgentLogoMode, DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection,
+    ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
     default_pane_text_scale, default_panel_visible, default_sidebar_width,
 };
 
@@ -100,6 +100,10 @@ struct StoredUiState {
     /// store written before the web theme existed, which loads as Dark.
     #[serde(default)]
     theme: Option<String>,
+    /// `shown` or `hidden`; a store written before the logo mode existed
+    /// loads as hidden.
+    #[serde(default)]
+    agent_logo_mode: Option<String>,
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
     #[serde(default)]
@@ -198,6 +202,9 @@ pub enum LoadDisposition {
     Loaded,
     /// Loaded, but the stored theme was not one this build knows; Dark was used.
     UnknownTheme,
+    /// Loaded, but the stored agent logo mode was not one this build knows;
+    /// hidden was used. A store with an unknown theme reports that first.
+    UnknownAgentLogoMode,
     Missing,
     Corrupt,
 }
@@ -330,6 +337,16 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             None => (ThemePreference::Dark, LoadDisposition::UnknownTheme),
         },
     };
+    let (agent_logo_mode, disposition) = match stored.agent_logo_mode.as_deref() {
+        None => (AgentLogoMode::Hidden, disposition),
+        Some(value) => match AgentLogoMode::parse(value) {
+            Some(mode) => (mode, disposition),
+            None if disposition == LoadDisposition::Loaded => {
+                (AgentLogoMode::Hidden, LoadDisposition::UnknownAgentLogoMode)
+            }
+            None => (AgentLogoMode::Hidden, disposition),
+        },
+    };
     (
         UiStateSnapshot {
             resolved_sessions: stored.resolved_sessions,
@@ -366,6 +383,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             theme,
+            agent_logo_mode,
             interface_language: stored.interface_language,
             usage: stored.usage.restored(),
             agent_onboarding: stored.agent_onboarding,
@@ -478,6 +496,7 @@ pub fn save(
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
+        agent_logo_mode: Some(state.agent_logo_mode.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
         usage: state.usage.clone(),
         agent_onboarding: state.agent_onboarding,

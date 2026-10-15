@@ -124,6 +124,8 @@ export type SnapshotSections =
   | UiStateUsageHints
   | FocusCheckoutPayload
   | InterfaceLanguageSetPayload
+  | AgentLogoMode
+  | AgentLogoModeSetPayload
   | TerminalFrame
   | AgentNotice
   | DesktopNoticesPayload;
@@ -131,6 +133,10 @@ export type SnapshotSections =
  * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
  */
 export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
+/**
+ * Whether the sidebar, the Sessions list and the tab bar draw an agent's provider logo before its title. Hidden is the default and what a store without the field, or with a value this build does not know, publishes.
+ */
+export type AgentLogoMode = "shown" | "hidden";
 
 export interface HideWireTypes {
   frame?: HidedWs;
@@ -520,6 +526,12 @@ export interface FocusCheckoutPayload {
  */
 export interface InterfaceLanguageSetPayload {
   language: InterfaceLanguage;
+}
+/**
+ * Payload of agent_logo_mode_set. This event alone edits the core preference; ui_state_update never changes it, and a mode the event does not name is refused and changes nothing.
+ */
+export interface AgentLogoModeSetPayload {
+  mode: AgentLogoMode;
 }
 /**
  * Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence, with terminal_epoch as have_terminal_epoch, when it reconnects; each daemon's hub has its own epoch, so a cursor resumes only on the hub that gave it. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.
