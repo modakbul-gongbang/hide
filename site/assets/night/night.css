@@ -1,0 +1,24 @@
+/* The one-night scene beside its six-moment list; written with night-wide.svg and night-tall.svg,
+   which share this timeline (17 s). Without JavaScript the list stands alone. */
+.night-stage{display:grid;gap:28px}
+.night-stage .night-scene svg{display:block;width:100%;height:auto}
+.night-stage.is-live{min-width:0}
+.night-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 28px;counter-reset:none}
+.night-steps li{display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:baseline;padding-top:12px;border-top:2px solid var(--line,#24383c);font-size:var(--t-small,14.5px);line-height:1.5;color:var(--muted,#9cb1b3)}
+.night-steps time{font-family:var(--font-mono,ui-monospace,monospace);font-size:var(--t-label,12px);letter-spacing:.04em;color:var(--faint,#5f7679)}
+.night-steps li:last-child{color:var(--ink,#f1f6f5)}
+.night-replay{justify-self:start;font:inherit;font-size:var(--t-small,14.5px);color:var(--ink,#f1f6f5);background:none;border:1px solid var(--line-strong,#31494e);border-radius:999px;padding:8px 16px;cursor:pointer}
+.night-replay:hover{border-color:var(--ink,#f1f6f5)}
+@media (max-width:720px){.night-steps{grid-template-columns:1fr;gap:10px}}
+@keyframes night-step-1{0.000%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 16.412%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 17.647%{opacity:0.38;border-top-color:var(--line,#24383c)} 95.294%{opacity:0.38} 100%{opacity:1}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(1){animation:night-step-1 17.0s linear both paused}
+@keyframes night-step-2{0.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 16.412%{opacity:0.38;border-top-color:var(--line,#24383c)} 17.647%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 28.176%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 29.412%{opacity:0.38;border-top-color:var(--line,#24383c)} 95.294%{opacity:0.38} 100%{opacity:1}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(2){animation:night-step-2 17.0s linear both paused}
+@keyframes night-step-3{0.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 28.176%{opacity:0.38;border-top-color:var(--line,#24383c)} 29.412%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 44.647%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 45.882%{opacity:0.38;border-top-color:var(--line,#24383c)} 95.294%{opacity:0.38} 100%{opacity:1}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(3){animation:night-step-3 17.0s linear both paused}
+@keyframes night-step-4{0.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 44.647%{opacity:0.38;border-top-color:var(--line,#24383c)} 45.882%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 67.000%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 68.235%{opacity:0.38;border-top-color:var(--line,#24383c)} 95.294%{opacity:0.38} 100%{opacity:1}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(4){animation:night-step-4 17.0s linear both paused}
+@keyframes night-step-5{0.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 67.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 68.235%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 83.471%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 84.706%{opacity:0.38;border-top-color:var(--line,#24383c)} 95.294%{opacity:0.38} 100%{opacity:1}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(5){animation:night-step-5 17.0s linear both paused}
+@keyframes night-step-6{0.000%{opacity:0.38;border-top-color:var(--line,#24383c)} 83.471%{opacity:0.38;border-top-color:var(--line,#24383c)} 84.706%{opacity:1;border-top-color:var(--accent-text,#b9ff66)} 95.294%{opacity:1} 100%{opacity:1} 100.000%{opacity:1;border-top-color:var(--accent-text,#b9ff66)}}
+.night-stage.is-live:not(.is-still) .night-steps li:nth-child(6){animation:night-step-6 17.0s linear both paused}

@@ -19,6 +19,7 @@
     <script>document.documentElement.classList.remove("no-js");</script>
     <script type="module" src="./downloads.js"></script>
     <script defer src="./site.js"></script>
+    <script defer src="./night.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -79,6 +80,8 @@
 
           <div class="night-scroll" role="region" aria-label="An example night, from 23:00 to 07:00. Scroll sideways to see all of it." tabindex="0">
             <div class="night-stage" id="night-stage">
+              <link rel="stylesheet" href="./assets/night/night.css">
+              <div class="night-scene">
               <div class="axis"><div></div><div class="ticks"><span style="--x:0">23:00</span><span style="--x:25">01:00</span><span style="--x:50">03:00</span><span style="--x:75">05:00</span><span style="--x:100">07:00</span></div></div>
               <div class="lanes">
                 <div class="lane you">
@@ -143,6 +146,16 @@
                 <span><i class="l-you"></i>reaches you</span>
                 <span><i class="l-fail"></i>a test broke</span>
               </div>
+              </div>
+              <ol class="night-steps">
+                <li><time>23:00</time><span>You hand three tasks to the lead agent and close the laptop.</span></li>
+                <li><time>23:05</time><span>The lead passes two of them to agents on machines that stay on.</span></li>
+                <li><time>01:10</time><span>One agent asks the lead and gets an answer. You keep sleeping.</span></li>
+                <li><time>02:40</time><span>A test breaks. A helper fixes it and tells the agent it helps.</span></li>
+                <li><time>05:00</time><span>A different agent checks the work.</span></li>
+                <li><time>07:00</time><span>Morning: two things are ready for you. Approve the finished work, and pick CSV or XLSX.</span></li>
+              </ol>
+              <button class="night-replay" type="button" hidden>Play the night again</button>
             </div>
           </div>
 
