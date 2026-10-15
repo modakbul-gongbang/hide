@@ -261,6 +261,15 @@ describe("the updater's states (D-17 to D-21)", () => {
     expect(timers).toHaveLength(1);
   });
 
+  it("refuses an update file that names another version than the chosen release", async () => {
+    const { updates, updater, events } = harness({ releases: [release("v0.5.0")] });
+    updater.available = "0.6.0";
+    await updates.check("operator");
+    expect(updater.download).toBeNull();
+    expect(updates.status().phase).toEqual({ kind: "failed", stage: "check" });
+    expect(events.at(-1)).toEqual(["update.check_failed", { detail: "the update file of v0.5.0 names version 0.6.0" }]);
+  });
+
   it("runs one check at a time", async () => {
     const { updates, updater } = harness({ releases: [release("v0.5.0")] });
     updater.available = "0.5.0";

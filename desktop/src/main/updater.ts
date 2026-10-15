@@ -293,6 +293,8 @@ export class AppUpdates {
         return;
       }
       version = result.updateInfo.version;
+      // The update file must describe the release chosen from GitHub's list, not another one.
+      if (chosen && version !== chosen.version) throw new Error(`the update file of ${chosen.tag} names version ${version}`);
     } catch (error) {
       this.log.event("update.check_failed", { detail: errorDetail(error) });
       if (!ready) this.set({ kind: "failed", stage: "check" });
