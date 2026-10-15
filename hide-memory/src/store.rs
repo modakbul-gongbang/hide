@@ -17,7 +17,7 @@ use crate::{
     RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 /// Version 2 names where analysis can go: the agent Hide AI runs on and any
 /// agent the operator added under its fallback list (PRD settings-cleanup
 /// D-26), which now includes vendors other than the two it was limited to.
@@ -304,6 +304,18 @@ pub enum PromotionState {
     /// `hide memory outdated`: the attempt ends without a pull request and
     /// the card waits to be verified again (D-12).
     Outdated,
+    /// The agent found the card's decision not built in the code yet, and
+    /// another branch of the repository building it with its document
+    /// already carrying the card (`hide memory building`): that branch's pull
+    /// request settles the card as the attempt's own would.
+    Building,
+    /// The agent found the card's decision not built and no branch building
+    /// it (`hide memory unbuilt`): asked once, until the operator leaves it.
+    Unbuilt,
+    /// The operator left an unbuilt card as it is: an ordinary card that
+    /// nothing asks about again, its document disagreement included, until
+    /// its text changes.
+    Kept,
 }
 
 impl PromotionState {
@@ -316,6 +328,9 @@ impl PromotionState {
             Self::ClosedUnmerged => "closed_unmerged",
             Self::Failed => "failed",
             Self::Outdated => "outdated",
+            Self::Building => "building",
+            Self::Unbuilt => "unbuilt",
+            Self::Kept => "kept",
         }
     }
 
@@ -328,6 +343,9 @@ impl PromotionState {
             "closed_unmerged" => Ok(Self::ClosedUnmerged),
             "failed" => Ok(Self::Failed),
             "outdated" => Ok(Self::Outdated),
+            "building" => Ok(Self::Building),
+            "unbuilt" => Ok(Self::Unbuilt),
+            "kept" => Ok(Self::Kept),
             _ => Err(MemoryError::InvalidState(value.to_owned())),
         }
     }
@@ -359,9 +377,15 @@ pub struct Promotion {
     pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
     /// Why a failed attempt's agent never started, as its spawn answered
-    /// (a refusal code, with its detail after a unit separator); `None` for
-    /// every other attempt.
+    /// (a refusal code, with its detail after a unit separator), or what an
+    /// `unbuilt` card's agent saw; `None` for every other attempt.
     pub failure: Option<String>,
+    /// The branch that builds a `building` card's decision, whose pull
+    /// request settles the card. Kept apart from `branch` and `agent_id`,
+    /// which stay the attempt's own, so nothing that ends an attempt's agent
+    /// or removes its worktree ever reaches the work that builds it.
+    #[serde(default)]
+    pub building_branch: Option<String>,
 }
 
 /// A card whose use crossed the bar for a repository file, with the counts
@@ -1873,7 +1897,7 @@ impl MemoryStore {
     /// Every promotion of a Project's cards, by card number.
     pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure,p.repository \
+            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.started_at_ms,p.updated_at_ms,p.failure,p.repository,p.building_branch \
              FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 AND (p.state NOT IN ('merged','closed_unmerged') OR p.revision=i.current_revision) ORDER BY i.number",
         )?;
         let rows = statement
@@ -1893,6 +1917,7 @@ impl MemoryStore {
                         updated_at_unix_ms: row.get(9)?,
                         failure: row.get(10)?,
                         repository: row.get(11)?,
+                        building_branch: row.get(12)?,
                     },
                 ))
             })?
@@ -1919,7 +1944,7 @@ impl MemoryStore {
         let mut statement = self.connection.prepare(
             "SELECT pr.id,pr.root,i.number FROM card_promotions p JOIN memory_items i ON i.id=p.item_id \
              JOIN projects pr ON pr.id=i.project_id WHERE pr.device_id=?1 \
-             AND p.state IN ('running','pr_open') ORDER BY pr.id,i.number",
+             AND p.state IN ('running','pr_open','building') ORDER BY pr.id,i.number",
         )?;
         let rows = statement
             .query_map([device], |row| {
@@ -2111,7 +2136,7 @@ impl MemoryStore {
                 numbers.push(*number);
             }
             let current: u64 = transaction.query_row("SELECT current_revision FROM memory_items WHERE project_id=?1 AND number=?2 AND lifecycle='active'", params![project_id, number], |row| row.get(0))?;
-            let moving: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE i.project_id=?1 AND i.number=?2 AND (c.state IN ('running','pr_open') OR (c.state='merged' AND c.revision=i.current_revision)))", params![project_id, number], |row| row.get(0))?;
+            let moving: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM card_promotions c JOIN memory_items i ON i.id=c.item_id WHERE i.project_id=?1 AND i.number=?2 AND (c.state IN ('running','pr_open','building') OR (c.state='merged' AND c.revision=i.current_revision)))", params![project_id, number], |row| row.get(0))?;
             if moving
                 || current != promotion.revision
                 || promotion.branch.as_deref() != Some(branch)
@@ -2173,6 +2198,70 @@ impl MemoryStore {
         Ok(self.connection.execute("UPDATE card_promotions SET state='failed',failure=?1,updated_at_ms=?2,pr_number=COALESCE(?7,pr_number) WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?3 AND number=?4) AND state IN ('running','pr_open') AND attempt=?5 AND agent_id IS ?6", params![failure, now, project_id, number, from.attempt, from.agent_id, pr_number])? == 1)
     }
 
+    /// Ends card `number`'s attempt `from` because the card's decision is not
+    /// built in the code yet and `branch` builds it, with `path` there already
+    /// carrying the card: `branch`'s pull request settles the card from now
+    /// on (`building`). Answers false when the row moved on since it was read.
+    pub fn build_promotion(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        branch: &str,
+        path: &str,
+        now_unix_ms: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        if !repository_path(path) {
+            return Err(MemoryError::InvalidState(format!(
+                "promotion_target:{path}"
+            )));
+        }
+        if !branch_name(branch) {
+            return Err(MemoryError::InvalidState(format!(
+                "promotion_branch:{branch}"
+            )));
+        }
+        Ok(self.connection.execute(
+            "UPDATE card_promotions SET state='building',building_branch=?1,target_path=?2,pr_number=NULL,failure=NULL,updated_at_ms=?3 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?4 AND number=?5) \
+             AND state IN ('running','pr_open') AND attempt=?6 AND agent_id IS ?7",
+            params![branch, path, now_unix_ms, project_id, number, from.attempt, from.agent_id],
+        )? == 1)
+    }
+
+    /// Ends card `number`'s attempt `from` because the card's decision is not
+    /// built and no branch builds it, keeping what the agent saw: the card is
+    /// asked about once (`unbuilt`). Answers false when the row moved on.
+    pub fn leave_unbuilt(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        from: &Promotion,
+        reason: &str,
+        now_unix_ms: u64,
+    ) -> Result<bool, MemoryError> {
+        self.require_writer()?;
+        let reason = reason
+            .trim()
+            .chars()
+            .take(crate::OUTDATED_REASON_LIMIT_CHARS)
+            .collect::<String>();
+        Ok(self.connection.execute(
+            "UPDATE card_promotions SET state='unbuilt',failure=?1,pr_number=NULL,updated_at_ms=?2 \
+             WHERE item_id=(SELECT id FROM memory_items WHERE project_id=?3 AND number=?4) \
+             AND state IN ('running','pr_open') AND attempt=?5 AND agent_id IS ?6",
+            params![
+                reason,
+                now_unix_ms,
+                project_id,
+                number,
+                from.attempt,
+                from.agent_id
+            ],
+        )? == 1)
+    }
+
     /// The rule and lesson cards whose use crossed the bar for a repository
     /// file and that the check before a suggestion let through (D-09, D-10,
     /// D-11, B12-B14): verified, with the operator's words in at least
@@ -2214,7 +2303,7 @@ impl MemoryStore {
              (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id \
               WHERE rii.item_id=i.id AND ir.turn_id='show' AND ir.created_at_ms>=?2) AS pulled \
              FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
-             LEFT JOIN card_promotions p ON p.item_id=i.id AND (p.revision=i.current_revision OR p.state IN ('running','pr_open')) \
+             LEFT JOIN card_promotions p ON p.item_id=i.id AND (p.revision=i.current_revision OR p.state IN ('running','pr_open','building')) \
              WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','lesson') AND r.verified_at_ms IS NOT NULL \
              AND NOT EXISTS(SELECT 1 FROM card_comparisons c WHERE c.item_id=i.id AND c.revision=i.current_revision) AND ((i.promotion_ok_revision IS i.current_revision)=?6) \
              AND (?6 OR i.reverify_at_ms IS NULL OR i.reverify_at_ms<=?7) \
@@ -2983,8 +3072,8 @@ fn write_promotion(
         .optional()?
         .ok_or(MemoryError::MemoryMissing)?;
     connection.execute(
-            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
-             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure,repository=excluded.repository",
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository,building_branch) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,started_at_ms=excluded.started_at_ms,updated_at_ms=excluded.updated_at_ms,failure=excluded.failure,repository=excluded.repository,building_branch=excluded.building_branch",
             params![
                 item_id,
                 promotion.state.as_str(),
@@ -2997,7 +3086,8 @@ fn write_promotion(
                 promotion.started_at_unix_ms,
                 promotion.updated_at_unix_ms,
                 promotion.failure,
-                promotion.repository
+                promotion.repository,
+                promotion.building_branch
             ],
         )?;
     Ok(())
@@ -3150,12 +3240,43 @@ COMMIT;"#,
         transaction.commit()?;
         version = 14;
     }
+    if version == 14 {
+        // One transaction copies every row, so no backup is kept (one would
+        // be another copy a Project's delete has to reach).
+        migrate_version_fourteen(connection)?;
+        version = 15;
+    }
     if version != SCHEMA_VERSION {
         return Err(MemoryError::WrongSchema {
             found: version,
             expected: SCHEMA_VERSION,
         });
     }
+    Ok(())
+}
+
+/// A promotion can end `building` (another branch builds the card's
+/// decision, and its pull request settles the card) or `unbuilt` (no branch
+/// builds it), which SQLite can only add by rebuilding the table that checks
+/// its states; `building_branch` names that other branch.
+fn migrate_version_fourteen(connection: &Connection) -> Result<(), MemoryError> {
+    let transaction = connection.unchecked_transaction()?;
+    let actual: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if actual == 14 {
+        transaction.execute_batch(
+            r#"CREATE TABLE card_promotions_v15(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated','building','unbuilt','kept')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT,repository TEXT,building_branch TEXT);
+INSERT INTO card_promotions_v15(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository) SELECT item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository FROM card_promotions;
+DROP TABLE card_promotions;
+ALTER TABLE card_promotions_v15 RENAME TO card_promotions;
+PRAGMA user_version=15;"#,
+        )?;
+    } else if actual != SCHEMA_VERSION {
+        return Err(MemoryError::WrongSchema {
+            found: actual,
+            expected: SCHEMA_VERSION,
+        });
+    }
+    transaction.commit()?;
     Ok(())
 }
 
@@ -3822,7 +3943,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL,checks INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT,repository TEXT);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated','building','unbuilt','kept')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT,repository TEXT,building_branch TEXT);
 CREATE TABLE card_comparisons(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL);
 CREATE TABLE promotion_batches(branch TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,numbers TEXT NOT NULL,PRIMARY KEY(project_id,branch));
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
@@ -4031,6 +4152,28 @@ pub fn repository_path(path: &str) -> bool {
         && path.split('/').all(|part| {
             !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git")
         })
+}
+
+/// Whether `branch` is shaped like a branch Git would take (the rules of
+/// `git check-ref-format --branch` a name can break by itself): `/` between
+/// non-empty names that do not start with `.` or end with `.lock`, no `..`,
+/// `@{`, space, control or invisible character, none of `~^:?*[\`, and not
+/// starting with `-` or ending with `.`. Whether it exists is the caller's to
+/// check against the repository's own branches.
+pub fn branch_name(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= CITED_PATH_LIMIT_BYTES
+        && !branch.starts_with('-')
+        && !branch.ends_with('.')
+        && !branch.contains("..")
+        && !branch.contains("@{")
+        && branch != "@"
+        && !branch
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || invisible(c) || "~^:?*[\\".contains(c))
+        && branch
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
 /// A character that changes how a path reads without showing itself, or
@@ -5063,6 +5206,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                     started_at_unix_ms: 100,
                     updated_at_unix_ms: 100,
                     failure: None,
+                    building_branch: None,
                 },
             )
             .unwrap();
@@ -5145,6 +5289,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                         started_at_unix_ms: 1000,
                         updated_at_unix_ms: 1000,
                         failure: None,
+                        building_branch: None,
                     },
                 )],
             )
@@ -5276,6 +5421,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             started_at_unix_ms: 100,
             updated_at_unix_ms: 100,
             failure: None,
+            building_branch: None,
         };
         let changed = Promotion {
             revision: 2,
@@ -5736,6 +5882,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             started_at_unix_ms: now,
             updated_at_unix_ms: now,
             failure: None,
+            building_branch: None,
         };
         store.set_promotion(&project, 1, &dismissed(1)).unwrap();
         assert_eq!(suggested(&store), Vec::<u64>::new());
@@ -6133,6 +6280,171 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
             failure: None,
+            building_branch: None,
+        }
+    }
+
+    #[test]
+    fn a_schema_fourteen_store_keeps_its_promotions_and_takes_the_building_states() {
+        let (temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "one", "one"),
+                &[candidate("Lint before tests", CandidateRelation::New)],
+            )
+            .unwrap();
+        let attempt = Promotion {
+            repository: Some("acme/app".into()),
+            pr_number: Some(7),
+            state: PromotionState::PrOpen,
+            ..running(1, "agent-7")
+        };
+        store.set_promotion(&project, 1, &attempt).unwrap();
+        // The table as schema 14 wrote it: no `building` or `unbuilt` state
+        // and no building branch.
+        store
+            .connection
+            .execute_batch(
+                r#"CREATE TABLE cp14(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed','outdated')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,started_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,failure TEXT,repository TEXT);
+INSERT INTO cp14 SELECT item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,started_at_ms,updated_at_ms,failure,repository FROM card_promotions;
+DROP TABLE card_promotions;
+ALTER TABLE cp14 RENAME TO card_promotions;
+PRAGMA user_version=14;"#,
+            )
+            .unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        drop(store);
+        let mut upgraded = MemoryStore::open(&path).unwrap();
+        assert_eq!(upgraded.promotions(&project).unwrap()[0].1, attempt);
+        assert!(
+            upgraded
+                .build_promotion(&project, 1, &attempt, "feat/backlog", "docs/UI.md", 9)
+                .unwrap()
+        );
+        let building = &upgraded.promotions(&project).unwrap()[0].1;
+        assert_eq!(
+            (
+                building.state,
+                building.building_branch.as_deref(),
+                building.target_path.as_deref(),
+                building.pr_number,
+            ),
+            (
+                PromotionState::Building,
+                Some("feat/backlog"),
+                Some("docs/UI.md"),
+                None
+            )
+        );
+        // The attempt's own agent and branch stay its own.
+        assert_eq!(building.agent_id.as_deref(), Some("agent-7"));
+        assert_eq!(building.branch.as_deref(), Some("hide-memory-m1-1"));
+    }
+
+    #[test]
+    fn only_the_attempts_agent_ends_it_building_or_unbuilt_and_a_building_card_stays_followed() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[
+                    candidate("Backlog follows one source", CandidateRelation::New),
+                    candidate("Missed work offers one button", CandidateRelation::New),
+                ],
+            )
+            .unwrap();
+        let first = running(1, "agent-7");
+        store.set_promotion(&project, 1, &first).unwrap();
+        for other in [running(1, "agent-9"), running(2, "agent-7")] {
+            assert!(
+                !store
+                    .build_promotion(&project, 1, &other, "feat/x", "docs/a.md", 5)
+                    .unwrap()
+            );
+        }
+        assert!(
+            store
+                .build_promotion(&project, 1, &first, "bad..name", "docs/a.md", 5)
+                .is_err()
+        );
+        assert!(
+            store
+                .build_promotion(&project, 1, &first, "feat/x", "docs/a.md", 5)
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .open_promotions("local")
+                .unwrap()
+                .into_iter()
+                .map(|(_, _, number, promotion)| (number, promotion.state))
+                .collect::<Vec<_>>(),
+            vec![(1, PromotionState::Building)]
+        );
+        let second = Promotion {
+            pr_number: Some(4),
+            state: PromotionState::PrOpen,
+            ..running(1, "agent-8")
+        };
+        store.set_promotion(&project, 2, &second).unwrap();
+        assert!(
+            store
+                .leave_unbuilt(&project, 2, &second, "  no branch builds it  ", 6)
+                .unwrap()
+        );
+        let unbuilt = &store.promotions(&project).unwrap()[1].1;
+        assert_eq!(
+            (unbuilt.state, unbuilt.failure.as_deref(), unbuilt.pr_number),
+            (PromotionState::Unbuilt, Some("no branch builds it"), None)
+        );
+        assert!(
+            !store
+                .leave_unbuilt(&project, 2, &second, "again", 7)
+                .unwrap()
+        );
+        let kept = Promotion {
+            state: PromotionState::Kept,
+            ..unbuilt.clone()
+        };
+        store.set_promotion(&project, 2, &kept).unwrap();
+        assert_eq!(
+            store.promotions(&project).unwrap()[1].1.state,
+            PromotionState::Kept
+        );
+    }
+
+    #[test]
+    fn a_building_branch_is_one_git_would_take() {
+        for good in [
+            "main",
+            "gen-prd/overview-device-tasks",
+            "feat/a.b",
+            "hide-memory-m1-mv",
+        ] {
+            assert!(branch_name(good), "{good}");
+        }
+        for bad in [
+            "",
+            "-x",
+            "a..b",
+            "a/.b",
+            "a.lock",
+            "a b",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[",
+            "a\\b",
+            "a/",
+            "/a",
+            "a.",
+            "@",
+            "a@{b",
+            "a\u{200B}b",
+        ] {
+            assert!(!branch_name(bad), "{bad}");
         }
     }
 
@@ -6413,6 +6725,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             started_at_unix_ms: 1,
             updated_at_unix_ms: 1,
             failure: None,
+            building_branch: None,
         };
         store.set_promotion(&project, 1, &merged(None)).unwrap();
         assert_eq!(given(&store), 0);
@@ -8523,6 +8836,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
                 started_at_unix_ms: 1,
                 updated_at_unix_ms: 1,
                 failure: None,
+                building_branch: None,
             };
             store.set_promotion(&project, number, &promotion).unwrap();
         }
